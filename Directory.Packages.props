@@ -19,8 +19,8 @@
     <!-- Meta Yoga 纯 C# 移植（Flexbox；AOT/NativeAOT） -->
     <PackageVersion Include="Yoga.Net" Version="3.2.3" />
     <!-- Vulkan 后端 -->
-    <PackageVersion Include="Silk.NET.Vulkan" Version="2.22.0" />
-    <PackageVersion Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.Vulkan" Version="2.23.0" />
+    <PackageVersion Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.23.0" />
     <PackageVersion Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.22.0" />
     <PackageVersion Include="LibTessDotNet" Version="1.1.15" />
   </ItemGroup>
