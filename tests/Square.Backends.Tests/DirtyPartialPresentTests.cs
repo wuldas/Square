@@ -178,6 +178,25 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void DisplayTreeRebuildsCommandsWhenArrangeMovesCleanElement()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 100, 100) };
+        var child = new ColorPaintElement(Color.Blue) { Geometry = new Rect(0, 0, 20, 20) };
+        root.Children.Add(child);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(new RenderContext(new Bitmap(100, 100), 1f));
+
+        child.Arrange(new Rect(0, 50, 20, 20));
+        tree.UpdateDirty();
+        var bitmap = new Bitmap(100, 100);
+        tree.Render(new RenderContext(bitmap, 1f));
+
+        AssertPixel(bitmap, 10, 10, Color.Transparent);
+        AssertPixel(bitmap, 10, 60, Color.Blue);
+    }
+
+    [Fact]
     public void DisplayTreeSynchronizationReusesUnchangedNodesAndBuildsNewNodes()
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 100) };

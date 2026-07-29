@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -13,7 +12,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     public bool SupportsPartialRendering => true;
     private const int CoverageSampleGrid = 4;
     private const int CoverageSampleCount = CoverageSampleGrid * CoverageSampleGrid;
-    private const int MaxPooledLayerBytes = 4 * 1024 * 1024;
+    private const uint AlphaMask = 0xFF000000u;
 
     private readonly ISoftwareRenderSurface _surface;
     private int _bitmapWidth;
@@ -28,6 +27,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     private readonly Stack<ClipRegion> _clipStack = new();
     private readonly Stack<Matrix3x2> _transformStack = new();
     private readonly Stack<LayerState> _layerStack = new();
+    private readonly LayerBufferPool _layerBufferPool = new();
     private readonly byte[] _coverageAlphaLookup = new byte[CoverageSampleCount + 1];
     private int _coverageAlphaSource = -1;
     private float _coverageAlphaOpacity = -1f;
@@ -41,6 +41,10 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     public Size CanvasSize => _canvasSize;
     public float DpiScale => _dpiScale;
+    internal int RetainedLayerBufferBytes => _layerBufferPool.RetainedBytes;
+    internal int RetainedLayerBufferCount => _layerBufferPool.RetainedBufferCount;
+    internal int LayerBufferAllocationCount => _layerBufferPool.AllocationCount;
+    internal int LayerBufferReuseCount => _layerBufferPool.ReuseCount;
 
     internal RenderContext(Bitmap bitmap, float dpiScale, PresentFrameHandler? presentFrame = null)
         : this(
@@ -313,20 +317,27 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         var pixelBounds = GetLayerPixelBounds(TransformRect(bounds));
         if (pixelBounds.Width == 0 || pixelBounds.Height == 0)
         {
-            _layerStack.Push(new LayerState([], 0, 0, 0, 0, Math.Clamp(opacity, 0f, 1f), false, false));
+            _layerStack.Push(new LayerState([], 0, 0, 0, 0, NormalizeOpacity(opacity), false));
             return;
         }
 
         var stride = checked(pixelBounds.Width * 4);
         var length = checked(stride * pixelBounds.Height);
-        var isPooled = length <= MaxPooledLayerBytes;
-        var background = isPooled ? ArrayPool<byte>.Shared.Rent(length) : new byte[length];
-        for (var rowIndex = 0; rowIndex < pixelBounds.Height; rowIndex++)
+        var background = _layerBufferPool.Rent(length);
+        try
         {
-            var surfaceRow = _surface.GetRowSpan(pixelBounds.Y + rowIndex)
-                .Slice(pixelBounds.X * 4, stride);
-            surfaceRow.CopyTo(background.AsSpan(rowIndex * stride, stride));
-            surfaceRow.Clear();
+            for (var rowIndex = 0; rowIndex < pixelBounds.Height; rowIndex++)
+            {
+                var surfaceRow = _surface.GetRowSpan(pixelBounds.Y + rowIndex)
+                    .Slice(pixelBounds.X * 4, stride);
+                surfaceRow.CopyTo(background.AsSpan(rowIndex * stride, stride));
+                surfaceRow.Clear();
+            }
+        }
+        catch
+        {
+            _layerBufferPool.Return(background);
+            throw;
         }
 
         _layerStack.Push(new LayerState(
@@ -335,9 +346,8 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             pixelBounds.Y,
             pixelBounds.Width,
             pixelBounds.Height,
-            Math.Clamp(opacity, 0f, 1f),
-            true,
-            isPooled));
+            NormalizeOpacity(opacity),
+            true));
     }
 
     public void PopLayer()
@@ -360,7 +370,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         }
         finally
         {
-            if (layer.IsPooled) ArrayPool<byte>.Shared.Return(layer.Background);
+            _layerBufferPool.Return(layer.Background);
         }
     }
 
@@ -395,7 +405,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         _canvasSize = canvasSize;
         _dpiScale = dpiScale;
         _transformStack.Clear();
-        ReleaseLayers();
+        ReleaseLayers(restoreBackground: true);
         _currentOpacity = 1f;
         _clipStack.Clear();
         UpdateClipCache();
@@ -410,6 +420,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private static float NormalizeDpiScale(float dpiScale)
         => float.IsFinite(dpiScale) && dpiScale > 0 ? dpiScale : 1f;
+
+    private static float NormalizeOpacity(float opacity)
+        => float.IsNaN(opacity) ? 1f : Math.Clamp(opacity, 0f, 1f);
 
     private static Matrix3x2 CreateDpiTransform(float dpiScale)
         => Matrix3x2.CreateScale(dpiScale);
@@ -446,7 +459,8 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     {
         _clipStack.Clear();
         _transformStack.Clear();
-        ReleaseLayers();
+        ReleaseLayers(restoreBackground: false);
+        _layerBufferPool.Clear();
         _scaledDirtyRects = [];
         _surface.Dispose();
         _bitmapWidth = 0;
@@ -1677,8 +1691,19 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private static bool IsOpaqueBgraRow(ReadOnlySpan<byte> row)
     {
-        for (var i = 3; i < row.Length; i += 4)
-            if (row[i] != 255) return false;
+        var pixels = MemoryMarshal.Cast<byte, uint>(row);
+        var offset = 0;
+        if (Vector.IsHardwareAccelerated && pixels.Length >= Vector<uint>.Count)
+        {
+            var alphaMask = new Vector<uint>(AlphaMask);
+            for (; offset <= pixels.Length - Vector<uint>.Count; offset += Vector<uint>.Count)
+            {
+                var values = new Vector<uint>(pixels.Slice(offset, Vector<uint>.Count));
+                if (!Vector.EqualsAll(values & alphaMask, alphaMask)) return false;
+            }
+        }
+        for (; offset < pixels.Length; offset++)
+            if ((pixels[offset] & AlphaMask) != AlphaMask) return false;
         return true;
     }
 
@@ -1711,11 +1736,12 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             }
 
             var da = dstSpan[i + 3];
-            var outA = (byte)(sa + da * (255 - sa) / 255);
+            var inverseAlpha = 255 - sa;
+            var outA = (byte)(sa + da * inverseAlpha / 255);
             if (outA == 0) continue;
-            dstSpan[i] = (byte)((sb * 255 + dstSpan[i] * da * (255 - sa) / 255) / outA);
-            dstSpan[i + 1] = (byte)((sg * 255 + dstSpan[i + 1] * da * (255 - sa) / 255) / outA);
-            dstSpan[i + 2] = (byte)((sr * 255 + dstSpan[i + 2] * da * (255 - sa) / 255) / outA);
+            dstSpan[i] = (byte)((sb * 255 + dstSpan[i] * da * inverseAlpha / 255) / outA);
+            dstSpan[i + 1] = (byte)((sg * 255 + dstSpan[i + 1] * da * inverseAlpha / 255) / outA);
+            dstSpan[i + 2] = (byte)((sr * 255 + dstSpan[i + 2] * da * inverseAlpha / 255) / outA);
             dstSpan[i + 3] = outA;
         }
     }
@@ -1756,12 +1782,22 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         return new LayerPixelBounds(left, top, right - left, bottom - top);
     }
 
-    private void ReleaseLayers()
+    private void ReleaseLayers(bool restoreBackground)
     {
         while (_layerStack.Count > 0)
         {
             var layer = _layerStack.Pop();
-            if (layer.IsPooled) ArrayPool<byte>.Shared.Return(layer.Background);
+            if (!layer.HasBuffer) continue;
+            if (restoreBackground)
+            {
+                var stride = layer.Width * 4;
+                for (var rowIndex = 0; rowIndex < layer.Height; rowIndex++)
+                {
+                    layer.Background.AsSpan(rowIndex * stride, stride).CopyTo(
+                        _surface.GetRowSpan(layer.Y + rowIndex).Slice(layer.X * 4, stride));
+                }
+            }
+            _layerBufferPool.Return(layer.Background);
         }
     }
 
@@ -1773,8 +1809,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         int Width,
         int Height,
         float Opacity,
-        bool HasBuffer,
-        bool IsPooled);
+        bool HasBuffer);
 
     // ── 文字光栅化（简易字形） ──
 

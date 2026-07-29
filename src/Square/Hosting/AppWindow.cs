@@ -303,6 +303,9 @@ public sealed class AppWindow : IRenderBackendApplication
     /// <summary>请求重新渲染窗口。</summary>
     public void RequestRender() => RequireRuntime().RequestRender();
 
+    /// <summary>元素失效时请求渲染；应用绑定前保持无操作。</summary>
+    internal void RequestRenderIfBound() => _runtime?.RequestRender();
+
     /// <summary>注入 DevTools 指针事件。</summary>
     public Task InjectPointerAsync(DevToolsPointerInput input) => RequireRuntime().InjectPointerAsync(input);
 

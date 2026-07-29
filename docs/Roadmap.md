@@ -39,7 +39,7 @@
 [x] `Square.Compiler`：Incremental Generator + Props 校验 + ref 生成 + 绑定编译 + 诊断映射
 [x] `Square.CSS`：Tokenizer/Selector/Cascade/Variables/Inheritance（含子代/兄弟/通用/属性选择器、`!important`、基础伪类）
 [x] `Square.Graphics`：`IRenderContext`/`IRenderBackendFactory` + 基础类型
-[~] `Square.Backends`：纯 C# Software Renderer（BGRA、脏区提交、真正的 group opacity/offscreen compositing ✓ / SIMD 与有界临时 surface 池化待实现）
+[x] `Square.Backends`：纯 C# Software Renderer（BGRA、脏区提交、真正的 group opacity/offscreen compositing、SIMD 不透明 BGRA 行扫描与每上下文有界临时 layer surface 池化）
 [x] `Square.Rendering`：Box/Flex/Grid 布局 + Element→DisplayTree→DrawCommand→提交；DisplayTree 已按 Element 标识增量同步插入、移除、显隐与顺序并复用未变化命令
 [x] `Square.Runtime` + `Square.UI`：Application/Element/UIDocument 基类/属性/元素操作 API（Style/ClassList/Children/Event）
 [x] `Square.Hosting`：`DesktopApplication` 聚合层——提取窗口、输入路由、焦点管理、文本编辑、剪贴板、帧调度和布局渲染循环
@@ -133,7 +133,7 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 - M5 跨平台完善（macOS Software 宿主 MVP 已落地，待完成 AOT/原生运行验收；X11 已支持 Xft/物理 DPI fallback 与 XRandR 刷新率驱动调度，后续继续完善多显示器动态 DPI）
 - M9 多目标输出：WinUI host + Software bitmap、SVG exporter、NativeUiNode 原型、Godot 嵌入宿主（见 `docs/Rendering-Targets.md`）
 - M7 标准 RichTextBox/WYSIWYG：富文本 document model、per-range style、selection/run 映射；折叠选区已支持活动样式、相邻 run 样式继承及基础加粗/下划线/斜体操作，RichText 选区已映射到文档 DOM `Range`；BiDi 与复杂文本 shaping 仍待完成
-- `.sqv` 前端继续推进：动态参数、对象绑定、内置及默认 `Value`/`change` 约定的自定义组件 `v-model`、整包 scoped slot props 已落地；下一步是独立 Template IR、类型化 scoped slot 解构与完整语义诊断（见 `docs/vue-plan.md` 里程碑 F–G）
+- `.sqv` 前端继续推进：语言无关 `TemplateDocument` IR 入口、基于 `[SlotContract]` 的类型化 scoped slot 解构、动态/缺失 slot contract 诊断及 Roslyn 模板语义诊断已落地；下一步继续把剩余 `SqxNode` 兼容节点迁移为完整 Template IR 节点，并扩展跨模板联合语义绑定（见 `docs/vue-plan.md` 里程碑 F–G）
 - 继续扩展 CSS Grid / Animation 到更完整规范
 
 ---

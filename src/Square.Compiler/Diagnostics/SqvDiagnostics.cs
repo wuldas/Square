@@ -33,6 +33,18 @@ public static class SqvDiagnostics
     public static readonly DiagnosticDescriptor SQV0009_InvalidExpression = new(
         "SQV0009", "模板表达式必须是 C# 表达式", "{0}", Category, DiagnosticSeverity.Error, true);
 
+    public static readonly DiagnosticDescriptor SQV0010_SlotContractMissing = new(
+        "SQV0010", "作用域插槽缺少类型契约", "{0}", Category, DiagnosticSeverity.Error, true);
+
+    public static readonly DiagnosticDescriptor SQV0011_SlotPropertyMissing = new(
+        "SQV0011", "作用域插槽属性不存在", "{0}", Category, DiagnosticSeverity.Error, true);
+
+    public static readonly DiagnosticDescriptor SQV0012_DynamicSlotDestructuring = new(
+        "SQV0012", "动态插槽不能使用类型化解构", "{0}", Category, DiagnosticSeverity.Error, true);
+
+    public static readonly DiagnosticDescriptor SQV0013_SemanticError = new(
+        "SQV0013", "模板 C# 语义错误", "{0}", Category, DiagnosticSeverity.Error, true);
+
     public static DiagnosticDescriptor Get(string id) => id switch
     {
         "SQV0002" => SQV0002_UnsupportedDirective,
@@ -43,6 +55,10 @@ public static class SqvDiagnostics
         "SQV0007" => SQV0007_UnsupportedBuiltIn,
         "SQV0008" => SQV0008_ScopedSlot,
         "SQV0009" => SQV0009_InvalidExpression,
+        "SQV0010" => SQV0010_SlotContractMissing,
+        "SQV0011" => SQV0011_SlotPropertyMissing,
+        "SQV0012" => SQV0012_DynamicSlotDestructuring,
+        "SQV0013" => SQV0013_SemanticError,
         _ => SQV0001_SyntaxError
     };
 }

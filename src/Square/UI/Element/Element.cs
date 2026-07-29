@@ -639,7 +639,10 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         _needsPaint = true;
         _paintFullDirty = true;
         _paintDirtyRects?.Clear();
-        Parent?.InvalidateLayout();
+        if (Parent != null)
+            Parent.InvalidateLayout();
+        else
+            RequestRenderIfAttached();
     }
 
     /// <summary>仅标记绘制失效（Square 扩展；整控件脏）。</summary>
@@ -648,6 +651,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         _needsPaint = true;
         _paintFullDirty = true;
         _paintDirtyRects?.Clear();
+        RequestRenderIfAttached();
     }
 
     /// <summary>
@@ -665,11 +669,18 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         if (_paintFullDirty)
         {
             _needsPaint = true;
+            RequestRenderIfAttached();
             return;
         }
         _needsPaint = true;
         _paintDirtyRects ??= [];
         _paintDirtyRects.Add(localRect);
+        RequestRenderIfAttached();
+    }
+
+    private void RequestRenderIfAttached()
+    {
+        AppWindow?.RequestRenderIfBound();
     }
 
     /// <summary>是否已标记为整控件绘制脏。</summary>
@@ -750,7 +761,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     public virtual Size Measure(Size availableSize) => Size.Zero;
 
     /// <summary>在最终矩形内排列自身（Square 布局协议）。</summary>
-    public virtual void Arrange(Rect finalRect) { _geometry = finalRect; }
+    public virtual void Arrange(Rect finalRect) { Geometry = finalRect; }
 
     /// <summary>向渲染上下文绘制本节点（Square 扩展；由 DisplayTree 经 CommandCollector 调用）。</summary>
     public virtual void Paint(IRenderContext ctx) { }

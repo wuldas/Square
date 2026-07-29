@@ -14,6 +14,24 @@ namespace Square.UI.Tests;
 
 public class DocumentTests
 {
+    private static bool IsRenderRequested(DesktopApplication application)
+    {
+        var field = typeof(DesktopApplication).GetField(
+            "_renderRequested",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsType<bool>(field!.GetValue(application));
+    }
+
+    private static void ClearRenderRequest(DesktopApplication application)
+    {
+        var field = typeof(DesktopApplication).GetField(
+            "_renderRequested",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field!.SetValue(application, false);
+    }
+
     [Theory]
     [InlineData(885f, 943f, 885.3333f, 942.6667f, true)]
     [InlineData(885f, 943f, 887f, 943f, false)]
@@ -87,6 +105,53 @@ public class DocumentTests
         application.MainWindow.Title = "Updated";
 
         Assert.Equal("Updated", window.Document.Title);
+    }
+
+    [Fact]
+    public void AttachedLayoutInvalidationRequestsApplicationFrame()
+    {
+        var window = new AppWindow("Layout");
+        var root = new View();
+        var text = new Square.Controls.Text("Initial");
+        root.Children.Add(text);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        window.WindowDocument.Build();
+        ClearRenderRequest(application);
+
+        text.TextContent = "Updated";
+
+        Assert.True(root.IsLayoutDirty);
+        Assert.True(IsRenderRequested(application));
+    }
+
+    [Fact]
+    public void AttachedPaintInvalidationRequestsApplicationFrame()
+    {
+        var window = new AppWindow("Paint");
+        var view = new View();
+        window.Load(view);
+        var application = new DesktopApplication(window);
+        window.WindowDocument.Build();
+        ClearRenderRequest(application);
+
+        view.InvalidatePaint();
+
+        Assert.True(view.NeedsPaint);
+        Assert.True(IsRenderRequested(application));
+    }
+
+    [Fact]
+    public void InvalidationBeforeApplicationBindingDoesNotThrow()
+    {
+        var window = new AppWindow("Before binding");
+        var text = new Square.Controls.Text("Initial");
+        window.Load(text);
+
+        var exception = Record.Exception(() => text.TextContent = "Updated");
+
+        Assert.Null(exception);
+        Assert.True(text.IsLayoutDirty);
     }
 
     [Fact]

@@ -16,6 +16,9 @@ namespace Square.Backends.Tests;
 
 public class SoftwareRendererTests
 {
+    private static byte BlendOpaque(byte source, byte sourceAlpha, byte destination)
+        => (byte)((source * sourceAlpha + destination * (255 - sourceAlpha) + 127) / 255);
+
     private static RenderContext CreateContext(int w, int h)
     {
         var bmp = new Bitmap(w, h);
@@ -339,6 +342,90 @@ public class SoftwareRendererTests
         Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(0, 0).ToArray());
         Assert.Equal([0, 0, 255, 255], context.GetBitmap().GetPixel(1, 0).ToArray());
         Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(2, 0).ToArray());
+    }
+
+    [Fact]
+    public void LayerBuffersAreReusedWithinBoundedContextPool()
+    {
+        using var context = CreateContext(64, 64);
+        context.Clear(Color.White);
+
+        context.PushLayer(new Rect(0, 0, 32, 32), 0.5f);
+        context.FillRect(new Rect(0, 0, 32, 32), new SolidColorBrush(Color.Red));
+        context.PopLayer();
+        var allocations = context.LayerBufferAllocationCount;
+
+        context.PushLayer(new Rect(0, 0, 32, 32), 0.5f);
+        context.FillRect(new Rect(0, 0, 32, 32), new SolidColorBrush(Color.Blue));
+        context.PopLayer();
+
+        Assert.Equal(1, allocations);
+        Assert.Equal(allocations, context.LayerBufferAllocationCount);
+        Assert.Equal(1, context.LayerBufferReuseCount);
+        Assert.Equal(1, context.RetainedLayerBufferCount);
+        Assert.InRange(context.RetainedLayerBufferBytes, 1, LayerBufferPool.MaxRetainedBytes);
+    }
+
+    [Fact]
+    public void LayerBufferPoolEnforcesBucketAndByteBounds()
+    {
+        var pool = new LayerBufferPool();
+        var buffers = Enumerable.Range(0, 8)
+            .Select(_ => pool.Rent(LayerBufferPool.MaxBufferBytes))
+            .ToArray();
+
+        foreach (var buffer in buffers) pool.Return(buffer);
+
+        Assert.Equal(LayerBufferPool.MaxBuffersPerBucket, pool.RetainedBufferCount);
+        Assert.True(pool.RetainedBytes <= LayerBufferPool.MaxRetainedBytes);
+    }
+
+    [Fact]
+    public void ResizeWithActiveLayerRestoresBackgroundBeforeResettingState()
+    {
+        using var context = CreateContext(2, 1);
+        context.Clear(Color.Blue);
+        context.PushLayer(new Rect(0, 0, 1, 1), 0.5f);
+        context.FillRect(new Rect(0, 0, 1, 1), new SolidColorBrush(Color.Red));
+
+        context.Resize(new Size(2, 1));
+
+        Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(0, 0).ToArray());
+        Assert.Equal(1, context.RetainedLayerBufferCount);
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(31)]
+    [InlineData(32)]
+    [InlineData(33)]
+    public void SimdSolidBlendMatchesScalarReference(int width)
+    {
+        using var context = CreateContext(width, 1);
+        var bitmap = context.GetBitmap();
+        var expected = new byte[bitmap.Pixels.Length];
+        for (var x = 0; x < width; x++)
+        {
+            var offset = x * 4;
+            bitmap.Pixels[offset] = expected[offset] = (byte)(x * 17 + 3);
+            bitmap.Pixels[offset + 1] = expected[offset + 1] = (byte)(x * 11 + 5);
+            bitmap.Pixels[offset + 2] = expected[offset + 2] = (byte)(x * 7 + 9);
+            bitmap.Pixels[offset + 3] = expected[offset + 3] = 255;
+        }
+
+        const byte alpha = 137;
+        for (var offset = 0; offset < expected.Length; offset += 4)
+        {
+            expected[offset] = BlendOpaque(40, alpha, expected[offset]);
+            expected[offset + 1] = BlendOpaque(90, alpha, expected[offset + 1]);
+            expected[offset + 2] = BlendOpaque(180, alpha, expected[offset + 2]);
+        }
+
+        context.FillRect(new Rect(0, 0, width, 1), new SolidColorBrush(Color.FromRgba(180, 90, 40, alpha)));
+
+        Assert.Equal(expected, bitmap.Pixels);
     }
 
     [Fact]

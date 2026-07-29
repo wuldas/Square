@@ -61,7 +61,7 @@ public sealed class ChildNodeCollection : IList<Node>
         var item = _list[oldIndex];
         _list.RemoveAt(oldIndex);
         _list.Insert(newIndex, item);
-        _owner.InvalidateLayout();
+        InvalidateStructure();
     }
 
     /// <summary>移除指定子节点。</summary>
@@ -81,7 +81,7 @@ public sealed class ChildNodeCollection : IList<Node>
         _list.RemoveAt(index);
         item.ParentNode = null;
         if (item is Element element) _owner.OnChildRemoved(element);
-        _owner.InvalidateLayout();
+        InvalidateStructure();
     }
 
     /// <summary>清空所有子节点。</summary>
@@ -94,7 +94,7 @@ public sealed class ChildNodeCollection : IList<Node>
             if (item is Element element) _owner.OnChildRemoved(element);
         }
         _list.Clear();
-        _owner.InvalidateLayout();
+        InvalidateStructure();
     }
 
     /// <summary>返回指定子节点的索引。</summary>
@@ -130,8 +130,11 @@ public sealed class ChildNodeCollection : IList<Node>
             _owner.OnChildAdded(element);
             AttachIfNeeded(element);
         }
-        _owner.InvalidateLayout();
+        InvalidateStructure();
     }
+
+    private void InvalidateStructure() =>
+        _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
 
     private void AttachIfNeeded(Element item)
     {

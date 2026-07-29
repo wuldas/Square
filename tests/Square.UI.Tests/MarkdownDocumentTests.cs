@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.CSS.Engine;
 using Square.Extensions.Markdown;
 using Square.Graphics;
 using Square.Graphics.Svg;
@@ -163,6 +164,29 @@ public class MarkdownDocumentTests
         var row = Assert.Single(table.Children);
         Assert.True(row.ClassList.Contains("markdown-table-row"));
         Assert.Equal(2, row.Children.Count);
+    }
+
+    [Fact]
+    public void DynamicMarkdownChildrenReceiveComponentStylesBeforeLayout()
+    {
+        var window = new Square.Hosting.AppWindow("Markdown styles");
+        var viewer = new MarkdownViewer { Content = "# Heading\n\n- Item" };
+        window.Load(viewer);
+        viewer.BuildElementTree();
+        ((IComponentLifecycle)viewer).OnAttached();
+
+        Assert.True(CssStyleReconciler.HasWork);
+        CssStyleReconciler.Flush();
+
+        var heading = Assert.Single(
+            viewer.QueryAll<View>(),
+            view => view.ClassList.Contains("markdown-heading-1"));
+        var list = Assert.Single(
+            viewer.QueryAll<View>(),
+            view => view.ClassList.Contains("markdown-list"));
+        Assert.Equal("28px", heading.Style.Get("font-size"));
+        Assert.Equal("6px", list.Style.Get("gap"));
+        CssStyleReconciler.UnregisterScopesForTree(window.WindowDocument.DocumentElement);
     }
 
     [Fact]

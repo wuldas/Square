@@ -485,6 +485,45 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void SqvScopedSlotDestructuringUsesDeclaredContractTypes()
+    {
+        const string source = """
+            using Square.UI;
+            namespace Square.Sample;
+            public sealed class RowSlotProps
+            {
+                public int Item { get; init; }
+                public string Label { get; init; } = "";
+            }
+            [SlotContract("row", typeof(RowSlotProps))]
+            public sealed class ContractCard : UIElement { }
+            """;
+        const string template = """
+            <template>
+              <ContractCard>
+                <template #row="{ item: row, label }">
+                  <Text>{{ row }}: {{ label }}</Text>
+                </template>
+              </ContractCard>
+            </template>
+            """;
+
+        var compilation = CreateCompilation(source);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("TypedSlot.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver = driver.RunGenerators(compilation);
+        var result = driver.GetRunResult();
+        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("__slotProps.Get<int>(\"item\")", generated);
+        Assert.Contains("__slotProps.Get<string>(\"label\")", generated);
+        Assert.Contains("var row =", generated);
+    }
+
+    [Fact]
     public void SqvInputVModelBindsValueAndWritesBackOnInput()
     {
         const string source = """

@@ -29,3 +29,19 @@ internal sealed class TemplateIfBranch
     public int Position;
     public List<SqxNode> Children = new();
 }
+
+/// <summary>模板 IR 中的作用域插槽绑定。</summary>
+internal sealed class TemplateSlotScope
+{
+    public string WholePropsName;
+    public List<TemplateSlotPropertyBinding> Properties = new();
+    public int Position;
+}
+
+internal sealed class TemplateSlotPropertyBinding
+{
+    public string PropertyName = "";
+    public string LocalName = "";
+    public string TypeName;
+    public int Position;
+}

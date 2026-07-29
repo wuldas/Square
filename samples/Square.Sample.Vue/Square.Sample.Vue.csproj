@@ -20,6 +20,7 @@
     <ProjectReference Include="..\..\src\Square.Platform.MacOS\Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
     <ProjectReference Include="..\..\src\Square.Extensions\Square.Extensions.csproj" />
     <ProjectReference Include="..\..\src\Square.Extensions.Markdown\Square.Extensions.Markdown.csproj" />
+    <ProjectReference Include="..\..\src\Square.DevTools\Square.DevTools.csproj" />
     <ProjectReference Include="..\..\src\Square.Images\Square.Images.csproj" />
     <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>

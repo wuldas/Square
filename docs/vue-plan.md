@@ -389,7 +389,7 @@ Card
 ### 里程碑 F：内置组件与高级特性（部分完成）
 
 - `<component :is="...">`、`<Teleport>`、`<Transition>`、`<TransitionGroup>`、`<KeepAlive>`、`<Suspense>`。
-- 作用域插槽属性已支持 `#name="slotProps"` 整包形式，出口通过 `SlotProps` 传递强类型值；解构语法等待类型化 slot contract。
+- 作用域插槽属性支持 `#name="slotProps"` 整包形式，以及基于组件 `[SlotContract(name, propsType)]` 元数据的 `{ item, label: caption }` 类型化解构；生成代码使用 `SlotProps.Get<T>`，保持 AOT-safe。
 - `:key` 循环键。
 
 ### 里程碑 G：诊断与清理（基本完成）
@@ -397,7 +397,7 @@ Card
 - 已实现 `SQV0001`-`SQV0009`，覆盖模板语法错误、不支持指令、无效 `v-for`、孤立条件分支、重复绑定、动态参数、Vue 内置组件、作用域插槽属性和非法 C# 表达式。
 - 已校验结束标签配对、未闭合插值/字符串/注释和 `<script lang>`。
 - 已在最终 AST 上检查重复属性/事件，包括 `v-model` 展开后与显式 `value` / `input` 绑定形成的冲突。
-- 已使用 Roslyn 对插值、绑定、事件、`v-if` 和 `v-for` 表达式进行 C# 语法验证；成员存在性等语义验证仍待后续处理。
+- 已使用 Roslyn 对插值、绑定、事件、`v-if` 和 `v-for` 表达式进行 C# 语法验证；生成后的临时 Compilation 会把映射回 `.sqv` 的成员、类型和事件错误转换为 `SQV0013`。跨模板联合绑定和更细分的语义诊断 ID 仍继续完善。
 - 新增 `docs/Sqv-Spec.md`。
 - 更新 `README.md`、`docs/Architecture.md`、`docs/Generator.md`。
 

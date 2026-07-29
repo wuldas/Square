@@ -247,7 +247,7 @@ public class GeneratorDiagnosticsTests
     [InlineData(":key=\"Id\"", "SQV0002")]
     [InlineData("@click.once=\"Handle\"", "SQV0002")]
     [InlineData("v-model=\"Value\"", "SQV0002")]
-    [InlineData("#header=\"{ slotProps }\"", "SQV0008")]
+    [InlineData("#header=\"{ item: class }\"", "SQV0008")]
     [InlineData("v-custom=\"Value\"", "SQV0002")]
     public void ReportsUnsupportedSqvSyntax(string attribute, string diagnosticId)
     {
@@ -324,6 +324,32 @@ public class GeneratorDiagnosticsTests
         var diagnostics = RunGenerator(new InMemoryAdditionalText("InvalidExpression.sqv", source));
 
         Assert.Contains(diagnostics, d => d.Id == "SQV0009");
+    }
+
+    [Fact]
+    public void ReportsSqvMemberBindingSemanticErrors()
+    {
+        const string source = """
+            <template><Button :disabled="MissingFlag" /></template>
+            <script lang="csharp">
+              public bool ExistingFlag = true;
+            </script>
+            """;
+
+        var diagnostics = RunGenerator(new InMemoryAdditionalText("Semantic.sqv", source));
+
+        Assert.Contains(diagnostics, diagnostic =>
+            diagnostic.Id == "SQV0013" && diagnostic.GetMessage().Contains("MissingFlag", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReportsMissingScopedSlotContract()
+    {
+        const string source = "<template><Card><template #row=\"{ item }\"></template></Card></template>";
+
+        var diagnostics = RunGenerator(new InMemoryAdditionalText("MissingContract.sqv", source));
+
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "SQV0010");
     }
 
     [Theory]

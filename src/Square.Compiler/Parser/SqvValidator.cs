@@ -105,7 +105,6 @@ internal static class SqvValidator
         "__sqv_on_object" => "__sqv_on_object",
         "__sqv_dynamic_property" => "__sqv_dynamic_property",
         "__sqv_dynamic_event" => "__sqv_dynamic_event",
-        "__sqv_slot_scope" => "__sqv_slot_scope",
         "text" => "TextContent",
         "value" => "Value",
         "checked" => "IsChecked",

@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace Square.Compiler.Parser;
 
@@ -80,6 +81,12 @@ internal sealed class SqvTemplateParser
         }
 
         SqvAttributeConverter.ApplyVModel(element);
+        var slotScopeAttribute = element.Attributes.FirstOrDefault(attribute => attribute.Name == "__sqv_slot_scope");
+        if (slotScopeAttribute != null)
+        {
+            element.SlotScope = SqvAttributeConverter.ParseSlotScope(slotScopeAttribute.RawValue, slotScopeAttribute.Position);
+            element.Attributes.Remove(slotScopeAttribute);
+        }
 
         if (Peek().Type == SqvTokenType.CloseSelfTag)
         {
@@ -341,7 +348,7 @@ internal static class SqvAttributeConverter
             var slotName = NormalizeSlotName(name.Substring(1));
             if (slotName.Length > 0 && slotName[0] == '[')
                 return DynamicSlotAttr(slotName, value, line, position, pending);
-            AddSlotScope(value, line, position, pending);
+            AddSlotScope(value, position, pending);
             return StaticAttr("slot", slotName, line, position);
         }
         if (name.StartsWith("v-slot", StringComparison.Ordinal))
@@ -349,7 +356,7 @@ internal static class SqvAttributeConverter
             var slotName = NormalizeSlotName(name.Substring("v-slot".Length));
             if (slotName.Length > 0 && slotName[0] == '[')
                 return DynamicSlotAttr(slotName, value, line, position, pending);
-            AddSlotScope(value, line, position, pending);
+            AddSlotScope(value, position, pending);
             return StaticAttr("slot", slotName, line, position);
         }
 
@@ -458,7 +465,7 @@ internal static class SqvAttributeConverter
         int position,
         List<SqxAttribute> pending)
     {
-        AddSlotScope(value, line, position, pending);
+        AddSlotScope(value, position, pending);
         return new SqxAttribute
         {
             Name = "slot",
@@ -470,12 +477,10 @@ internal static class SqvAttributeConverter
         };
     }
 
-    private static void AddSlotScope(string value, int line, int position, List<SqxAttribute> pending)
+    private static void AddSlotScope(string value, int position, List<SqxAttribute> pending)
     {
         if (string.IsNullOrWhiteSpace(value)) return;
-        if (!IsValidIdentifier(value))
-            throw new SqxParseException("Scoped slot binding must be a C# identifier", position, "SQV0008");
-        pending.Add(new SqxAttribute { Name = "__sqv_slot_scope", RawValue = value, Line = line, Position = position });
+        pending.Add(new SqxAttribute { Name = "__sqv_slot_scope", RawValue = value.Trim(), Position = position });
     }
 
     private static string ExtractDynamicArgument(string value, int position)
@@ -541,11 +546,41 @@ internal static class SqvAttributeConverter
 
     private static bool IsValidIdentifier(string value)
     {
-        if (string.IsNullOrEmpty(value)) return false;
-        if (!char.IsLetter(value[0]) && value[0] != '_') return false;
-        foreach (var c in value)
-            if (!char.IsLetterOrDigit(c) && c != '_') return false;
-        return true;
+        if (string.IsNullOrEmpty(value) || !SyntaxFacts.IsValidIdentifier(value)) return false;
+        return SyntaxFacts.GetKeywordKind(value) == SyntaxKind.None;
+    }
+
+    internal static TemplateSlotScope ParseSlotScope(string value, int position)
+    {
+        value = value?.Trim() ?? "";
+        if (IsValidIdentifier(value))
+            return new TemplateSlotScope { WholePropsName = value, Position = position };
+        if (value.Length < 2 || value[0] != '{' || value[value.Length - 1] != '}')
+            throw new SqxParseException("Scoped slot binding must be an identifier or an object destructuring pattern", position, "SQV0008");
+
+        var scope = new TemplateSlotScope { Position = position };
+        var locals = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rawPart in value.Substring(1, value.Length - 2).Split(','))
+        {
+            var part = rawPart.Trim();
+            if (part.Length == 0) continue;
+            var separator = part.IndexOf(':');
+            var propertyName = separator < 0 ? part : part.Substring(0, separator).Trim();
+            var localName = separator < 0 ? propertyName : part.Substring(separator + 1).Trim();
+            if (!IsValidIdentifier(propertyName) || !IsValidIdentifier(localName))
+                throw new SqxParseException("Scoped slot destructuring names must be valid C# identifiers", position, "SQV0008");
+            if (!locals.Add(localName))
+                throw new SqxParseException("Scoped slot local '" + localName + "' is declared more than once", position, "SQV0008");
+            scope.Properties.Add(new TemplateSlotPropertyBinding
+            {
+                PropertyName = propertyName,
+                LocalName = localName,
+                Position = position
+            });
+        }
+        if (scope.Properties.Count == 0)
+            throw new SqxParseException("Scoped slot destructuring pattern cannot be empty", position, "SQV0008");
+        return scope;
     }
 
     private static string NormalizeSlotName(string value)

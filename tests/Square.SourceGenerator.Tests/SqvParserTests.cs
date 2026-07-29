@@ -88,22 +88,24 @@ public class SqvParserTests
             "<Card><template #[slotName]=\"slotProps\"><Button :[propertyName]=\"Value\" @[eventName]=\"Handle\" /></template></Card>")));
         var template = Assert.IsType<SqxElement>(Assert.Single(root.Children));
         var slot = Assert.Single(template.Attributes, attribute => attribute.Name == "slot");
-        var scope = Assert.Single(template.Attributes, attribute => attribute.Name == "__sqv_slot_scope");
         var button = Assert.IsType<SqxElement>(Assert.Single(template.Children));
 
         Assert.True(slot.IsExpression);
         Assert.Equal("slotName", slot.RawValue);
-        Assert.Equal("slotProps", scope.RawValue);
+        Assert.Equal("slotProps", template.SlotScope!.WholePropsName);
         Assert.Equal("propertyName", Assert.Single(button.Attributes, attribute => attribute.IsDynamicProperty).ArgumentExpression);
         Assert.Equal("eventName", Assert.Single(button.Attributes, attribute => attribute.IsDynamicEvent).ArgumentExpression);
     }
 
     [Fact]
-    public void ValidatorRejectsScopedSlotDestructuring()
+    public void ParserRepresentsScopedSlotDestructuring()
     {
-        var exception = Assert.Throws<SqxParseException>(() =>
-            SqvTemplateParser.Parse("<Card><template #default=\"{ item }\" /></Card>"));
+        var card = Assert.IsType<SqxElement>(Assert.Single(
+            SqvTemplateParser.Parse("<Card><template #default=\"{ item: row, label }\" /></Card>")));
+        var template = Assert.IsType<SqxElement>(Assert.Single(card.Children));
 
-        Assert.Equal("SQV0008", exception.DiagnosticId);
+        Assert.Collection(template.SlotScope!.Properties,
+            item => { Assert.Equal("item", item.PropertyName); Assert.Equal("row", item.LocalName); },
+            label => { Assert.Equal("label", label.PropertyName); Assert.Equal("label", label.LocalName); });
     }
 }

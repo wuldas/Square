@@ -8,7 +8,7 @@ Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌
 
 ## 截图
 
-![Square sample screenshot](samples/QQ20260724-162014.png)
+![Square sample screenshot](samples/E46602.png)
 
 ![Square sample screenshot](samples/QQ20260724-162114.png)
 

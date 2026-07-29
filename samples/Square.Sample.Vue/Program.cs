@@ -5,6 +5,7 @@ using Square.Sample.Vue.Components;
 using Square.UI;
 using Square.Backends.Vulkan;
 using Square.Extensions.Routing;
+using Square.DevTools;
 namespace Square.Sample.Vue;
 
 public static class Program
@@ -29,7 +30,7 @@ public static class Program
         router.BeforeEach((to, _) => to.Path == "/admin"
             ? RouteGuardResult.Redirect("/login?returnUrl=/admin")
             : RouteGuardResult.Allow);
-        window.RenderingMode = RenderMode.DirtyRegion;
+        window.RenderingMode = RenderMode.Auto;
         window.Load(new Main());
         var app = new DesktopApplication(window);
         var backend = GetOption(args, "--backend") ?? Environment.GetEnvironmentVariable("SQUARE_RENDER_BACKEND");
@@ -37,6 +38,19 @@ public static class Program
             window.UseVulkanBackend();
         ConfigureRendering(window, args);
         SampleSignals.Initialize(app.Dispatcher);
+        if (HasOption(args, "--devtools"))
+        {
+            var devTools = window.UseDevToolsServer(new DevToolsOptions
+            {
+                Port = int.TryParse(GetOption(args, "--devtools-port"), out var port) ? port : 0,
+                AccessToken = GetOption(args, "--devtools-token"),
+                AllowInputInjection = true,
+                AllowInspector = true,
+                IncludeTextContent = true
+            });
+            System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
+            System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+        }
         app.Run();
     }
 
@@ -58,5 +72,8 @@ public static class Program
         }
         return null;
     }
+
+    private static bool HasOption(string[] args, string name) =>
+        args.Any(argument => string.Equals(argument, name, StringComparison.OrdinalIgnoreCase));
 
 }

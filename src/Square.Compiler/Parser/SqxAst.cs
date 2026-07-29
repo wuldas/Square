@@ -27,6 +27,7 @@ namespace Square.Compiler.Parser
         public string DirectiveId;
         public List<SqxAttribute> Attributes = new List<SqxAttribute>();
         public List<SqxNode> Children = new List<SqxNode>();
+        public TemplateSlotScope SlotScope;
     }
 
     internal class SqxText : SqxNode

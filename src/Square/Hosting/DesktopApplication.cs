@@ -230,7 +230,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     }
 
     /// <inheritdoc/>
-    public void RequestRender() => _renderRequested = true;
+    public void RequestRender() => Volatile.Write(ref _renderRequested, true);
 
     /// <inheritdoc/>
     public void Close()
@@ -329,7 +329,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var textSelectionChanged = FlushPendingTextSelection();
         var textSelectionOverlayDirtyBounds = _textSelectionOverlayDirtyBounds;
         _textSelectionOverlayDirtyBounds = Rect.Empty;
-        _renderRequested = false;
+        Volatile.Write(ref _renderRequested, false);
         if (_host == null || _renderContext == null) return;
 
         RunUpdatePass();
@@ -1528,7 +1528,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         var needsRender = (dueTargets != null && dueTargets.Count > 0)
                           || animationsRunning
-                          || _renderRequested
+                          || Volatile.Read(ref _renderRequested)
                           || _document.Context.Reconciler.HasWork
                           || CssStyleReconciler.HasWork
                           || Dispatcher.HasWork;

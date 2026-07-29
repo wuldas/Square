@@ -57,15 +57,18 @@ public sealed class SqxGenerator : IIncrementalGenerator
             }
 
             var contracts = BuildPropContracts(compilation, files);
+            var slotContracts = BuildSlotContracts(compilation);
             foreach (var file in files)
-                Generate(productionContext, file, contracts, catalog);
+                Generate(productionContext, compilation, file, contracts, slotContracts, catalog);
         });
     }
 
     private static void Generate(
         SourceProductionContext context,
+        Compilation compilation,
         SqxInput input,
         IReadOnlyDictionary<string, PropContract[]> contracts,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> slotContracts,
         DirectiveCatalog catalog)
     {
         string code;
@@ -74,9 +77,12 @@ public sealed class SqxGenerator : IIncrementalGenerator
             var document = ParseDocument(input);
             ValidateRequiredProps(context, input, document, contracts);
             ValidateRefNames(context, input, document);
+            ValidateSlotScopes(context, input, document, slotContracts);
             code = DirectiveValidator.Validate(context, input.Path, input.Content, document, catalog)
                 ? new ComponentEmitter(document, input.Namespace, catalog).Emit()
                 : "// Generator error: unsupported directive shape\n// Path: " + input.Path;
+            if (input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase))
+                ReportSemanticDiagnostics(context, compilation, input, code);
         }
         catch (SqxParseException exception)
         {
@@ -179,6 +185,43 @@ public sealed class SqxGenerator : IIncrementalGenerator
         var metadataName = type.ToDisplayString();
         return metadataName == "Square.Runtime.Binding.PropAttribute" ||
             type.Name is "PropAttribute" or "Prop";
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> BuildSlotContracts(Compilation compilation)
+    {
+        var result = new Dictionary<string, IReadOnlyDictionary<string, SlotContract>>(StringComparer.Ordinal);
+        VisitNamespace(compilation.GlobalNamespace);
+        return result;
+
+        void VisitNamespace(INamespaceSymbol namespaceSymbol)
+        {
+            foreach (var nested in namespaceSymbol.GetNamespaceMembers()) VisitNamespace(nested);
+            foreach (var type in namespaceSymbol.GetTypeMembers()) VisitType(type);
+        }
+
+        void VisitType(INamedTypeSymbol type)
+        {
+            var slots = new Dictionary<string, SlotContract>(StringComparer.Ordinal);
+            foreach (var attribute in type.GetAttributes())
+            {
+                if (attribute.AttributeClass?.ToDisplayString() != "Square.UI.SlotContractAttribute" ||
+                    attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not string name ||
+                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol propsType)
+                    continue;
+
+                var properties = propsType.GetMembers().OfType<IPropertySymbol>()
+                    .Where(property => !property.IsStatic && property.GetMethod != null)
+                    .ToDictionary(
+                        property => char.ToLowerInvariant(property.Name[0]) + property.Name.Substring(1),
+                        property => property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                        StringComparer.Ordinal);
+                slots[name] = new SlotContract(name, properties);
+            }
+            if (slots.Count > 0)
+                result[type.ToDisplayString()] = slots;
+            foreach (var nested in type.GetTypeMembers()) VisitType(nested);
+        }
     }
 
     private static SqxDocument ParseDocument(SqxInput input) =>
@@ -417,6 +460,85 @@ public sealed class SqxGenerator : IIncrementalGenerator
         }
     }
 
+    private static void ValidateSlotScopes(
+        SourceProductionContext context,
+        SqxInput input,
+        SqxDocument document,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> contracts)
+    {
+        var currentNamespace = string.IsNullOrWhiteSpace(document.Namespace) ? input.Namespace : document.Namespace;
+        var scriptUsings = ExtractNamespaceUsings(document.ScriptCode);
+        Visit(document.Template.Roots);
+
+        void Visit(IEnumerable<SqxNode> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                if (node is SqxElement element)
+                {
+                    ValidateComponentSlots(element);
+                    Visit(element.Children);
+                }
+                else if (node is TemplateForDirective loop) Visit(loop.Children);
+                else if (node is TemplateIfChainDirective chain)
+                    foreach (var branch in chain.Branches) Visit(branch.Children);
+            }
+        }
+
+        void ValidateComponentSlots(SqxElement component)
+        {
+            foreach (var child in component.Children.OfType<SqxElement>())
+            {
+                var scope = child.SlotScope;
+                if (scope == null || scope.Properties.Count == 0) continue;
+                var slotAttribute = child.Attributes.FirstOrDefault(attribute =>
+                    string.Equals(attribute.Name, "slot", StringComparison.OrdinalIgnoreCase));
+                if (slotAttribute?.IsExpression == true)
+                {
+                    Report(Diagnostics.SqvDiagnostics.SQV0012_DynamicSlotDestructuring, scope.Position,
+                        "Dynamic slot names cannot use typed destructuring.");
+                    continue;
+                }
+
+                var componentName = ResolveContractName(component.TagName, currentNamespace, scriptUsings, contracts.Keys);
+                var slotName = slotAttribute?.RawValue ?? "";
+                if (componentName == null || !contracts.TryGetValue(componentName, out var componentSlots) ||
+                    !componentSlots.TryGetValue(slotName, out var contract))
+                {
+                    foreach (var binding in scope.Properties) binding.TypeName = "object";
+                    Report(Diagnostics.SqvDiagnostics.SQV0010_SlotContractMissing, scope.Position,
+                        "Component <" + component.TagName + "> does not declare a contract for slot '" +
+                        (slotName.Length == 0 ? "default" : slotName) + "'.");
+                    continue;
+                }
+
+                foreach (var binding in scope.Properties)
+                {
+                    if (!contract.Properties.TryGetValue(binding.PropertyName, out var typeName))
+                    {
+                        binding.TypeName = "object";
+                        Report(Diagnostics.SqvDiagnostics.SQV0011_SlotPropertyMissing, binding.Position,
+                            "Slot '" + (slotName.Length == 0 ? "default" : slotName) +
+                            "' does not provide property '" + binding.PropertyName + "'.");
+                        continue;
+                    }
+                    binding.TypeName = typeName;
+                }
+            }
+        }
+
+        void Report(DiagnosticDescriptor descriptor, int position, string message)
+        {
+            var source = SourceText.From(input.Content, Encoding.UTF8);
+            position = Math.Max(0, Math.Min(position, source.Length));
+            var span = new TextSpan(position, 0);
+            context.ReportDiagnostic(Diagnostic.Create(
+                descriptor,
+                Location.Create(input.Path, span, source.Lines.GetLinePositionSpan(span)),
+                message));
+        }
+    }
+
     private static Location CreateLocation(SqxInput input, int line, int column)
     {
         var source = SourceText.From(input.Content, Encoding.UTF8);
@@ -425,6 +547,36 @@ public sealed class SqxGenerator : IIncrementalGenerator
         var position = Math.Min(textLine.End, textLine.Start + Math.Max(0, column - 1));
         var span = new TextSpan(position, 0);
         return Location.Create(input.Path, span, source.Lines.GetLinePositionSpan(span));
+    }
+
+    private static void ReportSemanticDiagnostics(
+        SourceProductionContext context,
+        Compilation compilation,
+        SqxInput input,
+        string generatedCode)
+    {
+        var parseOptions = compilation.SyntaxTrees.FirstOrDefault()?.Options as Microsoft.CodeAnalysis.CSharp.CSharpParseOptions;
+        var syntaxTree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
+            generatedCode,
+            parseOptions,
+            input.Path + ".semantic.g.cs");
+        var semanticCompilation = compilation.AddSyntaxTrees(syntaxTree);
+        var source = SourceText.From(input.Content, Encoding.UTF8);
+        foreach (var diagnostic in semanticCompilation.GetDiagnostics()
+                     .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Location.IsInSource))
+        {
+            var mapped = diagnostic.Location.GetMappedLineSpan();
+            if (!string.Equals(mapped.Path, input.Path, StringComparison.OrdinalIgnoreCase)) continue;
+            var line = Math.Max(0, Math.Min(mapped.StartLinePosition.Line, source.Lines.Count - 1));
+            var textLine = source.Lines[line];
+            var column = Math.Max(0, mapped.StartLinePosition.Character);
+            var position = Math.Min(textLine.End, textLine.Start + column);
+            var span = new TextSpan(position, 0);
+            context.ReportDiagnostic(Diagnostic.Create(
+                Diagnostics.SqvDiagnostics.SQV0013_SemanticError,
+                Location.Create(input.Path, span, source.Lines.GetLinePositionSpan(span)),
+                diagnostic.GetMessage()));
+        }
     }
 
     private static uint StableHash(string value)
@@ -463,6 +615,18 @@ public sealed class SqxGenerator : IIncrementalGenerator
             Name = name;
             TypeName = typeName;
             Required = required;
+        }
+    }
+
+    private sealed class SlotContract
+    {
+        public string Name { get; }
+        public IReadOnlyDictionary<string, string> Properties { get; }
+
+        public SlotContract(string name, IReadOnlyDictionary<string, string> properties)
+        {
+            Name = name;
+            Properties = properties;
         }
     }
 }
