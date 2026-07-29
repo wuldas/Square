@@ -15,7 +15,6 @@ namespace Square.Hosting;
 /// <summary>桌面平台应用程序：驱动平台宿主、布局、渲染与输入分发。</summary>
 public sealed class DesktopApplication : Application, IAppWindowRuntime
 {
-    private const double TextSelectionFrameIntervalSeconds = 1d / 60d;
     private static readonly Color DefaultSelectionBackground = Color.FromRgb(51, 144, 255);
     private static readonly Color DefaultSelectionForeground = Color.White;
 
@@ -34,7 +33,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private TextSelectionState? _textSelection;
     private Point? _pendingTextSelectionPoint;
     private Element? _pendingTextSelectionHit;
-    private double _lastTextSelectionRenderSeconds = double.NegativeInfinity;
     private Rect _textSelectionOverlayDirtyBounds = Rect.Empty;
     private bool _isSelectingText;
     private Element? _pointerDownTarget;
@@ -327,7 +325,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void RenderFrame()
     {
-        FlushPendingTextSelection();
+        var hadPendingTextSelection = _pendingTextSelectionPoint.HasValue;
+        var textSelectionChanged = FlushPendingTextSelection();
         var textSelectionOverlayDirtyBounds = _textSelectionOverlayDirtyBounds;
         _textSelectionOverlayDirtyBounds = Rect.Empty;
         _renderRequested = false;
@@ -348,12 +347,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             _layout.MeasureAndArrange(_root, size);
             ArrangeWindowShell(size);
-            _displayTree.BuildFrom(_root);
         }
-        else
-        {
-            _displayTree.UpdateDirty();
-        }
+        if (layoutDirty)
+            _displayTree.Synchronize(_root);
+        _displayTree.UpdateDirty();
 
         if (MainWindow.RenderingMode == RenderMode.FullFrame || layoutDirty || !_renderContext.SupportsPartialRendering)
         {
@@ -373,6 +370,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 dirty.Add(textSelectionOverlayDirtyBounds);
             if (dirty.Count == 0)
             {
+                if (hadPendingTextSelection && !textSelectionChanged)
+                {
+                    if (_focusedEditor != null)
+                        _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+                    return;
+                }
                 // 无节点标脏时仍全量重绘一帧，避免“状态已变但未 InvalidatePaint”时界面卡住
                 // （与脏区优化前“每次 RenderFrame 都清屏重放命令”的行为对齐）
                 MainWindow.LastRenderDiagnostics = new RenderDiagnostics(
@@ -636,15 +639,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
                 _pendingTextSelectionPoint = point;
                 _pendingTextSelectionHit = hit;
-                if (_clock.Elapsed.TotalSeconds - _lastTextSelectionRenderSeconds >= TextSelectionFrameIntervalSeconds)
-                {
-                    RenderFrame();
-                    needsRender = false;
-                }
-                else
-                {
-                    needsRender = true;
-                }
+                needsRender = true;
             }
             else
             {
@@ -1038,17 +1033,16 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return true;
     }
 
-    private void FlushPendingTextSelection()
+    private bool FlushPendingTextSelection()
     {
         if (_pendingTextSelectionPoint is not { } point ||
             _textSelection is not { IsSelecting: true } selection)
-            return;
+            return false;
 
         var hit = _pendingTextSelectionHit;
         _pendingTextSelectionPoint = null;
         _pendingTextSelectionHit = null;
-        UpdateTextSelection(selection, hit, point);
-        _lastTextSelectionRenderSeconds = _clock.Elapsed.TotalSeconds;
+        return UpdateTextSelection(selection, hit, point);
     }
 
     private static Element? FindUserSelectRoot(Element? element)

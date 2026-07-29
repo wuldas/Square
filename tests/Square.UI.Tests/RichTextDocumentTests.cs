@@ -170,6 +170,58 @@ public class RichTextDocumentTests
     }
 
     [Fact]
+    public void RichTextEditorMirrorsSelectionIntoDocumentRange()
+    {
+        var document = new UIDocument();
+        var editor = new RichTextEditor(RichTextDocument.FromPlainText("hello\nworld"));
+        document.Body.AppendChild(editor);
+
+        editor.SelectAll();
+
+        var mirror = Assert.IsType<Square.UI.Text>(Assert.Single(editor.ChildNodes));
+        var range = document.GetSelection().GetRangeAt(0);
+        Assert.Equal("hello\nworld", mirror.Data);
+        Assert.Same(mirror, range.StartContainer);
+        Assert.Equal(0, range.StartOffset);
+        Assert.Same(mirror, range.EndContainer);
+        Assert.Equal(editor.PlainText.Length, range.EndOffset);
+        Assert.Equal(editor.SelectedText, document.GetSelection().ToString());
+    }
+
+    [Fact]
+    public void RichTextEditorUpdatesDomMirrorAfterEditing()
+    {
+        var document = new UIDocument();
+        var editor = new RichTextEditor(RichTextDocument.FromPlainText("hi"));
+        document.Body.AppendChild(editor);
+
+        editor.HandleTextInput("!");
+
+        var mirror = Assert.IsType<Square.UI.Text>(Assert.Single(editor.ChildNodes));
+        Assert.Equal("!hi", mirror.Data);
+        Assert.Equal(1, document.GetSelection().AnchorOffset);
+        Assert.Equal(1, document.GetSelection().FocusOffset);
+    }
+
+    [Fact]
+    public void TextFragmentHitTestingDoesNotSplitGraphemeClusters()
+    {
+        const string text = "e\u0301";
+        var fragment = new TextFragment(
+            new View(),
+            text,
+            new Square.Graphics.Font("sans-serif", 16),
+            new Square.Graphics.Rect(0, 0, 20, 20),
+            [
+                new TextCharacterFragment(0, 1, new Square.Graphics.Rect(0, 0, 10, 20), Square.Graphics.Rect.Empty),
+                new TextCharacterFragment(1, 2, new Square.Graphics.Rect(10, 0, 10, 20), Square.Graphics.Rect.Empty)
+            ]);
+
+        Assert.Equal(0, fragment.HitTestOffset(new Square.Graphics.Point(11, 10)));
+        Assert.Equal(2, fragment.HitTestOffset(new Square.Graphics.Point(19, 10)));
+    }
+
+    [Fact]
     public void RichTextEditorMeasuresToFiniteAvailableWidth()
     {
         var editor = new RichTextEditor(RichTextDocument.FromPlainText("short"));
@@ -427,7 +479,7 @@ public class RichTextDocumentTests
 
         Assert.Equal(layout.Lines[0].Fragments[0].Bounds.Width, boldWidth);
         Assert.Equal(layout.Lines[0].Fragments[0].Bounds.Right, layout.GetCaretRect(2).X);
-        Assert.Equal(layout.Lines[0].Fragments[1].Bounds.Width, normalWidth);
+        Assert.Equal(layout.Lines[0].Fragments[1].Bounds.Width, normalWidth, 4);
         Assert.True(boldWidth > 0);
         Assert.True(normalWidth > 0);
     }

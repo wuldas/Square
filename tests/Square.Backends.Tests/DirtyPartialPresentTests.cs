@@ -178,6 +178,47 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void DisplayTreeSynchronizationReusesUnchangedNodesAndBuildsNewNodes()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 100, 100) };
+        var existing = new CountingPaintElement { Geometry = new Rect(0, 0, 20, 20) };
+        root.Children.Add(existing);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        var existingPaintCount = existing.PaintCount;
+
+        var added = new CountingPaintElement { Geometry = new Rect(20, 0, 20, 20) };
+        root.Children.Add(added);
+        tree.Synchronize(root);
+
+        Assert.Equal(existingPaintCount, existing.PaintCount);
+        Assert.Equal(1, added.PaintCount);
+    }
+
+    [Fact]
+    public void DisplayTreeSynchronizationPreservesDomOrderForEqualZIndex()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 20, 20) };
+        var red = new ColorPaintElement(Color.Red) { Geometry = root.Geometry };
+        var blue = new ColorPaintElement(Color.Blue) { Geometry = root.Geometry };
+        root.Children.Add(red);
+        root.Children.Add(blue);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        root.Children.Move(1, 0);
+        tree.Synchronize(root);
+        var bitmap = new Bitmap(20, 20);
+        tree.Render(new RenderContext(bitmap, 1f));
+
+        var pixel = 10 * bitmap.Stride + 10 * 4;
+        Assert.Equal(0, bitmap.Pixels[pixel]);
+        Assert.Equal(0, bitmap.Pixels[pixel + 1]);
+        Assert.Equal(255, bitmap.Pixels[pixel + 2]);
+        Assert.Equal(255, bitmap.Pixels[pixel + 3]);
+    }
+
+    [Fact]
     public void DirtyRectsRemainAvailableAfterDisplayTreeRender()
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 100) };
@@ -541,7 +582,13 @@ public class DirtyPartialPresentTests
 
     private sealed class CountingPaintElement : UIElement
     {
-        public override void Paint(IRenderContext ctx) => ctx.FillRect(Geometry, Brush.FromColor(Color.Red));
+        public int PaintCount { get; private set; }
+
+        public override void Paint(IRenderContext ctx)
+        {
+            PaintCount++;
+            ctx.FillRect(Geometry, Brush.FromColor(Color.Red));
+        }
     }
 
     private sealed class ColorPaintElement(Color color) : UIElement

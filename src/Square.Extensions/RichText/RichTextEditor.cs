@@ -6,11 +6,12 @@ using Square.UI;
 
 namespace Square.Extensions.RichText;
 
-public sealed class RichTextEditor : UIElement, ITextEditor
+public sealed class RichTextEditor : UIElement, ITextEditor, ITextSelectable
 {
     private const float DefaultFontSize = 14f;
     private const float DefaultPadding = 8f;
     private readonly RichTextEditorState _state;
+    private readonly Square.UI.Text _domText = new();
     private bool _isDragging;
 
     public RichTextEditor()
@@ -21,6 +22,8 @@ public sealed class RichTextEditor : UIElement, ITextEditor
     public RichTextEditor(RichTextDocument document)
     {
         _state = new RichTextEditorState(document);
+        ChildNodes.Add(_domText);
+        SyncDomTextAndSelection();
         AddEventListener("focus", ResetCaretBlink);
     }
 
@@ -36,6 +39,7 @@ public sealed class RichTextEditor : UIElement, ITextEditor
             Document.Blocks.AddRange(RichTextDocument.FromPlainText(value).Blocks);
             Document.Normalize();
             _state.SetSelection(RichTextSelection.Collapsed(new RichTextPosition(0, 0)));
+            SyncDomTextAndSelection();
             InvalidateLayout();
         }
     }
@@ -44,6 +48,8 @@ public sealed class RichTextEditor : UIElement, ITextEditor
     public int SelectionStart => ToLinearOffset(_state.Selection.Start);
     public int SelectionLength => ToLinearOffset(_state.Selection.End) - SelectionStart;
     public string SelectedText => GetSelectedText();
+    public string SelectableText => PlainText;
+    public Rect SelectableTextBounds => Geometry;
     public bool CanCopySelection => true;
     public bool CanCutSelection => true;
     public bool CanUndo => _state.CanUndo;
@@ -113,6 +119,7 @@ public sealed class RichTextEditor : UIElement, ITextEditor
     {
         if (!IsEnabled || string.IsNullOrEmpty(text)) return;
         _state.InsertText(text);
+        SyncDomTextAndSelection();
         DispatchEvent(StandardEvents.CreateInput());
         InvalidateLayout();
     }
@@ -288,6 +295,12 @@ public sealed class RichTextEditor : UIElement, ITextEditor
 
     public void ResetCaretBlink() => InvalidatePaint();
 
+    protected override void OnAttachedCore()
+    {
+        base.OnAttachedCore();
+        SyncDomTextAndSelection();
+    }
+
     private void ToggleMarks(RichTextMarks marks)
     {
         if (_state.Selection.IsCollapsed) return;
@@ -297,6 +310,7 @@ public sealed class RichTextEditor : UIElement, ITextEditor
 
     private void DispatchInputChanged()
     {
+        SyncDomTextAndSelection();
         DispatchEvent(StandardEvents.CreateInput());
         InvalidateLayout();
     }
@@ -374,8 +388,21 @@ public sealed class RichTextEditor : UIElement, ITextEditor
     {
         if (_state.Selection == selection) return;
         _state.SetSelection(selection);
+        SyncDomTextAndSelection();
         DispatchEvent(StandardEvents.CreateSelectionChange());
         InvalidatePaint();
+    }
+
+    private void SyncDomTextAndSelection()
+    {
+        _domText.Data = PlainText;
+        var ownerDocument = OwnerDocument;
+        if (ownerDocument == null) return;
+
+        var range = ownerDocument.CreateRange();
+        range.SetStart(_domText, SelectionStart);
+        range.SetEnd(_domText, SelectionStart + SelectionLength);
+        ownerDocument.GetSelection().AddRange(range);
     }
 
     private string GetSelectedText()

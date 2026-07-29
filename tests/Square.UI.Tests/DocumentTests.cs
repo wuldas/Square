@@ -666,6 +666,27 @@ public class DocumentTests
     }
 
     [Fact]
+    public void SelectionRejectsRangeFromDifferentDocument()
+    {
+        var first = new UIDocument();
+        var second = new UIDocument();
+        var firstText = new Square.UI.Text("first");
+        var secondText = new Square.UI.Text("second");
+        first.Body.AppendChild(firstText);
+        second.Body.AppendChild(secondText);
+
+        var current = first.CreateRange();
+        current.SelectNodeContents(firstText);
+        first.GetSelection().AddRange(current);
+        var foreign = second.CreateRange();
+        foreign.SelectNodeContents(secondText);
+
+        Assert.Throws<InvalidOperationException>(() => first.GetSelection().AddRange(foreign));
+        Assert.Same(current, first.GetSelection().GetRangeAt(0));
+        Assert.Equal("first", first.GetSelection().ToString());
+    }
+
+    [Fact]
     public void TextControlMaintainsDomTextChildNode()
     {
         var doc = new UIDocument();

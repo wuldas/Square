@@ -37,6 +37,9 @@ public sealed class Selection
 
     internal void SetRange(Range range)
     {
+        ArgumentNullException.ThrowIfNull(range);
+        if (!ReferenceEquals(range.OwnerDocument, _document))
+            throw new InvalidOperationException("Selection range belongs to a different document.");
         _ranges.Clear();
         _ranges.Add(range);
         _document.DispatchEvent(StandardEvents.CreateSelectionChange());

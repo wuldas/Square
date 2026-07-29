@@ -16,35 +16,57 @@ public sealed class DisplayTree
     /// <summary>以指定元素为根重建整棵显示树。</summary>
     public void BuildFrom(Element element)
     {
-        _root.Element = element;
-        _root.Bounds = element.Geometry;
-        _root.RebuildCommands();
-        _root.PopupBounds = GetPopupVisualBounds(element);
-        _root.IsDirty = true;
+        _root.Element = null;
         _root.Children.Clear();
-        BuildChildren(_root, element);
-        RebuildPopupList();
         _dirtyRects.Clear();
+        Synchronize(element);
     }
 
-    private static void BuildChildren(DisplayNode parent, Element element)
+    /// <summary>Synchronizes element structure while preserving display nodes for unchanged elements.</summary>
+    public void Synchronize(Element element)
     {
-        var children = element.Children;
-        if (children.Count == 0) return;
-        var ordered = new List<Element>(children.Count);
-        for (var i = 0; i < children.Count; i++)
-            ordered.Add(children[i]);
-        ordered.Sort((a, b) => a.ZIndex.CompareTo(b.ZIndex));
+        ArgumentNullException.ThrowIfNull(element);
+        if (!ReferenceEquals(_root.Element, element))
+        {
+            _root.Element = element;
+            _root.Bounds = element.Geometry;
+            _root.RebuildCommands();
+            _root.PopupBounds = GetPopupVisualBounds(element);
+            _root.IsDirty = true;
+        }
+        SynchronizeChildren(_root, element);
+        RebuildPopupList();
+    }
+
+    private static void SynchronizeChildren(DisplayNode parent, Element element)
+    {
+        var existing = new Dictionary<Element, DisplayNode>();
+        foreach (var child in parent.Children)
+            if (child.Element != null) existing[child.Element] = child;
+
+        var ordered = element.Children
+            .Select(static (child, index) => (Child: child, Index: index))
+            .Where(static item => item.Child.IsVisible)
+            .OrderBy(static item => item.Child.ZIndex)
+            .ThenBy(static item => item.Index)
+            .Select(static item => item.Child)
+            .ToList();
+        var synchronized = new List<DisplayNode>(ordered.Count);
         foreach (var child in ordered)
         {
-            if (!child.IsVisible) continue;
-            var node = new DisplayNode { Element = child, Bounds = child.Geometry, IsDirty = true };
-            node.RebuildCommands();
-            node.PopupBounds = GetPopupVisualBounds(child);
-            node.IsDirty = true;
-            parent.Children.Add(node);
-            BuildChildren(node, child);
+            if (!existing.TryGetValue(child, out var node))
+            {
+                node = new DisplayNode { Element = child, Bounds = child.Geometry, IsDirty = true };
+                node.RebuildCommands();
+                node.PopupBounds = GetPopupVisualBounds(child);
+                node.IsDirty = true;
+            }
+            SynchronizeChildren(node, child);
+            synchronized.Add(node);
         }
+
+        parent.Children.Clear();
+        parent.Children.AddRange(synchronized);
     }
 
     /// <summary>将指定矩形加入脏区队列。</summary>
