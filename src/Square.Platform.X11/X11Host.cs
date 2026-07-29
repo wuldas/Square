@@ -56,6 +56,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     private IntPtr _xim;
     private IntPtr _xic;
     private Rect _textInputRect;
+    private X11CaretSpot _textInputSpot;
     private bool _disposed;
     private bool _closed;
     private AppWindowState _state = AppWindowState.Normal;
@@ -93,16 +94,10 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         _dpiScale = DetectDpiScale();
         _refreshRate = DetectRefreshRate();
 
-        if (X11Api.MatchVisualInfo(_display, _screen, 32, X11Api.TrueColor, out var vi32))
-        {
-            _visual = vi32.visual;
-            _depth = 32;
-        }
-        else
-        {
-            _visual = X11Api.DefaultVisual(_display, _screen);
-            _depth = X11Api.DefaultDepth(_display, _screen);
-        }
+        // Use the server default visual for opaque desktop windows. Selecting a 32-bit ARGB
+        // visual makes compositors such as WSLg interpret the XImage high byte as window alpha.
+        _visual = X11Api.DefaultVisual(_display, _screen);
+        _depth = X11Api.DefaultDepth(_display, _screen);
         _colormap = X11Api.CreateColormap(_display, _root, _visual, X11Api.AllocNone);
 
         var attr = new X11Api.XSetWindowAttributes
@@ -202,7 +197,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
 
         _xic = X11Api.CreateIC(
             _xim,
-            "inputStyle", X11Api.XIMPreeditNothing | X11Api.XIMStatusNothing,
+            "inputStyle", X11InputPolicy.FallbackStyle,
             "clientWindow", _window,
             "focusWindow", _window,
             IntPtr.Zero);
@@ -377,9 +372,11 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         {
             try
             {
-                while (X11Api.Pending(_display) > 0)
+                var processedEvents = 0;
+                while (X11Api.Pending(_display) > 0 && !X11InputPolicy.ShouldYieldEventPump(processedEvents))
                 {
                     X11Api.NextEvent(_display, out var e);
+                    processedEvents++;
                     if (X11Api.FilterEvent(ref e, IntPtr.Zero)) continue;
                     DispatchEvent(e);
                 }
@@ -619,7 +616,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         var vk = MapXKeysymToVirtualKey(keysym);
         var control = (key.state & (1u << X11Api.ControlMapIndex)) != 0;
         var alt = (key.state & (1u << X11Api.Mod1MapIndex)) != 0;
-        var hasText = !string.IsNullOrEmpty(text) && text.Any(static c => !char.IsControl(c));
+        var hasText = X11InputPolicy.HasDispatchableText(text);
 
         // Shortcuts always go through virtual-key routing.
         if (control || alt)
@@ -631,11 +628,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         // Committed IME/compose text.
         if (hasText && (status is X11Api.XLookupChars or X11Api.XLookupBoth or 0))
         {
-            foreach (var ch in text!)
-            {
-                if (!char.IsControl(ch))
-                    TextInput?.Invoke(ch.ToString());
-            }
+            TextInput?.Invoke(text!);
 
             // Still emit navigation/edit keys (Backspace/Enter/arrows...) when no printable path only.
             if (IsNavigationOrEditKey(vk) && !text!.Any(static c => !char.IsControl(c) && !char.IsWhiteSpace(c)))
@@ -661,9 +654,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                 len = X11Api.Utf8LookupString(_xic, ref key, buffer, buffer.Length, out keysym, out status);
             }
 
-            if (len > 0 && status is X11Api.XLookupChars or X11Api.XLookupBoth)
-                return System.Text.Encoding.UTF8.GetString(buffer, 0, len);
-            return null;
+            return X11InputPolicy.DecodeCommittedText(buffer, len, status);
         }
 
         var n = X11Api.LookupString(ref key, buffer, buffer.Length, ref keysym, IntPtr.Zero);
@@ -731,7 +722,9 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     public void SetTextInputRect(Rect rect)
     {
         _textInputRect = rect;
-        // Full spot-location preedit needs XNSpotLocation; root-window IME still works without it.
+        _textInputSpot = X11InputPolicy.ToClientPhysicalSpot(rect, _dpiScale);
+        // Applying this spot requires XVaCreateNestedList and XSetICValues. Both are variadic Xlib APIs,
+        // so the managed policy is retained until a fixed-signature native shim is available.
     }
 
     public string GetClipboardText() => ReadSelection(_clipboardAtom) ?? "";

@@ -1,3 +1,4 @@
+using Square.Graphics;
 using Square.Platform.X11;
 using Xunit;
 
@@ -5,6 +6,41 @@ namespace Square.Platform.Tests;
 
 public class X11DisplayMetricsTests
 {
+    [Fact]
+    public void SelectMonitorUsesLargestWindowIntersection()
+    {
+        X11MonitorMetrics[] monitors =
+        [
+            new(new Rect(0, 0, 1920, 1080), 509, 286, 60, true),
+            new(new Rect(1920, 0, 2560, 1440), 597, 336, 144)
+        ];
+
+        Assert.Equal(1, X11DisplayMetrics.SelectMonitor(new Rect(1700, 100, 800, 600), monitors));
+    }
+
+    [Fact]
+    public void SelectMonitorUsesNearestThenPrimaryWhenWindowDoesNotIntersect()
+    {
+        X11MonitorMetrics[] monitors =
+        [
+            new(new Rect(0, 0, 100, 100), 300, 200, 60),
+            new(new Rect(200, 0, 100, 100), 300, 200, 60, true)
+        ];
+
+        Assert.Equal(1, X11DisplayMetrics.SelectMonitor(new Rect(140, 40, 20, 20), monitors));
+        Assert.Equal(-1, X11DisplayMetrics.SelectMonitor(Rect.Empty, []));
+    }
+
+    [Fact]
+    public void SelectedMonitorPoliciesResolveDpiAndRefreshFallbacks()
+    {
+        var monitor = new X11MonitorMetrics(new Rect(0, 0, 2560, 1440), 597, 336, 144);
+
+        Assert.Equal(120, X11DisplayMetrics.ResolveMonitorDpi("Xft.dpi: 120", monitor), 6);
+        Assert.Equal(144, X11DisplayMetrics.ResolveMonitorRefreshRate(monitor), 6);
+        Assert.Equal(60, X11DisplayMetrics.ResolveMonitorRefreshRate(monitor with { RefreshRate = 0 }), 6);
+    }
+
     [Theory]
     [InlineData("Xft.dpi:\t144\nXft.antialias: 1", 144)]
     [InlineData("Xft*dpi: 120.5", 120.5)]

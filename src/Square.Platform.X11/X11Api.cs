@@ -137,6 +137,7 @@ internal static partial class X11Api
     public const int XK_KP_Divide = 0xFFAF;
 
     // XIM / input method
+    public const long XIMPreeditPosition = 0x0004L;
     public const long XIMPreeditNothing = 0x0008L;
     public const long XIMStatusNothing = 0x0400L;
     public const int XBufferOverflow = -1;

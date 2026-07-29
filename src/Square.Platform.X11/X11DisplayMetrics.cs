@@ -1,4 +1,5 @@
 using System.Globalization;
+using Square.Graphics;
 
 namespace Square.Platform.X11;
 
@@ -52,6 +53,40 @@ internal static class X11DisplayMetrics
             ? dpi
             : CalculatePhysicalDpi(pixelWidth, pixelHeight, millimeterWidth, millimeterHeight);
 
+    internal static int SelectMonitor(Rect windowBounds, IReadOnlyList<X11MonitorMetrics> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        if (monitors.Count == 0) return -1;
+
+        var bestIndex = 0;
+        var bestIntersection = IntersectionArea(windowBounds, monitors[0].Bounds);
+        var bestDistance = DistanceSquared(windowBounds.Center, monitors[0].Bounds);
+        for (var i = 1; i < monitors.Count; i++)
+        {
+            var intersection = IntersectionArea(windowBounds, monitors[i].Bounds);
+            var distance = DistanceSquared(windowBounds.Center, monitors[i].Bounds);
+            if (intersection > bestIntersection
+                || (intersection == bestIntersection && intersection > 0 && monitors[i].IsPrimary && !monitors[bestIndex].IsPrimary)
+                || (bestIntersection == 0 && intersection == 0 && distance < bestDistance)
+                || (bestIntersection == 0 && intersection == 0 && distance == bestDistance
+                    && monitors[i].IsPrimary && !monitors[bestIndex].IsPrimary))
+            {
+                bestIndex = i;
+                bestIntersection = intersection;
+                bestDistance = distance;
+            }
+        }
+
+        return bestIndex;
+    }
+
+    internal static double ResolveMonitorDpi(string? resources, X11MonitorMetrics monitor)
+        => ResolveDpi(resources, (int)monitor.Bounds.Width, (int)monitor.Bounds.Height,
+            monitor.MillimeterWidth, monitor.MillimeterHeight);
+
+    internal static double ResolveMonitorRefreshRate(X11MonitorMetrics monitor)
+        => NormalizeRefreshRate(monitor.RefreshRate);
+
     internal static float DpiToScale(double dpi)
         => IsUsableDpi(dpi) ? (float)(dpi / DefaultDpi) : 1f;
 
@@ -79,4 +114,25 @@ internal static class X11DisplayMetrics
 
     private static bool IsUsableDpi(double dpi)
         => double.IsFinite(dpi) && dpi is >= 48d and <= 768d;
+
+    private static double IntersectionArea(Rect first, Rect second)
+    {
+        var width = Math.Max(0d, Math.Min(first.Right, second.Right) - Math.Max(first.Left, second.Left));
+        var height = Math.Max(0d, Math.Min(first.Bottom, second.Bottom) - Math.Max(first.Top, second.Top));
+        return width * height;
+    }
+
+    private static double DistanceSquared(Point point, Rect bounds)
+    {
+        var dx = point.X < bounds.Left ? bounds.Left - point.X : point.X > bounds.Right ? point.X - bounds.Right : 0d;
+        var dy = point.Y < bounds.Top ? bounds.Top - point.Y : point.Y > bounds.Bottom ? point.Y - bounds.Bottom : 0d;
+        return dx * dx + dy * dy;
+    }
 }
+
+internal readonly record struct X11MonitorMetrics(
+    Rect Bounds,
+    int MillimeterWidth,
+    int MillimeterHeight,
+    double RefreshRate,
+    bool IsPrimary = false);

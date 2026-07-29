@@ -21,6 +21,7 @@
 
   <ItemGroup Condition="'$(SquareTargetPlatform)' != 'X11'">
     <Compile Remove="X11DisplayMetricsTests.cs" />
+    <Compile Remove="X11InputPolicyTests.cs" />
   </ItemGroup>
 
 </Project>
