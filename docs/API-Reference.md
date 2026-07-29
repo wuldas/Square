@@ -1087,7 +1087,17 @@ public class Image : UIElement
 }
 ```
 
-`Source` 通过 `ImageSourceLoaderRegistry` 异步解析。核心 `Square` 只定义 `IImageFrameSource`、`IImageSourceLoader` 和注册表；引用 `Square.Images` 后会注册本地文件加载器。相对路径按进程当前工作目录解析，目前不支持 HTTP(S)、data URI 或嵌入资源。
+`Source` 通过 `ImageSourceLoaderRegistry` 异步解析。核心 `Square` 只定义 `IImageFrameSource`、`IImageSourceLoader` 和注册表；引用 `Square.Images` 后会注册本地文件加载器，原有相对路径解析行为保持不变。HTTP(S) 和嵌入资源加载器须显式注册：
+
+```csharp
+ImageSourceRegistration.RegisterHttp(httpClient, decoderOptions);
+ImageSourceRegistration.RegisterEmbeddedResources(typeof(App).Assembly, decoderOptions);
+
+image.Source = "https://example.com/image.png";
+image.Source = "embedded://My.App/My.App.Assets.image.png";
+```
+
+HTTP 加载器使用但不释放调用方注入的 `HttpClient`。嵌入资源 URI 的主机名必须匹配显式注册程序集的简单名称，路径是完整 manifest resource name；实现不会按名称动态加载程序集，兼容 NativeAOT。两种加载器都会在读取时执行 `ImageDecoderOptions.MaxEncodedBytes` 限制并传播取消。`data:` URI 仍不支持。
 
 通过 `Source` 加载的图片资源由控件拥有，改变 `Source` 或卸载控件会取消旧请求并释放旧文档。动画在控件挂载且可见时自动播放，隐藏时暂停并从剩余帧时长恢复。成功派发冒泡的 `load`，失败设置只读 `Error` 并派发冒泡的 `loaderror`；失败不会在 UI Dispatcher 上抛出。
 

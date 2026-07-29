@@ -14,5 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Fixtures\animation.apng"
+                      LogicalName="Square.Images.Tests.Fixtures.embedded.apng" />
   </ItemGroup>
 </Project>
