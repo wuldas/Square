@@ -13,6 +13,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     private IntPtr _window;
     private IntPtr _layer;
     private IntPtr _runLoopMode;
+    private IntPtr _colorSpace;
     private IRenderContext? _renderContext;
     private bool _running;
     private bool _closed;
@@ -139,6 +140,8 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
         }
 
         _runLoopMode = MacOSApi.CreateString("kCFRunLoopDefaultMode");
+        _colorSpace = MacOSApi.ColorSpaceCreateDeviceRgb();
+        if (_colorSpace == IntPtr.Zero) throw new InvalidOperationException("Unable to create the software color space.");
         _running = true;
     }
 
@@ -186,6 +189,15 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
                     DispatchEvent(nativeEvent);
                     MacOSApi.SendPointer(_application, MacOSApi.Selector("sendEvent:"), nativeEvent);
                 }
+
+                if (MacOSApi.SendByteResult(_window, MacOSApi.Selector("isVisible")) == 0)
+                {
+                    _running = false;
+                    SignalClosed();
+                    break;
+                }
+
+                Tick?.Invoke();
                 MacOSApi.SendIntPtr(_application, MacOSApi.Selector("updateWindows"));
             }
             finally
@@ -193,14 +205,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
                 MacOSApi.SendIntPtr(pool, MacOSApi.Selector("drain"));
             }
 
-            if (MacOSApi.SendByteResult(_window, MacOSApi.Selector("isVisible")) == 0)
-            {
-                _running = false;
-                SignalClosed();
-                break;
-            }
-
-            Tick?.Invoke();
+            if (!_running) break;
             Thread.Sleep(16);
         }
     }
@@ -347,27 +352,25 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
 
     private void PresentFrame(Bitmap bitmap, IReadOnlyList<Rect>? dirtyRects)
     {
-        _ = dirtyRects;
-        if (_layer == IntPtr.Zero || bitmap.IsDisposed) return;
+        if (dirtyRects is { Count: 0 }) return;
+        if (_layer == IntPtr.Zero || _colorSpace == IntPtr.Zero || bitmap.IsDisposed) return;
 
         fixed (byte* pixels = bitmap.Pixels)
         {
             var data = MacOSApi.DataCreate(IntPtr.Zero, pixels, bitmap.Pixels.Length);
             if (data == IntPtr.Zero) throw new InvalidOperationException("Unable to copy the software frame.");
             var provider = IntPtr.Zero;
-            var colorSpace = IntPtr.Zero;
             var image = IntPtr.Zero;
             try
             {
                 provider = MacOSApi.DataProviderCreate(data);
-                colorSpace = MacOSApi.ColorSpaceCreateDeviceRgb();
                 image = MacOSApi.ImageCreate(
                     (nuint)bitmap.Width,
                     (nuint)bitmap.Height,
                     8,
                     32,
                     (nuint)bitmap.Stride,
-                    colorSpace,
+                    _colorSpace,
                     MacOSApi.BitmapByteOrder32Little | MacOSApi.ImageAlphaPremultipliedFirst,
                     provider,
                     IntPtr.Zero,
@@ -379,7 +382,6 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
             finally
             {
                 if (image != IntPtr.Zero) MacOSApi.ReleaseCoreFoundation(image);
-                if (colorSpace != IntPtr.Zero) MacOSApi.ReleaseCoreFoundation(colorSpace);
                 if (provider != IntPtr.Zero) MacOSApi.ReleaseCoreFoundation(provider);
                 MacOSApi.ReleaseCoreFoundation(data);
             }
@@ -428,6 +430,8 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     public void Dispose()
     {
         _running = false;
+        _renderContext?.Dispose();
+        _renderContext = null;
         if (_window != IntPtr.Zero)
         {
             MacOSApi.SendIntPtr(_window, MacOSApi.Selector("close"));
@@ -439,8 +443,12 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
             MacOSApi.SendIntPtr(_runLoopMode, MacOSApi.Selector("release"));
             _runLoopMode = IntPtr.Zero;
         }
+        if (_colorSpace != IntPtr.Zero)
+        {
+            MacOSApi.ReleaseCoreFoundation(_colorSpace);
+            _colorSpace = IntPtr.Zero;
+        }
         _layer = IntPtr.Zero;
-        _renderContext = null;
         SignalClosed();
     }
 }

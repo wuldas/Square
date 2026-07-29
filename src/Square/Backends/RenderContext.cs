@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -12,6 +13,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     public bool SupportsPartialRendering => true;
     private const int CoverageSampleGrid = 4;
     private const int CoverageSampleCount = CoverageSampleGrid * CoverageSampleGrid;
+    private const int MaxPooledLayerBytes = 4 * 1024 * 1024;
 
     private readonly ISoftwareRenderSurface _surface;
     private int _bitmapWidth;
@@ -25,7 +27,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     private float _dpiScale;
     private readonly Stack<ClipRegion> _clipStack = new();
     private readonly Stack<Matrix3x2> _transformStack = new();
-    private readonly Stack<float> _opacityStack = new();
+    private readonly Stack<LayerState> _layerStack = new();
     private readonly byte[] _coverageAlphaLookup = new byte[CoverageSampleCount + 1];
     private int _coverageAlphaSource = -1;
     private float _coverageAlphaOpacity = -1f;
@@ -151,8 +153,20 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     {
         // BGRA packed fill — far cheaper than per-channel byte loop on full window
         var packed = PackBgra(color);
-        for (var y = 0; y < _bitmapHeight; y++)
-            FillPackedBgra(MemoryMarshal.Cast<byte, uint>(_surface.GetRowSpan(y).Slice(0, _bitmapWidth * 4)), packed);
+        if (_layerStack.Count == 0)
+        {
+            for (var y = 0; y < _bitmapHeight; y++)
+                FillPackedBgra(MemoryMarshal.Cast<byte, uint>(_surface.GetRowSpan(y).Slice(0, _bitmapWidth * 4)), packed);
+            return;
+        }
+
+        var layer = _layerStack.Peek();
+        if (!layer.HasBuffer) return;
+        for (var y = layer.Y; y < layer.Y + layer.Height; y++)
+        {
+            var row = _surface.GetRowSpan(y).Slice(layer.X * 4, layer.Width * 4);
+            FillPackedBgra(MemoryMarshal.Cast<byte, uint>(row), packed);
+        }
     }
 
     public void Clear(Color color, Rect rect)
@@ -296,10 +310,59 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     public void PushLayer(Rect bounds, float opacity)
     {
-        _opacityStack.Push(_currentOpacity);
-        _currentOpacity *= Math.Clamp(opacity, 0f, 1f);
+        var pixelBounds = GetLayerPixelBounds(TransformRect(bounds));
+        if (pixelBounds.Width == 0 || pixelBounds.Height == 0)
+        {
+            _layerStack.Push(new LayerState([], 0, 0, 0, 0, Math.Clamp(opacity, 0f, 1f), false, false));
+            return;
+        }
+
+        var stride = checked(pixelBounds.Width * 4);
+        var length = checked(stride * pixelBounds.Height);
+        var isPooled = length <= MaxPooledLayerBytes;
+        var background = isPooled ? ArrayPool<byte>.Shared.Rent(length) : new byte[length];
+        for (var rowIndex = 0; rowIndex < pixelBounds.Height; rowIndex++)
+        {
+            var surfaceRow = _surface.GetRowSpan(pixelBounds.Y + rowIndex)
+                .Slice(pixelBounds.X * 4, stride);
+            surfaceRow.CopyTo(background.AsSpan(rowIndex * stride, stride));
+            surfaceRow.Clear();
+        }
+
+        _layerStack.Push(new LayerState(
+            background,
+            pixelBounds.X,
+            pixelBounds.Y,
+            pixelBounds.Width,
+            pixelBounds.Height,
+            Math.Clamp(opacity, 0f, 1f),
+            true,
+            isPooled));
     }
-    public void PopLayer() => _currentOpacity = _opacityStack.Count > 0 ? _opacityStack.Pop() : 1f;
+
+    public void PopLayer()
+    {
+        if (_layerStack.Count == 0) return;
+
+        var layer = _layerStack.Pop();
+        if (!layer.HasBuffer) return;
+        var stride = layer.Width * 4;
+        try
+        {
+            for (var rowIndex = 0; rowIndex < layer.Height; rowIndex++)
+            {
+                var surfaceRow = _surface.GetRowSpan(layer.Y + rowIndex)
+                    .Slice(layer.X * 4, stride);
+                var background = layer.Background.AsSpan(rowIndex * stride, stride);
+                CompositeLayerRow(surfaceRow, background, layer.Opacity);
+                background.CopyTo(surfaceRow);
+            }
+        }
+        finally
+        {
+            if (layer.IsPooled) ArrayPool<byte>.Shared.Return(layer.Background);
+        }
+    }
 
     public void Flush() { }
 
@@ -332,7 +395,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         _canvasSize = canvasSize;
         _dpiScale = dpiScale;
         _transformStack.Clear();
-        _opacityStack.Clear();
+        ReleaseLayers();
         _currentOpacity = 1f;
         _clipStack.Clear();
         UpdateClipCache();
@@ -383,7 +446,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     {
         _clipStack.Clear();
         _transformStack.Clear();
-        _opacityStack.Clear();
+        ReleaseLayers();
         _scaledDirtyRects = [];
         _surface.Dispose();
         _bitmapWidth = 0;
@@ -570,9 +633,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
             var outputAlpha = (byte)(alpha + destinationAlpha * inverseAlpha / 255);
             if (outputAlpha == 0) continue;
-            row[offset] = (byte)((blue * 255 + row[offset] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-            row[offset + 1] = (byte)((green * 255 + row[offset + 1] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-            row[offset + 2] = (byte)((red * 255 + row[offset + 2] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+            row[offset] = (byte)((blue * alpha + row[offset] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+            row[offset + 1] = (byte)((green * alpha + row[offset + 1] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+            row[offset + 2] = (byte)((red * alpha + row[offset + 2] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
             row[offset + 3] = outputAlpha;
         }
     }
@@ -585,8 +648,13 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private Rect ClipRect(Rect rect)
     {
-        if (!_hasClip) return rect;
-        return Rect.Intersect(rect, _clipStack.Peek().Bounds);
+        if (_hasClip) rect = Rect.Intersect(rect, _clipStack.Peek().Bounds);
+        if (_layerStack.Count > 0)
+        {
+            var layer = _layerStack.Peek();
+            rect = Rect.Intersect(rect, new Rect(layer.X, layer.Y, layer.Width, layer.Height));
+        }
+        return rect;
     }
 
     private void PushClipRegion(Rect bounds, Func<float, float, bool>? contains, bool isRect)
@@ -608,6 +676,12 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private bool IsPointVisible(float x, float y)
     {
+        if (_layerStack.Count > 0)
+        {
+            var layer = _layerStack.Peek();
+            if (x < layer.X || x >= layer.X + layer.Width || y < layer.Y || y >= layer.Y + layer.Height)
+                return false;
+        }
         if (!_hasClip) return true;
         if (x < _clipLeft || x >= _clipRight || y < _clipTop || y >= _clipBottom) return false;
         return !_hasGeometryClip || _clipContains?.Invoke(x, y) == true;
@@ -1573,10 +1647,16 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private bool TryBlendBitmapUnscaled(Bitmap src, int sx0, int sy0, int width, int height, int dx0, int dy0)
     {
+        if (_hasGeometryClip) return false;
         var copyX0 = Math.Max(0, Math.Max(-dx0, -sx0));
         var copyY0 = Math.Max(0, Math.Max(-dy0, -sy0));
         var copyX1 = Math.Min(width, Math.Min(_bitmapWidth - dx0, src.Width - sx0));
         var copyY1 = Math.Min(height, Math.Min(_bitmapHeight - dy0, src.Height - sy0));
+        var clipped = ClipRect(new Rect(dx0, dy0, width, height));
+        copyX0 = Math.Max(copyX0, (int)MathF.Floor(clipped.Left) - dx0);
+        copyY0 = Math.Max(copyY0, (int)MathF.Floor(clipped.Top) - dy0);
+        copyX1 = Math.Min(copyX1, (int)MathF.Ceiling(clipped.Right) - dx0);
+        copyY1 = Math.Min(copyY1, (int)MathF.Ceiling(clipped.Bottom) - dy0);
         if (copyX0 >= copyX1 || copyY0 >= copyY1) return true;
         if (_currentOpacity < 1f) return false;
 
@@ -1639,6 +1719,62 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             dstSpan[i + 3] = outA;
         }
     }
+
+    private static void CompositeLayerRow(Span<byte> layer, Span<byte> background, float opacity)
+    {
+        for (var i = 0; i < layer.Length; i += 4)
+        {
+            var sourceAlpha = (byte)Math.Clamp((int)MathF.Round(layer[i + 3] * opacity), 0, 255);
+            if (sourceAlpha == 0) continue;
+
+            var destinationAlpha = background[i + 3];
+            var inverseAlpha = 255 - sourceAlpha;
+            var outputAlpha = (byte)(sourceAlpha + destinationAlpha * inverseAlpha / 255);
+            if (outputAlpha == 0) continue;
+
+            background[i] = (byte)((layer[i] * sourceAlpha + background[i] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+            background[i + 1] = (byte)((layer[i + 1] * sourceAlpha + background[i + 1] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+            background[i + 2] = (byte)((layer[i + 2] * sourceAlpha + background[i + 2] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+            background[i + 3] = outputAlpha;
+        }
+    }
+
+    private LayerPixelBounds GetLayerPixelBounds(Rect bounds)
+    {
+        if (_hasClip) bounds = Rect.Intersect(bounds, _clipStack.Peek().Bounds);
+        if (_layerStack.Count > 0)
+        {
+            var parent = _layerStack.Peek();
+            bounds = Rect.Intersect(bounds, new Rect(parent.X, parent.Y, parent.Width, parent.Height));
+        }
+        if (bounds.IsEmpty) return default;
+
+        var left = Math.Clamp((int)MathF.Floor(bounds.Left), 0, _bitmapWidth);
+        var top = Math.Clamp((int)MathF.Floor(bounds.Top), 0, _bitmapHeight);
+        var right = Math.Clamp((int)MathF.Ceiling(bounds.Right), left, _bitmapWidth);
+        var bottom = Math.Clamp((int)MathF.Ceiling(bounds.Bottom), top, _bitmapHeight);
+        return new LayerPixelBounds(left, top, right - left, bottom - top);
+    }
+
+    private void ReleaseLayers()
+    {
+        while (_layerStack.Count > 0)
+        {
+            var layer = _layerStack.Pop();
+            if (layer.IsPooled) ArrayPool<byte>.Shared.Return(layer.Background);
+        }
+    }
+
+    private readonly record struct LayerPixelBounds(int X, int Y, int Width, int Height);
+    private readonly record struct LayerState(
+        byte[] Background,
+        int X,
+        int Y,
+        int Width,
+        int Height,
+        float Opacity,
+        bool HasBuffer,
+        bool IsPooled);
 
     // ── 文字光栅化（简易字形） ──
 

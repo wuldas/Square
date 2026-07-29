@@ -239,23 +239,106 @@ public class SoftwareRendererTests
     }
 
     [Fact]
-    public void LayersMultiplyPrimitiveOpacityAndRestoreAfterPop()
+    public void LayersCompositeOverlappingPrimitivesWithGroupOpacityAndRestoreAfterPop()
     {
         var context = CreateContext(3, 1);
         context.Clear(Color.Transparent);
 
         context.PushLayer(new Rect(0, 0, 2, 1), 0.5f);
-        context.FillRect(new Rect(0, 0, 1, 1), new SolidColorBrush(Color.Red));
-        context.PushLayer(new Rect(1, 0, 1, 1), 0.5f);
+        context.FillRect(new Rect(0, 0, 2, 1), new SolidColorBrush(Color.Red));
         context.FillRect(new Rect(1, 0, 1, 1), new SolidColorBrush(Color.Red));
-        context.PopLayer();
         context.PopLayer();
         context.FillRect(new Rect(2, 0, 1, 1), new SolidColorBrush(Color.Red));
 
         var pixels = context.GetBitmap().Pixels;
         Assert.InRange(pixels[3], 127, 128);
-        Assert.InRange(pixels[7], 63, 64);
+        Assert.InRange(pixels[7], 127, 128);
         Assert.Equal(255, pixels[11]);
+    }
+
+    [Fact]
+    public void NestedLayersCompositeEachGroupOnce()
+    {
+        var context = CreateContext(1, 1);
+        context.Clear(Color.Transparent);
+
+        context.PushLayer(new Rect(0, 0, 1, 1), 0.5f);
+        context.PushLayer(new Rect(0, 0, 1, 1), 0.5f);
+        context.FillRect(new Rect(0, 0, 1, 1), new SolidColorBrush(Color.Red));
+        context.PopLayer();
+        context.PopLayer();
+
+        Assert.InRange(context.GetBitmap().Pixels[3], 63, 64);
+    }
+
+    [Fact]
+    public void LayerPreservesSemiTransparentContentColor()
+    {
+        var context = CreateContext(1, 1);
+        context.Clear(Color.Transparent);
+
+        context.PushLayer(new Rect(0, 0, 1, 1), 0.5f);
+        context.FillRect(
+            new Rect(0, 0, 1, 1),
+            new SolidColorBrush(Color.FromRgba(200, 100, 50, 128)));
+        context.PopLayer();
+
+        var pixel = context.GetBitmap().GetPixel(0, 0);
+        Assert.InRange(pixel[3], 63, 64);
+        Assert.InRange(pixel[2], 198, 202);
+        Assert.InRange(pixel[1], 98, 102);
+        Assert.InRange(pixel[0], 47, 52);
+    }
+
+    [Fact]
+    public void LayerClipsDrawingToItsBounds()
+    {
+        var context = CreateContext(3, 1);
+        context.Clear(Color.Blue);
+
+        context.PushLayer(new Rect(1, 0, 1, 1), 0.5f);
+        context.FillRect(new Rect(0, 0, 3, 1), new SolidColorBrush(Color.Red));
+        context.PopLayer();
+
+        Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(0, 0).ToArray());
+        Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(2, 0).ToArray());
+        var center = context.GetBitmap().GetPixel(1, 0);
+        Assert.InRange(center[2], 127, 128);
+        Assert.Equal(0, center[1]);
+        Assert.InRange(center[0], 127, 128);
+        Assert.Equal(255, center[3]);
+    }
+
+    [Fact]
+    public void LayerBoundsScaleToPhysicalPixels()
+    {
+        var context = new RenderContext(new Bitmap(4, 2), new Size(2, 1), 2f);
+        context.Clear(Color.Transparent);
+
+        context.PushLayer(new Rect(0.5f, 0, 0.5f, 1), 0.5f);
+        context.FillRect(new Rect(0, 0, 2, 1), new SolidColorBrush(Color.Red));
+        context.PopLayer();
+
+        var pixels = context.GetBitmap().Pixels;
+        Assert.Equal(0, pixels[3]);
+        Assert.InRange(pixels[7], 127, 128);
+        Assert.Equal(0, pixels[11]);
+        Assert.Equal(0, pixels[15]);
+    }
+
+    [Fact]
+    public void ClearInsideLayerOnlyClearsLayerBounds()
+    {
+        var context = CreateContext(3, 1);
+        context.Clear(Color.Blue);
+
+        context.PushLayer(new Rect(1, 0, 1, 1), 1f);
+        context.Clear(Color.Red);
+        context.PopLayer();
+
+        Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(0, 0).ToArray());
+        Assert.Equal([0, 0, 255, 255], context.GetBitmap().GetPixel(1, 0).ToArray());
+        Assert.Equal([255, 0, 0, 255], context.GetBitmap().GetPixel(2, 0).ToArray());
     }
 
     [Fact]
