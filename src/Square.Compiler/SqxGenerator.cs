@@ -57,9 +57,10 @@ public sealed class SqxGenerator : IIncrementalGenerator
             }
 
             var contracts = BuildPropContracts(compilation, files);
+            var generatedTypes = BuildGeneratedTypeNames(files);
             var slotContracts = BuildSlotContracts(compilation);
             foreach (var file in files)
-                Generate(productionContext, compilation, file, contracts, slotContracts, catalog);
+                Generate(productionContext, compilation, file, contracts, generatedTypes, slotContracts, catalog);
         });
     }
 
@@ -68,6 +69,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
         Compilation compilation,
         SqxInput input,
         IReadOnlyDictionary<string, PropContract[]> contracts,
+        IReadOnlyCollection<string> generatedTypes,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> slotContracts,
         DirectiveCatalog catalog)
     {
@@ -82,7 +84,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
                 ? new ComponentEmitter(document, input.Namespace, catalog).Emit()
                 : "// Generator error: unsupported directive shape\n// Path: " + input.Path;
             if (input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase))
-                ReportSemanticDiagnostics(context, compilation, input, code);
+                ReportSemanticDiagnostics(context, compilation, input, code, generatedTypes);
         }
         catch (SqxParseException exception)
         {
@@ -112,6 +114,31 @@ public sealed class SqxGenerator : IIncrementalGenerator
 
         var hintName = Path.GetFileNameWithoutExtension(input.Path) + "_" + StableHash(input.Path) + ".g.cs";
         context.AddSource(hintName, SourceText.From(code, Encoding.UTF8));
+    }
+
+    private static IReadOnlyCollection<string> BuildGeneratedTypeNames(ImmutableArray<SqxInput> inputs)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var input in inputs)
+        {
+            SqxDocument document;
+            try
+            {
+                document = ParseDocument(input);
+            }
+            catch (SqxParseException)
+            {
+                continue;
+            }
+
+            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
+                ? input.Namespace
+                : document.Namespace;
+            names.Add(document.Name);
+            if (!string.IsNullOrWhiteSpace(namespaceName))
+                names.Add(namespaceName + "." + document.Name);
+        }
+        return names;
     }
 
     private static IReadOnlyDictionary<string, PropContract[]> BuildPropContracts(
@@ -553,7 +580,8 @@ public sealed class SqxGenerator : IIncrementalGenerator
         SourceProductionContext context,
         Compilation compilation,
         SqxInput input,
-        string generatedCode)
+        string generatedCode,
+        IReadOnlyCollection<string> generatedTypes)
     {
         var parseOptions = compilation.SyntaxTrees.FirstOrDefault()?.Options as Microsoft.CodeAnalysis.CSharp.CSharpParseOptions;
         var syntaxTree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
@@ -563,8 +591,10 @@ public sealed class SqxGenerator : IIncrementalGenerator
         var semanticCompilation = compilation.AddSyntaxTrees(syntaxTree);
         var source = SourceText.From(input.Content, Encoding.UTF8);
         foreach (var diagnostic in semanticCompilation.GetDiagnostics()
-                     .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Location.IsInSource))
+                      .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Location.IsInSource))
         {
+            if (IsMissingGeneratedTypeDiagnostic(diagnostic, generatedTypes)) continue;
+
             var mapped = diagnostic.Location.GetMappedLineSpan();
             if (!string.Equals(mapped.Path, input.Path, StringComparison.OrdinalIgnoreCase)) continue;
             var line = Math.Max(0, Math.Min(mapped.StartLinePosition.Line, source.Lines.Count - 1));
@@ -577,6 +607,19 @@ public sealed class SqxGenerator : IIncrementalGenerator
                 Location.Create(input.Path, span, source.Lines.GetLinePositionSpan(span)),
                 diagnostic.GetMessage()));
         }
+    }
+
+    private static bool IsMissingGeneratedTypeDiagnostic(Diagnostic diagnostic, IReadOnlyCollection<string> generatedTypes)
+    {
+        if (diagnostic.Id != "CS0246") return false;
+        var message = diagnostic.GetMessage();
+        var firstQuote = message.IndexOfAny(new[] { '\'', '“' });
+        if (firstQuote < 0) return false;
+        var closingQuote = message[firstQuote] == '“' ? '”' : '\'';
+        var secondQuote = message.IndexOf(closingQuote, firstQuote + 1);
+        if (secondQuote <= firstQuote + 1) return false;
+        var typeName = message.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
+        return generatedTypes.Contains(typeName) || generatedTypes.Any(name => name.EndsWith("." + typeName, StringComparison.Ordinal));
     }
 
     private static uint StableHash(string value)

@@ -343,6 +343,24 @@ public class GeneratorDiagnosticsTests
     }
 
     [Fact]
+    public void DoesNotReportSemanticErrorForSameBatchGeneratedSqvComponentReference()
+    {
+        const string usage = """
+            <template><View /></template>
+            <script lang="csharp">
+              public object Page = new ChildPage();
+            </script>
+            """;
+        const string child = "<template><Text>Child</Text></template>";
+
+        var diagnostics = RunGenerator(
+            new InMemoryAdditionalText("Components/Main.sqv", usage),
+            new InMemoryAdditionalText("Components/ChildPage.sqv", child));
+
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "SQV0013");
+    }
+
+    [Fact]
     public void ReportsMissingScopedSlotContract()
     {
         const string source = "<template><Card><template #row=\"{ item }\"></template></Card></template>";
