@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <Description>Square macOS platform host</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="buildTransitive\**\*.cs" />
+    <ProjectReference Include="..\Square\Square.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="buildTransitive\Square.Platform.MacOS.props" Pack="true" PackagePath="buildTransitive" />
+    <None Include="buildTransitive\Square.Platform.MacOS.Registration.cs" Pack="true" PackagePath="buildTransitive" />
+  </ItemGroup>
+
+</Project>

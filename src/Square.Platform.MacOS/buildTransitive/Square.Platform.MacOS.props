@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <SquarePlatformAutoRegistration Condition="'$(SquarePlatformAutoRegistration)' == ''">true</SquarePlatformAutoRegistration>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(SquarePlatformAutoRegistration)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)Square.Platform.MacOS.Registration.cs"
+             Link="Square.Generated\Square.Platform.MacOS.Registration.g.cs"
+             Visible="false" />
+  </ItemGroup>
+</Project>

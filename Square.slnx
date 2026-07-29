@@ -2,6 +2,7 @@
   <Project Path="src/Square/Square.csproj" />
   <Project Path="src/Square.Platform.Win32/Square.Platform.Win32.csproj" />
   <Project Path="src/Square.Platform.X11/Square.Platform.X11.csproj" />
+  <Project Path="src/Square.Platform.MacOS/Square.Platform.MacOS.csproj" />
   <Project Path="src/Square.Compiler/Square.Compiler.csproj" />
   <Project Path="src/Square.Extensions/Square.Extensions.csproj" />
   <Project Path="src/Square.Extensions.Markdown/Square.Extensions.Markdown.csproj" />

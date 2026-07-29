@@ -959,6 +959,9 @@ public class VueGeneratorTests
             .ToList();
         if (references.All(reference => reference.Display != typeof(PropAttribute).Assembly.Location))
             references.Add(MetadataReference.CreateFromFile(typeof(PropAttribute).Assembly.Location));
+        var objectModelAssembly = typeof(System.Collections.Specialized.INotifyCollectionChanged).Assembly.Location;
+        if (references.All(reference => reference.Display != objectModelAssembly))
+            references.Add(MetadataReference.CreateFromFile(objectModelAssembly));
         return CSharpCompilation.Create(
             "VueGeneratorTests",
             [CSharpSyntaxTree.ParseText(source)],

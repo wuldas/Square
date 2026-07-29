@@ -294,10 +294,12 @@ internal sealed class FontCollection
             return _fallbacks.Count > 0 ? _fallbacks[0].Family : _byFamily.First().Key;
         }
 
-        _cjkFamily = Pick("NotoSansCJK", "NotoSansCJKsc", "NotoSansCJKtc", "NotoSansCJKjp",
+        _cjkFamily = Pick("PingFang SC", "Hiragino Sans",
+                          "NotoSansCJK", "NotoSansCJKsc", "NotoSansCJKtc", "NotoSansCJKjp",
                           "SourceHanSansSC", "SourceHanSansCN", "WenQuanYiZenHei",
                           "DroidSansFallback", "Microsoft YaHei UI", "MicrosoftYaHeiUI", "Yu Gothic UI", "YuGothicUI");
-        _japaneseFamily = Pick("NotoSansCJKjp", "Yu Gothic UI", "YuGothicUI", "Yu Gothic", "YuGothic", _cjkFamily);
+        _japaneseFamily = Pick("Hiragino Sans", "PingFang SC", "NotoSansCJKjp",
+                               "Yu Gothic UI", "YuGothicUI", "Yu Gothic", "YuGothic", _cjkFamily);
         _koreanFamily = Pick("NotoSansCJKkr", "Malgun Gothic", "MalgunGothic", _cjkFamily);
     }
 

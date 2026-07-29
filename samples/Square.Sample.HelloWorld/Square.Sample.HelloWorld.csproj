@@ -21,11 +21,13 @@
     <ProjectReference Include="..\..\src\Square.Images\Square.Images.csproj" />
     <ProjectReference Include="..\..\src\Square.Platform.Win32\Square.Platform.Win32.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square.Platform.X11\Square.Platform.X11.csproj" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <ProjectReference Include="..\..\src\Square.Platform.MacOS\Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\..\src\Square.Platform.Win32\buildTransitive\Square.Platform.Win32.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <Compile Include="..\..\src\Square.Platform.X11\buildTransitive\Square.Platform.X11.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <Compile Include="..\..\src\Square.Platform.MacOS\buildTransitive\Square.Platform.MacOS.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
   </ItemGroup>
 
 </Project>

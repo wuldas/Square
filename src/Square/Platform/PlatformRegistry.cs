@@ -28,5 +28,5 @@ public static class PlatformRegistry
     /// <exception cref="InvalidOperationException">未注册任何平台工厂。</exception>
     public static IPlatformFactory Get() =>
         _factory ?? _defaultFactory ?? throw new InvalidOperationException(
-            "No platform factory registered. Reference Square.Platform.Win32 or Square.Platform.X11.");
+            "No platform factory registered. Reference Square.Platform.Win32, Square.Platform.X11, or Square.Platform.MacOS.");
 }

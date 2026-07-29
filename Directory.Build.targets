@@ -9,12 +9,14 @@
 
   <Target Name="ValidateSquareTargetPlatform" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(SquareUnsupportedPlatform)' != ''" Text="$(SquareUnsupportedPlatform)" />
-    <Error Condition="'$(SquareTargetPlatform)' != 'Win32' and '$(SquareTargetPlatform)' != 'X11'"
-           Text="Unsupported SquareTargetPlatform '$(SquareTargetPlatform)'. Supported values are Win32 and X11." />
+    <Error Condition="'$(SquareTargetPlatform)' != 'Win32' and '$(SquareTargetPlatform)' != 'X11' and '$(SquareTargetPlatform)' != 'MacOS'"
+           Text="Unsupported SquareTargetPlatform '$(SquareTargetPlatform)'. Supported values are Win32, X11, and MacOS." />
     <Error Condition="'$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.Contains('linux')) and '$(SquareTargetPlatform)' != 'X11'"
            Text="RuntimeIdentifier '$(RuntimeIdentifier)' requires SquareTargetPlatform=X11." />
     <Error Condition="'$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.StartsWith('win-')) and '$(SquareTargetPlatform)' != 'Win32'"
            Text="RuntimeIdentifier '$(RuntimeIdentifier)' requires SquareTargetPlatform=Win32." />
+    <Error Condition="'$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.StartsWith('osx-')) and '$(SquareTargetPlatform)' != 'MacOS'"
+           Text="RuntimeIdentifier '$(RuntimeIdentifier)' requires SquareTargetPlatform=MacOS." />
   </Target>
 
   <Target Name="CopySquarePublicFiles" AfterTargets="CopyFilesToOutputDirectory"

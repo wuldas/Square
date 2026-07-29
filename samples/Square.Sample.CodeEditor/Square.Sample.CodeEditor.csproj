@@ -16,6 +16,7 @@
     <ProjectReference Include="..\..\src\Square\Square.csproj" />
     <ProjectReference Include="..\..\src\Square.Platform.Win32\Square.Platform.Win32.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square.Platform.X11\Square.Platform.X11.csproj" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <ProjectReference Include="..\..\src\Square.Platform.MacOS\Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
     <ProjectReference Include="..\..\src\Square.Extensions.CodeEditor\Square.Extensions.CodeEditor.csproj" />
     <ProjectReference Include="..\..\src\Square.DevTools\Square.DevTools.csproj" />
     <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
@@ -25,6 +26,7 @@
     <AdditionalFiles Include="**\*.sqx" />
     <Compile Include="..\..\src\Square.Platform.Win32\buildTransitive\Square.Platform.Win32.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <Compile Include="..\..\src\Square.Platform.X11\buildTransitive\Square.Platform.X11.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <Compile Include="..\..\src\Square.Platform.MacOS\buildTransitive\Square.Platform.MacOS.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
   </ItemGroup>
 
 </Project>

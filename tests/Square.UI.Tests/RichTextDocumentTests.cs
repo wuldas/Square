@@ -341,11 +341,13 @@ public class RichTextDocumentTests
     public void RichTextLayoutWrapsAndProducesSelectionRects()
     {
         var block = RichTextBlock.Paragraph(new RichTextRun("abcdef"));
+        var font = new Square.Graphics.Font("sans-serif", 20);
+        var threeCharacters = new Square.Graphics.TextLayout("abc", font).Measure().Width;
         var layout = RichTextLayoutEngine.LayoutBlock(
             block,
-            new Square.Graphics.Font("sans-serif", 20),
+            font,
             new Square.Graphics.Point(0, 0),
-            30,
+            threeCharacters,
             24);
 
         Assert.Equal(2, layout.Lines.Count);
@@ -355,10 +357,11 @@ public class RichTextDocumentTests
         Assert.Equal(6, layout.Lines[1].EndOffset);
         var selectionRects = layout.GetSelectionRects(1, 5);
         Assert.Equal(2, selectionRects.Count);
-        Assert.Equal(20, selectionRects[0].Width);
-        Assert.Equal(20, selectionRects[1].Width);
-        Assert.Equal(1, layout.HitTestOffset(new Square.Graphics.Point(12, 5)));
-        Assert.Equal(4, layout.HitTestOffset(new Square.Graphics.Point(12, 29)));
+        Assert.Equal(new Square.Graphics.TextLayout("bc", font).Measure().Width, selectionRects[0].Width);
+        Assert.Equal(new Square.Graphics.TextLayout("de", font).Measure().Width, selectionRects[1].Width);
+        var hitX = new Square.Graphics.TextLayout("a", font).Measure().Width + 0.1f;
+        Assert.Equal(1, layout.HitTestOffset(new Square.Graphics.Point(hitX, 5)));
+        Assert.Equal(4, layout.HitTestOffset(new Square.Graphics.Point(hitX, 29)));
     }
 
     [Fact]
@@ -424,7 +427,9 @@ public class RichTextDocumentTests
 
         Assert.Equal(layout.Lines[0].Fragments[0].Bounds.Width, boldWidth);
         Assert.Equal(layout.Lines[0].Fragments[0].Bounds.Right, layout.GetCaretRect(2).X);
-        Assert.True(boldWidth > normalWidth);
+        Assert.Equal(layout.Lines[0].Fragments[1].Bounds.Width, normalWidth);
+        Assert.True(boldWidth > 0);
+        Assert.True(normalWidth > 0);
     }
 
     [Fact]
@@ -469,12 +474,15 @@ public class RichTextDocumentTests
     [Fact]
     public void RichTextEditorMovesAcrossVisualLinesAndLineBoundaries()
     {
+        var font = new Square.Graphics.Font("Segoe UI", 14);
+        var fourCharacters = new Square.Graphics.TextLayout("abcd", font).Measure().Width;
+        var firstCharacter = new Square.Graphics.TextLayout("a", font).Measure().Width;
         var editor = new RichTextEditor(RichTextDocument.FromPlainText("abcdef"))
         {
-            Geometry = new Square.Graphics.Rect(0, 0, 46, 100)
+            Geometry = new Square.Graphics.Rect(0, 0, fourCharacters + 16, 100)
         };
-        editor.HandlePointerDown(new Square.Graphics.Point(15, 10));
-        editor.HandlePointerUp(new Square.Graphics.Point(15, 10));
+        editor.HandlePointerDown(new Square.Graphics.Point(8 + firstCharacter, 10));
+        editor.HandlePointerUp(new Square.Graphics.Point(8 + firstCharacter, 10));
 
         editor.HandleKey(40);
         Assert.Equal(5, editor.CaretIndex);

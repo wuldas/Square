@@ -18,6 +18,7 @@
     <InternalsVisibleTo Include="Square.Images.Tests" />
     <InternalsVisibleTo Include="Square.Platform.Win32" />
     <InternalsVisibleTo Include="Square.Platform.X11" />
+    <InternalsVisibleTo Include="Square.Platform.MacOS" />
     <InternalsVisibleTo Include="Square.UI.Tests" />
   </ItemGroup>
 

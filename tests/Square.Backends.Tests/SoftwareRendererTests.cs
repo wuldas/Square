@@ -302,7 +302,11 @@ public class SoftwareRendererTests
 
         var fragment = Assert.Single(tree.CollectTextFragments(root));
         Assert.Equal(2, fragment.Characters.Count);
-        Assert.True(fragment.Characters[0].Bounds.Width > fragment.Characters[1].Bounds.Width);
+        var layout = new TextLayout("Ma", new Font("Segoe UI", 20));
+        var firstAdvance = layout.MeasureOffset(1);
+        var secondAdvance = layout.MeasureOffset(2) - firstAdvance;
+        Assert.Equal(firstAdvance, fragment.Characters[0].Bounds.Width);
+        Assert.Equal(secondAdvance, fragment.Characters[1].Bounds.Width);
     }
 
     [Fact]

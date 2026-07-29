@@ -37,6 +37,9 @@ if (platform.Name != "Win32")
 #elif PLATFORM_X11
 if (platform.Name != "X11")
     throw new InvalidOperationException("The X11 platform package was not automatically registered.");
+#elif PLATFORM_MACOS
+if (platform.Name != "MacOS")
+    throw new InvalidOperationException("The macOS platform package was not automatically registered.");
 #endif
 
 using var source = new Bitmap(2, 1);

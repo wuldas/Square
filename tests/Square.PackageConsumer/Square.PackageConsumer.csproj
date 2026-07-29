@@ -11,6 +11,7 @@
     <PackageReference Include="Square.Images" />
     <PackageReference Include="Square.Platform.Win32" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <PackageReference Include="Square.Platform.X11" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <PackageReference Include="Square.Platform.MacOS" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
   </ItemGroup>
   <ItemGroup>
     <None Update="site.txt" CopyToOutputDirectory="PreserveNewest" />

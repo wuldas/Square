@@ -151,14 +151,14 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>Tab 插入空格。</summary>
     public bool InsertSpaces
     {
-        get => GetProperty<bool?>(nameof(InsertSpaces)) ?? true;
+        get => GetBooleanProperty(nameof(InsertSpaces), true);
         set => SetProperty(nameof(InsertSpaces), value);
     }
 
     /// <summary>是否显示行号 gutter；关闭后编辑区左缘无行号列。</summary>
     public bool ShowLineNumbers
     {
-        get => GetProperty<bool?>(nameof(ShowLineNumbers)) ?? true;
+        get => GetBooleanProperty(nameof(ShowLineNumbers), true);
         set
         {
             if (ShowLineNumbers == value) return;
@@ -183,7 +183,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否显示 glyph margin（断点/书签/自定义图标列）。</summary>
     public bool ShowGlyphMargin
     {
-        get => GetProperty<bool?>(nameof(ShowGlyphMargin)) ?? true;
+        get => GetBooleanProperty(nameof(ShowGlyphMargin), true);
         set
         {
             if (ShowGlyphMargin == value) return;
@@ -260,7 +260,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否显示折叠槽（括号/标签层级折叠）。</summary>
     public bool ShowFolding
     {
-        get => GetProperty<bool?>(nameof(ShowFolding)) ?? true;
+        get => GetBooleanProperty(nameof(ShowFolding), true);
         set
         {
             if (ShowFolding == value) return;
@@ -384,7 +384,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否按可视宽度软换行（不改动文档换行符）。</summary>
     public bool WordWrap
     {
-        get => GetProperty<bool?>(nameof(WordWrap)) ?? false;
+        get => GetBooleanProperty(nameof(WordWrap), false);
         set
         {
             if (WordWrap == value) return;
@@ -401,7 +401,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否显示滚动条（内容溢出时绘制；可关闭）。</summary>
     public bool ShowScrollBars
     {
-        get => GetProperty<bool?>(nameof(ShowScrollBars)) ?? true;
+        get => GetBooleanProperty(nameof(ShowScrollBars), true);
         set
         {
             if (ShowScrollBars == value) return;
@@ -416,7 +416,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否显示右侧 overview ruler（装饰/查找标记迷你条）。</summary>
     public bool ShowOverviewRuler
     {
-        get => GetProperty<bool?>(nameof(ShowOverviewRuler)) ?? true;
+        get => GetBooleanProperty(nameof(ShowOverviewRuler), true);
         set
         {
             if (ShowOverviewRuler == value) return;
@@ -434,7 +434,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>查找面板是否视为打开（宿主可绑定 UI；编辑器据此暴露 FindQuery 等）。</summary>
     public bool FindPanelVisible
     {
-        get => GetProperty<bool?>(nameof(FindPanelVisible)) ?? false;
+        get => GetBooleanProperty(nameof(FindPanelVisible), false);
         set
         {
             if (FindPanelVisible == value) return;
@@ -449,7 +449,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否高亮匹配括号。</summary>
     public bool HighlightMatchingBrackets
     {
-        get => GetProperty<bool?>(nameof(HighlightMatchingBrackets)) ?? true;
+        get => GetBooleanProperty(nameof(HighlightMatchingBrackets), true);
         set
         {
             if (HighlightMatchingBrackets == value) return;
@@ -461,7 +461,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>是否高亮所有查找匹配（需有 FindQuery）。</summary>
     public bool HighlightFindMatches
     {
-        get => GetProperty<bool?>(nameof(HighlightFindMatches)) ?? true;
+        get => GetBooleanProperty(nameof(HighlightFindMatches), true);
         set
         {
             if (HighlightFindMatches == value) return;
@@ -473,7 +473,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>只读：禁止输入、删除、替换、撤销/重做；仍可选择、复制、滚动与折叠。</summary>
     public bool ReadOnly
     {
-        get => GetProperty<bool?>(nameof(ReadOnly)) ?? false;
+        get => GetBooleanProperty(nameof(ReadOnly), false);
         set
         {
             if (ReadOnly == value) return;
@@ -484,6 +484,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
     /// <summary>切换只读。</summary>
     public void ToggleReadOnly() => ReadOnly = !ReadOnly;
+
+    private bool GetBooleanProperty(string name, bool defaultValue) =>
+        Properties.HasValue(name) ? GetProperty<bool>(name) : defaultValue;
 
     /// <inheritdoc/>
     public int CaretIndex => _caretIndex;

@@ -48,14 +48,16 @@
 
   <PropertyGroup>
     <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and '$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.Contains('linux'))">X11</SquareTargetPlatform>
-    <SquareUnsupportedPlatform Condition="'$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.Contains('osx'))">macOS is not implemented yet. Supported desktop targets are win-* and linux-*.</SquareUnsupportedPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and '$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.Contains('osx'))">MacOS</SquareTargetPlatform>
     <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and '$(OS)' == 'Windows_NT'">Win32</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and '$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">MacOS</SquareTargetPlatform>
     <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and '$(OS)' != 'Windows_NT' and '$(RuntimeIdentifier)' == ''">X11</SquareTargetPlatform>
     <IsWindowsBuild Condition="'$(SquareTargetPlatform)' == 'Win32'">true</IsWindowsBuild>
     <IsWindowsBuild Condition="'$(SquareTargetPlatform)' != 'Win32'">false</IsWindowsBuild>
 
-    <DefineConstants Condition="'$(IsWindowsBuild)' == 'true'">$(DefineConstants);PLATFORM_WIN32;BACKEND_SOFTWARE</DefineConstants>
-    <DefineConstants Condition="'$(IsWindowsBuild)' != 'true'">$(DefineConstants);PLATFORM_X11;BACKEND_SOFTWARE</DefineConstants>
+    <DefineConstants Condition="'$(SquareTargetPlatform)' == 'Win32'">$(DefineConstants);PLATFORM_WIN32;BACKEND_SOFTWARE</DefineConstants>
+    <DefineConstants Condition="'$(SquareTargetPlatform)' == 'X11'">$(DefineConstants);PLATFORM_X11;BACKEND_SOFTWARE</DefineConstants>
+    <DefineConstants Condition="'$(SquareTargetPlatform)' == 'MacOS'">$(DefineConstants);PLATFORM_MACOS;BACKEND_SOFTWARE</DefineConstants>
   </PropertyGroup>
 
 </Project>
