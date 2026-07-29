@@ -6,6 +6,8 @@ obj/
 *.userprefs
 *.cache
 *.log
+obj-*/
+bin-*/
 
 ## IDE
 .vs/

@@ -1,6 +1,6 @@
 # 开发路线
 
-> Version: 0.3  
+> Version: 0.3
 > 配套：`Architecture.md`、`Rendering-Targets.md`、`plan.md`、`rebuild-plan.md`
 
 ---
@@ -14,7 +14,7 @@
 | **M2 CSS 完整化 + 组件组合 + 动画 + 主题** | 默认/具名 Slot、fallback、嵌套组件；`Signal<T>` 跨组件/跨线程通信；完整 Selector/Cascade/Pseudo/Animation；Grid；Theme；元素查询 API | 插槽保持调用方作用域且不产生隐式布局容器；后台信号经 Dispatcher 安全送达 UI；CSS 测试套件通过 | ✅ 完成 |
 | **M3 扩展控件 + 路由** | `Square.Extensions.Routing` 窗口路由、参数、通配符、嵌套 RouterView、守卫、KeepAlive；扩展控件 | 路由可前进/后退、守卫重定向并正确切换生命周期；各控件可交互 | ✅ 完成 |
 | **M4 图形后端扩展** | Vulkan / Skia / Blend2D / Cairo 后端接入（`IRenderContext` 不变） | 同一 Demo 切换后端渲染一致 | 🔄 Vulkan、Skia 已落地；后端合规测试起步 |
-| **M5 跨平台桌面** | Linux(X11)、macOS 平台宿主；高 DPI/高刷新率打磨 | 三桌面平台 AOT 可执行均运行 | 🔄 X11 DPI/刷新率调度已落地，macOS 待实现 |
+| **M5 跨平台桌面** | Linux(X11)、macOS 平台宿主；高 DPI/高刷新率打磨 | 三桌面平台 AOT 可执行均运行 | 🔄 X11 DPI/刷新率调度与 macOS Software MVP 已落地；macOS AOT/原生验收待完成 |
 | **M6 移动端与 WebAssembly** | Android / iOS / WASM 平台层（最小实现） | 目标平台可启动并渲染基础 UI | ⏳ 计划 |
 | **M7 文本与 Canvas 完整** | BiDi、Font Fallback、Caret/Selection/HitTest 完整、标准 RichTextBox/WYSIWYG 富文本模型与渲染、Canvas `CanvasRenderingContext2D` 兼容层→DrawCommand | 复杂文本/富文本编辑与 Canvas 绘图可运行 | ⏳ 计划 |
 | **M8 工具链** | 完整 Source Generator 诊断、IDE 智能提示/补全、编译期检查 | IDE 内 `.sqx` 报错可定位、可补全 | ⏳ 计划 |
@@ -39,8 +39,8 @@
 [x] `Square.Compiler`：Incremental Generator + Props 校验 + ref 生成 + 绑定编译 + 诊断映射
 [x] `Square.CSS`：Tokenizer/Selector/Cascade/Variables/Inheritance（含子代/兄弟/通用/属性选择器、`!important`、基础伪类）
 [x] `Square.Graphics`：`IRenderContext`/`IRenderBackendFactory` + 基础类型
-[~] `Square.Backends`：纯 C# Software Renderer（BGRA/预乘 Alpha、脏区提交 ✓ / SIMD 与完整 layer opacity 待实现）
-[~] `Square.Rendering`：Box/Flex/Grid 布局 + Element→DisplayTree→DrawCommand→提交（子树挂卸、脏节点更新 ✓ / 更细粒度结构增量同步待实现）
+[~] `Square.Backends`：纯 C# Software Renderer（BGRA、脏区提交、真正的 group opacity/offscreen compositing ✓ / SIMD 与有界临时 surface 池化待实现）
+[x] `Square.Rendering`：Box/Flex/Grid 布局 + Element→DisplayTree→DrawCommand→提交；DisplayTree 已按 Element 标识增量同步插入、移除、显隐与顺序并复用未变化命令
 [x] `Square.Runtime` + `Square.UI`：Application/Element/UIDocument 基类/属性/元素操作 API（Style/ClassList/Children/Event）
 [x] `Square.Hosting`：`DesktopApplication` 聚合层——提取窗口、输入路由、焦点管理、文本编辑、剪贴板、帧调度和布局渲染循环
 [x] `Square.Controls`：10 个第一阶段控件 + 结构原语（Show/For/Switch/Match）+ 默认样式 + 基础动画时钟/缓动
@@ -79,7 +79,7 @@
 
 - [x] P0：文档规格
 - [x] P1：DOM 事件系统（EventTarget / Event / addEventListener / dispatchEvent + 捕获/冒泡）
-- [~] P1.5/D0–D4：内置指令目录与发射管线 ✓ / 第三方通用发射与端到端测试待完成
+- [~] P1.5/D0–D4：内置指令目录与发射管线、第三方声明式条件指令及当前/引用程序集端到端测试 ✓ / 更复杂的第三方循环与分支模式仍待扩展
 - [x] P2：去掉 Visual，Element 替代（EventTarget → Node → Element → UIElement）
 - [x] P3：Document / UIDocument 壳（UI/Head/Body，documentElement 只读）
 - [x] P4：DisplayTree / DisplayNode + HTMLElement 扩展点；SVGElement 后续已扩展为可绘制 SVG DOM
@@ -102,7 +102,7 @@ M2 与架构重建完成后，以下能力作为增量落地，未归入既有 M
 - **DevTools NativeAOT**：移除 ASP.NET Core/Kestrel 依赖，改为 loopback `HttpListener`、显式路由与手写 JSON 序列化，主示例 AOT 发布可继续启用截图、输入注入和 Inspector。
 - **PNG 编码与 BMP 解码**：`Square.Graphics.Codecs` 命名空间下，`BitmapPngEncoder` 将 `Bitmap` 编码为 8 位 RGBA PNG（zlib 压缩），`BmpPngConverter` 提供非压缩 24/32 位 BMP 加载与 BMP→PNG 转换，纯 C# 无外部依赖。
 - **SVG 资源与模板 SVG DOM**：`Square.Graphics.Svg.SvgImage` 可从文件、流或字符串加载静态 SVG；SQX/SQV 可直接声明 `svg/g/path/rect/circle/ellipse/line/polyline/polygon`。每个根 `SVGSVGElement` 持有 `SVGDocument : XMLDocument`，内部 SVG 节点由该文档管理并通过现有矢量绘制命令渲染，支持 NativeAOT。
-- **`Square.Images` 图片文档、控件加载与动画模块**：独立 packable 项目依赖核心 `Square.Graphics.Bitmap`，通过统一 `ImageDecoder.Decode(...) -> ImageDocument` 自动探测格式。已支持纯 C# PNG/APNG、基线 JPEG、BMP、GIF 多帧合成、ICO/CUR 全变体、Classic TIFF 多页面，以及 VP8L/VP8/ALPH 静态与动画 WebP；TIFF 支持未压缩/LZW/Deflate/Adobe Deflate/PackBits Strip 和 8 位 Predictor 2；WebP 支持 VP8X EXIF Orientation、ICCP/ALPH/EXIF/XMP flag/chunk 一致性、阶段顺序与累计元数据限制；VP8 关键帧支持分割、多 token partition、全部帧内预测、残差、量化与 loop filter；ALPH 支持 raw/VP8L 压缩、四种 filter 与 straight-alpha RGB 保留；动画支持 VP8L、VP8、ALPH+VP8 混合帧、局部矩形、alpha-over/no-blend、dispose-to-background 和单帧 loop metadata；GIF、APNG 和 WebP 覆盖帧时长、循环、透明、帧矩形、blend 与 disposal，ICO/CUR 暴露主变体、源位深与热点，JPEG/TIFF/WebP 支持 Exif/IFD Orientation。`<Image source="...">` 已通过核心加载器注册表异步加载本地文件、自动播放动画、处理取消/错误/可见性暂停；动画复用稳定 `Bitmap` 表面，Software Renderer 直接读取新像素，Vulkan 依据 `ContentVersion` 覆盖既有 atlas 区域。测试包含提交到仓库的 GIF/APNG、VP8L/VP8/ALPH 动画 WebP、静态 VP8 lossy 和透明 VP8+ALPH 文件、SHA-256 清单与 raw BGRA golden，并覆盖 Source 快速切换、取消、卸载与迟到结果释放。`Square.Images` 已通过本地 NuGet 包消费和 Windows x64 NativeAOT 原生发布/执行验证。后续增量包括嵌入资源与 HTTP 加载器、TIFF Tile 与更多颜色空间，以及完整 Exif/GPS/缩略图。
+- **`Square.Images` 图片文档、控件加载与动画模块**：独立 packable 项目依赖核心 `Square.Graphics.Bitmap`，通过统一 `ImageDecoder.Decode(...) -> ImageDocument` 自动探测格式。已支持纯 C# PNG/APNG、基线 JPEG、BMP、GIF 多帧合成、ICO/CUR 全变体、Classic TIFF 多页面，以及 VP8L/VP8/ALPH 静态与动画 WebP；TIFF 支持未压缩/LZW/Deflate/Adobe Deflate/PackBits Strip 和 8 位 Predictor 2；WebP 支持 VP8X EXIF Orientation、ICCP/ALPH/EXIF/XMP flag/chunk 一致性、阶段顺序与累计元数据限制；VP8 关键帧支持分割、多 token partition、全部帧内预测、残差、量化与 loop filter；ALPH 支持 raw/VP8L 压缩、四种 filter 与 straight-alpha RGB 保留；动画支持 VP8L、VP8、ALPH+VP8 混合帧、局部矩形、alpha-over/no-blend、dispose-to-background 和单帧 loop metadata；GIF、APNG 和 WebP 覆盖帧时长、循环、透明、帧矩形、blend 与 disposal，ICO/CUR 暴露主变体、源位深与热点，JPEG/TIFF/WebP 支持 Exif/IFD Orientation。`<Image source="...">` 已通过核心加载器注册表异步加载本地文件、显式程序集嵌入资源与 HTTP/HTTPS，支持有界读取、取消、错误和动画可见性暂停；动画复用稳定 `Bitmap` 表面，Software Renderer 直接读取新像素，Vulkan 依据 `ContentVersion` 覆盖既有 atlas 区域。测试包含提交到仓库的 GIF/APNG、VP8L/VP8/ALPH 动画 WebP、静态 VP8 lossy 和透明 VP8+ALPH 文件、SHA-256 清单与 raw BGRA golden，并覆盖 Source 快速切换、取消、卸载、迟到结果释放以及 HTTP/嵌入资源加载。`Square.Images` 已通过本地 NuGet 包消费和 Windows x64 NativeAOT 原生发布/执行验证。后续增量包括 TIFF Tile 与更多颜色空间，以及完整 Exif/GPS/缩略图。
 - **DOM `Range` 与 `TextFragment`**：`Square.UI.Range` 提供最小 DOM Range 文本选择模型（`SetStart` / `SetEnd` / `SelectNodeContents` / `Collapse` / 边界点比较）；`Square.Rendering.TextFragment` 提供字符级命中测试（`HitTestOffset`），为富文本编辑与选择奠定基础。
 - **Software Renderer 性能优化**：`RenderContext` 缓存位图像素指针与尺寸、裁剪区域缓存（避免栈查找）、批量 BGRA 填充；`LayoutEngine` 与 `StyleAccessor` 同步优化。
 - **`DesktopApplication.RenderingMode`**：新增 `RenderMode` 枚举（`FullFrame` / `Auto` / `DirtyRegion`），控制每帧重绘策略，可通过 `--render-mode` 参数或 `SQUARE_RENDER_MODE` 环境变量配置。
@@ -130,10 +130,10 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 - M3 扩展控件（ScrollViewer、List、Tree、Swiper、Popup、Dialog、MenuBar/Menu/ContextMenu 已落地；基础范围完成）
 - M4 Vulkan 描边收尾：`LineCap` / `LineJoin` / `MiterLimit`、任意 Path dash、复杂路径抗锯齿场景与真实 GPU readback 自动验证已落地
 - Vulkan NativeAOT：Windows x64 原生发布、启动、GPU readback 与截图回归验证已通过
-- M5 跨平台完善（macOS 宿主；X11 已支持 Xft/物理 DPI fallback 与 XRandR 刷新率驱动调度，后续继续完善多显示器动态 DPI）
+- M5 跨平台完善（macOS Software 宿主 MVP 已落地，待完成 AOT/原生运行验收；X11 已支持 Xft/物理 DPI fallback 与 XRandR 刷新率驱动调度，后续继续完善多显示器动态 DPI）
 - M9 多目标输出：WinUI host + Software bitmap、SVG exporter、NativeUiNode 原型、Godot 嵌入宿主（见 `docs/Rendering-Targets.md`）
-- M7 标准 RichTextBox/WYSIWYG：富文本 document model、per-range style、selection/run 映射；折叠选区已支持活动样式、相邻 run 样式继承及基础加粗/下划线/斜体操作，DOM `Range` 映射、BiDi 与复杂文本布局仍待完成
-- `.sqv` 前端继续推进：动态参数、对象绑定、`v-model` 与整包 scoped slot props 已落地；下一步是独立 Template IR、类型化 scoped slot 解构、自定义组件 `v-model` 与语义诊断（见 `docs/vue-plan.md` 里程碑 F–G）
+- M7 标准 RichTextBox/WYSIWYG：富文本 document model、per-range style、selection/run 映射；折叠选区已支持活动样式、相邻 run 样式继承及基础加粗/下划线/斜体操作，RichText 选区已映射到文档 DOM `Range`；BiDi 与复杂文本 shaping 仍待完成
+- `.sqv` 前端继续推进：动态参数、对象绑定、内置及默认 `Value`/`change` 约定的自定义组件 `v-model`、整包 scoped slot props 已落地；下一步是独立 Template IR、类型化 scoped slot 解构与完整语义诊断（见 `docs/vue-plan.md` 里程碑 F–G）
 - 继续扩展 CSS Grid / Animation 到更完整规范
 
 ---
@@ -142,5 +142,5 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 
 [~] Linux / X11 平台宿主：窗口、消息循环、鼠标/键盘/滚轮、剪贴板（CLIPBOARD + PRIMARY 中键粘贴）、XIM/XIC 文本输入、Software Renderer 通过 `XPutImage` 上屏、原生 Vulkan surface/swapchain/present、构建层 `PLATFORM_X11` 裁剪与交叉发布、Xft/物理 DPI fallback、可选 XRandR 刷新率调度 ✓ / 完整 IME preedit 与候选窗定位、多显示器动态 DPI 待完善
 [~] 跨平台字形栅格化：Windows 走 GDI `GetGlyphOutline` ✓ / Linux 与 macOS 走 StbTrueTypeSharp（纯 C#，无 native 依赖）✓ / 字体回退按脚本（CJK/日/韩）映射到 Noto/Source Han ✓ / Fontconfig 集成待实现
-[ ] macOS 平台宿主
+[~] macOS 平台宿主：AppKit 窗口、主线程事件泵、鼠标/键盘/滚轮、Software Renderer 上屏与 Retina scale 已落地 ✓ / 剪贴板、IME composition、窗口状态与缩放、NativeAOT 发布、真实 macOS 交互回归和多显示器动态 DPI 待完成
 [~] 高 DPI / 高刷新率打磨：X11 逻辑/物理坐标和 fractional DPI、刷新率 deadline 调度 ✓ / per-monitor DPI、呈现反馈与热插拔验收待完善
