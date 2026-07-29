@@ -57,7 +57,8 @@ public class TreeItem : UIElement, ITextSelectable
     /// <summary>子项集合。</summary>
     public IReadOnlyList<TreeItem> Items => Children.OfType<TreeItem>().ToArray();
     /// <summary>是否包含子项。</summary>
-    public bool HasItems => Items.Count > 0;
+    public bool HasItems => HasVirtualItems || Items.Count > 0;
+    internal bool HasVirtualItems { get; set; }
     /// <inheritdoc/>
     public string SelectableText => TextContent;
 

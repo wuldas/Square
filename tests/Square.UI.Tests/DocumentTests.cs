@@ -392,6 +392,19 @@ public class DocumentTests
         Assert.Same(doc, scroller.OwnerDocument);
     }
 
+    [Theory]
+    [InlineData("VirtualList", typeof(VirtualList))]
+    [InlineData("VirtualTree", typeof(VirtualTree))]
+    public void CreateElementRegistersVirtualizedControls(string tag, Type expectedType)
+    {
+        var doc = new UIDocument();
+
+        var element = doc.CreateElement(tag);
+
+        Assert.IsType(expectedType, element);
+        Assert.Same(doc, element.OwnerDocument);
+    }
+
     [Fact]
     public void CreateElementRegistersPopup()
     {

@@ -298,6 +298,26 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void SqvVirtualizedControlsLowerToBuiltInTypes()
+    {
+        const string source = """
+            <template>
+              <VirtualList item-height="24" overscan-count="2" />
+              <VirtualTree item-height="28" overscan-count="3" indent-size="16" />
+            </template>
+            """;
+
+        var result = RunGenerator(new InMemoryAdditionalText("Virtualized.sqv", source));
+        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+
+        Assert.Contains("new Square.Controls.VirtualList()", generated);
+        Assert.Contains("new Square.Controls.VirtualTree()", generated);
+        Assert.Contains("SetProperty(\"ItemHeight\", 24)", generated);
+        Assert.Contains("SetProperty(\"OverscanCount\", 2)", generated);
+        Assert.Contains("SetProperty(\"IndentSize\", 16)", generated);
+    }
+
+    [Fact]
     public void SqvPopupLowersToBuiltInControl()
     {
         const string source = """

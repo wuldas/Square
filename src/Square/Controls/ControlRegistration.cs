@@ -25,8 +25,10 @@ public static class ControlRegistration
         ElementRegistry.Register("MenuSeparator", static () => new MenuSeparator());
         ElementRegistry.Register("Text", static () => new Controls.Text());
         ElementRegistry.Register("List", static () => new Controls.List());
+        ElementRegistry.Register("VirtualList", static () => new VirtualList());
         ElementRegistry.Register("ListItem", static () => new ListItem());
         ElementRegistry.Register("Tree", static () => new Tree());
+        ElementRegistry.Register("VirtualTree", static () => new VirtualTree());
         ElementRegistry.Register("TreeItem", static () => new TreeItem());
         ElementRegistry.Register("Swiper", static () => new Swiper());
         ElementRegistry.Register("Link", static () => new Controls.Link());

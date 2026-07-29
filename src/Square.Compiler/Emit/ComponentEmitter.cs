@@ -758,8 +758,10 @@ namespace Square.Compiler.Emit
             "menuseparator" => "Square.Controls.MenuSeparator",
             "text" => "Square.Controls.Text",
             "list" => "Square.Controls.List",
+            "virtuallist" => "Square.Controls.VirtualList",
             "listitem" => "Square.Controls.ListItem",
             "tree" => "Square.Controls.Tree",
+            "virtualtree" => "Square.Controls.VirtualTree",
             "treeitem" => "Square.Controls.TreeItem",
             "swiper" => "Square.Controls.Swiper",
             "button" => "Square.Controls.Button",
@@ -785,7 +787,7 @@ namespace Square.Compiler.Emit
         };
 
         private static bool IsBuiltInTag(string tag) => tag.ToLowerInvariant() is "view" or "scrollviewer" or "popup" or "dialog" or
-            "menubar" or "menu" or "contextmenu" or "menuitem" or "menuseparator" or "text" or "list" or "listitem" or "tree" or "treeitem" or "swiper" or
+            "menubar" or "menu" or "contextmenu" or "menuitem" or "menuseparator" or "text" or "list" or "virtuallist" or "listitem" or "tree" or "virtualtree" or "treeitem" or "swiper" or
             "button" or "input" or "textarea" or "checkbox" or "radio" or "select" or "image" or "canvas" or "titlebar" or "link" or
             "svg" or "g" or "path" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon";
 
@@ -813,6 +815,9 @@ namespace Square.Compiler.Emit
             "options" => "Options",
             "items" => "Items",
             "selected-index" => "SelectedIndex",
+            "item-height" => "ItemHeight",
+            "overscan-count" => "OverscanCount",
+            "indent-size" => "IndentSize",
             "expanded" => "IsExpanded",
             "loop" => "Loop",
             "to" => "To",

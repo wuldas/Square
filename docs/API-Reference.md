@@ -2127,6 +2127,29 @@ public class List : ScrollViewer
 
 `List` 默认单选并复用 `ScrollViewer` 的纵向滚动。选择变化派发冒泡的 `selectionchange` 和 `change` 事件；多选模式支持 Control 切换与 Shift 范围选择。既可声明 `<ListItem>` 子项，也可通过 `Items` 或 `SetItemsSource(ObservableCollection<string>)` 生成文本项。
 
+### VirtualList
+
+```csharp
+public sealed class VirtualList : ScrollViewer
+{
+    public float ItemHeight { get; set; }       // 默认 28
+    public int OverscanCount { get; set; }      // 默认 3
+    public SelectionMode SelectionMode { get; set; }
+    public int ItemCount { get; }
+    public int RealizedItemCount { get; }
+    public int SelectedIndex { get; set; }
+    public IReadOnlyList<int> SelectedIndices { get; }
+    public object? SelectedValue { get; }
+
+    public void SetItemsSource<T>(
+        IReadOnlyList<T>? source,
+        Func<T, int, ListItem>? itemTemplate = null);
+    public void ScrollIntoView(int index);
+}
+```
+
+`VirtualList` 使用固定行高，只创建视口和 overscan 范围内的 `ListItem`。选择以逻辑索引保存，行控件滚出视口后不会丢失选择；`SelectedItem` / `SelectedItems` 只返回当前已实现的容器，完整数据选择应读取 `SelectedValue` / `SelectedValues`。实现使用上下 spacer 保持完整滚动范围，数据源实现 `INotifyCollectionChanged` 时会响应增删、移动、替换与重置。
+
 ### Tree / TreeItem
 
 ```csharp
@@ -2155,6 +2178,31 @@ public class TreeItem : UIElement
 ```
 
 `Tree` 使用嵌套 `<TreeItem>` 表达层级。上下键在可见节点间移动，右键展开或进入第一个子项，左键折叠或返回父项，Enter/Space 切换展开状态。选择变化派发 `selectionchange` 和 `change`，节点展开/折叠分别派发 `expand` 和 `collapse`。
+
+### VirtualTree
+
+```csharp
+public sealed class VirtualTree : ScrollViewer
+{
+    public float ItemHeight { get; set; }       // 默认 28
+    public int OverscanCount { get; set; }      // 默认 3
+    public float IndentSize { get; set; }       // 默认 18
+    public int VisibleItemCount { get; }
+    public int RealizedItemCount { get; }
+    public object? SelectedValue { get; }
+
+    public void SetItemsSource<T, TKey>(
+        IReadOnlyList<T>? roots,
+        Func<T, IReadOnlyList<T>?> childSelector,
+        Func<T, TKey> keySelector,
+        Func<T, int, TreeItem>? itemTemplate = null);
+    public bool ExpandIndex(int index);
+    public bool CollapseIndex(int index);
+    public void ScrollIntoView(int index);
+}
+```
+
+`VirtualTree` 将已展开的逻辑层级扁平化，只实现视口附近的 `TreeItem`，并按深度应用缩进。展开和选择状态按 key 保存，不依赖对应行是否已实现；键盘方向键保持普通 `Tree` 的父子导航语义。当前版本采用固定行高，根集合可通过 `INotifyCollectionChanged` 通知更新，子集合变化后可重新设置数据源刷新。
 
 ### Swiper
 
@@ -2394,7 +2442,7 @@ private void OnClick(Event e) { }
 | `Square.UI.Svg` | `SVGDocument`, `SVGElement`, `SVGSVGElement`, `SVGGElement`, `SVGPathElement`, `SVGRectElement`, `SVGCircleElement`, `SVGEllipseElement`, `SVGLineElement`, `SVGPolylineElement`, `SVGPolygonElement` |
 | `Square.UI.ElementApi` | `StyleAccessor`, `ClassListAccessor`, `ChildrenCollection` |
 | `Square.UI.Properties` | `PropertyStore` |
-| `Square.Controls` | `View`, `ScrollViewer`, `List`, `ListItem`, `Tree`, `TreeItem`, `Swiper`, `Popup`, `Dialog`, `MenuBar`, `Menu`, `ContextMenu`, `MenuItem`, `MenuSeparator`, `Text`, `Link`, `Button`, `Input`, `TextArea`, `CheckBox`, `Radio`, `Select`, `Image`, `Canvas` |
+| `Square.Controls` | `View`, `ScrollViewer`, `List`, `VirtualList`, `ListItem`, `Tree`, `VirtualTree`, `TreeItem`, `Swiper`, `Popup`, `Dialog`, `MenuBar`, `Menu`, `ContextMenu`, `MenuItem`, `MenuSeparator`, `Text`, `Link`, `Button`, `Input`, `TextArea`, `CheckBox`, `Radio`, `Select`, `Image`, `Canvas` |
 | `Square.Controls.Primitives` | `ShowNode`, `ForNode`, `SwitchNode` |
 | `Square.Graphics` | `IRenderContext`, `Color`, `Rect`, `Size`, `Point`, `Brush`, `Pen`, `Font`, `PathGeometry`, `TextLayout`, `Bitmap`, `RenderBackendRegistry` |
 | `Square.Graphics.Svg` | `SvgImage` |

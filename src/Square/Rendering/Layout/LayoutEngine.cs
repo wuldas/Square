@@ -201,6 +201,9 @@ public sealed class LayoutEngine
 
     private YogaNode CreateYogaSubtree(Element element, YogaSession session, float parentW, float parentH, bool isRoot)
     {
+        if (element is ILayoutPreparingElement preparing)
+            preparing.PrepareLayout(new Size(parentW, parentH));
+
         var node = YGNodeNewWithConfig(_yogaConfig);
         YGNodeSetContext(node, element);
         session.Map[element] = node;
