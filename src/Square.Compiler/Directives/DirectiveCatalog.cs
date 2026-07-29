@@ -23,6 +23,8 @@ internal sealed class DirectiveCatalog
 
     public static DirectiveCatalog BuiltIn { get; } = CreateBuiltIn();
 
+    public IEnumerable<DirectiveDescriptor> Descriptors => _byTag.Values.Distinct();
+
     public bool IsDirective(string tagName) =>
         !string.IsNullOrEmpty(tagName) && _byTag.ContainsKey(tagName);
 

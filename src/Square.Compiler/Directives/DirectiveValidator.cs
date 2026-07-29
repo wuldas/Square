@@ -10,14 +10,16 @@ namespace Square.Compiler.Directives;
 /// </summary>
 internal static class DirectiveValidator
 {
-    public static void Validate(
+    public static bool Validate(
         SourceProductionContext context,
         string filePath,
         string content,
         SqxDocument document,
         DirectiveCatalog catalog)
     {
-        ValidateNodes(context, filePath, content, document.Template.Roots, parentDirectiveId: null, catalog);
+        var canEmit = true;
+        ValidateNodes(context, filePath, content, document.Template.Roots, parentDirectiveId: null, catalog, ref canEmit);
+        return canEmit;
     }
 
     private static void ValidateNodes(
@@ -26,7 +28,8 @@ internal static class DirectiveValidator
         string content,
         IEnumerable<SqxNode> nodes,
         string parentDirectiveId,
-        DirectiveCatalog catalog)
+        DirectiveCatalog catalog,
+        ref bool canEmit)
     {
         foreach (var node in nodes)
         {
@@ -35,6 +38,18 @@ internal static class DirectiveValidator
             if (catalog.TryGet(element.TagName, out var descriptor))
             {
                 var id = descriptor.TagName;
+
+                if (descriptor.Pattern == "ControlFlowAttach" &&
+                    !descriptor.SkipStandaloneEmit &&
+                    !IsBuiltInControlFlow(id) &&
+                    (string.IsNullOrWhiteSpace(descriptor.RuntimeTypeName) ||
+                     string.IsNullOrWhiteSpace(descriptor.FieldPrefix) ||
+                     string.IsNullOrWhiteSpace(descriptor.PrimaryAttribute)))
+                {
+                    Report(context, filePath, content, element,
+                        SqxDiagnostics.SQXD007_UnsupportedControlFlowShape, id);
+                    canEmit = false;
+                }
 
                 // SQXD004: unknown pattern
                 if (!IsKnownPattern(descriptor.Pattern) &&
@@ -46,7 +61,7 @@ internal static class DirectiveValidator
 
                 // SQXD002: required primary attribute
                 if (!string.IsNullOrEmpty(descriptor.PrimaryAttribute) &&
-                    RequiresPrimaryAttribute(id))
+                    RequiresPrimaryAttribute(id, descriptor))
                 {
                     var attr = FindAttr(element, descriptor.PrimaryAttribute);
                     if (attr == null || string.IsNullOrWhiteSpace(attr.RawValue))
@@ -89,17 +104,21 @@ internal static class DirectiveValidator
                     }
                 }
 
-                ValidateNodes(context, filePath, content, element.Children, id, catalog);
+                ValidateNodes(context, filePath, content, element.Children, id, catalog, ref canEmit);
             }
             else
             {
-                ValidateNodes(context, filePath, content, element.Children, parentDirectiveId: null, catalog);
+                ValidateNodes(context, filePath, content, element.Children, parentDirectiveId: null, catalog, ref canEmit);
             }
         }
     }
 
-    private static bool RequiresPrimaryAttribute(string directiveId) =>
-        directiveId is "Show" or "For" or "Index"; // Match 的 when 可选（default 分支）
+    private static bool RequiresPrimaryAttribute(string directiveId, DirectiveDescriptor descriptor) =>
+        directiveId is "Show" or "For" or "Index" ||
+        descriptor.Pattern == "ControlFlowAttach" && !IsBuiltInControlFlow(directiveId);
+
+    private static bool IsBuiltInControlFlow(string directiveId) =>
+        directiveId is "Show" or "For" or "Index" or "Switch";
 
     private static bool IsKnownPattern(string pattern) =>
         pattern is "ControlFlowAttach" or "SlotOutlet";

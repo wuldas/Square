@@ -148,11 +148,13 @@ namespace Square.Compiler.Emit
             foreach (var item in _refs)
                 _sb.AppendLine("    internal " + item.TypeName + " " + item.Name + " = null!;");
 
-            // Field types by ControlFlowAttach prefix (catalog-driven)
-            EmitStructFields("_show", "ShowNode");
-            EmitStructFields("_for", "IForNode");
-            EmitStructFields("_index", "IForNode");
-            EmitStructFields("_switch", "SwitchNode");
+            foreach (var descriptor in _catalog.Descriptors
+                         .Where(descriptor => descriptor.Pattern == "ControlFlowAttach" &&
+                             !string.IsNullOrWhiteSpace(descriptor.FieldPrefix) &&
+                             !string.IsNullOrWhiteSpace(descriptor.RuntimeTypeName))
+                         .GroupBy(descriptor => descriptor.FieldPrefix, StringComparer.Ordinal)
+                         .Select(group => group.First()))
+                EmitStructFields(descriptor.FieldPrefix, GetDirectiveFieldType(descriptor));
             // Vue 专属结构节点
             EmitStructFields("_vfor", "IForNode");
             EmitStructFields("_vif", "ShowNode");
@@ -165,6 +167,9 @@ namespace Square.Compiler.Emit
             for (var i = 0; i < count; i++)
                 _sb.AppendLine("    private " + typeName + " " + prefix + i + " = null!;");
         }
+
+        private static string GetDirectiveFieldType(DirectiveDescriptor descriptor) =>
+            descriptor.TagName is "For" or "Index" ? "IForNode" : descriptor.RuntimeTypeName;
 
         private void EmitDisposeFields(string prefix)
         {

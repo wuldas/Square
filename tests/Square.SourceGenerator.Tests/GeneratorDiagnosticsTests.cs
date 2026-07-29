@@ -370,18 +370,40 @@ public class GeneratorDiagnosticsTests
         Assert.Contains(diagnostics, d => d.Id == "SQX0001");
     }
 
+    [Fact]
+    public void ReportsUnsupportedCustomControlFlowAttachShape()
+    {
+        const string source = """
+            using Square.Directives;
+            [SqxDirective("Broken", Pattern = "ControlFlowAttach", FieldPrefix = "_broken", PrimaryAttribute = "when")]
+            public sealed class BrokenDirective { }
+            """;
+
+        var diagnostics = RunGeneratorWithSource(
+            source,
+            new InMemoryAdditionalText("BrokenUsage.sqx", "<template><Broken when={true} /></template>"));
+
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "SQXD007");
+    }
+
     private static ImmutableArray<Diagnostic> RunGenerator(params AdditionalText[] files)
         => RunGeneratorWithSource("public sealed class Placeholder { }", files);
 
     private static ImmutableArray<Diagnostic> RunGeneratorWithSource(string source, params AdditionalText[] files)
     {
+        var trustedPlatformAssemblies = (string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES");
+        var references = (trustedPlatformAssemblies ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(path => MetadataReference.CreateFromFile(path))
+            .GroupBy(reference => reference.Display, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        if (references.All(reference => reference.Display != typeof(PropAttribute).Assembly.Location))
+            references.Add(MetadataReference.CreateFromFile(typeof(PropAttribute).Assembly.Location));
         var compilation = CSharpCompilation.Create(
             "GeneratorTests",
             [CSharpSyntaxTree.ParseText(source)],
-            [
-                MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-                MetadataReference.CreateFromFile(typeof(PropAttribute).Assembly.Location)
-            ],
+            references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             [new SqxGenerator().AsSourceGenerator()],

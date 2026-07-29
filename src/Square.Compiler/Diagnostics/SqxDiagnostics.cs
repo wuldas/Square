@@ -46,4 +46,9 @@ public static class SqxDiagnostics
 
     public static readonly DiagnosticDescriptor SQXD006_InvalidChild = new(
         "SQXD006", "结构指令子标签不匹配", "结构指令 <{0}> 只允许直接子标签 {1}，实际为 <{2}>", Category, DiagnosticSeverity.Error, true);
+
+    public static readonly DiagnosticDescriptor SQXD007_UnsupportedControlFlowShape = new(
+        "SQXD007", "不支持的结构指令形状",
+        "结构指令 <{0}> 的 ControlFlowAttach 形状不受支持；第三方条件指令必须同时声明 RuntimeTypeName、FieldPrefix 和 PrimaryAttribute",
+        Category, DiagnosticSeverity.Error, true);
 }

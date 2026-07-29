@@ -74,8 +74,9 @@ public sealed class SqxGenerator : IIncrementalGenerator
             var document = ParseDocument(input);
             ValidateRequiredProps(context, input, document, contracts);
             ValidateRefNames(context, input, document);
-            DirectiveValidator.Validate(context, input.Path, input.Content, document, catalog);
-            code = new ComponentEmitter(document, input.Namespace, catalog).Emit();
+            code = DirectiveValidator.Validate(context, input.Path, input.Content, document, catalog)
+                ? new ComponentEmitter(document, input.Namespace, catalog).Emit()
+                : "// Generator error: unsupported directive shape\n// Path: " + input.Path;
         }
         catch (SqxParseException exception)
         {

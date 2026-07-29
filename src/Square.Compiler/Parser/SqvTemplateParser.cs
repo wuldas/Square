@@ -577,7 +577,7 @@ internal static class SqvAttributeConverter
             string.Equals(tagName, "TextArea", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(tagName, "Select", StringComparison.OrdinalIgnoreCase))
             return new ModelProperty("value");
-        return null;
+        return IsBuiltInTag(tagName) ? null : new ModelProperty("Value");
     }
 
     private static string GetModelEvent(string tagName, bool lazy)
@@ -598,8 +598,17 @@ internal static class SqvAttributeConverter
             return "((Square.Controls.TextArea)e.Target!).Value";
         if (string.Equals(tagName, "Select", StringComparison.OrdinalIgnoreCase))
             return "((Square.Controls.Select)e.Target!).Value";
-        return "((Square.Controls.Input)e.Target!).Value";
+        if (string.Equals(tagName, "Input", StringComparison.OrdinalIgnoreCase))
+            return "((Square.Controls.Input)e.Target!).Value";
+        return "((" + tagName + ")e.Target!).Value";
     }
+
+    private static bool IsBuiltInTag(string tagName) => tagName.ToLowerInvariant() is
+        "view" or "scrollviewer" or "popup" or "dialog" or "menubar" or "menu" or
+        "contextmenu" or "menuitem" or "menuseparator" or "text" or "list" or "listitem" or
+        "tree" or "treeitem" or "swiper" or "button" or "input" or "textarea" or "checkbox" or
+        "radio" or "select" or "image" or "canvas" or "titlebar" or "link" or "svg" or "g" or
+        "path" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon";
 
     private static string ApplyModelModifiers(string valueExpression, HashSet<string> modifiers)
     {

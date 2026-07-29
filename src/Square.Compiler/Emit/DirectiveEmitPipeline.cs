@@ -172,7 +172,16 @@ internal sealed class DirectiveEmitPipeline
             }
             _sb.AppendLine(indent + parentName + ".RegisterGeneratedResource(" + field + ");");
             _sb.AppendLine(indent + field + ".AttachTo(" + parentName + ");");
+            return;
         }
+
+        var primaryValue = FindAttr(element, descriptor.PrimaryAttribute)?.RawValue;
+        _sb.AppendLine(indent + field + " = new " + descriptor.RuntimeTypeName + "(" + primaryValue + ", () =>");
+        _sb.AppendLine(indent + "{");
+        _emitFactoryBody(element.Children, indent + "    ", localNames);
+        _sb.AppendLine(indent + "});");
+        _sb.AppendLine(indent + parentName + ".RegisterGeneratedResource(" + field + ");");
+        _sb.AppendLine(indent + field + ".AttachTo(" + parentName + ");");
     }
 
     private void EmitSlotOutlet(
