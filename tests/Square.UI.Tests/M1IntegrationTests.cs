@@ -863,6 +863,18 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void HitTestPrefersLaterSiblingWhenZIndexMatches()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 200, 100) };
+        var earlier = new View { Geometry = new Rect(20, 20, 80, 40) };
+        var later = new Button { Geometry = new Rect(20, 20, 80, 40) };
+        root.Children.Add(earlier);
+        root.Children.Add(later);
+
+        Assert.Same(later, root.HitTest(new Point(30, 30)));
+    }
+
+    [Fact]
     public void OverflowVisibleAllowsHitTestingChildrenOutsideParentBoundsAndHiddenClipsThem()
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 100) };

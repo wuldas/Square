@@ -251,17 +251,17 @@ public sealed class AppWindow : IRenderBackendApplication
     public Task BeginMoveAsync() => InvokeAsync(static host => host.BeginMove());
 
     /// <summary>打开非模态子窗口显示指定内容。</summary>
-    public void Open(Element content, Size? size = null)
+    public void Open(Element content, Size? size = null, UIElement? customTitleBar = null)
     {
-        var child = CreateChildWindow(content, size, isModal: false);
+        var child = CreateChildWindow(content, customTitleBar, size, isModal: false);
         StartChildWindow(child, failure: null);
     }
 
     /// <summary>打开模态对话框并返回其结果。</summary>
-    public Task<object?> OpenDialog(Element content, Size? size = null)
+    public Task<object?> OpenDialog(Element content, Size? size = null, UIElement? customTitleBar = null)
     {
         ArgumentNullException.ThrowIfNull(content);
-        var child = CreateChildWindow(content, size, isModal: true);
+        var child = CreateChildWindow(content, customTitleBar, size, isModal: true);
         var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         child._dialogCompletion = value => completion.TrySetResult(value);
         StartChildWindow(child, exception => completion.TrySetException(exception));
@@ -269,9 +269,9 @@ public sealed class AppWindow : IRenderBackendApplication
     }
 
     /// <summary>打开模态对话框并返回强类型结果。</summary>
-    public async Task<T?> OpenDialog<T>(Element content, Size? size = null)
+    public async Task<T?> OpenDialog<T>(Element content, Size? size = null, UIElement? customTitleBar = null)
     {
-        var result = await OpenDialog(content, size).ConfigureAwait(false);
+        var result = await OpenDialog(content, size, customTitleBar).ConfigureAwait(false);
         if (result == null) return default;
         if (result is T typedResult) return typedResult;
         throw new InvalidOperationException(
@@ -366,11 +366,13 @@ public sealed class AppWindow : IRenderBackendApplication
             throw new InvalidOperationException("Global CSS must be loaded before the application starts.");
     }
 
-    private AppWindow CreateChildWindow(Element content, Size? size, bool isModal)
+    private AppWindow CreateChildWindow(Element content, UIElement? customTitleBar, Size? size, bool isModal)
     {
         ArgumentNullException.ThrowIfNull(content);
         if (content.ParentNode != null)
             throw new InvalidOperationException("Window content already has a parent.");
+        if (customTitleBar?.ParentNode != null)
+            throw new InvalidOperationException("The custom title bar already has a parent.");
 
         var ownerHost = GetHost() ?? throw new InvalidOperationException(
             "A child window can only be opened while the owner window is running.");
@@ -386,12 +388,12 @@ public sealed class AppWindow : IRenderBackendApplication
             RenderBackend = RenderBackend,
             Background = Background,
             RenderingMode = RenderingMode,
-            TitleStyle = TitleStyle,
             BorderStyle = BorderStyle,
             OwnerHandle = nativeOwner.Handle,
             IsModal = isModal
         };
         child.Load(content);
+        if (customTitleBar != null) child.LoadCustomTitleBar(customTitleBar);
         return child;
     }
 

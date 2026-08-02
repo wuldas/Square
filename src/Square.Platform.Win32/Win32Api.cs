@@ -50,6 +50,7 @@ internal static partial class Win32Api
     public const uint DIB_RGB_COLORS = 0;
     public const uint SRCCOPY = 0x00CC0020;
     public const uint PW_RENDERFULLCONTENT = 0x00000002;
+    public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const int UNICODE_NOCHAR = 0xFFFF;
@@ -69,6 +70,8 @@ internal static partial class Win32Api
     public const int SIZE_MAXIMIZED = 2;
     public const int SC_MOVE = 0xF010;
     public const int IDC_ARROW = 32512;
+    public const int IDC_SIZEWE = 32644;
+    public const int IDC_SIZENS = 32645;
     public const int IDC_IBEAM = 32513;
     public const int IDC_HAND = 32649;
     public const int SM_CXSIZEFRAME = 32;

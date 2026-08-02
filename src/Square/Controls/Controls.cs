@@ -98,6 +98,101 @@ public class Text : UIElement, ITextSelectable
     }
 }
 
+/// <summary>使用指定字体族绘制单色字形的通用图标控件。</summary>
+public class FontIcon : Text
+{
+    /// <summary>要绘制的字体字形。</summary>
+    public string Glyph
+    {
+        get => TextContent;
+        set => TextContent = value ?? "";
+    }
+
+    /// <summary>图标字体族。</summary>
+    public string FontFamily
+    {
+        get => GetProperty<string>(nameof(FontFamily)) ?? "";
+        set => SetProperty(nameof(FontFamily), value ?? "");
+    }
+
+    /// <summary>初始化空图标。</summary>
+    public FontIcon()
+    {
+        Style.Set("font-weight", "400");
+        Style.Set("font-style", "normal");
+        Style.Set("user-select", "none");
+    }
+
+    /// <summary>使用字体族和字形初始化图标。</summary>
+    public FontIcon(string fontFamily, string glyph) : this()
+    {
+        FontFamily = fontFamily;
+        Glyph = glyph;
+    }
+
+    /// <inheritdoc/>
+    protected override void OnPropertyChanged(string name)
+    {
+        base.OnPropertyChanged(name);
+        if (name != nameof(FontFamily)) return;
+
+        if (string.IsNullOrWhiteSpace(FontFamily))
+            Style.Remove("font-family");
+        else
+            Style.Set("font-family", $"'{FontFamily.Replace("'", "\\'")}'");
+    }
+}
+
+/// <summary>可拖动调整数值的布局分隔条。</summary>
+public class Splitter : UIElement
+{
+    private Point _dragStart;
+    private float _dragStartValue;
+
+    /// <summary>当前分隔值，通常表示相邻面板的逻辑像素尺寸。</summary>
+    public float Value { get => GetProperty<float>(nameof(Value)); set => SetProperty(nameof(Value), Clamp(value)); }
+    /// <summary>最小值。</summary>
+    public float Minimum { get => Properties.HasValue(nameof(Minimum)) ? GetProperty<float>(nameof(Minimum)) : 160f; set => SetProperty(nameof(Minimum), value); }
+    /// <summary>最大值。</summary>
+    public float Maximum { get => Properties.HasValue(nameof(Maximum)) ? GetProperty<float>(nameof(Maximum)) : 640f; set => SetProperty(nameof(Maximum), value); }
+    /// <summary>垂直分隔条调整宽度；水平分隔条调整高度。</summary>
+    public bool IsVertical { get => !Properties.HasValue(nameof(IsVertical)) || GetProperty<bool>(nameof(IsVertical)); set => SetProperty(nameof(IsVertical), value); }
+    /// <summary>反转拖动方向，用于位于面板左侧的分隔条。</summary>
+    public bool IsReversed { get => GetProperty<bool>(nameof(IsReversed)); set => SetProperty(nameof(IsReversed), value); }
+
+    /// <inheritdoc/>
+    public override string TagName => "Splitter";
+
+    /// <inheritdoc/>
+    public override Size Measure(Size availableSize) => IsVertical
+        ? new Size(float.IsNaN(Width) ? 6 : Width, availableSize.Height)
+        : new Size(availableSize.Width, float.IsNaN(Height) ? 6 : Height);
+
+    internal void HandlePointerDown(Point point)
+    {
+        _dragStart = point;
+        _dragStartValue = Value;
+        SetState(ElementState.Active, true);
+    }
+
+    internal void HandlePointerMove(Point point)
+    {
+        var delta = IsVertical ? point.X - _dragStart.X : point.Y - _dragStart.Y;
+        if (IsReversed) delta = -delta;
+        Value = _dragStartValue + delta;
+        DispatchTrusted(StandardEvents.CreateInput());
+    }
+
+    internal void HandlePointerUp(Point point)
+    {
+        HandlePointerMove(point);
+        SetState(ElementState.Active, false);
+        DispatchTrusted(StandardEvents.CreateChange());
+    }
+
+    private float Clamp(float value) => Math.Clamp(value, Math.Min(Minimum, Maximum), Math.Max(Minimum, Maximum));
+}
+
 /// <summary>List item, similar to HTML <c>li</c>. Optional marker and text; may also host children.</summary>
 public class ListItem : UIElement, ITextSelectable
 {
@@ -1485,10 +1580,16 @@ internal static class ControlDrawing
 
     internal static void DrawInputFrame(IRenderContext context, UIElement element)
     {
-        var background = element.IsEnabled ? Color.White : Color.FromRgb(240, 240, 240);
-        var border = element.IsFocused ? Color.FromRgb(0, 95, 184) : Color.FromRgb(165, 170, 176);
+        var background = element.IsEnabled
+            ? GetStyledColor(element, "background", Color.White)
+            : Color.FromRgb(240, 240, 240);
+        var border = GetStyledColor(
+            element,
+            "border-color",
+            element.IsFocused ? Color.FromRgb(0, 95, 184) : Color.FromRgb(165, 170, 176));
+        var borderWidth = GetStyledFloat(element, "border-width", element.IsFocused ? 2 : 1);
         DrawStyledBackground(context, element, background);
-        DrawStyledBorder(context, element, border, element.IsFocused ? 2 : 1);
+        DrawStyledBorder(context, element, border, borderWidth);
     }
 
     internal static void DrawStyledBackground(IRenderContext context, UIElement element, Color background)

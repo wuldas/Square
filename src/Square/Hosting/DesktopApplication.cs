@@ -36,6 +36,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private Rect _textSelectionOverlayDirtyBounds = Rect.Empty;
     private bool _isSelectingText;
     private Element? _pointerDownTarget;
+    private Splitter? _draggingSplitter;
     private Element? _lastClickTarget;
     private Point _lastClickPoint;
     private double _lastClickSeconds = double.NegativeInfinity;
@@ -617,7 +618,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             var isSelectingDocumentText = _textSelection is { IsSelecting: true };
             var needsRender = isSelectingDocumentText ? false : UpdateHoverPath(hit);
             _host.Cursor = ResolveCursor(hit, point);
-            if (_isSelectingText && _focusedEditor != null)
+            if (_draggingSplitter != null)
+            {
+                _draggingSplitter.HandlePointerMove(point);
+                needsRender = true;
+            }
+            else if (_isSelectingText && _focusedEditor != null)
             {
                 _focusedEditor.HandlePointerMove(MapPointerPoint(_focusedInput, point));
                 needsRender = true;
@@ -652,6 +658,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (action == MouseAction.Up)
         {
+            if (_draggingSplitter != null)
+            {
+                _draggingSplitter.HandlePointerUp(point);
+                _draggingSplitter = null;
+            }
+
             if (_isSelectingText && _focusedEditor != null)
             {
                 _focusedEditor.HandlePointerUp(MapPointerPoint(_focusedInput, point));
@@ -692,6 +704,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         UpdateHoverPath(hit);
         UpdateActivePath(hit);
         hit?.DispatchTrusted(StandardEvents.CreatePointerDown());
+        _draggingSplitter = FindAncestor<Splitter>(hit);
+        _draggingSplitter?.HandlePointerDown(point);
         UpdateFocus(hit, point, isDoubleClick);
 
         if (hit is Select selected) selected.HandlePointerDown(point);
@@ -781,6 +795,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return null;
     }
 
+    private static T? FindAncestor<T>(Element? hit) where T : Element
+    {
+        for (var current = hit; current != null; current = current.Parent)
+            if (current is T match) return match;
+        return null;
+    }
+
     private static CursorKind ResolveCursor(Element? hit, Point point)
     {
         for (var current = hit; current != null; current = current.Parent)
@@ -803,6 +824,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         for (var current = hit; current != null; current = current.Parent)
         {
             if (current is Link link) return link.IsEnabled ? CursorKind.Hand : CursorKind.Arrow;
+            if (current is Splitter splitter)
+                return splitter.IsVertical ? CursorKind.ResizeHorizontal : CursorKind.ResizeVertical;
             if (current is ITextEditor editor)
                 return editor.ResolveCursorAt(point) ?? CursorKind.Text;
         }

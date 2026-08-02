@@ -168,6 +168,8 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
                 Win32Api.SWP_NOZORDER | Win32Api.SWP_NOACTIVATE);
         }
 
+        CenterOnOwner();
+
         Win32Api.GetClientRect(_hwnd, out var rect);
         UpdateClientSize(rect);
 
@@ -200,6 +202,30 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
         Win32Api.ShowWindow(_hwnd, Win32Api.SW_SHOW);
         Win32Api.UpdateWindow(_hwnd);
     }
+
+    private void CenterOnOwner()
+    {
+        if (_hwnd == IntPtr.Zero || _ownerHandle == IntPtr.Zero) return;
+        if (!Win32Api.GetWindowRect(_ownerHandle, out var ownerRect) ||
+            !Win32Api.GetWindowRect(_hwnd, out var windowRect))
+            return;
+
+        var (x, y) = CalculateCenteredPosition(ownerRect, windowRect);
+        Win32Api.SetWindowPos(
+            _hwnd,
+            IntPtr.Zero,
+            x,
+            y,
+            0,
+            0,
+            Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER | Win32Api.SWP_NOACTIVATE);
+    }
+
+    internal static (int X, int Y) CalculateCenteredPosition(Win32Api.RECT owner, Win32Api.RECT window) =>
+        (
+            owner.Left + (owner.Width - window.Width) / 2,
+            owner.Top + (owner.Height - window.Height) / 2
+        );
 
     public void Close()
     {
@@ -835,6 +861,8 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
         {
             CursorKind.Text => Win32Api.IDC_IBEAM,
             CursorKind.Hand => Win32Api.IDC_HAND,
+            CursorKind.ResizeHorizontal => Win32Api.IDC_SIZEWE,
+            CursorKind.ResizeVertical => Win32Api.IDC_SIZENS,
             _ => Win32Api.IDC_ARROW
         };
         Win32Api.SetCursor(Win32Api.LoadCursor(IntPtr.Zero, new IntPtr(cursorId)));

@@ -124,6 +124,7 @@ public sealed class StyleAccessor
         if (_styles.TryGetValue(property, out current) && current.Value == value && current.Specificity == specificity)
             return false;
         _styles[property] = new StyleEntry(value, specificity);
+        if (property == "z-index") SyncOwnerZIndex();
         _owner.Invalidate(StyleInvalidation.ForProperty(property));
         return true;
     }
@@ -143,7 +144,10 @@ public sealed class StyleAccessor
         property = NormalizePropertyName(property);
         if (_styles == null) return;
         if (_styles.Remove(property))
+        {
+            if (property == "z-index") SyncOwnerZIndex();
             _owner.Invalidate(StyleInvalidation.ForProperty(property));
+        }
     }
 
     /// <summary>清空全部样式条目。</summary>
@@ -155,6 +159,7 @@ public sealed class StyleAccessor
         foreach (var property in _styles.Keys)
             invalidation |= StyleInvalidation.ForProperty(property);
         _styles.Clear();
+        _owner.ZIndex = 0;
         _owner.Invalidate(invalidation);
     }
 
@@ -171,7 +176,18 @@ public sealed class StyleAccessor
             invalidation |= StyleInvalidation.ForProperty(property);
         }
         if (changed)
+        {
+            SyncOwnerZIndex();
             _owner.Invalidate(invalidation);
+        }
+    }
+
+    private void SyncOwnerZIndex()
+    {
+        var value = Get("z-index");
+        _owner.ZIndex = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var zIndex)
+            ? zIndex
+            : 0;
     }
 
     /// <summary>返回当前全部样式的只读快照。</summary>

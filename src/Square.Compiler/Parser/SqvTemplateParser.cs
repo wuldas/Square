@@ -640,7 +640,7 @@ internal static class SqvAttributeConverter
 
     private static bool IsBuiltInTag(string tagName) => tagName.ToLowerInvariant() is
         "view" or "scrollviewer" or "popup" or "dialog" or "menubar" or "menu" or
-        "contextmenu" or "menuitem" or "menuseparator" or "text" or "list" or "virtuallist" or "listitem" or
+        "contextmenu" or "menuitem" or "menuseparator" or "text" or "fonticon" or "splitter" or "list" or "virtuallist" or "listitem" or
         "tree" or "virtualtree" or "treeitem" or "swiper" or "button" or "input" or "textarea" or "checkbox" or
         "radio" or "select" or "image" or "canvas" or "titlebar" or "link" or "svg" or "g" or
         "path" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon";

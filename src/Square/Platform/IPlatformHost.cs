@@ -126,7 +126,11 @@ public enum CursorKind
     /// <summary>文本。</summary>
     Text,
     /// <summary>手型。</summary>
-    Hand
+    Hand,
+    /// <summary>水平调整尺寸。</summary>
+    ResizeHorizontal,
+    /// <summary>垂直调整尺寸。</summary>
+    ResizeVertical
 }
 
 /// <summary>窗口状态。</summary>

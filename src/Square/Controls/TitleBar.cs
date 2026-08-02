@@ -48,8 +48,12 @@ public class TitleBar : View
         var iconHost = CreateHost("title-bar-icon");
         var titleHost = CreateHost("title-bar-title");
         var controlHost = CreateHost("title-bar-control");
+        iconHost.Style.Set("flex-shrink", "0");
         titleHost.Style.Set("flex-grow", "1");
+        titleHost.Style.Set("flex-shrink", "1");
+        titleHost.Style.Set("min-width", "0");
         controlHost.Style.Set("flex-direction", "row");
+        controlHost.Style.Set("flex-shrink", "0");
 
         Children.Add(iconHost);
         Children.Add(titleHost);

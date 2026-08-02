@@ -81,7 +81,8 @@ public sealed partial class SystemGlyphRasterizer
 
     private static string ResolveFontFamily(string requestedFamily, char character)
     {
-        if (!string.Equals(requestedFamily, "Segoe UI", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(requestedFamily, "Segoe UI", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(requestedFamily, "Segoe UI Variable", StringComparison.OrdinalIgnoreCase))
             return requestedFamily;
 
         if (character is >= '\u3040' and <= '\u30ff' or >= '\uff66' and <= '\uff9f')

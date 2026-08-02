@@ -24,6 +24,8 @@ public static class ControlRegistration
         ElementRegistry.Register("MenuItem", static () => new MenuItem());
         ElementRegistry.Register("MenuSeparator", static () => new MenuSeparator());
         ElementRegistry.Register("Text", static () => new Controls.Text());
+        ElementRegistry.Register("FontIcon", static () => new FontIcon());
+        ElementRegistry.Register("Splitter", static () => new Splitter());
         ElementRegistry.Register("List", static () => new Controls.List());
         ElementRegistry.Register("VirtualList", static () => new VirtualList());
         ElementRegistry.Register("ListItem", static () => new ListItem());

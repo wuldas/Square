@@ -67,6 +67,59 @@ public class DocumentTests
     }
 
     [Fact]
+    public void FontIconUsesRequestedFamilyAndGlyph()
+    {
+        var icon = new FontIcon("Product Icons", "\uE000");
+
+        Assert.Equal("\uE000", icon.Glyph);
+        Assert.Equal("\uE000", icon.TextContent);
+        Assert.Equal("Product Icons", icon.FontFamily);
+        Assert.Equal("'Product Icons'", icon.Style.Get("font-family"));
+        Assert.Equal("400", icon.Style.Get("font-weight"));
+        Assert.Equal("normal", icon.Style.Get("font-style"));
+        Assert.Equal("none", icon.Style.Get("user-select"));
+
+        icon.Glyph = "\uE001";
+
+        Assert.Equal("\uE001", icon.TextContent);
+    }
+
+    [Fact]
+    public void SplitterTracksDragAndRaisesInputAndChange()
+    {
+        var splitter = new Splitter { Value = 300, Minimum = 240, Maximum = 420 };
+        var inputCount = 0;
+        var changeCount = 0;
+        splitter.AddEventListener("input", () => inputCount++);
+        splitter.AddEventListener("change", () => changeCount++);
+
+        splitter.HandlePointerDown(new Square.Graphics.Point(100, 0));
+        splitter.HandlePointerMove(new Square.Graphics.Point(170, 0));
+        splitter.HandlePointerUp(new Square.Graphics.Point(200, 0));
+
+        Assert.Equal(400, splitter.Value);
+        Assert.Equal(2, inputCount);
+        Assert.Equal(1, changeCount);
+    }
+
+    [Fact]
+    public void ReversedSplitterClampsValue()
+    {
+        var splitter = new Splitter
+        {
+            Value = 320,
+            Minimum = 260,
+            Maximum = 400,
+            IsReversed = true
+        };
+
+        splitter.HandlePointerDown(new Square.Graphics.Point(100, 0));
+        splitter.HandlePointerMove(new Square.Graphics.Point(200, 0));
+
+        Assert.Equal(260, splitter.Value);
+    }
+
+    [Fact]
     public void BodyHostsApplicationContent()
     {
         var doc = new UIDocument();
@@ -349,7 +402,10 @@ public class DocumentTests
         var window = new AppWindow("Owner");
 
         Assert.Throws<InvalidOperationException>(() => window.Open(new View()));
+        Assert.Throws<InvalidOperationException>(() => window.Open(new View(), customTitleBar: new TitleBar()));
         await Assert.ThrowsAsync<InvalidOperationException>(() => window.OpenDialog(new View()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            window.OpenDialog(new View(), customTitleBar: new TitleBar()));
     }
 
     [Fact]

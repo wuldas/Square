@@ -453,8 +453,13 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
             ? new Point(point.X + _scrollOffset.X, point.Y + _scrollOffset.Y)
             : point;
 
-        foreach (var child in Children.OrderByDescending(child => child.ZIndex))
+        foreach (var child in Children
+                     .Select((element, index) => (element, index))
+                     .OrderByDescending(item => item.element.ZIndex)
+                     .ThenByDescending(item => item.index)
+                     .Select(item => item.element))
         {
+            if (child is IPopupElement { IsPopupOpen: false }) continue;
             var hit = child.HitTest(childPoint);
             if (hit != null) return hit;
         }

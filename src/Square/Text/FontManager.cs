@@ -20,6 +20,8 @@ public sealed class FontManager
     private readonly Dictionary<string, string> _familyCache = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Segoe UI"] = "Segoe UI",
+        ["Segoe UI Variable"] = "Segoe UI Variable",
+        ["Segoe UI Symbol"] = "Segoe UI Symbol",
         ["Arial"] = "Arial",
         ["Helvetica"] = "Arial",
         ["Times New Roman"] = "Times New Roman",
@@ -27,6 +29,8 @@ public sealed class FontManager
         ["Courier New"] = "Consolas",
         ["Courier"] = "Consolas",
         ["Consolas"] = "Consolas",
+        ["Cascadia Code"] = "Cascadia Code",
+        ["Cascadia Mono"] = "Cascadia Mono",
         ["sans-serif"] = "Segoe UI",
         ["serif"] = "Times New Roman",
         ["monospace"] = "Consolas",

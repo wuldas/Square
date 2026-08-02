@@ -380,9 +380,13 @@ internal sealed class FontCollection
             return
             [
                 "Segoe UI",
+                "Segoe UI Variable",
+                "Segoe UI Symbol",
                 "Microsoft YaHei UI",
                 "Yu Gothic UI",
                 "Malgun Gothic",
+                "Cascadia Mono",
+                "Cascadia Code",
                 "Consolas",
                 "Times New Roman",
                 "Arial",

@@ -776,6 +776,8 @@ namespace Square.Compiler.Emit
             "menuitem" => "Square.Controls.MenuItem",
             "menuseparator" => "Square.Controls.MenuSeparator",
             "text" => "Square.Controls.Text",
+            "fonticon" => "Square.Controls.FontIcon",
+            "splitter" => "Square.Controls.Splitter",
             "list" => "Square.Controls.List",
             "virtuallist" => "Square.Controls.VirtualList",
             "listitem" => "Square.Controls.ListItem",
@@ -806,7 +808,7 @@ namespace Square.Compiler.Emit
         };
 
         private static bool IsBuiltInTag(string tag) => tag.ToLowerInvariant() is "view" or "scrollviewer" or "popup" or "dialog" or
-            "menubar" or "menu" or "contextmenu" or "menuitem" or "menuseparator" or "text" or "list" or "virtuallist" or "listitem" or "tree" or "virtualtree" or "treeitem" or "swiper" or
+            "menubar" or "menu" or "contextmenu" or "menuitem" or "menuseparator" or "text" or "fonticon" or "splitter" or "list" or "virtuallist" or "listitem" or "tree" or "virtualtree" or "treeitem" or "swiper" or
             "button" or "input" or "textarea" or "checkbox" or "radio" or "select" or "image" or "canvas" or "titlebar" or "link" or
             "svg" or "g" or "path" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon";
 
@@ -821,6 +823,13 @@ namespace Square.Compiler.Emit
         private static string MapPropName(string name) => name.ToLowerInvariant() switch
         {
             "text" => "TextContent",
+            "glyph" => "Glyph",
+            "icon" => "Icon",
+            "font-family" => "FontFamily",
+            "minimum" => "Minimum",
+            "maximum" => "Maximum",
+            "vertical" => "IsVertical",
+            "reversed" => "IsReversed",
             "value" => "Value",
             "checked" => "IsChecked",
             "disabled" => "IsDisabled",

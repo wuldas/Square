@@ -22,6 +22,20 @@ public class StyleAndFontTests
     }
 
     [Fact]
+    public void CssZIndexUpdatesElementStackingOrder()
+    {
+        var view = new View();
+
+        view.Style.Set("z-index", "30");
+
+        Assert.Equal(30, view.ZIndex);
+
+        view.Style.Remove("z-index");
+
+        Assert.Equal(0, view.ZIndex);
+    }
+
+    [Fact]
     public void StyleClassAndContentChangesInvalidateLayoutToRoot()
     {
         var root = new View();

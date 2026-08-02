@@ -691,6 +691,45 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void FontIconLowersToBuiltInControlAndMapsIconProperties()
+    {
+        const string source = """
+            <template>
+              <FontIcon font-family="Product Icons" glyph="\uE000" />
+              <PiIcon icon="Search" />
+            </template>
+            """;
+
+        var result = RunGenerator(new InMemoryAdditionalText("Icon.sqx", source));
+        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+
+        Assert.Contains("new Square.Controls.FontIcon()", generated);
+        Assert.Contains("new PiIcon()", generated);
+        Assert.Contains(".SetProperty(\"FontFamily\", \"Product Icons\")", generated);
+        Assert.Contains(".SetProperty(\"Glyph\", \"\\\\uE000\")", generated);
+        Assert.Contains(".SetProperty(\"Icon\", \"Search\")", generated);
+    }
+
+    [Fact]
+    public void SplitterLowersToBuiltInControlAndMapsSizingProperties()
+    {
+        const string source = """
+            <template>
+              <Splitter minimum="240" maximum="440" vertical="true" reversed="true" />
+            </template>
+            """;
+
+        var result = RunGenerator(new InMemoryAdditionalText("Splitter.sqx", source));
+        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+
+        Assert.Contains("new Square.Controls.Splitter()", generated);
+        Assert.Contains(".SetProperty(\"Minimum\", 240)", generated);
+        Assert.Contains(".SetProperty(\"Maximum\", 440)", generated);
+        Assert.Contains(".SetProperty(\"IsVertical\", true)", generated);
+        Assert.Contains(".SetProperty(\"IsReversed\", true)", generated);
+    }
+
+    [Fact]
     public void SqvVForLowersToForNodeWithItemName()
     {
         const string source = """
