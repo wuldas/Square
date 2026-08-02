@@ -180,23 +180,53 @@ public class PseudoClassTests
     [Fact]
     public void HoverWithoutDynamicRulesKeepsLayoutClean()
     {
-        var sheet = new CssParser(new CssTokenizer("Button { width: 120px; color: red; }").Tokenize()).Parse();
+        var sheet = new CssParser(new CssTokenizer("View { width: 120px; color: red; }").Tokenize()).Parse();
         var engine = new CssEngine();
         engine.LoadStyleSheet(sheet);
         var root = new Square.Controls.View();
-        var button = new Square.Controls.Button();
-        root.Children.Add(button);
+        var view = new Square.Controls.View();
+        root.Children.Add(view);
         engine.ApplyStylesToTree(root);
         root.ClearLayoutDirty();
-        button.ClearLayoutDirty();
+        view.ClearLayoutDirty();
+        root.ClearPaintDirty();
+        view.ClearPaintDirty();
 
-        button.SetState(ElementState.Hover, true);
+        view.SetState(ElementState.Hover, true);
         CssStyleReconciler.Flush();
 
-        Assert.Equal("120px", button.Style.Get("width"));
-        Assert.Equal("red", button.Style.Get("color"));
-        Assert.False(button.IsLayoutDirty);
+        Assert.Equal("120px", view.Style.Get("width"));
+        Assert.Equal("red", view.Style.Get("color"));
+        Assert.False(view.IsLayoutDirty);
         Assert.False(root.IsLayoutDirty);
+        Assert.False(view.NeedsPaint);
+        Assert.False(root.NeedsPaint);
+    }
+
+    [Fact]
+    public void ButtonHoverStillInvalidatesNativeHoverVisual()
+    {
+        var button = new Square.Controls.Button();
+        button.ClearPaintDirty();
+
+        button.SetState(ElementState.Hover, true);
+
+        Assert.True(button.NeedsPaint);
+    }
+
+    [Fact]
+    public void CustomElementHoverKeepsAutomaticPaintInvalidation()
+    {
+        var element = new CustomHoverElement();
+        element.ClearPaintDirty();
+
+        element.SetState(ElementState.Hover, true);
+
+        Assert.True(element.NeedsPaint);
+    }
+
+    private sealed class CustomHoverElement : UIElement
+    {
     }
 
     [Fact]

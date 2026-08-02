@@ -594,7 +594,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private void HandleWheel(Point point, int delta)
     {
         var hit = HitTest(point);
-        if (UpdateHoverPath(hit)) RequestRender();
+        UpdateHoverPath(hit);
         hit?.DispatchTrusted(StandardEvents.CreateWheel(0, -delta));
         RenderFrame();
     }
@@ -616,7 +616,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (action == MouseAction.Move)
         {
             var isSelectingDocumentText = _textSelection is { IsSelecting: true };
-            var needsRender = isSelectingDocumentText ? false : UpdateHoverPath(hit);
+            if (!isSelectingDocumentText) UpdateHoverPath(hit);
+            var needsRender = false;
             _host.Cursor = ResolveCursor(hit, point);
             if (_draggingSplitter != null)
             {
@@ -636,7 +637,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                     var dragDeltaY = point.Y - _textSelection.PointerDownPoint.Y;
                     if (dragDeltaX * dragDeltaX + dragDeltaY * dragDeltaY <= 25)
                     {
-                        if (needsRender) RequestRender();
                         return;
                     }
 
@@ -1556,6 +1556,20 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                           || CssStyleReconciler.HasWork
                           || Dispatcher.HasWork;
         if (_focusedEditor?.ToggleCaretBlink() == true) needsRender = true;
-        if (needsRender) RenderFrame();
+        if (needsRender && HasVisualWork()) RenderFrame();
+    }
+
+    private bool HasVisualWork()
+    {
+        RunUpdatePass();
+        return _renderRequested || HasVisualInvalidation(_root);
+    }
+
+    private static bool HasVisualInvalidation(Element element)
+    {
+        if (element.IsLayoutDirty || element.NeedsPaint) return true;
+        foreach (var child in element.Children)
+            if (HasVisualInvalidation(child)) return true;
+        return false;
     }
 }

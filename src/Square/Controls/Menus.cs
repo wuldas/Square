@@ -428,6 +428,10 @@ public class MenuItem : UIElement, ITextSelectable
         }
     }
 
+    /// <inheritdoc/>
+    protected override bool RequiresStatePaintInvalidation(ElementState flag) =>
+        flag == ElementState.Hover || base.RequiresStatePaintInvalidation(flag);
+
     internal void SetCheckedFromGroup(bool value)
     {
         if (IsChecked == value) return;

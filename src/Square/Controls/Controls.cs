@@ -429,6 +429,10 @@ public class Button : UIElement, ITextSelectable
     }
 
     /// <inheritdoc/>
+    protected override bool RequiresStatePaintInvalidation(ElementState flag) =>
+        flag == ElementState.Hover || base.RequiresStatePaintInvalidation(flag);
+
+    /// <inheritdoc/>
     protected override void OnPropertyChanged(string name)
     {
         base.OnPropertyChanged(name);

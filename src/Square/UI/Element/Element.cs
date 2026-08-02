@@ -189,11 +189,21 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         else State &= ~flag;
         if (State == previous) return;
         OnStateChanged(flag, on);
-        Invalidate(ElementInvalidation.Style);
+        if (flag == ElementState.Hover)
+        {
+            InvalidateStyle();
+            if (RequiresStatePaintInvalidation(flag)) InvalidatePaint();
+        }
+        else
+            Invalidate(ElementInvalidation.Style);
     }
 
     /// <summary>交互/伪类状态变化扩展点。</summary>
     protected virtual void OnStateChanged(ElementState flag, bool on) { }
+
+    /// <summary>状态切换是否直接影响元素自绘；外部自定义元素默认保持原有自动重绘行为。</summary>
+    protected virtual bool RequiresStatePaintInvalidation(ElementState flag) =>
+        flag != ElementState.Hover || GetType().Assembly != typeof(Element).Assembly;
 
     /// <summary>可见性变化扩展点。</summary>
     protected virtual void OnIsVisibleChanged(bool isVisible) { }
@@ -710,6 +720,12 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         }
         if ((invalidation & (ElementInvalidation.Paint | ElementInvalidation.Style | ElementInvalidation.DisplayTree)) != 0)
             InvalidatePaint();
+    }
+
+    private void InvalidateStyle()
+    {
+        if (_invalidationSuppressionDepth > 0) return;
+        StyleInvalidated?.Invoke(this);
     }
 
     internal static IDisposable SuppressInvalidation()
