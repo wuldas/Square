@@ -92,9 +92,7 @@ public sealed class CssEngine
     /// <param name="Element">根元素。</param>
     public void ApplyStylesToTree(Element Element)
     {
-        CssStyleReconciler.RegisterScope(this, Element);
-        ApplyStylesToTreeCore(Element);
-        CssStyleReconciler.RefreshAnimations(this, Element);
+        CssStyleReconciler.ApplyScope(this, Element);
     }
 
     internal void ApplyStylesToTreeCore(Element Element)

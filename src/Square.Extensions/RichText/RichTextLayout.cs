@@ -84,9 +84,45 @@ public sealed class RichTextBlockLayout
             if (end <= start) continue;
             var startX = MeasureOffsetOnLine(line, start);
             var endX = MeasureOffsetOnLine(line, end);
-            rects.Add(new Rect(startX, line.Bounds.Y, Math.Max(1, endX - startX), line.Bounds.Height));
+            var left = startX;
+            var right = endX;
+            if (TryGetGlyphAt(line, start, out var firstGlyph))
+                left += Math.Min(0, firstGlyph.InkBounds.Left);
+            if (TryGetGlyphBefore(line, end, out var lastGlyph))
+                right += Math.Max(0, lastGlyph.InkBounds.Right - lastGlyph.AdvanceX);
+            rects.Add(new Rect(left, line.Bounds.Y, Math.Max(1, right - left), line.Bounds.Height));
         }
         return rects;
+    }
+
+    private static bool TryGetGlyphAt(RichTextLayoutLine line, int offset, out GlyphMetrics glyph)
+    {
+        foreach (var fragment in line.Fragments)
+        {
+            if (offset < fragment.StartOffset || offset >= fragment.EndOffset) continue;
+            var localOffset = offset - fragment.StartOffset;
+            var status = Rune.DecodeFromUtf16(fragment.Run.Text.AsSpan(localOffset), out var rune, out _);
+            if (status != System.Buffers.OperationStatus.Done) break;
+            glyph = TextMetrics.GetGlyphMetrics(fragment.Font, rune);
+            return true;
+        }
+        glyph = default;
+        return false;
+    }
+
+    private static bool TryGetGlyphBefore(RichTextLayoutLine line, int offset, out GlyphMetrics glyph)
+    {
+        foreach (var fragment in line.Fragments)
+        {
+            if (offset <= fragment.StartOffset || offset > fragment.EndOffset) continue;
+            var localEnd = offset - fragment.StartOffset;
+            var status = Rune.DecodeLastFromUtf16(fragment.Run.Text.AsSpan(0, localEnd), out var rune, out _);
+            if (status != System.Buffers.OperationStatus.Done) break;
+            glyph = TextMetrics.GetGlyphMetrics(fragment.Font, rune);
+            return true;
+        }
+        glyph = default;
+        return false;
     }
 
     private static float MeasureOffsetOnLine(RichTextLayoutLine line, int offset)

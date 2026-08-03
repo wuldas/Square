@@ -472,9 +472,8 @@ public class SoftwareRendererTests
 
         var fragment = Assert.Single(tree.CollectTextFragments(root));
         Assert.Equal(2, fragment.Characters.Count);
-        var layout = new TextLayout("Ma", new Font("Segoe UI", 20));
-        var firstAdvance = layout.MeasureOffset(1);
-        var secondAdvance = layout.MeasureOffset(2) - firstAdvance;
+        var firstAdvance = TextMetrics.GetGlyphMetrics(fragment.Font, new System.Text.Rune('M')).AdvanceX;
+        var secondAdvance = TextMetrics.GetGlyphMetrics(fragment.Font, new System.Text.Rune('a')).AdvanceX;
         Assert.Equal(firstAdvance, fragment.Characters[0].Bounds.Width);
         Assert.Equal(secondAdvance, fragment.Characters[1].Bounds.Width);
     }

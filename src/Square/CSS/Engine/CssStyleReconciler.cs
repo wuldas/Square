@@ -36,6 +36,16 @@ public static class CssStyleReconciler
         }
     }
 
+    internal static void ApplyScope(CssEngine engine, Element root)
+    {
+        lock (ApplyGate)
+        {
+            RegisterScope(engine, root);
+            engine.ApplyStylesToTreeCore(root);
+            RefreshAnimations(engine, root);
+        }
+    }
+
     /// <summary>刷新所有脏元素的样式，重新应用级联样式并推进动画。</summary>
     public static void Flush()
     {

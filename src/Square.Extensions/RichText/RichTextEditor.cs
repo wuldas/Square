@@ -365,7 +365,12 @@ public sealed class RichTextEditor : UIElement, ITextEditor, ITextSelectable
         if (direction < 0 && lineIndex > 0)
         {
             var target = blockLayout.Lines[lineIndex - 1];
-            next = new RichTextPosition(position.BlockIndex, blockLayout.HitTestOffset(new Point(caret.X, target.Bounds.Y + target.Bounds.Height / 2f)));
+            var targetOffset = blockLayout.HitTestOffset(new Point(caret.X, target.Bounds.Y + target.Bounds.Height / 2f));
+            if (targetOffset == target.EndOffset && lineIndex - 1 < blockLayout.Lines.Count - 1)
+                targetOffset = RichTextBoundaries.PreviousTextElement(
+                    Document.Blocks[position.BlockIndex].PlainText,
+                    targetOffset);
+            next = new RichTextPosition(position.BlockIndex, targetOffset);
         }
         else if (direction > 0 && lineIndex < blockLayout.Lines.Count - 1)
         {

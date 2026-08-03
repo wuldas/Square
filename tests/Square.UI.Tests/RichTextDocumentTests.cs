@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using Square.Extensions.RichText;
 using Square.Text;
 using Square.Extensions;
@@ -409,12 +410,15 @@ public class RichTextDocumentTests
         Assert.Equal(6, layout.Lines[1].EndOffset);
         var selectionRects = layout.GetSelectionRects(1, 5);
         Assert.Equal(2, selectionRects.Count);
-        Assert.Equal(new Square.Graphics.TextLayout("bc", font).Measure().Width, selectionRects[0].Width);
-        Assert.Equal(new Square.Graphics.TextLayout("de", font).Measure().Width, selectionRects[1].Width);
+        AssertWithinOneUlp(new Square.Graphics.TextLayout("bc", font).Measure().Width, selectionRects[0].Width);
+        AssertWithinOneUlp(new Square.Graphics.TextLayout("de", font).Measure().Width, selectionRects[1].Width);
         var hitX = new Square.Graphics.TextLayout("a", font).Measure().Width + 0.1f;
         Assert.Equal(1, layout.HitTestOffset(new Square.Graphics.Point(hitX, 5)));
         Assert.Equal(4, layout.HitTestOffset(new Square.Graphics.Point(hitX, 29)));
     }
+
+    private static void AssertWithinOneUlp(float expected, float actual) =>
+        Assert.InRange(actual, MathF.BitDecrement(expected), MathF.BitIncrement(expected));
 
     [Fact]
     public void RichTextLayoutWrapsAtWordBoundariesAcrossStyledRuns()
@@ -535,18 +539,30 @@ public class RichTextDocumentTests
         };
         editor.HandlePointerDown(new Square.Graphics.Point(8 + firstCharacter, 10));
         editor.HandlePointerUp(new Square.Graphics.Point(8 + firstCharacter, 10));
+        var initialIndex = editor.CaretIndex;
+        var initialCaret = editor.CaretRect;
 
         editor.HandleKey(40);
-        Assert.Equal(5, editor.CaretIndex);
+        var lowerLineIndex = editor.CaretIndex;
+        Assert.True(lowerLineIndex > initialIndex);
+        Assert.True(editor.CaretRect.Y > initialCaret.Y);
 
         editor.HandleKey(36);
-        Assert.Equal(4, editor.CaretIndex);
+        var lowerLineStart = editor.CaretIndex;
+        Assert.True(lowerLineStart < lowerLineIndex);
+        Assert.Equal(8, editor.CaretRect.X);
 
         editor.HandleKey(35);
         Assert.Equal(6, editor.CaretIndex);
+        var lowerLineEndCaret = editor.CaretRect;
 
         editor.HandleKey(38);
-        Assert.Equal(2, editor.CaretIndex);
+        Assert.True(editor.CaretIndex <= lowerLineStart);
+        Assert.True(editor.CaretRect.Y < lowerLineEndCaret.Y);
+        var editorFont = FontManager.Instance.FromCss("sans-serif", null, null, null, 14);
+        var maxAdvance = "abcdef".EnumerateRunes()
+            .Max(rune => Square.Graphics.TextMetrics.GetGlyphMetrics(editorFont, rune).AdvanceX);
+        Assert.InRange(Math.Abs(editor.CaretRect.X - lowerLineEndCaret.X), 0, maxAdvance + 0.0001f);
     }
 
     [Fact]

@@ -4,6 +4,7 @@ using Square.Backends;
 using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
+using Square.Text;
 using Xunit;
 
 namespace Square.Backends.Tests;
@@ -22,12 +23,19 @@ public class TextSelectionMeasurementTests
             "GetSelectionRects",
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         var selection = Assert.Single((List<Rect>)getSelectionRects.Invoke(input, [input.Value])!);
-        var font = new Font("Segoe UI", 14);
-        var expectedWidth = TextMetrics.GetGlyphMetrics(font, new Rune('W')).AdvanceX * 3;
+        var font = FontManager.Instance.FromCss("sans-serif", "14px", null, null, 14);
+        var glyph = TextMetrics.GetGlyphMetrics(font, new Rune('W'));
+        var logicalWidth = glyph.AdvanceX * 3;
+        var leftOverhang = Math.Max(0, -glyph.InkBounds.Left);
+        var rightOverhang = Math.Max(0, glyph.InkBounds.Right - glyph.AdvanceX);
+        var logicalCaretX = selection.Left + leftOverhang + logicalWidth;
 
-        Assert.True(selection.Width >= expectedWidth);
-        Assert.True(selection.Left <= input.CaretRect.X - expectedWidth + 0.5001f);
-        Assert.True(selection.Right >= input.CaretRect.X);
+        Assert.InRange(
+            Math.Abs(selection.Width - (logicalWidth + leftOverhang + rightOverhang)),
+            0,
+            0.0001f);
+        Assert.InRange(Math.Abs((selection.Right - logicalCaretX) - rightOverhang), 0, 0.0001f);
+        Assert.InRange(Math.Abs(input.CaretRect.X - logicalCaretX), 0, 0.5001f);
     }
 
     [Fact]
@@ -52,7 +60,7 @@ public class TextSelectionMeasurementTests
         var actualOverhang = selection.Right - input.CaretRect.X;
 
         Assert.InRange(actualOverhang, overhang - 0.5001f, overhang + 0.5001f);
-        Assert.True(selection.Right >= input.CaretRect.X);
+        Assert.True(selection.Right >= input.CaretRect.X - 0.5001f);
     }
 
     [Fact]

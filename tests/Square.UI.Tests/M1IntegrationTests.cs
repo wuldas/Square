@@ -1858,6 +1858,7 @@ public class M1IntegrationTests
         var component = new Main();
         component.BuildElementTree();
         var layout = new LayoutEngine();
+        var app = Assert.IsType<View>(Assert.Single(component.Children));
         var tabs = Assert.Single(component.QueryAll<Tabs>());
 
         layout.Measure(component, new Size(400, 300));
@@ -1869,7 +1870,8 @@ public class M1IntegrationTests
 
         Assert.Equal(720, component.Geometry.Width);
         Assert.True(tabs.Geometry.Width > initialWidth);
-        Assert.Equal(688, tabs.Geometry.Width);
+        Assert.Equal(app.Geometry.Left + 16, tabs.Geometry.Left);
+        Assert.Equal(app.Geometry.Right - 16, tabs.Geometry.Right);
     }
 
     [Fact]
