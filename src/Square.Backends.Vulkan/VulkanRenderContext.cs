@@ -708,9 +708,54 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         rx = Math.Min(rx, rect.Width / 2);
         ry = Math.Min(ry, rect.Height / 2);
         if (rx <= 0 || ry <= 0) { FillRect(rect, brush); return; }
+        var segments = GetCurveSegmentCount(rx, ry, MathF.PI / 2);
+        var perimeterCount = segments * 4 + 4;
+        var vertices = ArrayPool<Vertex2D>.Shared.Rent(perimeterCount + 1);
+        var indices = ArrayPool<uint>.Shared.Rent(perimeterCount * 3);
+        try
+        {
+            var packed = PackColor(ResolveBrushColor(brush, rect.Center));
+            var (u0, v0, _, _) = VulkanTextureAtlas.WhitePixelUV;
+            var center = TransformPoint(rect.Center);
+            vertices[0] = new Vertex2D(center.X, center.Y, u0, v0, packed);
 
-        var path = CreateRoundedRectPath(rect, rx, ry);
-        FillPath(path, brush);
+            var vertexCount = 1;
+            AppendRoundedRectArc(vertices, ref vertexCount, rect.Right - rx, rect.Y + ry, rx, ry,
+                -MathF.PI / 2, segments, includeStart: true, u0, v0, packed);
+            AppendRoundedRectArc(vertices, ref vertexCount, rect.Right - rx, rect.Bottom - ry, rx, ry,
+                0, segments, includeStart: false, u0, v0, packed);
+            AppendRoundedRectArc(vertices, ref vertexCount, rect.X + rx, rect.Bottom - ry, rx, ry,
+                MathF.PI / 2, segments, includeStart: false, u0, v0, packed);
+            AppendRoundedRectArc(vertices, ref vertexCount, rect.X + rx, rect.Y + ry, rx, ry,
+                MathF.PI, segments, includeStart: false, u0, v0, packed);
+
+            var indexCount = 0;
+            var actualPerimeterCount = vertexCount - 1;
+            for (var i = 0; i < actualPerimeterCount; i++)
+            {
+                indices[indexCount++] = 0;
+                indices[indexCount++] = (uint)(i + 1);
+                indices[indexCount++] = (uint)(i + 1 == actualPerimeterCount ? 1 : i + 2);
+            }
+            AddBatch(vertices.AsSpan(0, vertexCount), indices.AsSpan(0, indexCount));
+        }
+        finally
+        {
+            ArrayPool<Vertex2D>.Shared.Return(vertices);
+            ArrayPool<uint>.Shared.Return(indices);
+        }
+    }
+
+    private void AppendRoundedRectArc(Vertex2D[] vertices, ref int vertexCount,
+        float cx, float cy, float rx, float ry, float startAngle, int segments, bool includeStart,
+        float u, float v, uint color)
+    {
+        for (var i = includeStart ? 0 : 1; i <= segments; i++)
+        {
+            var angle = startAngle + MathF.PI / 2 * i / segments;
+            var point = TransformPoint(new Point(cx + rx * MathF.Cos(angle), cy + ry * MathF.Sin(angle)));
+            vertices[vertexCount++] = new Vertex2D(point.X, point.Y, u, v, color);
+        }
     }
 
     private void DrawRoundedRect(Rect rect, float rx, float ry, Pen pen)

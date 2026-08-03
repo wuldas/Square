@@ -133,8 +133,11 @@ public sealed class ChildNodeCollection : IList<Node>
         InvalidateStructure();
     }
 
-    private void InvalidateStructure() =>
+    private void InvalidateStructure()
+    {
+        _owner.InvalidateHitTestOrder();
         _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+    }
 
     private void AttachIfNeeded(Element item)
     {

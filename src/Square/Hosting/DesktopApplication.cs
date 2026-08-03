@@ -403,19 +403,20 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 }
                 else
                 {
-                    // 局部绘制进软件缓冲
-                    _renderContext.Clear(MainWindow.Background, MainWindow.LastRenderDiagnostics.DirtyUnion);
-                    _displayTree.Render(_renderContext, MainWindow.LastRenderDiagnostics.DirtyUnion);
-                    _renderContext.PushClip(MainWindow.LastRenderDiagnostics.DirtyUnion);
-                    RenderTextSelection(_renderContext);
-                    _renderContext.PopClip();
+                    foreach (var dirtyRect in dirty)
+                        _renderContext.Clear(MainWindow.Background, dirtyRect);
+                    _displayTree.Render(_renderContext, dirty);
+                    foreach (var dirtyRect in dirty)
+                    {
+                        _renderContext.PushClip(dirtyRect);
+                        RenderTextSelection(_renderContext);
+                        _renderContext.PopClip();
+                    }
                     RenderDiagnosticsOverlay(_renderContext);
                     _renderContext.Flush();
-                    // Clear and replay use DirtyUnion, so presentation must upload that same area.
-                    // Uploading the original disjoint rects leaves updated pixels between them stale.
                     _renderContext.Present(MainWindow.ShowRenderDiagnosticsOverlay
                         ? null
-                        : [MainWindow.LastRenderDiagnostics.DirtyUnion]);
+                        : dirty);
                 }
             }
         }

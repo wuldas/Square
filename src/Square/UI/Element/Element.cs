@@ -26,6 +26,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     private Size _scrollContentSize;
     private Point _scrollOffset;
     private int _zIndex;
+    private HitTestEntry[]? _hitTestChildren;
     private readonly List<IDisposable> _bindings = [];
     private List<IDisposable>? _generatedResources;
     private int _debugId;
@@ -61,6 +62,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         {
             if (_zIndex == value) return;
             _zIndex = value;
+            Parent?.InvalidateHitTestOrder();
             Parent?.InvalidatePaint();
         }
     }
@@ -463,18 +465,41 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
             ? new Point(point.X + _scrollOffset.X, point.Y + _scrollOffset.Y)
             : point;
 
-        foreach (var child in Children
-                     .Select((element, index) => (element, index))
-                     .OrderByDescending(item => item.element.ZIndex)
-                     .ThenByDescending(item => item.index)
-                     .Select(item => item.element))
+        var orderedChildren = GetHitTestChildren();
+        for (var i = 0; i < orderedChildren.Length; i++)
         {
+            var child = orderedChildren[i].Element;
             if (child is IPopupElement { IsPopupOpen: false }) continue;
             var hit = child.HitTest(childPoint);
             if (hit != null) return hit;
         }
 
         return inside ? this : null;
+    }
+
+    private HitTestEntry[] GetHitTestChildren()
+    {
+        if (_hitTestChildren != null) return _hitTestChildren;
+        _hitTestChildren = Children
+            .Select((element, index) => new HitTestEntry(element, index))
+            .ToArray();
+        Array.Sort(_hitTestChildren, HitTestEntryComparer.Instance);
+        return _hitTestChildren;
+    }
+
+    internal void InvalidateHitTestOrder() => _hitTestChildren = null;
+
+    private readonly record struct HitTestEntry(Element Element, int Index);
+
+    private sealed class HitTestEntryComparer : IComparer<HitTestEntry>
+    {
+        public static HitTestEntryComparer Instance { get; } = new();
+
+        public int Compare(HitTestEntry left, HitTestEntry right)
+        {
+            var zIndex = right.Element.ZIndex.CompareTo(left.Element.ZIndex);
+            return zIndex != 0 ? zIndex : right.Index.CompareTo(left.Index);
+        }
     }
 
     /// <summary>是否裁剪溢出内容（由 CSS overflow 推导；渲染用）。</summary>

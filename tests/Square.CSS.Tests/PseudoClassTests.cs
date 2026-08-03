@@ -350,6 +350,61 @@ public class PseudoClassTests
     }
 
     [Fact]
+    public void HoverReplayUpdatesDescendantsAndSiblingSelectors()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".trigger:hover .child { color: red; } .trigger:hover + .sibling { background: blue; }").Tokenize()).Parse());
+        var root = new Square.Controls.View();
+        var trigger = new Square.Controls.View();
+        trigger.ClassList.Add("trigger");
+        var child = new Square.Controls.Text("child");
+        child.ClassList.Add("child");
+        trigger.Children.Add(child);
+        var sibling = new Square.Controls.View();
+        sibling.ClassList.Add("sibling");
+        root.Children.Add(trigger);
+        root.Children.Add(sibling);
+        engine.ApplyStylesToTree(root);
+
+        trigger.SetState(ElementState.Hover, true);
+        CssStyleReconciler.Flush();
+
+        Assert.Equal("red", child.Style.Get("color"));
+        Assert.Equal("blue", sibling.Style.Get("background"));
+    }
+
+    [Fact]
+    public void SiblingHoverReplayPreservesNestedSiblingScopeStyles()
+    {
+        var outerEngine = new CssEngine();
+        outerEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".trigger:hover + .sibling { background: blue; }").Tokenize()).Parse());
+        var siblingEngine = new CssEngine();
+        siblingEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".sibling { gap: 12px; } .label { font-size: 18px; }").Tokenize()).Parse());
+        var root = new Square.Controls.View();
+        var trigger = new Square.Controls.View();
+        trigger.ClassList.Add("trigger");
+        var sibling = new Square.Controls.View();
+        sibling.ClassList.Add("sibling");
+        var label = new Square.Controls.Text("label");
+        label.ClassList.Add("label");
+        sibling.Children.Add(label);
+        root.Children.Add(trigger);
+        root.Children.Add(sibling);
+        outerEngine.ApplyStylesToTree(root);
+        siblingEngine.ApplyStylesToTree(sibling);
+
+        trigger.SetState(ElementState.Hover, true);
+        CssStyleReconciler.Flush();
+
+        Assert.Equal("blue", sibling.Style.Get("background"));
+        Assert.Equal("12px", sibling.Style.Get("gap"));
+        Assert.Equal("18px", label.Style.Get("font-size"));
+    }
+
+    [Fact]
     public void LayoutHoverInvalidatesLayoutOnlyWhenComputedValueChanges()
     {
         var sheet = new CssParser(new CssTokenizer("Button { width: 100px; } Button:hover { width: 180px; }").Tokenize()).Parse();

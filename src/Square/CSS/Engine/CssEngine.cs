@@ -12,6 +12,8 @@ public sealed class CssEngine
     private readonly Dictionary<string, Dictionary<string, string>> _themes = new();
     private string? _activeTheme;
 
+    internal bool HasSiblingCombinators { get; private set; }
+
     /// <summary>加载样式表，收集规则、自定义变量与关键帧。</summary>
     /// <param name="sheet">待加载的样式表。</param>
     public void LoadStyleSheet(CssStyleSheet sheet)
@@ -19,6 +21,8 @@ public sealed class CssEngine
         foreach (var rule in sheet.Rules)
         {
             _rules.Add(rule);
+            HasSiblingCombinators |= rule.Selector.Steps.Any(step =>
+                step.Combinator is Combinator.Adjacent or Combinator.GeneralSibling);
             foreach (var declaration in rule.Declarations)
                 if (declaration.Property.StartsWith("--", StringComparison.Ordinal))
                     _variables[declaration.Property] = declaration.Value;

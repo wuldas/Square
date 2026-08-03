@@ -42,23 +42,30 @@ public static class CssStyleReconciler
         lock (ApplyGate)
         {
             StyleScope[] scopes;
+            Element[] dirtyElements;
             lock (Gate)
             {
                 if (DirtyElements.Count == 0) return;
-                var dirtyElements = DirtyElements.ToArray();
+                dirtyElements = DirtyElements.ToArray();
                 DirtyElements.Clear();
-                var dirtyRoots = dirtyElements.Select(FindTreeRoot).ToHashSet();
+                var candidateScopes = Scopes
+                    .Where(scope => dirtyElements.Any(element => AreInSameStyleBranch(scope.Root, element)))
+                    .ToArray();
+                var expandToParent = candidateScopes.Any(scope => scope.Engine.HasSiblingCombinators);
+                var styleRoots = MinimizeRoots(dirtyElements
+                    .Select(element => expandToParent && element.Parent != null ? element.Parent : element));
                 scopes = Scopes
-                    .Where(scope => dirtyRoots.Contains(FindTreeRoot(scope.Root)))
+                    .Where(scope => styleRoots.Any(root => AreInSameStyleBranch(scope.Root, root)))
                     .ToArray();
             }
+            if (scopes.Length == 0) return;
 
             _applying++;
             try
             {
-                var styleRoots = new HashSet<Element>();
-                foreach (var scope in scopes)
-                    styleRoots.Add(scope.Root);
+                var expandToParent = scopes.Any(scope => scope.Engine.HasSiblingCombinators);
+                var styleRoots = MinimizeRoots(dirtyElements
+                    .Select(element => expandToParent && element.Parent != null ? element.Parent : element));
                 var styleSnapshots = styleRoots.Select(CaptureStyleSnapshot).ToArray();
 
                 using (Element.SuppressInvalidation())
@@ -66,11 +73,17 @@ public static class CssStyleReconciler
                     foreach (var root in styleRoots)
                         ClearCascadedSubtree(root);
 
-                    foreach (var scope in scopes)
+                    foreach (var root in styleRoots)
                     {
-                        scope.Engine.ApplyStylesToTreeCore(scope.Root);
-                        scope.Animations.Attach(scope.Root);
+                        foreach (var scope in scopes)
+                        {
+                            var target = IsAncestorOrSelf(scope.Root, root) ? root : scope.Root;
+                            if (AreInSameStyleBranch(target, root))
+                                scope.Engine.ApplyStylesToTreeCore(target);
+                        }
                     }
+                    foreach (var scope in scopes)
+                        scope.Animations.Attach(scope.Root);
                 }
 
                 foreach (var snapshot in styleSnapshots)
@@ -159,6 +172,24 @@ public static class CssStyleReconciler
         while (element.Parent != null)
             element = element.Parent;
         return element;
+    }
+
+    private static bool AreInSameStyleBranch(Element scopeRoot, Element dirtyElement) =>
+        IsAncestorOrSelf(scopeRoot, dirtyElement) || IsAncestorOrSelf(dirtyElement, scopeRoot);
+
+    private static bool IsAncestorOrSelf(Element ancestor, Element element)
+    {
+        for (var current = element; current != null; current = current.Parent)
+            if (ReferenceEquals(current, ancestor)) return true;
+        return false;
+    }
+
+    private static Element[] MinimizeRoots(IEnumerable<Element> elements)
+    {
+        var roots = elements.Distinct().ToList();
+        roots.RemoveAll(candidate => roots.Any(other =>
+            !ReferenceEquals(candidate, other) && IsAncestorOrSelf(other, candidate)));
+        return roots.ToArray();
     }
 
     private static StyleSnapshot CaptureStyleSnapshot(Element element)

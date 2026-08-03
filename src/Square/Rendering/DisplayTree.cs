@@ -273,6 +273,23 @@ public sealed class DisplayTree
             _dirtyRects.Clear();
             return;
         }
+        RenderRegion(ctx, dirtyClip);
+        _dirtyRects.Clear();
+    }
+
+    /// <summary>分别裁剪并渲染多个脏区，避免绘制它们之间未变化的区域。</summary>
+    public void Render(IRenderContext ctx, IReadOnlyList<Rect> dirtyClips)
+    {
+        foreach (var dirtyClip in dirtyClips)
+        {
+            if (!dirtyClip.IsEmpty)
+                RenderRegion(ctx, dirtyClip);
+        }
+        _dirtyRects.Clear();
+    }
+
+    private void RenderRegion(IRenderContext ctx, Rect? dirtyClip)
+    {
         if (dirtyClip is { } clip)
         {
             ctx.PushClip(clip);
@@ -285,7 +302,6 @@ public sealed class DisplayTree
             _root.Render(ctx, dirtyClip);
             RenderPopups(ctx, dirtyClip);
         }
-        _dirtyRects.Clear();
     }
 
     /// <summary>对所有打开的弹出层进行命中测试。</summary>

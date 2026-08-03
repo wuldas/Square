@@ -875,6 +875,37 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void HitTestPrefersHigherZIndexBeforeSiblingOrder()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 200, 100) };
+        var higher = new Button { Geometry = new Rect(20, 20, 80, 40), ZIndex = 2 };
+        var later = new View { Geometry = new Rect(20, 20, 80, 40), ZIndex = 1 };
+        root.Children.Add(higher);
+        root.Children.Add(later);
+
+        Assert.Same(higher, root.HitTest(new Point(30, 30)));
+    }
+
+    [Fact]
+    public void HitTestOrderCacheTracksZIndexAndStructureChanges()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 200, 100) };
+        var first = new View { Geometry = new Rect(20, 20, 80, 40) };
+        var second = new Button { Geometry = new Rect(20, 20, 80, 40) };
+        root.Children.Add(first);
+        root.Children.Add(second);
+
+        Assert.Same(second, root.HitTest(new Point(30, 30)));
+
+        first.ZIndex = 2;
+        Assert.Same(first, root.HitTest(new Point(30, 30)));
+
+        var third = new Button { Geometry = new Rect(20, 20, 80, 40), ZIndex = 3 };
+        root.Children.Add(third);
+        Assert.Same(third, root.HitTest(new Point(30, 30)));
+    }
+
+    [Fact]
     public void OverflowVisibleAllowsHitTestingChildrenOutsideParentBoundsAndHiddenClipsThem()
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 100) };

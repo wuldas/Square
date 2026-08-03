@@ -489,6 +489,22 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void DisjointDirtyRenderDoesNotDrawNodesBetweenRegions()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 300, 100) };
+        root.Children.Add(new CountingPaintElement { Geometry = new Rect(10, 10, 20, 20) });
+        root.Children.Add(new CountingPaintElement { Geometry = new Rect(140, 10, 20, 20) });
+        root.Children.Add(new CountingPaintElement { Geometry = new Rect(270, 10, 20, 20) });
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var context = new CountingRenderContext();
+
+        tree.Render(context, [new Rect(8, 8, 24, 24), new Rect(268, 8, 24, 24)]);
+
+        Assert.Equal(2, context.FillCount);
+    }
+
+    [Fact]
     public void DirtyRenderUsesViewportCoordinatesForScrolledChildren()
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 60) };

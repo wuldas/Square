@@ -278,6 +278,36 @@ public class DocumentTests
     }
 
     [Fact]
+    public void HoverFlushDoesNotReapplySiblingComponentScope()
+    {
+        var root = new View();
+        var left = new View();
+        var right = new View();
+        var button = new Button();
+        root.Children.Add(left);
+        root.Children.Add(right);
+        left.Children.Add(button);
+
+        var leftEngine = new CssEngine();
+        leftEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Button:hover { color: red; }").Tokenize()).Parse());
+        leftEngine.ApplyStylesToTree(left);
+
+        var rightEngine = new CssEngine();
+        rightEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "View { color: blue; }").Tokenize()).Parse());
+        rightEngine.ApplyStylesToTree(right);
+        right.Style.SetCascaded("color", "sentinel", int.MaxValue);
+
+        button.SetState(ElementState.Hover, true);
+        CssStyleReconciler.Flush();
+
+        Assert.Equal("red", button.Style.Get("color"));
+        Assert.Equal("sentinel", right.Style.Get("color"));
+        CssStyleReconciler.UnregisterScopesForTree(root);
+    }
+
+    [Fact]
     public void AppWindowLoadsNestedCssImportsRelativeToEachStyleSheet()
     {
         var window = new AppWindow("Imports");
