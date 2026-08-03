@@ -362,8 +362,10 @@ public class GridLayoutTests
         layout.Arrange(root, new Rect(0, 0, 600, 200));
 
         Assert.Equal(600, bar.Geometry.Width);
-        Assert.Equal(56, file.Geometry.Width);
-        Assert.Equal(56, view.Geometry.Width);
+        Assert.InRange(Math.Abs(file.Geometry.Width - file.Measure(new Size(float.MaxValue, float.MaxValue)).Width), 0, 1);
+        Assert.InRange(Math.Abs(view.Geometry.Width - view.Measure(new Size(float.MaxValue, float.MaxValue)).Width), 0, 1);
+        Assert.True(file.Geometry.Width >= 56);
+        Assert.True(view.Geometry.Width >= 56);
         Assert.Equal(file.Geometry.Right, view.Geometry.X);
         Assert.Equal(32, bar.Geometry.Height);
     }

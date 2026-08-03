@@ -84,6 +84,8 @@ public sealed class CssEngine
                 ApplyDeclaration(Element, property, decl.Value, specificity, decl.Important);
             }
         }
+
+        ApplyThemeVariables(Element);
     }
 
     /// <summary>对整棵元素树应用样式并刷新动画。</summary>
@@ -148,11 +150,7 @@ public sealed class CssEngine
 
     private void ApplyInheritedProperties(Element Element)
     {
-        if (Element.Parent == null)
-        {
-            ApplyThemeVariables(Element);
-            return;
-        }
+        if (Element.Parent == null) return;
         foreach (var property in new[]
                  {
                      "color", "font-family", "font-size", "font-weight", "font-style", "line-height", "text-align", "visibility"
@@ -166,7 +164,6 @@ public sealed class CssEngine
         foreach (var pair in Element.Parent.Style.GetAll())
             if (pair.Key.StartsWith("--", StringComparison.Ordinal))
                 Element.Style.SetCascaded(pair.Key, pair.Value, new CssSpecificity(-1, 0, 0), important: false);
-        ApplyThemeVariables(Element);
     }
 
     private void ApplyThemeVariables(Element Element)

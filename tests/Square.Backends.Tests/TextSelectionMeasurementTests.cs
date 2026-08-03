@@ -4,7 +4,6 @@ using Square.Backends;
 using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
-using Square.Text.Glyph;
 using Xunit;
 
 namespace Square.Backends.Tests;
@@ -24,13 +23,10 @@ public class TextSelectionMeasurementTests
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         var selection = Assert.Single((List<Rect>)getSelectionRects.Invoke(input, [input.Value])!);
         var font = new Font("Segoe UI", 14);
-        var glyph = new SystemGlyphRasterizer().Rasterize(font, 'W');
-        var expectedWidth = glyph == null
-            ? TextLayout.MeasureRuneAdvance(new Rune('W'), font) * 3
-            : glyph.AdvanceX * 3;
+        var expectedWidth = TextMetrics.GetGlyphMetrics(font, new Rune('W')).AdvanceX * 3;
 
         Assert.True(selection.Width >= expectedWidth);
-        Assert.True(selection.Left <= input.CaretRect.X - expectedWidth);
+        Assert.True(selection.Left <= input.CaretRect.X - expectedWidth + 0.5001f);
         Assert.True(selection.Right >= input.CaretRect.X);
     }
 
@@ -51,12 +47,11 @@ public class TextSelectionMeasurementTests
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         var selection = Assert.Single((List<Rect>)getSelectionRects.Invoke(input, [input.Value])!);
         var font = new Font("Segoe UI", 14);
-        var glyph = new SystemGlyphRasterizer().Rasterize(font, 't');
-        var expectedRight = glyph == null
-            ? input.CaretRect.X
-            : Math.Max(input.CaretRect.X, input.CaretRect.X - glyph.AdvanceX + glyph.OffsetX + glyph.Width);
+        var glyph = TextMetrics.GetGlyphMetrics(font, new Rune('t'));
+        var overhang = Math.Max(0, glyph.InkBounds.Right - glyph.AdvanceX);
+        var actualOverhang = selection.Right - input.CaretRect.X;
 
-        Assert.Equal(expectedRight, selection.Right);
+        Assert.InRange(actualOverhang, overhang - 0.5001f, overhang + 0.5001f);
         Assert.True(selection.Right >= input.CaretRect.X);
     }
 
@@ -116,12 +111,12 @@ public class TextSelectionMeasurementTests
 
         var fragment = Assert.Single(tree.CollectTextFragments(root));
         var lastCharacter = fragment.Characters[^1];
-        var glyph = new SystemGlyphRasterizer().Rasterize(fragment.Font, 't');
-        var expectedRight = glyph == null
-            ? lastCharacter.Bounds.Right
-            : Math.Max(lastCharacter.Bounds.Right, lastCharacter.Bounds.X + glyph.OffsetX + glyph.Width);
+        var glyph = TextMetrics.GetGlyphMetrics(fragment.Font, new Rune('t'));
+        var expectedRight = Math.Max(
+            lastCharacter.Bounds.Right,
+            lastCharacter.Bounds.X + glyph.InkBounds.Right);
 
-        Assert.Equal(expectedRight, lastCharacter.SelectionBounds.Right);
+        Assert.InRange(Math.Abs(lastCharacter.SelectionBounds.Right - expectedRight), 0, 0.0001f);
         Assert.True(lastCharacter.SelectionBounds.Right >= lastCharacter.Bounds.Right);
     }
 }

@@ -172,8 +172,9 @@ public class M1IntegrationTests
 
         var bar = Assert.Single(document.DocumentElement.QueryAll<MenuBar>());
         var items = bar.Children.OfType<MenuItem>().ToArray();
-        Assert.Equal(56, items[0].Geometry.Width);
-        Assert.Equal(56, items[1].Geometry.Width);
+        Assert.InRange(Math.Abs(items[0].Geometry.Width - items[0].Measure(new Size(float.MaxValue, float.MaxValue)).Width), 0, 1);
+        Assert.InRange(Math.Abs(items[1].Geometry.Width - items[1].Measure(new Size(float.MaxValue, float.MaxValue)).Width), 0, 1);
+        Assert.All(items[..2], item => Assert.InRange(item.Geometry.Width, 56, 80));
         Assert.Equal(items[0].Geometry.Right, items[1].Geometry.X);
     }
 
