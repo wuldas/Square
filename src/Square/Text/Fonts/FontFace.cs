@@ -31,23 +31,35 @@ public sealed class FontFace
     /// 使用 CSS 族名与源创建字体面。
     /// <paramref name="source"/> 为本地文件路径，或 <c>url(...)</c> 中的路径字符串（当前仅支持本地路径，不发起网络请求）。
     /// </summary>
-    public FontFace(string family, string source)
+    public FontFace(
+        string family,
+        string source,
+        Graphics.FontWeight weight = Graphics.FontWeight.Normal,
+        Graphics.FontStyle style = Graphics.FontStyle.Normal)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(family);
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         Family = family.Trim();
+        Weight = weight;
+        Style = style;
         _sourcePath = NormalizeSourcePath(source);
         Source = source.Trim();
         Status = FontFaceLoadStatus.Unloaded;
     }
 
     /// <summary>使用 CSS 族名与字体文件字节创建（如嵌入资源）。</summary>
-    public FontFace(string family, byte[] data)
+    public FontFace(
+        string family,
+        byte[] data,
+        Graphics.FontWeight weight = Graphics.FontWeight.Normal,
+        Graphics.FontStyle style = Graphics.FontStyle.Normal)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(family);
         ArgumentNullException.ThrowIfNull(data);
         if (data.Length == 0) throw new ArgumentException("Font data is empty.", nameof(data));
         Family = family.Trim();
+        Weight = weight;
+        Style = style;
         _sourceBytes = data;
         Source = "";
         Status = FontFaceLoadStatus.Unloaded;
@@ -55,6 +67,12 @@ public sealed class FontFace
 
     /// <summary>CSS 字体族名（对齐 <c>family</c>）。</summary>
     public string Family { get; }
+
+    /// <summary>该字体面的 CSS 字重。</summary>
+    public Graphics.FontWeight Weight { get; }
+
+    /// <summary>该字体面的 CSS 样式。</summary>
+    public Graphics.FontStyle Style { get; }
 
     /// <summary>源描述字符串（路径或空）。</summary>
     public string Source { get; }
@@ -122,7 +140,7 @@ public sealed class FontFace
                 throw new InvalidOperationException("Unable to parse font data.");
 
             _data = bytes;
-            FontCollection.Shared.Register(Family, bytes, offset);
+            FontCollection.Shared.Register(Family, bytes, offset, Weight, Style);
             Square.Text.FontManager.Instance.RegisterLoadedFamily(Family);
             Status = FontFaceLoadStatus.Loaded;
         }

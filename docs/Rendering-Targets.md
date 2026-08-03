@@ -1,6 +1,6 @@
 # 多目标渲染与宿主路线
 
-> Version: 0.1  
+> Document Revision: 0.1
 > 配套：`Architecture.md`、`Rendering.md`、`Graphics.md`、`Roadmap.md`
 
 本文规划 Square 从当前 Software Renderer 扩展到 WinUI XAML、HTML、Android UI、SVG、Godot 等目标时的架构边界和分阶段路线。目标不是立即实现所有目标，而是提前定义稳定的抽象，避免后续把“窗口宿主”“绘制后端”“原生 UI 输出”和“文件导出”混成一个不可维护的后端概念。
@@ -47,7 +47,7 @@ DisplayTree                     Native UI Tree
         │                             └─ Android View/Compose
         │
         ├─ Software bitmap
-        ├─ Skia / Cairo / GPU canvas
+        ├─ Skia / Vulkan / GPU canvas
         ├─ Godot Canvas
         ├─ SVG export
         └─ PDF export
@@ -459,7 +459,7 @@ public enum TargetSupportLevel
 - SVG 可被浏览器打开。
 - 基础视觉与软件渲染接近。
 
-### P3：NativeUiNode 原型
+### P3：NativeUiNode 原型 ✅
 
 - 从 Element Tree + layout 结果生成 `NativeUiNode`。
 - 保留控件 kind、bounds、style snapshot、source element。
@@ -481,16 +481,18 @@ public enum TargetSupportLevel
 - 基础表单示例可用原生 WinUI 控件运行。
 - fallback 控件可与 native 控件混排。
 
-### P5：HTML adapter 原型
+### P5：HTML adapter 原型 🔄
 
-- 生成 static HTML/CSS。
+- `Square.Native.Html` 已生成 static semantic HTML + inline final CSS。
+- `Square.Hosting.Web` 已支持 ASP.NET Core 每请求组件工厂，并可与桌面平台宿主共存。
 - 可选支持 interactive DOM/WASM。
-- 支持 canvas fallback。
+- Canvas/复杂绘制控件当前输出带诊断的占位节点，bitmap/canvas fallback 待实现。
 
 退出标准：
 
-- 基础页面可导出静态 HTML。
-- 事件桥接方案形成最小闭环。
+- 基础页面可导出静态 HTML。✅
+- ASP.NET Core Web Server 可按路由返回语义 HTML。✅
+- 事件桥接方案形成最小闭环。待实现
 
 ### P6：Android / Godot 嵌入路线
 

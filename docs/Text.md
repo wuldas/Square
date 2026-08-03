@@ -1,6 +1,6 @@
 # 字体与排版
 
-> Version: 0.3  
+> Document Revision: 0.3
 > 配套：`Architecture.md`、`Graphics.md`
 
 ---

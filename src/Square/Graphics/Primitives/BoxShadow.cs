@@ -38,6 +38,26 @@ public readonly record struct BoxShadow(float OffsetX, float OffsetY, float Blur
         return true;
     }
 
+    /// <summary>尝试解析逗号分隔的 CSS 外阴影列表。</summary>
+    /// <returns>解析成功返回 true；<c>none</c> 返回空列表；任一阴影无效时返回 false。</returns>
+    public static bool TryParseList(string? value, out IReadOnlyList<BoxShadow> shadows)
+    {
+        shadows = Array.Empty<BoxShadow>();
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var text = value.Trim();
+        if (string.Equals(text, "none", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!TrySplitList(text, out var items)) return false;
+
+        var parsed = new List<BoxShadow>(items.Count);
+        foreach (var item in items)
+        {
+            if (!TryParse(item, out var shadow)) return false;
+            parsed.Add(shadow);
+        }
+        shadows = parsed;
+        return true;
+    }
+
     private static bool HasTopLevelComma(string text)
     {
         var depth = 0;
@@ -48,6 +68,46 @@ public readonly record struct BoxShadow(float OffsetX, float OffsetY, float Blur
             else if (character == ',' && depth == 0) return true;
         }
         return false;
+    }
+
+    private static bool TrySplitList(string text, out List<string> items)
+    {
+        items = [];
+        var start = 0;
+        var depth = 0;
+        char quote = '\0';
+        for (var i = 0; i < text.Length; i++)
+        {
+            var character = text[i];
+            if (quote != '\0')
+            {
+                if (character == quote) quote = '\0';
+                continue;
+            }
+            if (character is '\'' or '"')
+            {
+                quote = character;
+                continue;
+            }
+            if (character == '(') depth++;
+            else if (character == ')')
+            {
+                if (--depth < 0) return false;
+            }
+            else if (character == ',' && depth == 0)
+            {
+                var item = text[start..i].Trim();
+                if (item.Length == 0) return false;
+                items.Add(item);
+                start = i + 1;
+            }
+        }
+
+        if (depth != 0 || quote != '\0') return false;
+        var last = text[start..].Trim();
+        if (last.Length == 0) return false;
+        items.Add(last);
+        return true;
     }
 
     private static List<string> Tokenize(string text)
@@ -127,6 +187,15 @@ public static class BoxShadowRendering
         return shadowBounds.IsEmpty ? box : Rect.Union(box, shadowBounds);
     }
 
+    /// <summary>计算全部盒阴影的视觉包围盒。</summary>
+    public static Rect GetVisualBounds(Rect box, IReadOnlyList<BoxShadow> shadows)
+    {
+        var bounds = box;
+        foreach (var shadow in shadows)
+            bounds = Rect.Union(bounds, GetVisualBounds(box, shadow));
+        return bounds;
+    }
+
     /// <summary>绘制盒阴影。</summary>
     public static void Draw(IRenderContext context, Rect box, float cornerRadius, BoxShadow shadow)
     {
@@ -148,5 +217,12 @@ public static class BoxShadowRendering
             if (radius <= 0) context.FillRect(rect, new SolidColorBrush(color));
             else context.FillGeometry(new RoundedRectGeometry(rect, radius, radius), new SolidColorBrush(color));
         }
+    }
+
+    /// <summary>按 CSS 堆叠顺序绘制全部盒阴影，列表首项位于最上层。</summary>
+    public static void Draw(IRenderContext context, Rect box, float cornerRadius, IReadOnlyList<BoxShadow> shadows)
+    {
+        for (var i = shadows.Count - 1; i >= 0; i--)
+            Draw(context, box, cornerRadius, shadows[i]);
     }
 }

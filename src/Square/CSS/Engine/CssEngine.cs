@@ -1,5 +1,6 @@
 using Square.CSS.Ast;
 using Square.UI;
+using System.Globalization;
 
 namespace Square.CSS.Engine;
 
@@ -177,7 +178,10 @@ public sealed class CssEngine
     private static void ApplyInheritedProperties(Element Element)
     {
         if (Element.Parent == null) return;
-        foreach (var property in new[] { "color", "font-family", "font-size" })
+        foreach (var property in new[]
+                 {
+                     "color", "font-family", "font-size", "font-weight", "font-style", "line-height", "text-align"
+                 })
         {
             if (Element.Style.Get(property) != null) continue;
             var inherited = Element.Parent.Style.Get(property);
@@ -287,7 +291,7 @@ public sealed class CssEngine
                     specificity += 10;
                     break;
                 case SimpleSelectorKind.Attribute:
-                    if (!MatchAttribute(Element, part.Name)) return false;
+                    if (!MatchAttribute(Element, part)) return false;
                     specificity += 10;
                     break;
             }
@@ -295,16 +299,31 @@ public sealed class CssEngine
         return true;
     }
 
-    private static bool MatchAttribute(Element Element, string selector)
+    private static bool MatchAttribute(Element Element, SimpleSelector selector)
     {
-        var equalsIndex = selector.IndexOf('=');
-        if (equalsIndex < 0)
-            return Element.Properties.HasValue(selector);
+        if (selector.AttributeOperator == AttributeSelectorOperator.Invalid || selector.Name.Length == 0)
+            return false;
+        if (selector.AttributeOperator == AttributeSelectorOperator.Presence)
+            return Element.Properties.HasValue(selector.Name);
 
-        var name = selector[..equalsIndex].Trim();
-        var expected = selector[(equalsIndex + 1)..].Trim().Trim('"', '\'');
-        var actual = Element.GetProperty<object>(name);
-        return actual != null && string.Equals(Convert.ToString(actual), expected, StringComparison.OrdinalIgnoreCase);
+        var actualValue = Element.GetProperty<object>(selector.Name);
+        var expected = selector.AttributeValue;
+        if (actualValue == null || expected == null) return false;
+        var actual = Convert.ToString(actualValue, CultureInfo.InvariantCulture) ?? "";
+        var comparison = StringComparison.OrdinalIgnoreCase;
+        return selector.AttributeOperator switch
+        {
+            AttributeSelectorOperator.Equals => string.Equals(actual, expected, comparison),
+            AttributeSelectorOperator.Includes => expected.Length > 0 &&
+                actual.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .Any(value => string.Equals(value, expected, comparison)),
+            AttributeSelectorOperator.DashMatch => expected.Length > 0 &&
+                (string.Equals(actual, expected, comparison) || actual.StartsWith(expected + "-", comparison)),
+            AttributeSelectorOperator.PrefixMatch => expected.Length > 0 && actual.StartsWith(expected, comparison),
+            AttributeSelectorOperator.SuffixMatch => expected.Length > 0 && actual.EndsWith(expected, comparison),
+            AttributeSelectorOperator.SubstringMatch => expected.Length > 0 && actual.Contains(expected, comparison),
+            _ => false
+        };
     }
 
     private static bool MatchPseudoClass(Element Element, string name)

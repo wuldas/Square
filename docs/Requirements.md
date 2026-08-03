@@ -1,6 +1,6 @@
 # Square Framework 需求说明
 
-> Version: 0.3 Draft
+> Document Revision: 0.3 Draft
 > Status: Draft
 > 变更（v0.3）：架构重建完成，事件系统切换为 DOM 风格，新增 Document/UIDocument 文档模型
 
@@ -95,8 +95,7 @@ private void OnClick()
 ```
 Software
 Skia
-Blend2D
-Cairo
+Vulkan
 ```
 
 未来允许增加：
@@ -105,7 +104,6 @@ Cairo
 Direct2D
 Metal
 OpenGL
-Vulkan
 WebGPU
 ```
 
@@ -572,14 +570,12 @@ Backend 为可插拔模块。
 后续：
 
 - Skia
-- Blend2D
-- Cairo
+- Vulkan
 
 未来：
 
 - Direct2D
 - Metal
-- Vulkan
 
 Backend 不影响框架核心。
 

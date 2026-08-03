@@ -1,0 +1,59 @@
+name: Vulkan GPU Conformance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: square-vulkan-gpu-conformance
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  SQUARE_RUN_REAL_VULKAN_GPU_CONFORMANCE: '1'
+  SQUARE_VULKAN_READBACK: '1'
+  SQUARE_VULKAN_MSAA: '1'
+
+jobs:
+  gpu-conformance:
+    name: ${{ matrix.platform }} real GPU
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Win32
+            runner: '["self-hosted","Windows","X64","square-vulkan-gpu"]'
+          - platform: X11
+            runner: '["self-hosted","Linux","X64","square-vulkan-gpu"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Vulkan preflight (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: vulkaninfo --summary
+
+      - name: Vulkan preflight (X11)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -n "$DISPLAY"
+          xdpyinfo >/dev/null
+          vulkaninfo --summary
+
+      - name: Real Vulkan render, present and readback
+        run: dotnet test tests/Square.Backends.Conformance.Tests/Square.Backends.Conformance.Tests.csproj --configuration Release -p:SquareTargetPlatform=${{ matrix.platform }} --filter "Category=RealVulkanGpu"

@@ -22,10 +22,16 @@ jobs:
         include:
           - os: windows-2025
             platform: Win32
+            rid: win-x64
+            executable: Square.Sample.exe
           - os: ubuntu-24.04
             platform: X11
-          - os: macos-15
+            rid: linux-x64
+            executable: Square.Sample
+          - os: macos-15-intel
             platform: MacOS
+            rid: osx-x64
+            executable: Square.Sample
 
     steps:
       - name: Checkout
@@ -51,3 +57,63 @@ jobs:
 
       - name: Test
         run: dotnet test Square.slnx --configuration Release --no-build --no-restore -p:SquareTargetPlatform=${{ matrix.platform }}
+
+      - name: Restore font conformance tool
+        if: runner.os == 'Windows'
+        run: dotnet restore tools/Square.FontComparison/Square.FontComparison.csproj -p:SquareTargetPlatform=Win32
+
+      - name: Build font conformance tool
+        if: runner.os == 'Windows'
+        run: dotnet build tools/Square.FontComparison/Square.FontComparison.csproj --configuration Release --no-restore -p:SquareTargetPlatform=Win32
+
+      - name: Install pinned Chromium
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: tools/Square.FontComparison/bin/Release/net10.0/playwright.ps1 install chromium
+
+      - name: Chromium font conformance
+        if: runner.os == 'Windows'
+        run: dotnet run --project tools/Square.FontComparison/Square.FontComparison.csproj --configuration Release --no-build --no-restore -p:SquareTargetPlatform=Win32 -- compare --backends Software,Skia --output artifacts/font-comparison
+
+      - name: Upload font conformance report
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: font-conformance-windows
+          path: artifacts/font-comparison
+          if-no-files-found: warn
+
+      - name: Install Linux NativeAOT and X11 dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libx11-6 libxrandr2 xvfb
+
+      - name: NativeAOT publish
+        run: dotnet publish samples/Square.Sample/Square.Sample.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:SquareTargetPlatform=${{ matrix.platform }} -p:SquareSamplePublishAot=true -o artifacts/nativeaot
+
+      - name: NativeAOT startup and screenshot regression (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          New-Item -ItemType Directory -Force "artifacts/screenshots" | Out-Null
+          $process = Start-Process -FilePath ".\artifacts\nativeaot\${{ matrix.executable }}" -ArgumentList "--circle-regression", "--verify-circle-regression", "--screenshot", "artifacts/screenshots/win32.png" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "NativeAOT sample exited with code $($process.ExitCode)." }
+          if (-not (Test-Path -LiteralPath "artifacts/screenshots/win32.png") -or (Get-Item -LiteralPath "artifacts/screenshots/win32.png").Length -eq 0) { throw "Screenshot was not created." }
+
+      - name: NativeAOT startup and screenshot regression (X11)
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          mkdir -p artifacts/screenshots
+          xvfb-run -a ./artifacts/nativeaot/${{ matrix.executable }} --circle-regression --verify-circle-regression --screenshot artifacts/screenshots/x11.png
+          test -s artifacts/screenshots/x11.png
+
+      - name: NativeAOT startup and screenshot regression (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          mkdir -p artifacts/screenshots
+          ./artifacts/nativeaot/${{ matrix.executable }} --circle-regression --verify-circle-regression --screenshot artifacts/screenshots/macos.png
+          test -s artifacts/screenshots/macos.png

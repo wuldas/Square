@@ -162,6 +162,18 @@ public class StyleAndFontTests
     }
 
     [Fact]
+    public void TextMeasureUsesCssLineHeight()
+    {
+        var text = new Square.Controls.Text("first\nsecond");
+        text.Style.SetProperty("font-size", "16px");
+        text.Style.SetProperty("line-height", "30px");
+
+        var measured = text.Measure(new Size(300, 300));
+
+        Assert.Equal(60, measured.Height);
+    }
+
+    [Fact]
     public void QuerySelectorFindsByIdClassAndDescendant()
     {
         var root = new View { Id = "root" };

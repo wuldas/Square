@@ -1,6 +1,6 @@
 # CSS 支持范围
 
-> Version: 0.3  
+> Document Revision: 0.3
 > 配套：`Architecture.md`、`Sqx-Spec.md`
 
 ---
@@ -48,12 +48,12 @@ CSS 是框架的重要组成部分，与 `.sqx` 的 `<style>` 段和 `style`/`cl
 | 相邻兄弟 | `Text + Text` | ✅ 已实现 |
 | 通用兄弟 | `Text ~ Text` | ✅ 已实现 |
 | 通用 | `*` | ✅ 已实现 |
-| 属性 | `[disabled]` `[variant=primary]` | ✅ 基础已实现 |
+| 属性 | `[IsDisabled]` `[variant=primary]` `[tags~=primary]` `[lang|=en]` `[code^=pre]` `[code$=suffix]` `[code*=middle]` | ✅ 已实现 |
 | 伪类 | `:hover` `:focus` `:active` | ✅ 基础已实现 |
 | 函数式伪类 | `:nth-child(2)` `:not(.active)` | ⚠️ 部分实现 |
 | 伪元素 | `::before` `::after` | ❌ 未实现（M3+） |
 
-> 说明：组合选择器、`!important`、`:nth-child(n)` 与基础属性选择器已有单元测试覆盖。属性选择器当前支持存在性匹配和精确值匹配，暂不支持 `~=`、`|=`、`^=`、`$=`、`*=` 等高级操作符。
+> 说明：组合选择器、`!important`、`:nth-child(n)` 与属性选择器已有单元测试覆盖。属性选择器匹配 `Element.Properties` 强类型属性袋，不是独立 DOM Attr 集合；属性名保持 PropertyStore 的大小写语义，值匹配当前统一使用大小写不敏感比较。暂不支持命名空间属性及 `i` / `s` 大小写修饰符。
 
 ---
 
@@ -154,7 +154,7 @@ await face.LoadAsync();
 
 当前 `overflow: hidden` / `overflow: clip` 会裁剪子树渲染与命中测试；`visible` 保持子元素可溢出命中。`overflow: scroll` / `auto` 会跟踪内容尺寸、裁剪并平移子树、映射滚动后的命中测试，并通过 wheel 默认动作滚动最近的可滚动祖先。`ScrollViewer` 控件在该通用机制上提供默认纵向滚动和强类型 offset / extent / viewport API。
 
-`box-shadow` 当前支持单个外阴影：`offset-x offset-y [blur-radius] [spread-radius] color`。支持 `px`、十六进制颜色、`rgb()` 和 `rgba()`；暂不支持 `inset`、逗号分隔的多重阴影和 `text-shadow`。阴影不参与布局，但会扩展 DisplayTree 的视觉边界和脏矩形。Popup、Menu、ContextMenu 与 Dialog 默认使用 `0 4px 8px 2px rgba(0,0,0,0.48)` elevation 阴影，可通过 `box-shadow: none` 覆盖。
+`box-shadow` 支持逗号分隔的多个外阴影：`offset-x offset-y [blur-radius] [spread-radius] color`。支持 `px`、十六进制颜色、`rgb()` 和 `rgba()`；列表首项绘制在后续阴影之上。暂不支持 `inset` 和 `text-shadow`。全部阴影均不参与布局，但会共同扩展 DisplayTree 的视觉边界和脏矩形。Popup、Menu、ContextMenu 与 Dialog 默认使用 `0 4px 8px 2px rgba(0,0,0,0.48)` elevation 阴影，可通过 `box-shadow: none` 覆盖。
 
 ---
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Square.CSS.Ast;
 using Square.CSS.Tokenizer;
 using Square.CSS.Engine;
 using Square.Controls;
@@ -330,6 +331,136 @@ public class CssParserTests
         Assert.Equal("0.5", disabled.Style.Get("opacity"));
         Assert.Equal("blue", primary.Style.Get("color"));
         Assert.Null(secondary.Style.Get("color"));
+    }
+
+    [Fact]
+    public void ParseAdvancedAttributeSelectorOperators()
+    {
+        var css = "Button[role][variant=primary][tags ~= 'rounded'][lang |= en][code ^= pre][code $= suffix][code *= middle] { color: red; }";
+        var sheet = new CssParser(new CssTokenizer(css).Tokenize()).Parse();
+
+        var attributes = sheet.Rules[0].Selector.Steps[0].Selector.Parts
+            .Where(part => part.Kind == SimpleSelectorKind.Attribute)
+            .ToArray();
+
+        Assert.Collection(attributes,
+            selector => AssertAttribute(selector, "role", AttributeSelectorOperator.Presence, null),
+            selector => AssertAttribute(selector, "variant", AttributeSelectorOperator.Equals, "primary"),
+            selector => AssertAttribute(selector, "tags", AttributeSelectorOperator.Includes, "rounded"),
+            selector => AssertAttribute(selector, "lang", AttributeSelectorOperator.DashMatch, "en"),
+            selector => AssertAttribute(selector, "code", AttributeSelectorOperator.PrefixMatch, "pre"),
+            selector => AssertAttribute(selector, "code", AttributeSelectorOperator.SuffixMatch, "suffix"),
+            selector => AssertAttribute(selector, "code", AttributeSelectorOperator.SubstringMatch, "middle"));
+    }
+
+    [Fact]
+    public void AdvancedAttributeSelectorsMatchWordsPrefixesSuffixesAndSubstrings()
+    {
+        var css = """
+                  Button[tags~=primary] { includes: yes; }
+                  Button[lang|=en] { dash: yes; }
+                  Button[code^=prefix] { prefix: yes; }
+                  Button[code$=suffix] { suffix: yes; }
+                  Button[code*=middle] { substring: yes; }
+                  Button[label*='hello world'] { quoted: yes; }
+                  """;
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(css).Tokenize()).Parse());
+        var button = new Button();
+        button.SetProperty("tags", "small primary rounded");
+        button.SetProperty("lang", "en-US");
+        button.SetProperty("code", "prefix-middle-suffix");
+        button.SetProperty("label", "SAY HELLO WORLD NOW");
+
+        engine.ApplyStyles(button);
+
+        Assert.Equal("yes", button.Style.Get("includes"));
+        Assert.Equal("yes", button.Style.Get("dash"));
+        Assert.Equal("yes", button.Style.Get("prefix"));
+        Assert.Equal("yes", button.Style.Get("suffix"));
+        Assert.Equal("yes", button.Style.Get("substring"));
+        Assert.Equal("yes", button.Style.Get("quoted"));
+    }
+
+    [Fact]
+    public void AdvancedAttributeSelectorsRejectNearMissesAndMalformedRules()
+    {
+        var css = """
+                  Button[tags~=primary] { includes: yes; }
+                  Button[lang|=en] { dash: yes; }
+                  Button[code^=prefix] { prefix: yes; }
+                  Button[code$=suffix] { suffix: yes; }
+                  Button[code*=middle] { substring: yes; }
+                  Button[tags~=] { malformed: yes; }
+                  """;
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(css).Tokenize()).Parse());
+        var button = new Button();
+        button.SetProperty("tags", "primaryish");
+        button.SetProperty("lang", "english");
+        button.SetProperty("code", "middle-prefix-suffix-extra");
+
+        engine.ApplyStyles(button);
+
+        Assert.Null(button.Style.Get("includes"));
+        Assert.Null(button.Style.Get("dash"));
+        Assert.Null(button.Style.Get("prefix"));
+        Assert.Null(button.Style.Get("suffix"));
+        Assert.Equal("yes", button.Style.Get("substring"));
+        Assert.Null(button.Style.Get("malformed"));
+    }
+
+    [Fact]
+    public void AttributeSelectorReconcilesAfterAncestorPropertyMutationAndRemoval()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "View[theme=dark] Text { color: white; }").Tokenize()).Parse());
+        var root = new View();
+        var text = new Square.Controls.Text("item");
+        root.Children.Add(text);
+        engine.ApplyStylesToTree(root);
+        Assert.Null(text.Style.Get("color"));
+
+        root.SetProperty("theme", "dark");
+        CssStyleReconciler.Flush();
+        Assert.Equal("white", text.Style.Get("color"));
+
+        root.RemoveProperty("theme");
+        CssStyleReconciler.Flush();
+        Assert.Null(text.Style.Get("color"));
+    }
+
+    [Fact]
+    public void AdvancedAttributeSelectorUsesClassSpecificityAndSourceOrder()
+    {
+        var css = """
+                  Button[tags~=primary] { color: red; }
+                  Button { color: blue; }
+                  Button[code^=prefix] { background: green; }
+                  Button[code*=middle] { background: yellow; }
+                  """;
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(css).Tokenize()).Parse());
+        var button = new Button();
+        button.SetProperty("tags", "primary");
+        button.SetProperty("code", "prefix-middle");
+
+        engine.ApplyStyles(button);
+
+        Assert.Equal("red", button.Style.Get("color"));
+        Assert.Equal("yellow", button.Style.Get("background"));
+    }
+
+    private static void AssertAttribute(
+        SimpleSelector selector,
+        string name,
+        AttributeSelectorOperator attributeOperator,
+        string? value)
+    {
+        Assert.Equal(name, selector.Name);
+        Assert.Equal(attributeOperator, selector.AttributeOperator);
+        Assert.Equal(value, selector.AttributeValue);
     }
 
     [Fact]

@@ -1,0 +1,46 @@
+{
+  "fonts": [
+    {
+      "family": "Square Inter",
+      "file": "Inter-Regular.ttf",
+      "weight": 400,
+      "style": "normal",
+      "sha256": "40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82"
+    },
+    {
+      "family": "Square Inter",
+      "file": "Inter-Bold.ttf",
+      "weight": 700,
+      "style": "normal",
+      "sha256": "288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f"
+    },
+    {
+      "family": "Square Inter",
+      "file": "Inter-Italic.ttf",
+      "weight": 400,
+      "style": "italic",
+      "sha256": "bbc051dd204b5019a1aa0bc0ae2aa8a05ab13e7a3f979fa357631dc7feb6833a"
+    },
+    {
+      "family": "Square Inter",
+      "file": "Inter-BoldItalic.ttf",
+      "weight": 700,
+      "style": "italic",
+      "sha256": "948405a16cdc62701da5f4005ed068ca5f4d27061d98f7974ccfc37831d9581d"
+    },
+    {
+      "family": "Square Noto Sans SC",
+      "file": "NotoSansCJKsc-Regular.otf",
+      "weight": 400,
+      "style": "normal",
+      "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"
+    },
+    {
+      "family": "Square Noto Sans SC",
+      "file": "NotoSansCJKsc-Bold.otf",
+      "weight": 700,
+      "style": "normal",
+      "sha256": "b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a"
+    }
+  ]
+}

@@ -411,7 +411,7 @@ public sealed class DisplayTree
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = command.Origin.X;
+            var x = command.Origin.X + GetTextAlignmentOffset(command.Text, line.Width);
             var y = command.Origin.Y + lineIndex * lineHeight;
             for (var offset = line.StartOffset; offset < line.EndOffset;)
             {
@@ -447,6 +447,17 @@ public sealed class DisplayTree
         return new TextFragment(element, text, command.Text.Font, boundsAll, characters);
     }
 
+    private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)
+    {
+        if (!float.IsFinite(text.MaxSize.Width) || text.MaxSize.Width <= lineWidth) return 0;
+        return text.Alignment switch
+        {
+            TextAlignment.Center => (text.MaxSize.Width - lineWidth) / 2f,
+            TextAlignment.Right => text.MaxSize.Width - lineWidth,
+            _ => 0
+        };
+    }
+
     private static bool IsDescendantOrSelf(Element element, Element root)
     {
         for (var current = element; current != null; current = current.Parent)
@@ -469,8 +480,8 @@ public sealed class DisplayTree
     {
         if (element is not IPopupElement { IsPopupOpen: true } popup) return Rect.Empty;
         var bounds = popup.PopupBounds;
-        return BoxShadow.TryParse(element.Style.GetPropertyValue("box-shadow"), out var shadow)
-            ? BoxShadowRendering.GetVisualBounds(bounds, shadow)
+        return BoxShadow.TryParseList(element.Style.GetPropertyValue("box-shadow"), out var shadows)
+            ? BoxShadowRendering.GetVisualBounds(bounds, shadows)
             : bounds;
     }
 }

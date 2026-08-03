@@ -131,7 +131,7 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X;
+            var x = origin.X + GetTextAlignmentOffset(text, line.Width);
             var baseline = origin.Y + lineIndex * lineHeight + baselineOffset;
             for (var offset = line.StartOffset; offset < line.EndOffset;)
             {
@@ -449,6 +449,17 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
 
     private float SnapToPhysicalPixel(float value)
         => MathF.Round(value * _dpiScale) / _dpiScale;
+
+    private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)
+    {
+        if (!float.IsFinite(text.MaxSize.Width) || text.MaxSize.Width <= lineWidth) return 0;
+        return text.Alignment switch
+        {
+            TextAlignment.Center => (text.MaxSize.Width - lineWidth) / 2f,
+            TextAlignment.Right => text.MaxSize.Width - lineWidth,
+            _ => 0
+        };
+    }
 
     private static SKMatrix ToSkMatrix(Matrix3x2 matrix)
         => new(

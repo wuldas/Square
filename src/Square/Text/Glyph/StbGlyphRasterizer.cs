@@ -20,7 +20,7 @@ internal sealed class StbGlyphRasterizer
     public RasterizedGlyph? Rasterize(Font font, char character)
     {
         if (!IsAvailable) return null;
-        var entry = _fonts.Resolve(font.Family, character);
+        var entry = _fonts.Resolve(font.Family, character, font.Weight, font.Style);
         if (entry == null) return null;
 
         var effectiveFont = entry.Family == font.Family
@@ -39,11 +39,7 @@ internal sealed class StbGlyphRasterizer
         var info = entry.AcquireFontInfo();
         if (info == null) return null;
 
-        // GDI CreateFont(-size) uses character height; ScaleForPixelHeight matches that
-        // for most fonts, but UI fonts can look slightly smaller than Segoe UI optically.
-        // A modest boost keeps Linux text closer to Windows without changing layout CSS.
-        var pixelHeight = font.Size * 1.12f;
-        var scale = StbTrueType.stbtt_ScaleForPixelHeight(info, pixelHeight);
+        var scale = StbTrueType.stbtt_ScaleForMappingEmToPixels(info, font.Size);
         if (scale <= 0) return null;
 
         var codepoint = (int)character;
@@ -66,7 +62,7 @@ internal sealed class StbGlyphRasterizer
                     Stride = 0,
                     OffsetX = xoff,
                     OffsetY = yoff,
-                    AdvanceX = (int)MathF.Round(advanceWidth * scale),
+                    AdvanceX = advanceWidth * scale,
                     Coverage = []
                 };
             }
@@ -87,7 +83,7 @@ internal sealed class StbGlyphRasterizer
                 Stride = stride,
                 OffsetX = xoff,
                 OffsetY = (int)MathF.Round(ascent * scale) + yoff,
-                AdvanceX = (int)MathF.Round(advanceWidth * scale),
+                AdvanceX = advanceWidth * scale,
                 Coverage = coverage
             };
         }
@@ -117,19 +113,69 @@ internal sealed class FontEntry
     public string Family { get; }
 
     /// <summary>已加载字节（内存中）；路径字体在首次使用时再读入。</summary>
-    public FontEntry(string family, byte[] data, int offset = 0)
+    public FontEntry(
+        string family,
+        byte[] data,
+        int offset = 0,
+        FontWeight weight = FontWeight.Normal,
+        FontStyle style = FontStyle.Normal)
     {
         Family = family;
+        Weight = weight;
+        Style = style;
         _data = data;
         _offset = offset;
     }
 
     /// <summary>延迟从文件加载，避免启动时把整个系统字体目录读进内存。</summary>
-    public FontEntry(string family, string path, int offset = 0)
+    public FontEntry(
+        string family,
+        string path,
+        int offset = 0,
+        FontWeight weight = FontWeight.Normal,
+        FontStyle style = FontStyle.Normal)
     {
         Family = family;
+        Weight = weight;
+        Style = style;
         _path = path;
         _offset = offset;
+    }
+
+    /// <summary>该字体面的 CSS 字重。</summary>
+    public FontWeight Weight { get; }
+
+    /// <summary>该字体面的 CSS 样式。</summary>
+    public FontStyle Style { get; }
+
+    /// <summary>字体在 TTC 中的偏移。</summary>
+    public int Offset => _offset;
+
+    /// <summary>获取字体文件字节。</summary>
+    public byte[]? GetData() => EnsureData();
+
+    /// <summary>按 CSS em 尺寸读取字体垂直度量。</summary>
+    public unsafe bool TryGetFontMetrics(float size, out FontMetrics metrics)
+    {
+        var info = AcquireFontInfo();
+        if (info == null)
+        {
+            metrics = default;
+            return false;
+        }
+
+        int ascent, descent, lineGap;
+        StbTrueType.stbtt_GetFontVMetrics(info, &ascent, &descent, &lineGap);
+        var scale = StbTrueType.stbtt_ScaleForMappingEmToPixels(info, size);
+        var scaledAscent = ascent * scale;
+        var scaledDescent = descent * scale;
+        metrics = new FontMetrics(
+            -scaledAscent,
+            -scaledAscent,
+            -scaledDescent,
+            -scaledDescent,
+            lineGap * scale);
+        return true;
     }
 
     /// <summary>获取或初始化 stbtt_fontinfo；首次调用时加载字体数据。</summary>
@@ -183,6 +229,7 @@ internal sealed class FontCollection
 
     private readonly object _gate = new();
     private readonly Dictionary<string, FontEntry> _byFamily = new(NormalizedComparer.Instance);
+    private readonly Dictionary<string, List<FontEntry>> _customFaces = new(NormalizedComparer.Instance);
     private readonly HashSet<string> _customFamilies = new(NormalizedComparer.Instance);
     private readonly List<FontEntry> _fallbacks = [];
     private string? _cjkFamily;
@@ -208,15 +255,26 @@ internal sealed class FontCollection
     /// 注册已加载的字体数据（FontFace.Load 成功后调用）。
     /// 同名族覆盖为自定义面，并优先于系统回退。
     /// </summary>
-    public void Register(string family, byte[] data, int offset = 0)
+    public void Register(
+        string family,
+        byte[] data,
+        int offset = 0,
+        FontWeight weight = FontWeight.Normal,
+        FontStyle style = FontStyle.Normal)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(family);
         ArgumentNullException.ThrowIfNull(data);
         lock (_gate)
         {
-            var entry = new FontEntry(family, data, offset);
+            var entry = new FontEntry(family, data, offset, weight, style);
             var norm = Normalize(family);
-            _byFamily[norm] = entry;
+            if (!_customFaces.TryGetValue(norm, out var faces))
+            {
+                faces = [];
+                _customFaces[norm] = faces;
+            }
+            faces.RemoveAll(face => face.Weight == weight && face.Style == style);
+            faces.Add(entry);
             _customFamilies.Add(norm);
             // Custom faces are selected only by family name. They must not become
             // fallbacks for normal text, especially for private-use icon fonts.
@@ -229,7 +287,10 @@ internal sealed class FontCollection
     public bool ContainsFamily(string family)
     {
         lock (_gate)
-            return _byFamily.ContainsKey(Normalize(family));
+        {
+            var normalized = Normalize(family);
+            return _customFaces.ContainsKey(normalized) || _byFamily.ContainsKey(normalized);
+        }
     }
 
     /// <summary>判断指定字体族是否为已注册的自定义字体族。</summary>
@@ -245,13 +306,20 @@ internal sealed class FontCollection
     /// <param name="requestedFamily">请求的字体族名称。</param>
     /// <param name="character">用于脚本回退判断的字符。</param>
     /// <returns>匹配的字体条目；无可用字体返回 null。</returns>
-    public FontEntry? Resolve(string requestedFamily, char character)
+    public FontEntry? Resolve(
+        string requestedFamily,
+        char character,
+        FontWeight weight = FontWeight.Normal,
+        FontStyle style = FontStyle.Normal)
     {
         lock (_gate)
         {
-            if (_byFamily.Count == 0) return null;
+            if (_byFamily.Count == 0 && _customFaces.Count == 0) return null;
 
             var normRequested = Normalize(requestedFamily);
+            if (_customFaces.TryGetValue(normRequested, out var customFaces))
+                return MatchFace(customFaces, weight, style);
+
             // 按 Unicode 范围选脚本回退族（不建 per-char 大字典，省内存）
             var scriptFamily = ResolveScriptFamily(character);
             if (scriptFamily != null
@@ -268,6 +336,21 @@ internal sealed class FontCollection
             return _fallbacks.Count > 0 ? _fallbacks[0] : null;
         }
     }
+
+    /// <summary>查找通过 FontFace 注册的字体面。</summary>
+    public FontEntry? ResolveCustomFace(string family, FontWeight weight, FontStyle style)
+    {
+        lock (_gate)
+            return _customFaces.TryGetValue(Normalize(family), out var faces)
+                ? MatchFace(faces, weight, style)
+                : null;
+    }
+
+    private static FontEntry MatchFace(IReadOnlyList<FontEntry> faces, FontWeight weight, FontStyle style)
+        => faces
+            .OrderBy(face => face.Style == style ? 0 : 1)
+            .ThenBy(face => Math.Abs((int)face.Weight - (int)weight))
+            .First();
 
     private string? ResolveScriptFamily(char character)
     {

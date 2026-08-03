@@ -1,6 +1,6 @@
 # SQX 语言规范
 
-> Version: 0.3
+> Document Revision: 0.3
 > 配套：`Architecture.md`、`Requirements.md`
 
 ---

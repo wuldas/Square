@@ -349,7 +349,7 @@ public class DirtyPartialPresentTests
         var root = new View { Geometry = new Rect(0, 0, 160, 100) };
         var view = new View { Geometry = new Rect(40, 30, 30, 20) };
         view.Style.Set("background", "#ffffff");
-        view.Style.Set("box-shadow", "5px 7px 10px 2px rgba(0,0,0,0.5)");
+        view.Style.Set("box-shadow", "-8px -6px 0 2px rgba(0,0,0,0.5), 5px 7px 10px 2px rgba(0,0,0,0.5)");
         root.Children.Add(view);
         var tree = new DisplayTree();
         tree.BuildFrom(root);
@@ -361,7 +361,7 @@ public class DirtyPartialPresentTests
         tree.UpdateDirty();
         var dirty = tree.CollectDirtyRects();
 
-        Assert.Contains(dirty, rect => rect.Right >= 87 && rect.Bottom >= 69);
+        Assert.Contains(dirty, rect => rect.Left <= 30 && rect.Top <= 22 && rect.Right >= 87 && rect.Bottom >= 69);
     }
 
     [Fact]
@@ -370,7 +370,7 @@ public class DirtyPartialPresentTests
         var root = new View { Geometry = new Rect(0, 0, 200, 120) };
         var anchor = new View { Geometry = new Rect(50, 30, 20, 10) };
         var popup = new Popup { Geometry = new Rect(0, 0, 60, 30) };
-        popup.Style.Set("box-shadow", "0 6px 12px rgba(0,0,0,0.5)");
+        popup.Style.Set("box-shadow", "-8px -4px 0 2px rgba(0,0,0,0.5), 0 6px 12px rgba(0,0,0,0.5)");
         popup.Anchor = anchor;
         root.Children.Add(anchor);
         root.Children.Add(popup);

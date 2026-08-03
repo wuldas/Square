@@ -1,6 +1,7 @@
 using System.Text;
 using SkiaSharp;
 using Square.Graphics;
+using Square.Text.Glyph;
 
 namespace Square.Backends.Skia;
 
@@ -9,6 +10,7 @@ internal sealed class SkiaTextMetricsProvider : ITextMetricsProvider
     private readonly Dictionary<FontKey, FontMetrics> _fontMetrics = [];
     private readonly Dictionary<GlyphKey, GlyphMetrics> _glyphMetrics = [];
     private readonly Dictionary<TypefaceKey, SKTypeface> _typefaces = [];
+    private readonly FontCollection _fonts = FontCollection.Shared;
     private readonly object _sync = new();
 
     public bool TryGetFontMetrics(Font font, out FontMetrics metrics)
@@ -66,9 +68,18 @@ internal sealed class SkiaTextMetricsProvider : ITextMetricsProvider
         {
             if (!_typefaces.TryGetValue(key, out typeface!))
             {
-                typeface = codePoint is int value
-                    ? SKFontManager.Default.MatchCharacter(family, style, null, value)
-                    : SKTypeface.FromFamilyName(family, style);
+                var customFace = _fonts.ResolveCustomFace(family, font.Weight, font.Style);
+                if (customFace?.GetData() is { } data)
+                {
+                    using var skData = SKData.CreateCopy(data);
+                    typeface = SKTypeface.FromData(skData, customFace.Offset);
+                }
+                else
+                {
+                    typeface = codePoint is int value
+                        ? SKFontManager.Default.MatchCharacter(family, style, null, value)
+                        : SKTypeface.FromFamilyName(family, style);
+                }
                 typeface ??= SKTypeface.Default;
                 _typefaces[key] = typeface;
             }

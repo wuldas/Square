@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Square.Text.Fonts;
+using Square.Graphics;
 using Square.UI;
 using Xunit;
 
@@ -73,6 +74,21 @@ public class FontFaceTests
         var face = new FontFace("SquareBytesFace", bytes);
         await face.LoadAsync();
         Assert.Equal(FontFaceLoadStatus.Loaded, face.Status);
+    }
+
+    [Fact]
+    public async Task FontFacePreservesWeightAndStyleDescriptors()
+    {
+        var path = FindSystemFontPath();
+        if (path is null)
+            return;
+
+        var face = new FontFace("SquareDescriptorFace", path, FontWeight.Bold, FontStyle.Italic);
+        await face.LoadAsync();
+
+        Assert.Equal(FontWeight.Bold, face.Weight);
+        Assert.Equal(FontStyle.Italic, face.Style);
+        Assert.True(Square.Text.FontManager.Instance.IsFamilyKnown("SquareDescriptorFace"));
     }
 
     [Fact]

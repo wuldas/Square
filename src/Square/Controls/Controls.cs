@@ -910,8 +910,8 @@ public class Popup : View, IPopupElement
         var bounds = ContentBounds;
         var translation = new Vector2(bounds.X - Geometry.X, bounds.Y - Geometry.Y);
         context.PushTransform(Matrix3x2.CreateTranslation(translation));
-        if (BoxShadow.TryParse(Style.GetPropertyValue("box-shadow"), out var shadow))
-            BoxShadowRendering.Draw(context, Geometry, ControlDrawing.GetStyledRadius(this, Geometry), shadow);
+        if (BoxShadow.TryParseList(Style.GetPropertyValue("box-shadow"), out var shadows))
+            BoxShadowRendering.Draw(context, Geometry, ControlDrawing.GetStyledRadius(this, Geometry), shadows);
         context.PushClip(Geometry);
         var background = ControlDrawing.GetStyledColor(this, "background", Color.White);
         ControlDrawing.DrawStyledBackground(context, this, background);
@@ -1525,10 +1525,14 @@ internal static class ControlDrawing
     internal static Size MeasureText(Element element, string text, float defaultSize, Size? maxSize = null)
     {
         var font = ResolveFont(element, defaultSize);
-        return new TextLayout(text, font)
+        var layout = new TextLayout(text, font)
         {
-            MaxSize = maxSize ?? new Size(float.MaxValue, float.MaxValue)
-        }.Measure();
+            MaxSize = maxSize ?? new Size(float.MaxValue, float.MaxValue),
+            Alignment = ResolveTextAlignment(element)
+        };
+        var lineHeight = GetStyledLineHeight(element, font.Size);
+        layout.LineHeight = lineHeight / font.Size;
+        return layout.Measure();
     }
 
     internal static Rect GetTextBounds(Element element, string text, float defaultSize, Point origin)
@@ -1576,11 +1580,22 @@ internal static class ControlDrawing
         var color = useStyledColor ? GetStyledColor(element, "color", defaultColor) : defaultColor;
         var layout = new TextLayout(text, font)
         {
-            MaxSize = maxSize ?? new Size(float.MaxValue, float.MaxValue)
+            MaxSize = maxSize ?? new Size(float.MaxValue, float.MaxValue),
+            Alignment = ResolveTextAlignment(element)
         };
-        if (lineHeight.HasValue && font.Size > 0) layout.LineHeight = lineHeight.Value / font.Size;
+        if (font.Size > 0)
+            layout.LineHeight = (lineHeight ?? GetStyledLineHeight(element, font.Size)) / font.Size;
         context.DrawText(layout, position, new SolidColorBrush(color));
     }
+
+    private static TextAlignment ResolveTextAlignment(Element element)
+        => element.Style.GetPropertyValue("text-align").Trim().ToLowerInvariant() switch
+        {
+            "center" => TextAlignment.Center,
+            "right" => TextAlignment.Right,
+            "justify" => TextAlignment.Justify,
+            _ => TextAlignment.Left
+        };
 
     internal static void DrawInputFrame(IRenderContext context, UIElement element)
     {

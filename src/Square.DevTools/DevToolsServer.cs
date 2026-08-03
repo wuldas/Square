@@ -41,10 +41,7 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         var token = string.IsNullOrWhiteSpace(options.AccessToken)
             ? Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant()
             : options.AccessToken;
-        var port = options.Port == 0 ? ReserveLoopbackPort() : options.Port;
-        var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
+        var listener = StartListener(options.Port, out var port);
 
         var server = new DevToolsServer(listener, Task.CompletedTask, token, port);
         server._acceptLoop = Task.Run(() => server.AcceptLoopAsync(window, options));
@@ -217,6 +214,28 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private static HttpListener StartListener(int requestedPort, out int port)
+    {
+        const int attempts = 5;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            port = requestedPort == 0 ? ReserveLoopbackPort() : requestedPort;
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try
+            {
+                listener.Start();
+                return listener;
+            }
+            catch (HttpListenerException) when (requestedPort == 0 && attempt + 1 < attempts)
+            {
+                listener.Close();
+            }
+        }
+
+        throw new InvalidOperationException("Unable to bind the Square DevTools loopback listener.");
     }
 
     private static bool IsAuthorized(HttpListenerRequest request, string token)

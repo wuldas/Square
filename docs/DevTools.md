@@ -1,6 +1,6 @@
 # DevTools
 
-> Version: 0.5  
+> Document Revision: 0.5
 > 配套：`Getting-Started.md`、`API-Reference.md`、`Rendering.md`
 
 `Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集和输入自动化。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
@@ -45,10 +45,10 @@ app.Run();
 |---|---:|---|
 | `Port` | `0` | `0` 表示由操作系统自动分配空闲端口；`1..65535` 表示严格绑定指定端口 |
 | `AccessToken` | `null` | 访问令牌；为空时自动生成 24 字节随机 token 的十六进制字符串 |
-| `AllowInputInjection` | `true` | 是否允许 `/input/*` 输入注入接口；关闭后输入接口返回 `403` |
-| `AllowInspector` | `true` | 是否允许 `/inspect/*` 运行时检查接口；关闭后返回 `403` |
-| `IncludeSourcePaths` | `true` | Inspector 响应是否包含模板源码路径 |
-| `IncludeTextContent` | `true` | Inspector 响应是否包含元素文本内容 |
+| `AllowInputInjection` | `false` | 是否允许 `/input/*` 输入注入接口；关闭后输入接口返回 `403` |
+| `AllowInspector` | `false` | 是否允许 `/inspect/*` 运行时检查接口；关闭后返回 `403` |
+| `IncludeSourcePaths` | `false` | Inspector 响应是否包含模板源码路径 |
+| `IncludeTextContent` | `false` | Inspector 响应是否包含元素文本内容 |
 
 RichText 示例已经集成 DevTools：
 
@@ -84,7 +84,7 @@ X-Square-DevTools-Token: <启动时生成的随机令牌>
 
 ### 端口分配规则
 
-1. 库和示例默认使用 `Port = 0`，由操作系统原子分配空闲端口，允许多个 Square 程序并行启动。
+1. 库和示例默认使用 `Port = 0`，自动探测 loopback 空闲端口并在绑定冲突时有限重试，允许多个 Square 程序并行启动。
 2. 自动端口模式下，调用方必须读取 `DevToolsServer.Port` 或 `DevToolsServer.BaseAddress`，不得假设端口为 `5128`。
 3. 只有需要固定外部配置时才使用 `1..65535`。指定端口被占用时启动失败，不自动换到其他端口，避免客户端连接到错误实例。
 4. 每个进程默认生成独立随机 token。固定 token 仅用于受控的本地示例或测试。
@@ -107,7 +107,7 @@ Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
 
 - `devTools.Port` 是实际绑定端口，不会是 `0`。
 - `devTools.BaseAddress` 是当前实例的实际根地址。
-- 操作系统负责原子选择端口，不需要先探测再绑定，因此不存在“检查为空闲后被其他进程抢占”的竞态窗口。
+- 自动端口使用短暂的探测再绑定流程，存在极小的竞争窗口；实现会有限重试，持续冲突时启动失败。
 
 ### 固定端口模式
 
@@ -608,9 +608,9 @@ Inspector 会暴露源码路径、组件名、文本内容和样式信息，因�
 ```csharp
 public sealed class DevToolsOptions
 {
-    public bool AllowInspector { get; set; } = true;
-    public bool IncludeSourcePaths { get; set; } = true;
-    public bool IncludeTextContent { get; set; } = true;
+    public bool AllowInspector { get; set; }
+    public bool IncludeSourcePaths { get; set; }
+    public bool IncludeTextContent { get; set; }
 }
 ```
 

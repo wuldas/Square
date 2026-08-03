@@ -1,6 +1,6 @@
 # 渲染架构
 
-> Version: 0.5
+> Document Revision: 0.5
 > 配套：`Architecture.md`、`Graphics.md`、`Layout.md`
 > `PushLayer` / `PopLayer` 当前实现嵌套绘制透明度乘法；`bounds` 尚不创建离屏表面，真正的 group opacity/compositing 仍为后续能力。
 
@@ -117,7 +117,7 @@ CSS `line-height` 仍控制行进距离，Skia font bounds 用于计算行盒内
 - 仅重绘脏区范围内的 DrawCommand
 - `VisualBounds` 使用 DrawCommand 的实际视觉范围，而不是只使用元素 `Geometry`
 - Path、clip、transform、popup 等都会参与脏区计算，避免局部重绘漏绘或过度扩大
-- Popup 内容使用 popup 局部坐标生成 DrawCommand；任一后代需要重绘时，脏区会提升到整个 Popup 视觉范围，包含 `box-shadow`
+- Popup 内容使用 popup 局部坐标生成 DrawCommand；任一后代需要重绘时，脏区会提升到整个 Popup 视觉范围，包含全部 `box-shadow` 外阴影
 - 宿主将窗口指针坐标映射到 Popup 内容坐标，并将文本光标矩形映射回窗口坐标后交给平台 IME
 
 ### 6.2 渲染模式
@@ -210,8 +210,8 @@ Square Framework - Overlay: Off
 ```
 IRenderContext (抽象)
   ├── SoftwareBackend   (纯 C# CPU 渲染)
-  ├── VulkanBackend     (Silk.NET 原生 Vulkan)
-  └── Future Backends   (Skia / Blend2D / Cairo / ...)
+  ├── SkiaBackend       (SkiaSharp CPU 渲染)
+  └── VulkanBackend     (Silk.NET 原生 Vulkan)
 ```
 
 - 同一 `IRenderContext` 接口

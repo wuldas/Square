@@ -257,23 +257,7 @@ public sealed class CssParser
 
             if (token.Type == CssTokenType.OpenBracket)
             {
-                Advance();
-                while (Peek().Type == CssTokenType.Whitespace) Advance();
-                var name = Peek().Type == CssTokenType.Identifier ? Advance().Text : "";
-                while (Peek().Type == CssTokenType.Whitespace) Advance();
-                if (Peek().Type == CssTokenType.Equals)
-                {
-                    Advance();
-                    while (Peek().Type == CssTokenType.Whitespace) Advance();
-                    var valueToken = Advance();
-                    parts.Add(new SimpleSelector(SimpleSelectorKind.Attribute, name + "=" + valueToken.Text));
-                }
-                else if (!string.IsNullOrWhiteSpace(name))
-                {
-                    parts.Add(new SimpleSelector(SimpleSelectorKind.Attribute, name));
-                }
-                while (Peek().Type is not (CssTokenType.CloseBracket or CssTokenType.Eof)) Advance();
-                if (Peek().Type == CssTokenType.CloseBracket) Advance();
+                parts.Add(ParseAttributeSelector());
                 continue;
             }
 
@@ -320,6 +304,76 @@ public sealed class CssParser
         FlushCompound(parts, steps);
         if (steps.Count > 0) result.Add(new ComplexSelector(steps));
         return result;
+    }
+
+    private SimpleSelector ParseAttributeSelector()
+    {
+        Advance();
+        SkipWhitespace();
+        var name = Peek().Type == CssTokenType.Identifier ? Advance().Text : "";
+        SkipWhitespace();
+
+        var attributeOperator = AttributeSelectorOperator.Presence;
+        string? value = null;
+        var valid = name.Length > 0;
+        if (Peek().Type != CssTokenType.CloseBracket)
+        {
+            valid &= TryParseAttributeOperator(out attributeOperator);
+            SkipWhitespace();
+            var valueToken = Peek();
+            if (valueToken.Type is CssTokenType.Identifier or CssTokenType.String or CssTokenType.Number or CssTokenType.Hash)
+            {
+                value = Advance().Text;
+            }
+            else
+            {
+                valid = false;
+            }
+            SkipWhitespace();
+            valid &= Peek().Type == CssTokenType.CloseBracket;
+        }
+
+        while (Peek().Type is not (CssTokenType.CloseBracket or CssTokenType.Eof)) Advance();
+        if (Peek().Type == CssTokenType.CloseBracket) Advance();
+        else valid = false;
+
+        return new SimpleSelector(
+            SimpleSelectorKind.Attribute,
+            name,
+            valid ? attributeOperator : AttributeSelectorOperator.Invalid,
+            value);
+    }
+
+    private bool TryParseAttributeOperator(out AttributeSelectorOperator attributeOperator)
+    {
+        attributeOperator = AttributeSelectorOperator.Invalid;
+        var token = Peek();
+        if (token.Type == CssTokenType.Equals)
+        {
+            Advance();
+            attributeOperator = AttributeSelectorOperator.Equals;
+            return true;
+        }
+
+        if (Peek(1).Type != CssTokenType.Equals) return false;
+        attributeOperator = token.Type switch
+        {
+            CssTokenType.Tilde => AttributeSelectorOperator.Includes,
+            CssTokenType.Asterisk => AttributeSelectorOperator.SubstringMatch,
+            CssTokenType.Delimiter when token.Text == "|" => AttributeSelectorOperator.DashMatch,
+            CssTokenType.Delimiter when token.Text == "^" => AttributeSelectorOperator.PrefixMatch,
+            CssTokenType.Delimiter when token.Text == "$" => AttributeSelectorOperator.SuffixMatch,
+            _ => AttributeSelectorOperator.Invalid
+        };
+        if (attributeOperator == AttributeSelectorOperator.Invalid) return false;
+        Advance();
+        Advance();
+        return true;
+    }
+
+    private void SkipWhitespace()
+    {
+        while (Peek().Type == CssTokenType.Whitespace) Advance();
     }
 
     private void FlushCompound(List<SimpleSelector> parts, List<CompoundStep> steps)
@@ -385,6 +439,6 @@ public sealed class CssParser
         return result.ToString().Trim();
     }
 
-    private CssToken Peek() => _i < _tokens.Count ? _tokens[_i] : _tokens[^1];
+    private CssToken Peek(int offset = 0) => _i + offset < _tokens.Count ? _tokens[_i + offset] : _tokens[^1];
     private CssToken Advance() => _i < _tokens.Count ? _tokens[_i++] : _tokens[^1];
 }

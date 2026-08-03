@@ -614,6 +614,34 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void TextAlignmentOffsetsEachLineWithinFiniteWidth()
+    {
+        var font = new Font("Segoe UI", 16);
+        var layout = new TextLayout("Align", font)
+        {
+            MaxSize = new Size(160, 40),
+            Alignment = TextAlignment.Right
+        };
+        var context = CreateContext(160, 40);
+        context.Clear(Color.White);
+
+        context.DrawText(layout, Point.Zero, Brush.FromColor(Color.Black));
+
+        var bitmap = context.GetBitmap();
+        var firstInkX = bitmap.Width;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel[0] >= 240 && pixel[1] >= 240 && pixel[2] >= 240) continue;
+                firstInkX = Math.Min(firstInkX, x);
+            }
+        }
+        Assert.True(firstInkX > 80, $"Expected right-aligned ink, first ink x was {firstInkX}.");
+    }
+
+    [Fact]
     public void SystemRasterizerSupportsChineseAndJapaneseGlyphs()
     {
         var rasterizer = new SystemGlyphRasterizer();
@@ -1985,6 +2013,29 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void DisplayTreeRendersMultipleStyledBoxShadowsInCssPaintOrder()
+    {
+        var view = new View { Geometry = new Rect(20, 20, 20, 20) };
+        view.Style.Set("background", "#ffffff");
+        view.Style.Set("box-shadow", "-10px 0 0 #ff0000, 10px 0 0 #0000ff");
+        var context = CreateContext(60, 60);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(view);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        AssertPixel(bitmap, 12, 30, 255, 0, 0, 255);
+        AssertPixel(bitmap, 47, 30, 0, 0, 255, 255);
+
+        view.Style.Set("box-shadow", "10px 0 0 #ff0000, 10px 0 0 #0000ff");
+        tree.UpdateDirty();
+        tree.Render(context);
+        AssertPixel(bitmap, 47, 30, 255, 0, 0, 255);
+    }
+
+    [Fact]
     public void DefaultMenuShadowIsVisibleOnWhiteBackground()
     {
         var root = new View { Geometry = new Rect(0, 0, 160, 120) };
@@ -2001,6 +2052,15 @@ public class SoftwareRendererTests
         var pixel = context.GetBitmap().GetPixel(70, 76);
         Assert.True(pixel[0] < 180 && pixel[1] < 180 && pixel[2] < 180,
             $"Expected visible menu shadow, got BGR=({pixel[0]},{pixel[1]},{pixel[2]})");
+    }
+
+    private static void AssertPixel(Bitmap bitmap, int x, int y, byte r, byte g, byte b, byte a)
+    {
+        var pixel = bitmap.GetPixel(x, y);
+        Assert.Equal(b, pixel[0]);
+        Assert.Equal(g, pixel[1]);
+        Assert.Equal(r, pixel[2]);
+        Assert.Equal(a, pixel[3]);
     }
 
     private static IEnumerable<byte> AlphaValues(Bitmap bitmap)

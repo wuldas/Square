@@ -127,8 +127,10 @@ public static class CssStyleReconciler
         }
     }
 
-    internal static void UnregisterScopesForTree(Element root)
+    /// <summary>释放与指定元素树关联的 CSS scope 和待处理样式失效。</summary>
+    public static void UnregisterScopesForTree(Element root)
     {
+        ArgumentNullException.ThrowIfNull(root);
         lock (Gate)
         {
             Scopes.RemoveAll(scope => ReferenceEquals(FindTreeRoot(scope.Root), root));

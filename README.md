@@ -133,11 +133,14 @@ dotnet publish samples/Square.Sample.Vue/Square.Sample.Vue.csproj \
 - [布局](docs/Layout.md)
 - [渲染](docs/Rendering.md)
 - [DevTools 调试服务](docs/DevTools.md)
+- [Web Server 与静态 HTML](docs/Web-Hosting.md)
 - [开发路线](docs/Roadmap.md)
 
 ## 项目状态
 
 Square 适合框架设计验证、实验和贡献开发，暂不建议用于生产项目。
+
+当前程序集与 NuGet 包统一使用 `0.1.0`。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
 
 贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告。
 

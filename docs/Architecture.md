@@ -1,6 +1,6 @@
 # Square Framework 总体架构
 
-> Version: 0.3
+> Document Revision: 0.3
 > 配套：`Requirements.md`（需求）、`vue-plan.md`（SQV / Vue 模板语法）、`Sqx-Spec.md`（SQX 原生语法）、`Rendering-Targets.md`（多目标渲染与宿主路线）、`plan.md`（分阶段计划）、`rebuild-plan.md`（架构重建）
 
 ---
@@ -44,7 +44,7 @@ Layout Engine  (Square.Rendering, CSS 盒/flex/grid)
  IRenderContext  (Square.Graphics 抽象)
       │
       ▼
- Backend  (Square.Backends: Software → Skia/Blend2D/Cairo)
+ Backend  (Square.Backends: Software / Skia / Vulkan)
 ```
 
 - **非 Immediate Mode**：保留 Element Tree + Display Tree，支持脏区增量重绘。
@@ -55,7 +55,7 @@ Layout Engine  (Square.Rendering, CSS 盒/flex/grid)
 
 ## 3. 模块划分与职责
 
-当前物理程序集包括 `Square`、`Square.Compiler`、平台与渲染后端、`Square.Extensions`、`Square.Extensions.Markdown`、`Square.Extensions.CodeEditor` 和 `Square.DevTools`。下表中的 Runtime/UI/Controls 等名称是 `Square` 聚合程序集内部保持稳定的逻辑模块与命名空间。
+当前物理程序集包括 `Square`、`Square.Compiler`、平台与渲染后端、`Square.Extensions`、`Square.Extensions.Markdown`、`Square.Extensions.CodeEditor`、`Square.DevTools`、`Square.Native.Html` 和 `Square.Hosting.Web`。下表中的 Runtime/UI/Controls 等名称是 `Square` 聚合程序集内部保持稳定的逻辑模块与命名空间。
 
 | 模块 | 职责 | 关键设计 |
 |---|---|---|
@@ -75,8 +75,10 @@ Layout Engine  (Square.Rendering, CSS 盒/flex/grid)
 | `Square.Extensions` | 可选扩展 | RichText、Routing 与文件弹窗；由应用显式注册，不被核心反向依赖 |
 | `Square.Extensions.Markdown` | Markdown 扩展 | Markdig 文档模型与 TextMate 代码块高亮；通过 `MarkdownRegistration` 注册 |
 | `Square.Extensions.CodeEditor` | 代码编辑扩展 | PieceTable、视口绘制、多光标、折叠与 TextMate 高亮；通过 `CodeEditorRegistration` 注册 |
-| `Square.Backends` | 渲染后端 | 纯 C# Software Renderer → Skia/Blend2D/Cairo |
+| `Square.Backends` | 渲染后端 | 纯 C# Software Renderer、Skia、Vulkan |
 | `Square.Hosting` | 桌面应用宿主 | `DesktopApplication(UIDocument)`：窗口、输入、焦点、帧调度、布局与 DisplayTree 提交 |
+| `Square.Native.Html` | 静态语义 HTML | Element/NativeUiNode → browser semantic HTML + inline final CSS；不依赖桌面平台 |
+| `Square.Hosting.Web` | ASP.NET Core Web Server 宿主 | 每请求组件工厂、HTML response 和请求级资源释放；可与桌面平台注册共存 |
 
 **依赖方向**：`Square.Compiler` 在编译期生成组件；`Events` 保持平台与 UI 无关；`UI` → `Events`；`Controls/UI/Rendering/CSS/Text` → `Runtime` + `Graphics`（逻辑依赖）；具体 Platform/Backend 项目依赖核心抽象。核心层禁止反向依赖具体 Backend/Platform 实现。`Square.Hosting` 是聚合层，应用在启动前通过 `PlatformRegistry` 注册所引用的平台工厂。
 

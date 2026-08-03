@@ -1,6 +1,6 @@
 # 入门指南
 
-> Version: 0.3
+> Document Revision: 0.3
 > 配套：`vue-plan.md`、`Architecture.md`、`Sqx-Spec.md`、`API-Reference.md`
 
 本文带你从零创建一个 Square 桌面应用，默认使用 `.sqv` 的 Vue 模板语法编写组件。`.sqx` 原生语法仍可用，详见 `Sqx-Spec.md`。
@@ -487,7 +487,7 @@ Button {
 | 子代 | `View > Text` | ✅ |
 | 相邻兄弟 | `Text + Text` | ✅ |
 | 通用 | `*` | ✅ |
-| 属性 | `[disabled]` `[variant=primary]` | ✅ 基础 |
+| 属性 | `[IsDisabled]` `[variant=primary]` `[tags~=primary]` `[lang|=en]` `[code^=pre]` `[code$=suffix]` `[code*=middle]` | ✅ |
 | 伪类 | `:hover` `:focus` `:active` `:disabled` `:checked` | ✅ |
 
 `Button` 内置基础交互反馈：悬停提亮，按下压暗并让文字下移 1px。可以继续使用 `Button:hover` / `Button:active` 覆盖背景色；默认反馈会基于覆盖后的颜色绘制。
@@ -710,7 +710,7 @@ dotnet publish samples/Square.Sample/Square.Sample.csproj \
   --self-contained true
 ```
 
-Square 以 NativeAOT 兼容为设计约束：不使用 `Reflection.Emit`、`dynamic` 或运行时程序集发现。P/Invoke 使用源生成或显式静态入口。CI 验证 Win32/X11 Software AOT 发布；Vulkan 与 DevTools 也提供 AOT 路径，但组合场景仍属于实验性验证范围。Vulkan 后端通过显式系统库加载器加载 `vulkan-1.dll` 或 `libvulkan.so`，shader 使用构建期生成的内嵌 SPIR-V；DevTools 使用 `HttpListener`、显式路由和手写 JSON 输出。
+Square 以 NativeAOT 兼容为设计约束：不使用 `Reflection.Emit`、`dynamic` 或运行时程序集发现。P/Invoke 使用源生成或显式静态入口。CI 在 Win32、X11 和 macOS runner 上发布 Software AOT 示例，启动原生可执行文件并执行像素截图回归；Vulkan 与 DevTools 也提供 AOT 路径，但组合场景仍属于实验性验证范围。Vulkan 后端通过显式系统库加载器加载 `vulkan-1.dll` 或 `libvulkan.so`，shader 使用构建期生成的内嵌 SPIR-V；DevTools 使用 `HttpListener`、显式路由和手写 JSON 输出。
 
 主示例的 AOT 发布默认不引用 Vulkan 和 DevTools。需要 Vulkan AOT 时增加 `-p:SquareSampleUseVulkan=true`，需要 DevTools 时增加 `-p:SquareSampleUseDevTools=true`；不传对应属性时，相关项目及其依赖不会进入发布产物。
 

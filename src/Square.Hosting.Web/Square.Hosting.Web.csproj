@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Description>ASP.NET Core hosting for Square static semantic HTML pages</Description>
+    <PackageTags>$(PackageTags);aspnetcore;kestrel;ssr;html;web-server</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Square.Native.Html\Square.Native.Html.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -17,10 +17,37 @@ public enum SimpleSelectorKind
     Attribute
 }
 
+/// <summary>属性选择器操作符。</summary>
+public enum AttributeSelectorOperator
+{
+    /// <summary>属性存在。</summary>
+    Presence,
+    /// <summary>值精确相等。</summary>
+    Equals,
+    /// <summary>空白分隔词列表包含指定词。</summary>
+    Includes,
+    /// <summary>值等于指定值或以“指定值-”开头。</summary>
+    DashMatch,
+    /// <summary>值以指定文本开头。</summary>
+    PrefixMatch,
+    /// <summary>值以指定文本结尾。</summary>
+    SuffixMatch,
+    /// <summary>值包含指定文本。</summary>
+    SubstringMatch,
+    /// <summary>无效属性选择器，始终不匹配。</summary>
+    Invalid
+}
+
 /// <summary>表示一个简单选择器。</summary>
 /// <param name="Kind">选择器种类。</param>
 /// <param name="Name">选择器名称。</param>
-public sealed record SimpleSelector(SimpleSelectorKind Kind, string Name);
+/// <param name="AttributeOperator">属性选择器操作符。</param>
+/// <param name="AttributeValue">属性选择器期望值。</param>
+public sealed record SimpleSelector(
+    SimpleSelectorKind Kind,
+    string Name,
+    AttributeSelectorOperator AttributeOperator = AttributeSelectorOperator.Presence,
+    string? AttributeValue = null);
 
 /// <summary>表示复合选择器，由多个简单选择器组合而成。</summary>
 /// <param name="Parts">简单选择器列表。</param>

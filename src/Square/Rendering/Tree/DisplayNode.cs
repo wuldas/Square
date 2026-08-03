@@ -89,8 +89,8 @@ public sealed class DisplayNode
         if (element == null || !element.IsVisible) return;
         element.ClearPaintDirty();
         var collector = new CommandCollector(commands);
-        if (element is not IPopupElement && BoxShadow.TryParse(element.Style.GetPropertyValue("box-shadow"), out var shadow))
-            BoxShadowRendering.Draw(collector, element.Geometry, GetCornerRadius(element), shadow);
+        if (element is not IPopupElement && BoxShadow.TryParseList(element.Style.GetPropertyValue("box-shadow"), out var shadows))
+            BoxShadowRendering.Draw(collector, element.Geometry, GetCornerRadius(element), shadows);
         element.Paint(collector);
     }
 

@@ -19,7 +19,7 @@ public sealed class RasterizedGlyph
     /// <summary>字形顶部相对于基线的垂直偏移（像素）。</summary>
     public required int OffsetY { get; init; }
     /// <summary>该字形的水平步进宽度（像素）。</summary>
-    public required int AdvanceX { get; init; }
+    public required float AdvanceX { get; init; }
     /// <summary>灰度覆盖率数据（0..255），按 Stride 逐行排列。</summary>
     public required byte[] Coverage { get; init; }
 }
@@ -320,6 +320,10 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
     /// <returns>始终返回 true。</returns>
     public bool TryGetFontMetrics(Font font, out FontMetrics metrics)
     {
+        var customFace = FontCollection.Shared.ResolveCustomFace(font.Family, font.Weight, font.Style);
+        if (customFace?.TryGetFontMetrics(font.Size, out metrics) == true)
+            return true;
+
         var height = Math.Max(1, font.Size * TextLayout.DefaultLineHeight);
         var ascent = font.Size * 0.8f;
         metrics = new FontMetrics(-ascent, -ascent, height - ascent, height - ascent, 0);

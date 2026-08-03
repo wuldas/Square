@@ -12,11 +12,16 @@ internal static partial class MacOSApi
     internal const nuint WindowStyleTitled = 1;
     internal const nuint WindowStyleClosable = 1 << 1;
     internal const nuint WindowStyleMiniaturizable = 1 << 2;
+    internal const nuint WindowStyleResizable = 1 << 3;
+    internal const nuint WindowStyleFullScreen = 1 << 14;
     internal const nuint BackingStoreBuffered = 2;
     internal const uint BitmapByteOrder32Little = 0x2000;
     internal const uint ImageAlphaPremultipliedFirst = 2;
 
     private static readonly IntPtr AppKitHandle = NativeLibrary.Load(AppKit);
+
+    internal static IntPtr PasteboardTypeString =>
+        Marshal.ReadIntPtr(NativeLibrary.GetExport(AppKitHandle, "NSPasteboardTypeString"));
 
     internal static IntPtr GetClass(string name)
     {
@@ -53,6 +58,19 @@ internal static partial class MacOSApi
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
     internal static partial IntPtr SendDouble(IntPtr receiver, IntPtr selector, double value);
 
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendRect(IntPtr receiver, IntPtr selector, NSRect value);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendSize(IntPtr receiver, IntPtr selector, NSSize value);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial byte SendPointerPointerByteResult(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second);
+
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend", StringMarshalling = StringMarshalling.Utf8)]
     private static partial IntPtr SendUtf8(IntPtr receiver, IntPtr selector, string value);
 
@@ -88,6 +106,26 @@ internal static partial class MacOSApi
 
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
     internal static partial NSPoint SendPointResult(IntPtr receiver, IntPtr selector);
+
+    internal static NSRect SendRectResult(IntPtr receiver, IntPtr selector)
+    {
+        if (RuntimeInformation.ProcessArchitecture == Architecture.X64)
+        {
+            SendRectResultX64(out var result, receiver, selector);
+            return result;
+        }
+
+        if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+            return SendRectResultArm64(receiver, selector);
+
+        throw new PlatformNotSupportedException("Square supports macOS on x64 and arm64.");
+    }
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    private static partial NSRect SendRectResultArm64(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend_stret")]
+    private static partial void SendRectResultX64(out NSRect result, IntPtr receiver, IntPtr selector);
 
     [LibraryImport(CoreFoundation, EntryPoint = "CFDataCreate")]
     internal static unsafe partial IntPtr DataCreate(IntPtr allocator, byte* bytes, nint length);

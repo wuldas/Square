@@ -20,6 +20,8 @@
     <InternalsVisibleTo Include="Square.Platform.X11" />
     <InternalsVisibleTo Include="Square.Platform.MacOS" />
     <InternalsVisibleTo Include="Square.UI.Tests" />
+    <InternalsVisibleTo Include="Square.DevTools.Tests" />
+    <InternalsVisibleTo Include="Square.Backends.Skia" />
   </ItemGroup>
 
   <ItemGroup>

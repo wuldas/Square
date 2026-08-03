@@ -1,6 +1,6 @@
 # 布局引擎
 
-> Version: 0.3  
+> Document Revision: 0.3
 > 配套：`Architecture.md`、`CSS-Spec.md`
 
 ---

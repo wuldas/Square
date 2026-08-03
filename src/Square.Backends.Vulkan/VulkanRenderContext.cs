@@ -442,7 +442,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X;
+            var x = origin.X + GetTextAlignmentOffset(text, line.Width);
             var y = origin.Y + lineIndex * lineHeight;
             for (var offset = line.StartOffset; offset < line.EndOffset;)
             {
@@ -633,7 +633,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = physicalOrigin.X;
+            var x = physicalOrigin.X + GetTextAlignmentOffset(text, line.Width / DpiScale) * DpiScale;
             var y = physicalOrigin.Y + lineIndex * lineHeight;
             for (var offset = line.StartOffset; offset < line.EndOffset;)
             {
@@ -675,6 +675,17 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
                 offset += consumed;
             }
         }
+    }
+
+    private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)
+    {
+        if (!float.IsFinite(text.MaxSize.Width) || text.MaxSize.Width <= lineWidth) return 0;
+        return text.Alignment switch
+        {
+            TextAlignment.Center => (text.MaxSize.Width - lineWidth) / 2f,
+            TextAlignment.Right => text.MaxSize.Width - lineWidth,
+            _ => 0
+        };
     }
 
     private bool IsDpiOnlyTransform()

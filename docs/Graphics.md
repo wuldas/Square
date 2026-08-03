@@ -1,6 +1,6 @@
 # IRenderContext API
 
-> Version: 0.3  
+> Document Revision: 0.3
 > 配套：`Architecture.md`、`Rendering.md`
 
 ---

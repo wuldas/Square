@@ -24,4 +24,12 @@
     <Compile Remove="X11InputPolicyTests.cs" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(SquareTargetPlatform)' != 'Win32'">
+    <Compile Remove="Win32WindowPlacementTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SquareTargetPlatform)' != 'MacOS'">
+    <Compile Remove="MacOSHostPolicyTests.cs" />
+  </ItemGroup>
+
 </Project>

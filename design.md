@@ -16,7 +16,7 @@ Square 是 **纯 C# 实现、编译优先（Compile First）、NativeAOT 优先�
 1. **Compile First**：`.sqx` / `.sqv` 在编译期生成 C#，运行时零模板解析。
 2. **Pure C# Core**：Parser、Generator、CSS、Layout、Runtime、Display Tree、Animation、Text 均以 C# 实现。
 3. **NativeAOT First**：禁用 `Reflection.Emit`、运行时代码生成、`dynamic` 和运行时程序集加载；注册、绑定、平台分发均采用 AOT 友好机制。
-4. **Backend Independent**：核心不依赖具体图形库；Software、Skia、Blend2D、Cairo 等后端通过 `IRenderContext`/`IRenderBackendFactory` 接入。
+4. **Backend Independent**：核心不依赖具体图形库；Software、Skia、Vulkan 等后端通过 `IRenderContext`/`IRenderBackendFactory` 接入。
 5. **Retained Rendering**：使用 Document/Element Tree + Display Tree；布局与绘制由脏标记驱动，而非 Immediate Mode。
 6. **Low Coupling / IDE Friendly**：模块间通过抽象接口通信；Source Generator 将 `.sqx`/`.sqv` 诊断映射回源文件行列。
 
@@ -258,7 +258,7 @@ Props 校验通过 `<script>` 中的 `[Prop]` 成员提取组件契约；模板�
 `Square.CSS` 当前覆盖：
 
 - Tokenizer / Parser / AST
-- 类型、类、id、后代、子代、兄弟、通用和基础属性选择器
+- 类型、类、id、后代、子代、兄弟、通用和完整基础操作符属性选择器
 - Specificity、Cascade、`!important`
 - CSS Variables、Inheritance
 - 基础伪类和元素状态匹配
@@ -269,7 +269,7 @@ Props 校验通过 `<script>` 中的 `[Prop]` 成员提取组件契约；模板�
 
 CSS 只负责样式计算与属性应用；具体布局由 `Square.Rendering.LayoutEngine` 执行，绘制由元素 `Paint()` 产生命令并进入 DisplayTree。
 
-仍需后续完善的方向：伪元素、高级属性选择器、完整 CSS Grid、完整 animation/keyframes 语义、更多 CSSOM API。
+仍需后续完善的方向：伪元素、完整 animation/keyframes 语义、更多 CSSOM API，以及命名空间属性和大小写修饰符等高级选择器语义。
 
 ---
 
@@ -426,7 +426,7 @@ NativeAOT 约束贯穿设计：
 仍需推进：
 
 - 条件 `ProjectReference` 和发布模板中的平台/后端裁剪继续细化。
-- Skia / Blend2D / Cairo 后端接入，并保持 `IRenderContext` API 稳定。
+- Skia / Vulkan 后端持续完善，并保持 `IRenderContext` API 稳定。
 - macOS、移动端、WASM 平台宿主。
 - 富文本编辑器深化：显式 caret affinity、系统剪贴板多 MIME、列表/链接/图片节点、Markdown/HTML import/export。
 - 完整文本能力：BiDi、Font Fallback、复杂 selection/caret 行为。

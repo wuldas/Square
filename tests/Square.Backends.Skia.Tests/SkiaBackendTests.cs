@@ -4,6 +4,7 @@ using SkiaSharp;
 using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
+using Square.Text.Fonts;
 using Xunit;
 
 namespace Square.Backends.Skia.Tests;
@@ -73,6 +74,23 @@ public sealed class SkiaBackendTests
         Assert.Equal(bounds[0].Top, actual.InkBounds.Top, 3);
         Assert.Equal(bounds[0].Right, actual.InkBounds.Right, 3);
         Assert.Equal(bounds[0].Bottom, actual.InkBounds.Bottom, 3);
+    }
+
+    [Fact]
+    public async Task RegisteredCustomFontBytesProvideSkiaMetrics()
+    {
+        var path = FindSystemFontPath();
+        if (path == null) return;
+        await new FontFace("SquareSkiaCustom", path).LoadAsync();
+        using var context = new SkiaBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(8, 8)
+        });
+
+        var metrics = TextMetrics.GetGlyphMetrics(new Font("SquareSkiaCustom", 16), new Rune('A'));
+
+        Assert.True(metrics.AdvanceX > 0);
+        Assert.False(metrics.InkBounds.IsEmpty);
     }
 
     [Fact]
@@ -261,6 +279,18 @@ public sealed class SkiaBackendTests
         {
             CanvasSize = new Size(width, height)
         });
+
+    private static string? FindSystemFontPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts", "arial.ttf"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts", "segoeui.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf"
+        };
+        return candidates.FirstOrDefault(File.Exists);
+    }
 
     private static void AssertPixel(Bitmap bitmap, int x, int y, byte red, byte green, byte blue, byte alpha)
     {

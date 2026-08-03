@@ -1869,7 +1869,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X;
+            var x = origin.X + GetTextAlignmentOffset(textLayout, line.Width / _dpiScale) * _dpiScale;
             var y = origin.Y + lineIndex * lineHeight;
             for (var offset = line.StartOffset; offset < line.EndOffset;)
             {
@@ -1911,6 +1911,17 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 offset += consumed;
             }
         }
+    }
+
+    private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)
+    {
+        if (!float.IsFinite(text.MaxSize.Width) || text.MaxSize.Width <= lineWidth) return 0;
+        return text.Alignment switch
+        {
+            TextAlignment.Center => (text.MaxSize.Width - lineWidth) / 2f,
+            TextAlignment.Right => text.MaxSize.Width - lineWidth,
+            _ => 0
+        };
     }
 
     private void DrawGlyph(char c, int x, int y, int pixelSize, Color color)

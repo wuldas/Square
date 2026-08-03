@@ -9,6 +9,8 @@
   <Project Path="src/Square.Extensions.CodeEditor/Square.Extensions.CodeEditor.csproj" />
   <Project Path="src/Square.Images/Square.Images.csproj" />
   <Project Path="src/Square.DevTools/Square.DevTools.csproj" />
+  <Project Path="src/Square.Native.Html/Square.Native.Html.csproj" />
+  <Project Path="src/Square.Hosting.Web/Square.Hosting.Web.csproj" />
   <Project Path="src/Square.Backends.Vulkan/Square.Backends.Vulkan.csproj" />
   <Project Path="src/Square.Backends.Skia/Square.Backends.Skia.csproj" />
   <Folder Name="/Samples/">
@@ -16,6 +18,7 @@
     <Project Path="samples/Square.Sample.HelloWorld/Square.Sample.HelloWorld.csproj" />
     <Project Path="samples/Square.Sample.RichText/Square.Sample.RichText.csproj" />
     <Project Path="samples/Square.Sample.Vue/Square.Sample.Vue.csproj" />
+    <Project Path="samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj" />
     <Project Path="samples/Square.Sample/Square.Sample.csproj" />
   </Folder>
   <Folder Name="/Tests/">
@@ -24,9 +27,12 @@
     <Project Path="tests/Square.Backends.Vulkan.Tests/Square.Backends.Vulkan.Tests.csproj" />
     <Project Path="tests/Square.Backends.Skia.Tests/Square.Backends.Skia.Tests.csproj" />
     <Project Path="tests/Square.CSS.Tests/Square.CSS.Tests.csproj" />
+    <Project Path="tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj" />
     <Project Path="tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj" />
     <Project Path="tests/Square.Graphics.Tests/Square.Graphics.Tests.csproj" />
     <Project Path="tests/Square.Images.Tests/Square.Images.Tests.csproj" />
+    <Project Path="tests/Square.Native.Html.Tests/Square.Native.Html.Tests.csproj" />
+    <Project Path="tests/Square.Hosting.Web.Tests/Square.Hosting.Web.Tests.csproj" />
     <Project Path="tests/Square.Markup.Tests/Square.Markup.Tests.csproj" />
     <Project Path="tests/Square.Platform.Tests/Square.Platform.Tests.csproj" />
     <Project Path="tests/Square.Runtime.Tests/Square.Runtime.Tests.csproj" />

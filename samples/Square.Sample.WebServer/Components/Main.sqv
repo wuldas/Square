@@ -1,0 +1,411 @@
+<template>
+  <View class="window-shell">
+    <View class="window-title-bar">
+      <View class="brand-mark"><Text class="brand-symbol" text="P²" /></View>
+      <View class="window-title-content">
+        <Text class="window-product-name" text="PiSquared" />
+        <Text class="window-divider" text="/" />
+        <Text class="window-workspace-name" text="PiSquared" />
+      </View>
+      <View class="window-controls">
+        <Button class="window-control-button" text="−" />
+        <Button class="window-control-button" text="□" />
+        <Button class="window-control-button window-close-button" text="×" />
+      </View>
+    </View>
+
+    <View class="app-shell">
+      <View class="app-toolbar">
+        <View class="toolbar-left">
+          <Button class="toolbar-icon-button" text="☰" />
+          <Button class="toolbar-icon-button toolbar-icon-muted" text="‹" />
+          <Button class="toolbar-icon-button toolbar-icon-muted" text="›" />
+        </View>
+
+        <Button class="command-search">
+          <Text class="command-search-icon" text="⌕" />
+          <Text class="command-search-copy" text="Search commands, sessions and files" />
+          <Text class="command-search-shortcut" text="Ctrl+P" />
+        </Button>
+
+        <View class="toolbar-right">
+          <Button class="toolbar-text-button" text="Claude Sonnet 4" />
+          <View class="connection-pill">
+            <Text class="connection-dot" text="●" />
+            <Text class="connection-copy" text="Preview ready" />
+          </View>
+          <Button class="toolbar-icon-button" text="◫" />
+        </View>
+      </View>
+
+      <View class="workbench-row">
+        <View class="workspace-rail">
+          <View class="workspace-list">
+            <Button class="workspace-button workspace-active" text="P" />
+            <Button class="workspace-button workspace-cyan" text="S" />
+            <Button class="workspace-button workspace-amber" text="B" />
+            <Button class="workspace-add-button" text="+" />
+          </View>
+          <View class="rail-footer">
+            <Button class="rail-icon-button" text="?" />
+            <Button class="rail-icon-button" text="⚙" />
+          </View>
+        </View>
+
+        <View class="session-sidebar">
+          <View class="workspace-heading">
+            <View class="workspace-heading-copy">
+              <Text class="workspace-heading-title" text="PiSquared" />
+              <Text class="workspace-heading-path" text="C:\Users\Wuldas\RiderProjects\PiSquared" />
+            </View>
+            <Button class="small-icon-button" text="•••" />
+          </View>
+
+          <Button class="new-session-button"><Text class="new-session-icon" text="＋" /><Text text="New session" /></Button>
+          <Text class="section-label" text="RECENT SESSIONS" />
+
+          <View class="session-search-box">
+            <Text class="session-search-icon" text="⌕" />
+            <Input class="session-search-input" placeholder="Search sessions" />
+          </View>
+
+          <Button class="session-filter" text="All time  ▾" />
+
+          <ScrollViewer class="session-list-scroll">
+            <View class="session-list">
+              <Button class="session-item session-item-active">
+                <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
+                <View class="session-copy">
+                  <Text class="session-title" text="Build the PiSquared workbench" />
+                  <Text class="session-meta" text="8 messages · just now" />
+                </View>
+              </Button>
+              <Button class="session-item">
+                <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
+                <View class="session-copy">
+                  <Text class="session-title" text="Design the approval flow" />
+                  <Text class="session-meta" text="14 messages · 2 hours ago" />
+                </View>
+              </Button>
+              <Button class="session-item">
+                <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
+                <View class="session-copy">
+                  <Text class="session-title" text="SQLite session architecture" />
+                  <Text class="session-meta" text="21 messages · yesterday" />
+                </View>
+              </Button>
+              <Button class="session-item">
+                <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
+                <View class="session-copy">
+                  <Text class="session-title" text="Provider protocol research" />
+                  <Text class="session-meta" text="11 messages · Jul 28" />
+                </View>
+              </Button>
+              <Button class="session-item">
+                <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
+                <View class="session-copy">
+                  <Text class="session-title" text="Workspace safety rules" />
+                  <Text class="session-meta" text="6 messages · Jul 27" />
+                </View>
+              </Button>
+            </View>
+          </ScrollViewer>
+          <Text class="session-count" text="5 sessions in this workspace" />
+        </View>
+
+        <View class="pane-divider" />
+
+        <View class="conversation-panel">
+          <View class="conversation-header">
+            <View class="conversation-heading-copy">
+              <Text class="conversation-title" text="Build the PiSquared workbench" />
+              <Text class="conversation-subtitle" text="UI prototype · local workspace" />
+            </View>
+            <View class="conversation-header-actions">
+              <Button class="header-chip" text="Run mock stream" />
+              <Button class="header-chip" text="Default" />
+              <Button class="small-icon-button" text="•••" />
+            </View>
+          </View>
+
+          <ScrollViewer class="conversation-scroll">
+            <View class="conversation-document">
+              <View class="welcome-card">
+                <View class="welcome-icon"><Text class="welcome-icon-text" text="✦" /></View>
+                <View class="welcome-copy">
+                  <Text class="welcome-title" text="A focused coding workspace" />
+                  <Text class="welcome-body" text="Investigation, tools, changes and review share one quiet desktop surface." />
+                  <View class="welcome-tags">
+                    <Text class="welcome-tag" text="Square UI" />
+                    <Text class="welcome-tag" text="Diff approval" />
+                    <Text class="welcome-tag" text="Local sessions" />
+                  </View>
+                </View>
+              </View>
+
+              <View class="message-block user-message">
+                <Text class="message-body" text="先做 UI，参考 bomp 的工作区轨道、会话栏和右侧上下文。" />
+              </View>
+
+              <View class="message-block assistant-message">
+                <View class="message-meta">
+                  <View class="assistant-avatar"><Text class="assistant-avatar-text" text="P²" /></View>
+                  <Text class="message-author" text="PiSquared" />
+                  <Text class="message-model" text="UI design preview" />
+                </View>
+                <Text class="assistant-paragraph" text="先建立可运行的静态工作台，验证布局、滚动和交互状态。" />
+                <View class="design-summary">
+                  <Text class="design-summary-title" text="UI direction" />
+                  <Text class="design-summary-line" text="• 64px workspace rail for project switching" />
+                  <Text class="design-summary-line" text="• compact, searchable session history" />
+                  <Text class="design-summary-line" text="• document-style transcript" />
+                  <Text class="design-summary-line" text="• persistent Changes and Files context" />
+                </View>
+              </View>
+
+              <View class="tool-card">
+                <View class="tool-card-header">
+                  <View class="tool-card-title-group">
+                    <View class="tool-status-icon"><Text class="tool-status-glyph" text="✓" /></View>
+                    <View class="tool-card-copy">
+                      <Text class="tool-card-title" text="inspect_workspace" />
+                      <Text class="tool-card-summary" text="Read BOMP layout and Square component samples" />
+                    </View>
+                  </View>
+                  <View class="tool-card-state"><Text class="tool-duration" text="1.4s" /><Text class="tool-chevron" text="⌄" /></View>
+                </View>
+              </View>
+
+              <View class="message-block assistant-message preview-message">
+                <View class="message-meta">
+                  <View class="assistant-avatar"><Text class="assistant-avatar-text" text="P²" /></View>
+                  <Text class="message-author" text="PiSquared" />
+                  <Text class="message-model" text="UI design preview" />
+                </View>
+                <Text class="assistant-paragraph" text="The preview uses quiet surfaces and reserves blue for focus and selection." />
+                <View class="conversation-notice">
+                  <Text class="notice-title" text="Preview scope" />
+                  <Text class="notice-body" text="Buttons update mock state only. Runtime services come after layout validation." />
+                </View>
+              </View>
+            </View>
+          </ScrollViewer>
+
+          <View class="composer-shell">
+            <View class="composer-box">
+              <TextArea class="composer-input" placeholder="Ask PiSquared to inspect or change this workspace..." />
+              <View class="composer-actions">
+                <View class="composer-left-actions">
+                  <Button class="composer-icon-button" text="＋" />
+                  <Text class="composer-hint" text="Enter to send · Shift+Enter for a new line" />
+                </View>
+                <Button class="send-button" text="➤" />
+              </View>
+            </View>
+            <View class="composer-footer">
+              <Button class="footer-control" text="Build  ▾" />
+              <Button class="footer-control" text="Claude Sonnet 4  ▾" />
+              <Button class="footer-control" text="Thinking: Medium  ▾" />
+              <View class="composer-footer-spacer" />
+              <Text class="context-usage" text="Context 18%" />
+            </View>
+          </View>
+        </View>
+
+        <View class="pane-divider" />
+
+        <View class="context-sidebar">
+          <View class="context-tabs">
+            <Button class="context-tab context-tab-active" text="Changes" />
+            <Button class="context-tab" text="Files" />
+          </View>
+          <View class="context-content">
+            <View class="context-heading">
+              <View class="context-heading-copy"><Text class="context-heading-icon" text="⑂" /><Text class="context-heading-title" text="main" /></View>
+              <Button class="small-icon-button" text="↻" />
+            </View>
+            <Text class="context-section-label" text="WORKING CHANGES" />
+            <Button class="change-row change-row-active">
+              <Text class="change-status modified" text="M" />
+              <View class="change-copy"><Text class="change-path" text="src/PiSquared.App/Components/Workbench.sqx" /><Text class="change-lines" text="+318  -0" /></View>
+            </Button>
+            <Button class="change-row">
+              <Text class="change-status added" text="A" />
+              <View class="change-copy"><Text class="change-path" text="src/PiSquared.App/Program.cs" /><Text class="change-lines" text="+24  -0" /></View>
+            </Button>
+            <Button class="change-row">
+              <Text class="change-status added" text="A" />
+              <View class="change-copy"><Text class="change-path" text="Directory.Build.props" /><Text class="change-lines" text="+10  -0" /></View>
+            </Button>
+            <View class="change-summary-card">
+              <Text class="change-summary-kicker" text="PROPOSED REVIEW" />
+              <Text class="change-summary-title" text="3 files changed" />
+              <Text class="change-summary-body" text="Desktop shell and mock interactions are ready for review." />
+              <View class="change-summary-actions">
+                <Button class="secondary-action" text="Review diff" />
+                <Button class="primary-action" text="Accept" />
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      <View class="status-bar">
+        <View class="status-left"><Text class="status-brand" text="PiSquared" /><Text class="status-copy" text="UI preview ready" /></View>
+        <View class="status-right"><Text class="status-copy" text="main" /><Text class="status-copy" text="3 changes" /><Text class="status-copy" text="Software renderer" /></View>
+      </View>
+    </View>
+  </View>
+</template>
+
+<style>
+  .window-shell { display: flex; flex-direction: column; width: 100%; height: 100vh; min-width: 1180px; min-height: 720px; overflow: hidden; background: #f4f6f8; font-family: "Segoe UI", Arial, sans-serif; }
+  .window-title-bar { display: flex; flex-direction: row; align-items: center; height: 40px; min-height: 40px; padding-left: 12px; background: #1f2328; border-bottom: 1px solid #343a40; }
+  .brand-mark { display: flex; align-items: center; justify-content: center; width: 32px; height: 28px; background: #0d6efd; border-radius: 6px; }
+  .brand-symbol { color: #ffffff; font-size: 14px; font-weight: 600; }
+  .window-title-content { display: flex; flex-direction: row; align-items: center; gap: 9px; height: 40px; min-width: 0; flex-grow: 1; padding-left: 10px; }
+  .window-product-name { color: #ffffff; font-size: 15px; font-weight: 600; }
+  .window-divider { color: #6c757d; font-size: 14px; }
+  .window-workspace-name { color: #ced4da; font-size: 14px; }
+  .window-controls { display: flex; flex-direction: row; align-items: center; height: 40px; }
+  .window-control-button { display: flex; align-items: center; justify-content: center; width: 46px; height: 40px; padding: 0; background: #212529; border: 0; border-radius: 0; color: #f8f9fa; font-size: 18px; }
+  .window-close-button { font-size: 22px; }
+
+  .app-shell { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; flex-grow: 1; background: #f4f6f8; color: #212529; font-size: 15px; overflow: hidden; }
+  .app-toolbar { display: flex; flex-direction: row; align-items: center; height: 48px; min-height: 48px; padding: 0 14px; background: #ffffff; border-bottom: 1px solid #e5e7eb; box-shadow: 0 1px 8px rgba(15,23,42,0.06); }
+  .toolbar-left, .toolbar-right { display: flex; flex-direction: row; align-items: center; gap: 4px; flex-grow: 1; flex-basis: 0; min-width: 0; }
+  .toolbar-right { justify-content: flex-end; }
+  .toolbar-icon-button, .small-icon-button, .rail-icon-button, .composer-icon-button { display: flex; align-items: center; justify-content: center; border: 0; background: #ffffff; color: #495057; }
+  .toolbar-icon-button { width: 34px; height: 34px; padding: 0; border-radius: 6px; font-size: 20px; }
+  .toolbar-icon-muted { color: #adb5bd; }
+  .command-search { display: flex; flex-direction: row; align-items: center; gap: 10px; width: 500px; height: 36px; padding: 0 14px; background: #f8fafc; border: 1px solid #d9e2ec; border-radius: 10px; color: #64748b; }
+  .command-search-icon { color: #6c757d; font-size: 22px; }
+  .command-search-copy { min-width: 0; flex-grow: 1; color: #6c757d; font-size: 14px; text-align: left; }
+  .command-search-shortcut { color: #6c757d; font-size: 11px; background: #f8f9fa; padding: 2px 6px; border: 1px solid #dee2e6; border-radius: 4px; }
+  .toolbar-text-button { height: 32px; padding: 0 10px; border: 0; background: #ffffff; color: #495057; border-radius: 6px; font-size: 12px; }
+  .connection-pill { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 32px; padding: 0 9px; }
+  .connection-dot { color: #198754; font-size: 9px; }
+  .connection-copy { color: #6c757d; font-size: 13px; }
+
+  .workbench-row { display: flex; flex-direction: row; min-width: 0; min-height: 0; flex-grow: 1; align-items: stretch; overflow: hidden; }
+  .pane-divider { width: 1px; min-width: 1px; height: 100%; background: #e5e7eb; }
+  .workspace-rail { display: flex; flex-direction: column; justify-content: space-between; width: 72px; min-width: 72px; padding: 16px 0; background: #f8fafc; border-right: 1px solid #e5e7eb; }
+  .workspace-list, .rail-footer { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .workspace-button { width: 40px; height: 40px; border: 1px solid #ced4da; border-radius: 8px; background: #ffffff; color: #495057; font-size: 14px; font-weight: 600; box-shadow: 0 1px 3px rgba(33,37,41,0.06); }
+  .workspace-active { background: #0d6efd; border-color: #0d6efd; color: #ffffff; }
+  .workspace-cyan { background: #e7f5ff; border-color: #a5d8ff; color: #0b7285; }
+  .workspace-amber { background: #fff3cd; border-color: #ffecb5; color: #997404; }
+  .workspace-add-button, .rail-icon-button { width: 38px; height: 38px; padding: 0; border: 0; background: #f8f9fa; color: #6c757d; border-radius: 7px; font-size: 18px; }
+  .rail-icon-button { font-size: 15px; }
+
+  .session-sidebar { display: flex; flex-direction: column; width: 316px; min-width: 316px; min-height: 0; padding: 16px; background: #f8fafc; overflow: hidden; }
+  .workspace-heading { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; padding: 0 4px; }
+  .workspace-heading-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .workspace-heading-title { color: #212529; font-size: 16px; font-weight: 600; }
+  .workspace-heading-path { color: #6c757d; font-size: 11px; }
+  .small-icon-button { width: 30px; height: 30px; padding: 0; border-radius: 6px; background: #f8f9fa; font-size: 13px; }
+  .new-session-button { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; background: #0d6efd; border: 1px solid #0d6efd; border-radius: 6px; color: #ffffff; font-size: 14px; font-weight: 600; }
+  .new-session-icon { color: #ffffff; font-size: 20px; margin-right: 8px; }
+  .section-label, .context-section-label { margin: 20px 8px 9px; color: #6c757d; font-size: 11px; font-weight: 600; }
+  .session-search-box { display: flex; flex-direction: row; align-items: center; gap: 8px; height: 38px; padding: 0 11px; margin-bottom: 10px; background: #ffffff; border: 1px solid #d9e2ec; border-radius: 10px; }
+  .session-search-icon { color: #6c757d; font-size: 19px; }
+  .session-search-input { min-width: 0; height: 30px; flex-grow: 1; padding: 0 8px; background: #ffffff; border: 1px solid transparent; border-radius: 8px; color: #212529; font-size: 13px; }
+  .session-filter { width: 100%; height: 34px; padding: 0 10px; margin-bottom: 8px; background: #ffffff; border: 1px solid #ced4da; border-radius: 6px; color: #495057; font-size: 12px; }
+  .session-list-scroll { min-height: 0; flex-grow: 1; overflow-y: auto; }
+  .session-list { display: flex; flex-direction: column; gap: 4px; }
+  .session-item { display: flex; flex-direction: row; align-items: center; width: 100%; min-height: 60px; gap: 11px; padding: 10px 11px; background: #f8fafc; border: 1px solid #f8fafc; border-radius: 10px; text-align: left; }
+  .session-item-active { background: #e7f1ff; border-color: #9ec5fe; }
+  .session-icon-box { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; min-width: 30px; background: #cfe2ff; border-radius: 6px; }
+  .session-icon-text { color: #0d6efd; font-size: 18px; }
+  .session-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex-grow: 1; }
+  .session-title { color: #212529; font-size: 14px; font-weight: 500; }
+  .session-meta { color: #6c757d; font-size: 11px; }
+  .session-count { padding: 9px 8px 0; color: #6c757d; font-size: 11px; }
+
+  .conversation-panel { display: flex; flex-direction: column; min-width: 500px; min-height: 0; flex-grow: 1; background: #ffffff; overflow: hidden; }
+  .conversation-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; height: 58px; min-height: 58px; padding: 0 26px; border-bottom: 1px solid #dee2e6; }
+  .conversation-heading-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .conversation-title { color: #212529; font-size: 17px; font-weight: 600; }
+  .conversation-subtitle { color: #6c757d; font-size: 12px; }
+  .conversation-header-actions { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+  .header-chip { height: 30px; padding: 0 10px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; color: #495057; font-size: 12px; }
+  .conversation-scroll { min-height: 0; flex-grow: 1; overflow-y: auto; background: #ffffff; }
+  .conversation-document { display: flex; flex-direction: column; width: 860px; max-width: 90%; align-self: center; padding: 32px 0 36px; }
+  .welcome-card { display: flex; flex-direction: row; gap: 18px; padding: 20px 22px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 5px 16px rgba(15,23,42,0.05); }
+  .welcome-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; min-width: 48px; background: #cfe2ff; border-radius: 8px; }
+  .welcome-icon-text { color: #0d6efd; font-size: 28px; }
+  .welcome-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .welcome-title { color: #212529; font-size: 17px; font-weight: 600; }
+  .welcome-body { color: #6c757d; font-size: 14px; line-height: 22px; }
+  .welcome-tags { display: flex; flex-direction: row; gap: 6px; margin-top: 4px; }
+  .welcome-tag { padding: 4px 8px; background: #e9ecef; border: 1px solid #dee2e6; border-radius: 5px; color: #495057; font-size: 11px; }
+  .message-block { margin-top: 22px; }
+  .user-message { max-width: 82%; align-self: flex-end; padding: 14px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; }
+  .message-body { color: #212529; font-size: 15px; line-height: 24px; }
+  .assistant-message { display: flex; flex-direction: column; gap: 9px; }
+  .message-meta { display: flex; flex-direction: row; align-items: center; gap: 7px; }
+  .assistant-avatar { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: #212529; border-radius: 7px; }
+  .assistant-avatar-text { color: #ffffff; font-size: 11px; font-weight: 600; }
+  .message-author { color: #212529; font-size: 13px; font-weight: 600; }
+  .message-model { color: #6c757d; font-size: 11px; }
+  .assistant-paragraph { color: #212529; font-size: 15px; line-height: 24px; }
+  .design-summary { display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0d6efd; border-radius: 12px; }
+  .design-summary-title { color: #212529; font-size: 13px; font-weight: 600; }
+  .design-summary-line { color: #495057; font-size: 13px; line-height: 19px; }
+  .tool-card { margin-top: 18px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 14px rgba(15,23,42,0.045); }
+  .tool-card-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 52px; padding: 9px 14px; }
+  .tool-card-title-group, .tool-card-state { display: flex; flex-direction: row; align-items: center; gap: 9px; min-width: 0; }
+  .tool-status-icon { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: #d1e7dd; border-radius: 6px; }
+  .tool-status-glyph { color: #198754; font-size: 18px; font-weight: 600; }
+  .tool-card-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .tool-card-title { color: #212529; font-size: 13px; font-weight: 600; }
+  .tool-card-summary { color: #6c757d; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+  .tool-duration, .tool-chevron { color: #6c757d; font-size: 11px; }
+  .conversation-notice { display: flex; flex-direction: column; gap: 5px; padding: 12px 15px; background: #e7f1ff; border: 1px solid #b6d4fe; border-left: 4px solid #0d6efd; border-radius: 6px; }
+  .notice-title { color: #084298; font-size: 13px; font-weight: 600; }
+  .notice-body { color: #495057; font-size: 12px; line-height: 19px; }
+
+  .composer-shell { width: 860px; max-width: 90%; height: 164px; min-height: 164px; align-self: center; padding: 0 0 18px; overflow: hidden; }
+  .composer-box { display: flex; flex-direction: column; min-height: 124px; padding: 10px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; box-shadow: 0 10px 28px rgba(15,23,42,0.09); }
+  .composer-input { width: 100%; min-height: 76px; max-height: 116px; padding: 10px 13px; background: #fbfdff; border: 1px solid #e2e8f0; border-radius: 14px; color: #1f2937; font-size: 16px; line-height: 24px; resize: none; }
+  .composer-actions { display: flex; flex-direction: row; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .composer-left-actions { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; }
+  .composer-icon-button { width: 32px; height: 32px; padding: 0; border-radius: 6px; background: #ffffff; font-size: 17px; }
+  .composer-hint { color: #6c757d; font-size: 11px; }
+  .send-button { width: 42px; height: 36px; padding: 0; background: #0d6efd; border: 1px solid #0d6efd; border-radius: 10px; color: #ffffff; font-size: 19px; }
+  .composer-footer { display: flex; flex-direction: row; align-items: center; gap: 6px; padding: 7px 8px 0; }
+  .footer-control { height: 28px; padding: 0 7px; background: #ffffff; border: 0; color: #495057; font-size: 11px; border-radius: 5px; }
+  .composer-footer-spacer { flex-grow: 1; }
+  .context-usage { color: #6c757d; font-size: 11px; }
+
+  .context-sidebar { display: flex; flex-direction: column; width: 352px; min-width: 352px; min-height: 0; background: #f8fafc; overflow: hidden; }
+  .context-tabs { display: flex; flex-direction: row; height: 48px; min-height: 48px; padding: 0 10px; background: #ffffff; border-bottom: 1px solid #dee2e6; }
+  .context-tab { height: 48px; flex-grow: 1; background: #ffffff; border: 0; border-bottom: 3px solid transparent; color: #6c757d; font-size: 13px; }
+  .context-tab-active { color: #0d6efd; border-bottom-color: #0d6efd; }
+  .context-content { display: flex; flex-direction: column; min-height: 0; flex-grow: 1; padding: 14px; }
+  .context-heading { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 42px; margin-bottom: 5px; border-bottom: 1px solid #dee2e6; }
+  .context-heading-copy { display: flex; flex-direction: row; align-items: center; gap: 7px; min-width: 0; }
+  .context-heading-icon { color: #6c757d; font-size: 19px; }
+  .context-heading-title { color: #212529; font-size: 13px; font-weight: 600; }
+  .context-section-label { margin-top: 12px; margin-left: 4px; }
+  .change-row { display: flex; flex-direction: row; align-items: center; gap: 9px; width: 100%; min-height: 52px; padding: 7px 6px; background: #f8f9fa; border: 1px solid #f8f9fa; border-radius: 6px; text-align: left; }
+  .change-row-active { background: #e7f1ff; border-color: #9ec5fe; }
+  .change-status { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; min-width: 24px; background: #fff3cd; border-radius: 5px; color: #997404; font-size: 11px; font-weight: 600; }
+  .change-status.added { background: #d1e7dd; color: #0f5132; }
+  .change-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex-grow: 1; }
+  .change-path { color: #343a40; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+  .change-lines { color: #6c757d; font-size: 10px; }
+  .change-summary-card { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; padding: 18px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; box-shadow: 0 6px 18px rgba(15,23,42,0.06); }
+  .change-summary-kicker { color: #0d6efd; font-size: 10px; font-weight: 600; }
+  .change-summary-title { color: #212529; font-size: 14px; font-weight: 600; }
+  .change-summary-body { color: #6c757d; font-size: 12px; line-height: 18px; }
+  .change-summary-actions { display: flex; flex-direction: row; gap: 6px; margin-top: 4px; }
+  .secondary-action, .primary-action { height: 36px; flex-grow: 1; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .secondary-action { background: #ffffff; border: 1px solid #6c757d; color: #495057; }
+  .primary-action { background: #0d6efd; border: 1px solid #0d6efd; color: #ffffff; }
+
+  .status-bar { display: flex; flex-direction: row; align-items: center; justify-content: space-between; height: 30px; min-height: 30px; padding: 0 12px; background: #212529; border-top: 1px solid #343a40; }
+  .status-left, .status-right { display: flex; flex-direction: row; align-items: center; gap: 12px; }
+  .status-brand { color: #6ea8fe; font-size: 11px; font-weight: 600; }
+  .status-copy { color: #ced4da; font-size: 10px; }
+</style>

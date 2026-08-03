@@ -73,6 +73,61 @@ public class BoxShadowTests
     {
         Assert.False(BoxShadow.TryParse(value, out _));
     }
+
+    [Fact]
+    public void ParseMultipleOuterShadowsWithoutSplittingFunctionalColorCommas()
+    {
+        Assert.True(BoxShadow.TryParseList(
+            "2px 4px 8px rgba(0, 0, 0, 0.2), -1px 0 0 1px rgb(10, 20, 30)",
+            out var shadows));
+
+        Assert.Collection(shadows,
+            shadow =>
+            {
+                Assert.Equal(2, shadow.OffsetX);
+                Assert.Equal(4, shadow.OffsetY);
+                Assert.Equal(8, shadow.BlurRadius);
+                Assert.Equal(51, shadow.Color.A);
+            },
+            shadow =>
+            {
+                Assert.Equal(-1, shadow.OffsetX);
+                Assert.Equal(1, shadow.SpreadRadius);
+                Assert.Equal(Color.FromRgb(10, 20, 30), shadow.Color);
+            });
+    }
+
+    [Theory]
+    [InlineData("0 2px 4px #000,")]
+    [InlineData("0 2px 4px #000,, 0 1px 2px #000")]
+    [InlineData("0 2px 4px #000, inset 0 1px 2px #000")]
+    [InlineData("none, 0 1px 2px #000")]
+    public void MultipleShadowDeclarationIsAllOrNothing(string value)
+    {
+        Assert.False(BoxShadow.TryParseList(value, out _));
+    }
+
+    [Fact]
+    public void NoneProducesAnEmptyShadowList()
+    {
+        Assert.True(BoxShadow.TryParseList("none", out var shadows));
+        Assert.Empty(shadows);
+    }
+
+    [Fact]
+    public void MultipleShadowBoundsIncludeEveryDirection()
+    {
+        Assert.True(BoxShadow.TryParseList(
+            "-8px -6px 0 2px #000000, 10px 7px 0 3px #000000",
+            out var shadows));
+
+        var bounds = BoxShadowRendering.GetVisualBounds(new Rect(20, 20, 30, 20), shadows);
+
+        Assert.Equal(10, bounds.Left);
+        Assert.Equal(12, bounds.Top);
+        Assert.Equal(63, bounds.Right);
+        Assert.Equal(50, bounds.Bottom);
+    }
 }
 
 public class RectTests

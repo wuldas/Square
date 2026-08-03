@@ -1,0 +1,13 @@
+<template>
+  <View class="hello-page">
+    <Text class="hello-title" :text="Name" />
+    <Link text="Back to home" href="/" />
+  </View>
+</template>
+<script lang="csharp">
+  public ObservableValue<string> Name = new("Hello, Square.");
+</script>
+<style>
+  .hello-page { display: flex; flex-direction: column; gap: 16px; max-width: 720px; margin: 0 auto; padding: 64px 24px; font-family: system-ui, sans-serif; }
+  .hello-title { font-size: 40px; font-weight: 750; color: #172033; }
+</style>

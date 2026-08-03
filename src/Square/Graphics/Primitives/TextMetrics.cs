@@ -66,7 +66,9 @@ public static class TextMetrics
     public static float GetBaselineOffset(Font font, float lineHeight)
     {
         var metrics = GetFontMetrics(font);
-        return (lineHeight - metrics.Height) / 2f - metrics.Top;
+        var ascent = Math.Max(0, -metrics.Ascent);
+        var descent = Math.Max(0, metrics.Descent);
+        return (lineHeight - ascent - descent) / 2f + ascent;
     }
 
     /// <summary>计算字形在行盒内的墨迹包围盒（已平移到基线位置）。</summary>

@@ -1,6 +1,6 @@
 # 编码规范
 
-> Version: 0.3  
+> Document Revision: 0.3
 > 适用于所有 `Square.*` 项目
 
 ---
