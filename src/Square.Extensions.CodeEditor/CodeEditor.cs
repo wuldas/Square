@@ -59,9 +59,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>初始化默认等宽样式。</summary>
     public CodeEditor()
     {
-        if (string.IsNullOrEmpty(Style.GetPropertyValue("font-family")))
+        if (string.IsNullOrEmpty(Style.Get("font-family")))
             Style.Set("font-family", "monospace");
-        if (string.IsNullOrEmpty(Style.GetPropertyValue("font-size")))
+        if (string.IsNullOrEmpty(Style.Get("font-size")))
             Style.Set("font-size", "13px");
         AddEventListener("focus", ResetCaretBlink);
         AddEventListener("blur", OnBlur);
@@ -2603,15 +2603,15 @@ public sealed class CodeEditor : UIElement, ITextEditor
     }
 
     private Font ResolveFont() => FontManager.Instance.FromCss(
-        Style.GetPropertyValue("font-family"),
-        Style.GetPropertyValue("font-size"),
-        Style.GetPropertyValue("font-weight"),
-        Style.GetPropertyValue("font-style"),
+        Style.Get("font-family") ?? "",
+        Style.Get("font-size") ?? "",
+        Style.Get("font-weight") ?? "",
+        Style.Get("font-style") ?? "",
         DefaultFontSize);
 
     private float GetLineHeight(Font font)
     {
-        var value = Style.GetPropertyValue("line-height").Trim();
+        var value = (Style.Get("line-height") ?? "").Trim();
         if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase) &&
             float.TryParse(value[..^2], System.Globalization.CultureInfo.InvariantCulture, out var px) && px > 0)
             return px;

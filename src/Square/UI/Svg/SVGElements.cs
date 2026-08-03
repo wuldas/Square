@@ -217,13 +217,13 @@ internal static class SvgValues
 
     public static float StyleNumber(SVGElement element, string style, string property, float fallback)
     {
-        var value = element.Style.GetPropertyValue(style);
+        var value = element.Style.Get(style) ?? "";
         return string.IsNullOrWhiteSpace(value) ? Number(element, property, fallback) : Parse(value, fallback);
     }
 
     public static string? StyleValue(SVGElement element, string style, string property)
     {
-        var value = element.Style.GetPropertyValue(style);
+        var value = element.Style.Get(style) ?? "";
         if (!string.IsNullOrWhiteSpace(value)) return value;
         return element.GetProperty<object>(property)?.ToString();
     }

@@ -346,6 +346,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// <summary>写入强类型属性并触发变更通知与重绘（Square 扩展）。</summary>
     public void SetProperty<T>(string name, T value)
     {
+        if (TrySetSpecialBoundValue(name, value)) return;
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
@@ -367,8 +368,9 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// <summary>用委托取值写入属性（Square 扩展；用于表达式绑定）。</summary>
     public void BindProperty<T>(string name, Func<T> getter)
     {
-        Properties.MarkBound(name);
         var value = getter();
+        if (TrySetSpecialBoundValue(name, value)) return;
+        Properties.MarkBound(name);
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
@@ -416,10 +418,29 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
 
     private void SetBoundValue<T>(string name, T value)
     {
+        if (TrySetSpecialBoundValue(name, value)) return;
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
+    }
+
+    private bool TrySetSpecialBoundValue<T>(string name, T value)
+    {
+        if (string.Equals(name, "class", StringComparison.OrdinalIgnoreCase))
+        {
+            ClassList.Clear();
+            var text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+            foreach (var className in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                ClassList.Add(className);
+            return true;
+        }
+        if (string.Equals(name, "style", StringComparison.OrdinalIgnoreCase))
+        {
+            Style.CssText = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+            return true;
+        }
+        return false;
     }
 
     /// <summary>登记与此元素子树同生命周期的生成资源。</summary>

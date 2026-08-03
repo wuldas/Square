@@ -480,7 +480,7 @@ public sealed class DisplayTree
     {
         if (element is not IPopupElement { IsPopupOpen: true } popup) return Rect.Empty;
         var bounds = popup.PopupBounds;
-        return BoxShadow.TryParseList(element.Style.GetPropertyValue("box-shadow"), out var shadows)
+        return BoxShadow.TryParseList(element.Style.Get("box-shadow"), out var shadows)
             ? BoxShadowRendering.GetVisualBounds(bounds, shadows)
             : bounds;
     }

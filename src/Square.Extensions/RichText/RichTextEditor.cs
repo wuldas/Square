@@ -543,16 +543,16 @@ public sealed class RichTextEditor : UIElement, ITextEditor, ITextSelectable
     private Font ResolveFont()
     {
         return FontManager.Instance.FromCss(
-            Style.GetPropertyValue("font-family"),
-            Style.GetPropertyValue("font-size"),
-            Style.GetPropertyValue("font-weight"),
-            Style.GetPropertyValue("font-style"),
+            Style.Get("font-family") ?? "",
+            Style.Get("font-size") ?? "",
+            Style.Get("font-weight") ?? "",
+            Style.Get("font-style") ?? "",
             DefaultFontSize);
     }
 
     private float GetLineHeight(Font font)
     {
-        var value = Style.GetPropertyValue("line-height").Trim();
+        var value = (Style.Get("line-height") ?? "").Trim();
         if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase) &&
             float.TryParse(value[..^2], System.Globalization.CultureInfo.InvariantCulture, out var pixels) && pixels > 0)
             return pixels;
@@ -563,7 +563,7 @@ public sealed class RichTextEditor : UIElement, ITextEditor, ITextSelectable
 
     private float ResolvePadding()
     {
-        var value = Style.GetPropertyValue("padding").Trim();
+        var value = (Style.Get("padding") ?? "").Trim();
         if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase))
             value = value[..^2];
         return float.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var padding) && padding >= 0

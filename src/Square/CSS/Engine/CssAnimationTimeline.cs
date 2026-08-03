@@ -11,11 +11,12 @@ public sealed class CssAnimationTimeline
     private readonly List<AnimationTrack> _tracks;
     private readonly float _duration;
     private readonly float _delay;
-    private readonly int _iterationCount;
+    private readonly float _iterationCount;
     private readonly AnimationDirection _direction;
     private readonly Func<float, float> _easing;
     private float _elapsed;
     private bool _running;
+    private bool _cleared;
 
     /// <summary>初始化 CssAnimationTimeline 的新实例。</summary>
     /// <param name="Element">目标元素。</param>
@@ -25,26 +26,35 @@ public sealed class CssAnimationTimeline
     /// <param name="delay">延迟时间（秒）。</param>
     /// <param name="iterationCount">迭代次数。</param>
     /// <param name="direction">动画方向。</param>
-    internal CssAnimationTimeline(Element Element, KeyFramesRule keyFrames, float duration, Func<float, float> easing, float delay = 0, int iterationCount = 1, string direction = "normal")
+    internal CssAnimationTimeline(Element Element, KeyFramesRule keyFrames, float duration, Func<float, float> easing, float delay = 0, float iterationCount = 1, string direction = "normal")
     {
         _visual = Element;
         _duration = Math.Max(0.0001f, duration);
-        _delay = Math.Max(0, delay);
-        _iterationCount = Math.Max(1, iterationCount);
+        _delay = delay;
+        _iterationCount = Math.Max(0, iterationCount);
         _direction = ParseDirection(direction);
         _easing = easing;
         _tracks = BuildTracks(keyFrames);
     }
 
     /// <summary>获取动画是否已完成。</summary>
-    public bool IsComplete => _elapsed >= _delay + _duration * _iterationCount;
+    public bool IsComplete => _iterationCount != int.MaxValue && _elapsed >= Math.Max(0, _delay) + _duration * _iterationCount;
 
     /// <summary>启动动画时间线，应用起始帧。</summary>
     public void Start()
     {
         _elapsed = 0;
         _running = true;
-        Apply(GetDirectedProgress(0));
+        if (_iterationCount == 0)
+        {
+            _running = false;
+            return;
+        }
+        if (_delay < 0)
+        {
+            _elapsed = Math.Min(_duration * _iterationCount, -_delay);
+            Apply(_easing(GetDirectedProgress(_elapsed)));
+        }
     }
 
     /// <summary>推进动画时间线，应用当前帧。</summary>
@@ -52,20 +62,32 @@ public sealed class CssAnimationTimeline
     public void Tick(float deltaSeconds)
     {
         if (!_running) return;
-        _elapsed = Math.Min(_delay + _duration * _iterationCount, _elapsed + Math.Max(0, deltaSeconds));
-        if (_elapsed >= _delay)
-            Apply(_easing(GetDirectedProgress(_elapsed - _delay)));
-        if (IsComplete) _running = false;
+        var activeStart = Math.Max(0, _delay);
+        var total = activeStart + _duration * _iterationCount;
+        _elapsed = _iterationCount == int.MaxValue
+            ? _elapsed + Math.Max(0, deltaSeconds)
+            : Math.Min(total, _elapsed + Math.Max(0, deltaSeconds));
+        if (_elapsed >= activeStart)
+            Apply(_easing(GetDirectedProgress(_elapsed - activeStart + Math.Max(0, -_delay))));
+        if (IsComplete)
+        {
+            _running = false;
+            ClearAnimatedValues();
+        }
     }
 
     private float GetDirectedProgress(float activeElapsed)
     {
         if (_iterationCount != int.MaxValue && activeElapsed >= _duration * _iterationCount)
             activeElapsed = _duration * _iterationCount;
-        var iteration = Math.Min(_iterationCount - 1, (int)MathF.Floor(activeElapsed / _duration));
+        var maxIteration = Math.Max(0, (int)MathF.Ceiling(_iterationCount) - 1);
+        var iteration = Math.Min(maxIteration, (int)MathF.Floor(activeElapsed / _duration));
         var local = Math.Clamp((activeElapsed - iteration * _duration) / _duration, 0f, 1f);
         if (_iterationCount != int.MaxValue && activeElapsed >= _duration * _iterationCount)
-            local = 1f;
+        {
+            var fractional = _iterationCount - MathF.Floor(_iterationCount);
+            local = fractional > 0 ? fractional : 1f;
+        }
         var reverse = _direction switch
         {
             AnimationDirection.Reverse => true,
@@ -83,6 +105,14 @@ public sealed class CssAnimationTimeline
             var value = track.ValueAt(progress);
             _visual.Style.SetAnimated(track.Property, FormatNumber(value));
         }
+    }
+
+    private void ClearAnimatedValues()
+    {
+        if (_cleared) return;
+        _cleared = true;
+        foreach (var track in _tracks)
+            _visual.Style.RemoveAnimated(track.Property);
     }
 
     private static List<AnimationTrack> BuildTracks(KeyFramesRule keyFrames)

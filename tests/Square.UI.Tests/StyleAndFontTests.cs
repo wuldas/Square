@@ -113,6 +113,36 @@ public class StyleAndFontTests
     }
 
     [Fact]
+    public void StyleAccessorCssomPriorityAndEmptyValueMatchChrome()
+    {
+        var view = new View();
+        view.Style.SetProperty("color", "red", "important");
+
+        Assert.Equal("red", view.Style.GetPropertyValue("color"));
+        Assert.Equal("important", view.Style.GetPropertyPriority("color"));
+        Assert.Contains("color: red !important;", view.Style.CssText, StringComparison.Ordinal);
+
+        view.Style.SetProperty("color", "blue", "invalid");
+        Assert.Equal("red", view.Style.GetPropertyValue("color"));
+
+        view.Style.SetProperty("color", "");
+        Assert.Equal("", view.Style.GetPropertyValue("color"));
+        Assert.Equal(0, view.Style.Length);
+    }
+
+    [Fact]
+    public void CssomMembersExposeOnlyInlineDeclarations()
+    {
+        var view = new View();
+        view.Style.SetCascaded("color", "blue", 10);
+
+        Assert.Equal("blue", view.Style.Get("color"));
+        Assert.Equal("", view.Style.GetPropertyValue("color"));
+        Assert.Equal("", view.Style.CssText);
+        Assert.Equal(0, view.Style.Length);
+    }
+
+    [Fact]
     public void FontParseFamilyListAndWeight()
     {
         var list = Font.ParseFamilyList("\"Segoe UI\", Tahoma, sans-serif");

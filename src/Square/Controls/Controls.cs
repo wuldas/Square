@@ -910,7 +910,7 @@ public class Popup : View, IPopupElement
         var bounds = ContentBounds;
         var translation = new Vector2(bounds.X - Geometry.X, bounds.Y - Geometry.Y);
         context.PushTransform(Matrix3x2.CreateTranslation(translation));
-        if (BoxShadow.TryParseList(Style.GetPropertyValue("box-shadow"), out var shadows))
+        if (BoxShadow.TryParseList(Style.Get("box-shadow"), out var shadows))
             BoxShadowRendering.Draw(context, Geometry, ControlDrawing.GetStyledRadius(this, Geometry), shadows);
         context.PushClip(Geometry);
         var background = ControlDrawing.GetStyledColor(this, "background", Color.White);
@@ -1507,12 +1507,12 @@ internal static class ControlDrawing
     internal static Font ResolveFont(Element element, float defaultSize)
     {
         // 优先 CSS；控件属性 FontSize 作为缺省字号
-        var family = element.Style.GetPropertyValue("font-family");
+        var family = element.Style.Get("font-family") ?? "";
         if (string.IsNullOrEmpty(family)) family = "sans-serif";
 
-        var sizeCss = element.Style.GetPropertyValue("font-size");
-        var weightCss = element.Style.GetPropertyValue("font-weight");
-        var styleCss = element.Style.GetPropertyValue("font-style");
+        var sizeCss = element.Style.Get("font-size") ?? "";
+        var weightCss = element.Style.Get("font-weight") ?? "";
+        var styleCss = element.Style.Get("font-style") ?? "";
 
         return FontManager.Instance.FromCss(
             family,
@@ -1589,7 +1589,7 @@ internal static class ControlDrawing
     }
 
     private static TextAlignment ResolveTextAlignment(Element element)
-        => element.Style.GetPropertyValue("text-align").Trim().ToLowerInvariant() switch
+        => (element.Style.Get("text-align") ?? "").Trim().ToLowerInvariant() switch
         {
             "center" => TextAlignment.Center,
             "right" => TextAlignment.Right,
@@ -1654,7 +1654,7 @@ internal static class ControlDrawing
 
     internal static float GetStyledFloat(Element element, string name, float fallback)
     {
-        var raw = element.Style.GetPropertyValue(name);
+        var raw = element.Style.Get(name) ?? "";
         if (string.IsNullOrEmpty(raw)) return fallback;
         raw = raw.Replace("px", "", StringComparison.OrdinalIgnoreCase).Trim();
         return float.TryParse(raw, System.Globalization.NumberStyles.Float,
@@ -1665,7 +1665,7 @@ internal static class ControlDrawing
 
     internal static float GetStyledRadius(Element element, Rect geometry)
     {
-        var raw = element.Style.GetPropertyValue("border-radius");
+        var raw = element.Style.Get("border-radius") ?? "";
         if (string.IsNullOrWhiteSpace(raw)) return 0;
 
         var token = raw.Trim().Split([' ', '/'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
@@ -1694,7 +1694,7 @@ internal static class ControlDrawing
 
     internal static float GetStyledLineHeight(Element element, float fontSize)
     {
-        var value = element.Style.GetPropertyValue("line-height").Trim();
+        var value = (element.Style.Get("line-height") ?? "").Trim();
         if (string.IsNullOrEmpty(value))
             return MathF.Round(TextMetrics.GetLineHeight(ResolveFont(element, fontSize), TextLayout.DefaultLineHeight));
 
@@ -1709,10 +1709,10 @@ internal static class ControlDrawing
 
     internal static Color GetStyledColor(Element element, string name, Color fallback)
     {
-        var value = element.Style.GetPropertyValue(name);
+        var value = element.Style.Get(name) ?? "";
         if (name == "background")
         {
-            var backgroundColor = element.Style.GetPropertyValue("background-color");
+            var backgroundColor = element.Style.Get("background-color") ?? "";
             if (!string.IsNullOrWhiteSpace(backgroundColor)) value = backgroundColor;
         }
         if (string.IsNullOrWhiteSpace(value)) return fallback;

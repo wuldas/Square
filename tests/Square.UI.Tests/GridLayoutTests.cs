@@ -116,6 +116,44 @@ public class GridLayoutTests
     }
 
     [Fact]
+    public void NestedViewportUnitsResolveAgainstRootViewport()
+    {
+        var root = new View();
+        root.Style.Set("width", "800px");
+        root.Style.Set("height", "500px");
+        var container = new View();
+        container.Style.Set("width", "200px");
+        container.Style.Set("height", "100px");
+        var child = new View();
+        child.Style.Set("width", "50vw");
+        child.Style.Set("height", "50vh");
+        container.Children.Add(child);
+        root.Children.Add(container);
+
+        var layout = new LayoutEngine();
+        layout.Measure(root, new Size(800, 500));
+        layout.Arrange(root, new Rect(0, 0, 800, 500));
+
+        Assert.Equal(400, child.Geometry.Width);
+        Assert.Equal(250, child.Geometry.Height);
+    }
+
+    [Fact]
+    public void ResponsiveUnitUsesParentWidthPercentage()
+    {
+        var root = new View();
+        var child = new View();
+        child.Style.Set("width", "25rp");
+        root.Children.Add(child);
+
+        var layout = new LayoutEngine();
+        layout.Measure(root, new Size(400, 100));
+        layout.Arrange(root, new Rect(0, 0, 400, 100));
+
+        Assert.Equal(100, child.Geometry.Width);
+    }
+
+    [Fact]
     public void FlexLayoutAppliesCssPaddingShorthandEdges()
     {
         var root = new View();
@@ -402,6 +440,55 @@ public class GridLayoutTests
 
         Assert.Equal(new Rect(0, 0, 300, 40), header.Geometry);
         Assert.Equal(new Rect(100, 40, 200, 60), main.Geometry);
+    }
+
+    [Fact]
+    public void GridAcceptsChromeQuotedAreasAndIndependentGaps()
+    {
+        var root = new View();
+        root.Style.Set("display", "grid");
+        root.Style.Set("grid-template-columns", "80px 120px");
+        root.Style.Set("grid-template-rows", "40px 50px");
+        root.Style.Set("grid-template-areas", "\"header header\" \"nav main\"");
+        root.Style.Set("row-gap", "10px");
+        root.Style.Set("column-gap", "20px");
+        var header = new MeasuredBox(1, 1);
+        header.Style.Set("grid-area", "header");
+        var nav = new MeasuredBox(1, 1);
+        nav.Style.Set("grid-area", "nav");
+        var main = new MeasuredBox(1, 1);
+        main.Style.Set("grid-area", "main");
+        root.Children.Add(header);
+        root.Children.Add(nav);
+        root.Children.Add(main);
+
+        var layout = new LayoutEngine();
+        layout.Measure(root, new Size(220, 100));
+        layout.Arrange(root, new Rect(0, 0, 220, 100));
+
+        Assert.Equal(new Rect(0, 0, 220, 40), header.Geometry);
+        Assert.Equal(new Rect(0, 50, 80, 50), nav.Geometry);
+        Assert.Equal(new Rect(100, 50, 120, 50), main.Geometry);
+    }
+
+    [Fact]
+    public void GridSpanPropertiesAffectPlacement()
+    {
+        var root = new View();
+        root.Style.Set("display", "grid");
+        root.Style.Set("grid-template-columns", "100px 100px");
+        root.Style.Set("grid-template-rows", "50px");
+        var child = new MeasuredBox(1, 1);
+        child.Style.Set("grid-column", "1");
+        child.Style.Set("grid-row", "1");
+        child.Style.Set("grid-column-span", "2");
+        root.Children.Add(child);
+
+        var layout = new LayoutEngine();
+        layout.Measure(root, new Size(200, 50));
+        layout.Arrange(root, new Rect(0, 0, 200, 50));
+
+        Assert.Equal(new Rect(0, 0, 200, 50), child.Geometry);
     }
 
     [Fact]

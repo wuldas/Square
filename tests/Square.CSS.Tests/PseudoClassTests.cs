@@ -471,7 +471,7 @@ public class PseudoClassTests
         Assert.Equal("0.5", text.Style.Get("opacity"));
 
         timeline.Tick(0.5f);
-        Assert.Equal("1", text.Style.Get("opacity"));
+        Assert.Null(text.Style.Get("opacity"));
         Assert.True(timeline.IsComplete);
     }
 
@@ -486,10 +486,10 @@ public class PseudoClassTests
         var timeline = engine.CreateAnimationTimeline(text);
 
         timeline!.Start();
-        Assert.Equal("1", text.Style.Get("opacity"));
+        Assert.Null(text.Style.Get("opacity"));
 
         timeline.Tick(0.25f);
-        Assert.Equal("1", text.Style.Get("opacity"));
+        Assert.Null(text.Style.Get("opacity"));
 
         timeline.Tick(0.5f);
         Assert.Equal("0.75", text.Style.Get("opacity"));
@@ -499,7 +499,7 @@ public class PseudoClassTests
         Assert.False(timeline.IsComplete);
 
         timeline.Tick(0.75f);
-        Assert.Equal("0", text.Style.Get("opacity"));
+        Assert.Null(text.Style.Get("opacity"));
         Assert.True(timeline.IsComplete);
     }
 
@@ -522,7 +522,7 @@ public class PseudoClassTests
         Assert.True(manager.HasRunningAnimations);
 
         manager.Tick(0.75f);
-        Assert.Equal("1", text.Style.Get("opacity"));
+        Assert.Null(text.Style.Get("opacity"));
         Assert.False(manager.HasRunningAnimations);
     }
 
@@ -562,7 +562,7 @@ public class PseudoClassTests
         Assert.True(CssStyleReconciler.TickAnimations(root, 0.25f));
         Assert.Equal("0.25", text.Style.Get("opacity"));
         Assert.True(CssStyleReconciler.TickAnimations(root, 0.75f));
-        Assert.Equal("1", text.Style.Get("opacity"));
+        Assert.Null(text.Style.Get("opacity"));
         Assert.False(CssStyleReconciler.TickAnimations(root, 0.1f));
     }
 }

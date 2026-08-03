@@ -315,6 +315,7 @@ public sealed class CssParser
 
         var attributeOperator = AttributeSelectorOperator.Presence;
         string? value = null;
+        var caseSensitivity = AttributeCaseSensitivity.Default;
         var valid = name.Length > 0;
         if (Peek().Type != CssTokenType.CloseBracket)
         {
@@ -330,6 +331,15 @@ public sealed class CssParser
                 valid = false;
             }
             SkipWhitespace();
+            if (Peek().Type == CssTokenType.Identifier &&
+                (string.Equals(Peek().Text, "i", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(Peek().Text, "s", StringComparison.OrdinalIgnoreCase)))
+            {
+                caseSensitivity = string.Equals(Advance().Text, "i", StringComparison.OrdinalIgnoreCase)
+                    ? AttributeCaseSensitivity.Insensitive
+                    : AttributeCaseSensitivity.Sensitive;
+                SkipWhitespace();
+            }
             valid &= Peek().Type == CssTokenType.CloseBracket;
         }
 
@@ -341,7 +351,8 @@ public sealed class CssParser
             SimpleSelectorKind.Attribute,
             name,
             valid ? attributeOperator : AttributeSelectorOperator.Invalid,
-            value);
+            value,
+            caseSensitivity);
     }
 
     private bool TryParseAttributeOperator(out AttributeSelectorOperator attributeOperator)
@@ -401,13 +412,19 @@ public sealed class CssParser
             var important = false;
             for (var i = valueTokens.Count - 1; i >= 0 && valueTokens[i].Type == CssTokenType.Whitespace; i--)
                 valueTokens.RemoveAt(i);
-            if (valueTokens.Count >= 2 &&
-                valueTokens[^2].Type == CssTokenType.Bang &&
+            if (valueTokens.Count > 0 &&
                 valueTokens[^1].Type == CssTokenType.Identifier &&
                 string.Equals(valueTokens[^1].Text, "important", StringComparison.OrdinalIgnoreCase))
             {
-                important = true;
-                valueTokens.RemoveRange(valueTokens.Count - 2, 2);
+                var bangIndex = valueTokens.Count - 2;
+                while (bangIndex >= 0 && valueTokens[bangIndex].Type == CssTokenType.Whitespace) bangIndex--;
+                if (bangIndex >= 0 && valueTokens[bangIndex].Type == CssTokenType.Bang)
+                {
+                    important = true;
+                    valueTokens.RemoveRange(bangIndex, valueTokens.Count - bangIndex);
+                    while (valueTokens.Count > 0 && valueTokens[^1].Type == CssTokenType.Whitespace)
+                        valueTokens.RemoveAt(valueTokens.Count - 1);
+                }
             }
             decls.Add(new(propToken.Text, FormatValue(valueTokens), important));
         }
@@ -429,6 +446,7 @@ public sealed class CssParser
             }
 
             if (token.Type == CssTokenType.Hash) result.Append('#').Append(token.Text);
+            else if (token.Type == CssTokenType.String) result.Append('"').Append(token.Text.Replace("\"", "\\\"", StringComparison.Ordinal)).Append('"');
             else if (token.Type == CssTokenType.OpenParen) result.Append('(');
             else if (token.Type == CssTokenType.CloseParen) { while (result.Length > 0 && result[result.Length - 1] == ' ') result.Length--; result.Append(')'); }
             else if (token.Type == CssTokenType.Comma) result.Append(',');

@@ -362,7 +362,7 @@ public class CssParserTests
                   Button[code^=prefix] { prefix: yes; }
                   Button[code$=suffix] { suffix: yes; }
                   Button[code*=middle] { substring: yes; }
-                  Button[label*='hello world'] { quoted: yes; }
+                  Button[label*='hello world' i] { quoted: yes; }
                   """;
         var engine = new CssEngine();
         engine.LoadStyleSheet(new CssParser(new CssTokenizer(css).Tokenize()).Parse());

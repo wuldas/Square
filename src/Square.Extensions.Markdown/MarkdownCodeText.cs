@@ -168,15 +168,15 @@ internal sealed class MarkdownCodeText : UIElement, ITextSelectable
     private string[] GetLines() => TextContent.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
 
     private Font ResolveFont() => FontManager.Instance.FromCss(
-        Style.GetPropertyValue("font-family"),
-        Style.GetPropertyValue("font-size"),
-        Style.GetPropertyValue("font-weight"),
-        Style.GetPropertyValue("font-style"),
+        Style.Get("font-family") ?? "",
+        Style.Get("font-size") ?? "",
+        Style.Get("font-weight") ?? "",
+        Style.Get("font-style") ?? "",
         13f);
 
     private float GetLineHeight(Font font)
     {
-        var value = Style.GetPropertyValue("line-height").Trim();
+        var value = (Style.Get("line-height") ?? "").Trim();
         if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase) &&
             float.TryParse(value[..^2], System.Globalization.CultureInfo.InvariantCulture, out var px) && px > 0)
             return px;

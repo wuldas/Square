@@ -246,6 +246,7 @@ public class VueGeneratorTests
         Assert.Contains("new Square.Controls.View()", generated);
         Assert.Contains("new Square.Controls.Text(\"hello\")", generated);
         Assert.Contains(".Children.Add", generated);
+        Assert.Contains(".Style.CssText = \"user-select: text\"", generated);
         Assert.DoesNotContain("new view", generated);
     }
 

@@ -1,5 +1,6 @@
 using Square.CSS.Ast;
 using Square.UI;
+using Square.UI.ElementApi;
 using System.Globalization;
 
 namespace Square.CSS.Engine;
@@ -8,14 +9,13 @@ namespace Square.CSS.Engine;
 public sealed class CssEngine
 {
     private readonly List<CssRule> _rules = [];
-    private readonly Dictionary<string, string> _variables = [];
     private readonly Dictionary<string, KeyFramesRule> _keyFrames = new();
     private readonly Dictionary<string, Dictionary<string, string>> _themes = new();
     private string? _activeTheme;
 
     internal bool HasSiblingCombinators { get; private set; }
 
-    /// <summary>加载样式表，收集规则、自定义变量与关键帧。</summary>
+    /// <summary>加载样式表规则与关键帧。</summary>
     /// <param name="sheet">待加载的样式表。</param>
     public void LoadStyleSheet(CssStyleSheet sheet)
     {
@@ -24,9 +24,6 @@ public sealed class CssEngine
             _rules.Add(rule);
             HasSiblingCombinators |= rule.Selector.Steps.Any(step =>
                 step.Combinator is Combinator.Adjacent or Combinator.GeneralSibling);
-            foreach (var declaration in rule.Declarations)
-                if (declaration.Property.StartsWith("--", StringComparison.Ordinal))
-                    _variables[declaration.Property] = declaration.Value;
         }
         foreach (var kf in sheet.KeyFrames) _keyFrames[kf.Name] = kf;
     }
@@ -62,7 +59,7 @@ public sealed class CssEngine
     public void ApplyStyles(Element Element)
     {
         ApplyInheritedProperties(Element);
-        var matched = new List<(CssRule rule, int specificity, int order)>();
+        var matched = new List<(CssRule rule, CssSpecificity specificity, int order)>();
 
         for (var i = 0; i < _rules.Count; i++)
         {
@@ -82,12 +79,9 @@ public sealed class CssEngine
             var isSelectionRule = IsSelectionRule(rule.Selector);
             foreach (var decl in rule.Declarations)
             {
-                if (decl.Property.StartsWith("--", StringComparison.Ordinal)) continue;
-                var value = ResolveVariables(decl.Value);
                 var property = isSelectionRule ? MapSelectionProperty(decl.Property) : decl.Property;
                 if (property == null) continue;
-                ApplyDeclaration(Element, property, value,
-                    decl.Important ? int.MaxValue : specificity);
+                ApplyDeclaration(Element, property, decl.Value, specificity, decl.Important);
             }
         }
     }
@@ -123,12 +117,14 @@ public sealed class CssEngine
         return new CssAnimationTimeline(Element, keyFrames, duration, easing, delay, iterationCount, direction);
     }
 
-    private static int ParseIterationCount(string? value)
+    private static float ParseIterationCount(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return 1;
         var text = value.Trim();
         if (string.Equals(text, "infinite", StringComparison.OrdinalIgnoreCase)) return int.MaxValue;
-        return int.TryParse(text, out var count) ? Math.Max(1, count) : 1;
+        return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var count)
+            ? Math.Max(0, count)
+            : 1;
     }
 
     private static float ParseDurationSeconds(string? value)
@@ -139,7 +135,7 @@ public sealed class CssEngine
             return ms / 1000f;
         if (text.EndsWith('s') && float.TryParse(text[..^1], out var s))
             return s;
-        return float.TryParse(text, out var seconds) ? seconds : 0f;
+        return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) ? seconds : 0f;
     }
 
     private static Func<float, float> ResolveEasing(string? value) => value?.Trim().ToLowerInvariant() switch
@@ -150,48 +146,39 @@ public sealed class CssEngine
         _ => t => t
     };
 
-    private string ResolveVariables(string value)
+    private void ApplyInheritedProperties(Element Element)
     {
-        while (value.Contains("var(", StringComparison.Ordinal))
+        if (Element.Parent == null)
         {
-            var start = value.IndexOf("var(", StringComparison.Ordinal);
-            var end = value.IndexOf(')', start);
-            if (end < 0) break;
-            var inner = value[(start + 4)..end].Trim();
-            var commaIdx = inner.IndexOf(',');
-            var varName = commaIdx >= 0 ? inner[..commaIdx].Trim() : inner;
-            var fallback = commaIdx >= 0 ? inner[(commaIdx + 1)..].Trim() : null;
-            var replacement = GetVariable(varName) ?? fallback;
-            if (replacement == null) break;
-            value = value[..start] + replacement + value[(end + 1)..];
+            ApplyThemeVariables(Element);
+            return;
         }
-        return value;
-    }
-
-    private string? GetVariable(string name)
-    {
-        if (_activeTheme != null && _themes.TryGetValue(_activeTheme, out var theme) && theme.TryGetValue(name, out var themed))
-            return themed;
-        return _variables.TryGetValue(name, out var value) ? value : null;
-    }
-
-    private static void ApplyInheritedProperties(Element Element)
-    {
-        if (Element.Parent == null) return;
         foreach (var property in new[]
                  {
-                     "color", "font-family", "font-size", "font-weight", "font-style", "line-height", "text-align"
+                     "color", "font-family", "font-size", "font-weight", "font-style", "line-height", "text-align", "visibility"
                  })
         {
-            if (Element.Style.Get(property) != null) continue;
             var inherited = Element.Parent.Style.Get(property);
-            if (inherited != null) Element.Style.SetCascaded(property, inherited, -1);
+            if (inherited != null)
+                Element.Style.SetCascaded(property, inherited, new CssSpecificity(-1, 0, 0), important: false);
         }
+
+        foreach (var pair in Element.Parent.Style.GetAll())
+            if (pair.Key.StartsWith("--", StringComparison.Ordinal))
+                Element.Style.SetCascaded(pair.Key, pair.Value, new CssSpecificity(-1, 0, 0), important: false);
+        ApplyThemeVariables(Element);
     }
 
-    private static bool TryMatchSelector(ComplexSelector selector, Element Element, out int specificity)
+    private void ApplyThemeVariables(Element Element)
     {
-        specificity = 0;
+        if (_activeTheme == null || !_themes.TryGetValue(_activeTheme, out var theme)) return;
+        foreach (var pair in theme)
+            Element.Style.SetCascaded(pair.Key, pair.Value, new CssSpecificity(int.MaxValue - 1, 0, 0), important: false);
+    }
+
+    private static bool TryMatchSelector(ComplexSelector selector, Element Element, out CssSpecificity specificity)
+    {
+        specificity = default;
         if (selector.Steps.Count == 0) return false;
 
         var last = selector.Steps[^1];
@@ -211,7 +198,7 @@ public sealed class CssEngine
 
             if (relation is Combinator.Child or Combinator.Adjacent)
             {
-                var s = 0;
+                var s = default(CssSpecificity);
                 if (candidate == null || !MatchCompound(step.Selector, candidate, ref s)) return false;
                 specificity += s;
                 current = candidate;
@@ -226,7 +213,7 @@ public sealed class CssEngine
                 var matchedSibling = false;
                 for (var siblingIndex = currentIndex - 1; siblingIndex >= 0; siblingIndex--)
                 {
-                    var s = 0;
+                    var s = default(CssSpecificity);
                     var sibling = parent.Children[siblingIndex];
                     if (!MatchCompound(step.Selector, sibling, ref s)) continue;
                     specificity += s;
@@ -242,7 +229,7 @@ public sealed class CssEngine
             var p = current.Parent;
             while (p != null)
             {
-                var s = 0;
+                var s = default(CssSpecificity);
                 if (MatchCompound(step.Selector, p, ref s))
                 {
                     specificity += s;
@@ -265,38 +252,53 @@ public sealed class CssEngine
         return index > 0 ? parent.Children[index - 1] : null;
     }
 
-    private static bool MatchCompound(CompoundSelector compound, Element Element, ref int specificity)
+    private static bool MatchCompound(CompoundSelector compound, Element Element, ref CssSpecificity specificity)
     {
         foreach (var part in compound.Parts)
         {
             switch (part.Kind)
             {
                 case SimpleSelectorKind.Type:
-                    if (!string.Equals(Element.GetType().Name, part.Name, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(Element.TagName, part.Name, StringComparison.OrdinalIgnoreCase))
                         return false;
-                    specificity += 1;
+                    specificity += new CssSpecificity(0, 0, 1);
                     break;
                 case SimpleSelectorKind.Class:
                     if (!Element.ClassList.Contains(part.Name)) return false;
-                    specificity += 10;
+                    specificity += new CssSpecificity(0, 1, 0);
                     break;
                 case SimpleSelectorKind.Id:
                     if (Element.Id != part.Name) return false;
-                    specificity += 100;
+                    specificity += new CssSpecificity(1, 0, 0);
                     break;
                 case SimpleSelectorKind.Universal:
                     break;
                 case SimpleSelectorKind.PseudoClass:
                     if (!MatchPseudoClass(Element, part.Name)) return false;
-                    specificity += 10;
+                    specificity += GetPseudoClassSpecificity(part.Name);
                     break;
                 case SimpleSelectorKind.Attribute:
                     if (!MatchAttribute(Element, part)) return false;
-                    specificity += 10;
+                    specificity += new CssSpecificity(0, 1, 0);
                     break;
             }
         }
         return true;
+    }
+
+    private static CssSpecificity GetPseudoClassSpecificity(string name)
+    {
+        if (name.StartsWith("not(", StringComparison.OrdinalIgnoreCase) && name.EndsWith(')'))
+            return GetSimpleArgumentSpecificity(name[4..^1].Trim());
+        return new CssSpecificity(0, 1, 0);
+    }
+
+    private static CssSpecificity GetSimpleArgumentSpecificity(string selector)
+    {
+        if (selector.StartsWith('#')) return new CssSpecificity(1, 0, 0);
+        if (selector.StartsWith('.')) return new CssSpecificity(0, 1, 0);
+        if (selector == "*") return default;
+        return new CssSpecificity(0, 0, 1);
     }
 
     private static bool MatchAttribute(Element Element, SimpleSelector selector)
@@ -310,7 +312,9 @@ public sealed class CssEngine
         var expected = selector.AttributeValue;
         if (actualValue == null || expected == null) return false;
         var actual = Convert.ToString(actualValue, CultureInfo.InvariantCulture) ?? "";
-        var comparison = StringComparison.OrdinalIgnoreCase;
+        var comparison = selector.AttributeCaseSensitivity == AttributeCaseSensitivity.Insensitive
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
         return selector.AttributeOperator switch
         {
             AttributeSelectorOperator.Equals => string.Equals(actual, expected, comparison),
@@ -334,9 +338,7 @@ public sealed class CssEngine
             var argument = lower[10..^1].Trim();
             if (Element.Parent == null) return false;
             var index = Element.Parent.Children.IndexOf(Element) + 1;
-            if (argument == "odd") return index % 2 == 1;
-            if (argument == "even") return index % 2 == 0;
-            return int.TryParse(argument, out var expected) && index == expected;
+            return MatchesNthChild(argument, index);
         }
 
         if (lower.StartsWith("not(", StringComparison.Ordinal) && lower.EndsWith(')'))
@@ -350,7 +352,7 @@ public sealed class CssEngine
             "disabled" => Element.HasState(ElementState.Disabled),
             "checked" => Element.HasState(ElementState.Checked),
             "open" => Element.HasState(ElementState.Open),
-            "empty" => Element.Children.Count == 0,
+            "empty" => Element.ChildNodes.Count == 0,
             "first-child" => Element.Parent?.Children[0] == Element,
             "last-child" => Element.Parent?.Children[^1] == Element,
             "only-child" => Element.Parent?.Children.Count == 1,
@@ -358,6 +360,35 @@ public sealed class CssEngine
             "selection" => true,
             _ => false
         };
+    }
+
+    private static bool MatchesNthChild(string expression, int index)
+    {
+        expression = expression.Replace(" ", "", StringComparison.Ordinal).ToLowerInvariant();
+        if (expression == "odd") expression = "2n+1";
+        else if (expression == "even") expression = "2n";
+        if (int.TryParse(expression, NumberStyles.Integer, CultureInfo.InvariantCulture, out var exact))
+            return index == exact;
+
+        var n = expression.IndexOf('n');
+        if (n < 0) return false;
+        var coefficientText = expression[..n];
+        var offsetText = expression[(n + 1)..];
+        var coefficient = coefficientText switch
+        {
+            "" or "+" => 1,
+            "-" => -1,
+            _ when int.TryParse(coefficientText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => int.MinValue
+        };
+        if (coefficient == int.MinValue) return false;
+        var offset = 0;
+        if (offsetText.Length > 0 &&
+            !int.TryParse(offsetText, NumberStyles.Integer, CultureInfo.InvariantCulture, out offset))
+            return false;
+        if (coefficient == 0) return index == offset;
+        var delta = index - offset;
+        return delta % coefficient == 0 && delta / coefficient >= 0;
     }
 
     private static bool IsSelectionRule(ComplexSelector selector) => selector.Steps.Any(step =>
@@ -377,21 +408,30 @@ public sealed class CssEngine
         if (selector.StartsWith('.')) return Element.ClassList.Contains(selector[1..]);
         if (selector.StartsWith('#')) return Element.Id == selector[1..];
         if (selector == "*") return true;
-        return string.Equals(Element.GetType().Name, selector, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(Element.TagName, selector, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void ApplyDeclaration(Element Element, string property, string value, int specificity)
+    private static void ApplyDeclaration(
+        Element Element,
+        string property,
+        string value,
+        CssSpecificity specificity,
+        bool important)
     {
         if (string.Equals(property, "animation", StringComparison.OrdinalIgnoreCase))
         {
-            ApplyAnimationShorthand(Element, value, specificity);
+            ApplyAnimationShorthand(Element, value, specificity, important);
             return;
         }
 
-        Element.Style.SetCascaded(property, value, specificity);
+        Element.Style.SetCascaded(property, value, specificity, important);
     }
 
-    private static void ApplyAnimationShorthand(Element Element, string value, int specificity)
+    private static void ApplyAnimationShorthand(
+        Element Element,
+        string value,
+        CssSpecificity specificity,
+        bool important)
     {
         var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) return;
@@ -442,12 +482,12 @@ public sealed class CssEngine
             if (name.Length == 0) name = part;
         }
 
-        if (name.Length > 0) Element.Style.SetCascaded("animation-name", name, specificity);
-        if (duration.Length > 0) Element.Style.SetCascaded("animation-duration", duration, specificity);
-        if (timingFunction.Length > 0) Element.Style.SetCascaded("animation-timing-function", timingFunction, specificity);
-        if (delay.Length > 0) Element.Style.SetCascaded("animation-delay", delay, specificity);
-        if (iterationCount.Length > 0) Element.Style.SetCascaded("animation-iteration-count", iterationCount, specificity);
-        if (direction.Length > 0) Element.Style.SetCascaded("animation-direction", direction, specificity);
+        if (name.Length > 0) Element.Style.SetCascaded("animation-name", name, specificity, important);
+        if (duration.Length > 0) Element.Style.SetCascaded("animation-duration", duration, specificity, important);
+        if (timingFunction.Length > 0) Element.Style.SetCascaded("animation-timing-function", timingFunction, specificity, important);
+        if (delay.Length > 0) Element.Style.SetCascaded("animation-delay", delay, specificity, important);
+        if (iterationCount.Length > 0) Element.Style.SetCascaded("animation-iteration-count", iterationCount, specificity, important);
+        if (direction.Length > 0) Element.Style.SetCascaded("animation-direction", direction, specificity, important);
     }
 
     private static bool IsTime(string value) =>

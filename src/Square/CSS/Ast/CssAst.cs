@@ -47,7 +47,19 @@ public sealed record SimpleSelector(
     SimpleSelectorKind Kind,
     string Name,
     AttributeSelectorOperator AttributeOperator = AttributeSelectorOperator.Presence,
-    string? AttributeValue = null);
+    string? AttributeValue = null,
+    AttributeCaseSensitivity AttributeCaseSensitivity = AttributeCaseSensitivity.Default);
+
+/// <summary>属性选择器值比较方式。</summary>
+public enum AttributeCaseSensitivity
+{
+    /// <summary>默认大小写敏感。</summary>
+    Default,
+    /// <summary><c>i</c> 修饰符，ASCII 大小写不敏感。</summary>
+    Insensitive,
+    /// <summary><c>s</c> 修饰符，显式大小写敏感。</summary>
+    Sensitive
+}
 
 /// <summary>表示复合选择器，由多个简单选择器组合而成。</summary>
 /// <param name="Parts">简单选择器列表。</param>

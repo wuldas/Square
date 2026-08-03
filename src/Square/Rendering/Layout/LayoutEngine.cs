@@ -45,6 +45,10 @@ public sealed class ComputedStyle
     public float FlexBasis { get; set; } = float.NaN;
     /// <summary>子项间距。</summary>
     public float Gap { get; set; }
+    /// <summary>行间距。</summary>
+    public float RowGap { get; set; }
+    /// <summary>列间距。</summary>
+    public float ColumnGap { get; set; }
     /// <summary>宽度（NaN 表示自动）。</summary>
     public float Width { get; set; } = float.NaN;
     /// <summary>高度（NaN 表示自动）。</summary>
@@ -93,6 +97,13 @@ public sealed class ComputedStyle
 /// </summary>
 public sealed class LayoutEngine
 {
+    [ThreadStatic]
+    private static int _layoutDepth;
+    [ThreadStatic]
+    private static float _viewportWidth;
+    [ThreadStatic]
+    private static float _viewportHeight;
+
     private readonly Config _yogaConfig;
 
     /// <summary>创建布局引擎实例。</summary>
@@ -104,6 +115,24 @@ public sealed class LayoutEngine
 
     /// <summary>测量元素在给定可用尺寸下的期望尺寸。</summary>
     public void Measure(Element element, Size availableSize)
+    {
+        var outermost = _layoutDepth++ == 0;
+        if (outermost)
+        {
+            _viewportWidth = availableSize.Width;
+            _viewportHeight = availableSize.Height;
+        }
+        try
+        {
+            MeasureCore(element, availableSize);
+        }
+        finally
+        {
+            _layoutDepth--;
+        }
+    }
+
+    private void MeasureCore(Element element, Size availableSize)
     {
         var style = GetComputedStyle(element, availableSize.Width, availableSize.Height);
         if (!element.IsVisible || style.Display == DisplayMode.None)
@@ -128,6 +157,24 @@ public sealed class LayoutEngine
 
     /// <summary>按最终矩形排列元素及其子树。</summary>
     public void Arrange(Element element, Rect finalRect)
+    {
+        var outermost = _layoutDepth++ == 0;
+        if (outermost)
+        {
+            _viewportWidth = finalRect.Width;
+            _viewportHeight = finalRect.Height;
+        }
+        try
+        {
+            ArrangeCore(element, finalRect);
+        }
+        finally
+        {
+            _layoutDepth--;
+        }
+    }
+
+    private void ArrangeCore(Element element, Rect finalRect)
     {
         var style = GetComputedStyle(element, finalRect.Width, finalRect.Height);
         if (!element.IsVisible || style.Display == DisplayMode.None)
@@ -712,22 +759,23 @@ public sealed class LayoutEngine
 
     private void MeasureGrid(Element element, ComputedStyle style, Size available)
     {
-        var gap = style.Gap;
-        var cols = ParseGridTemplate(style.GridTemplateColumns, available.Width, gap);
-        var rows = ParseGridTemplate(style.GridTemplateRows, available.Height, gap);
+        var rowGap = style.RowGap;
+        var columnGap = style.ColumnGap;
+        var cols = ParseGridTemplate(style.GridTemplateColumns, available.Width, columnGap);
+        var rows = ParseGridTemplate(style.GridTemplateRows, available.Height, rowGap);
         ApplyIntrinsicGridTracks(element, style.GridTemplateColumns, cols, isColumns: true);
         ApplyIntrinsicGridTracks(element, style.GridTemplateRows, rows, isColumns: false);
-        RecomputeFlexibleGridTracks(style.GridTemplateColumns, cols, available.Width, gap);
-        RecomputeFlexibleGridTracks(style.GridTemplateRows, rows, available.Height, gap);
+        RecomputeFlexibleGridTracks(style.GridTemplateColumns, cols, available.Width, columnGap);
+        RecomputeFlexibleGridTracks(style.GridTemplateRows, rows, available.Height, rowGap);
 
         var colCount = Math.Max(1, cols.Length);
         var rowCount = Math.Max(1, rows.Length);
         var effectiveCols = new float[colCount];
         var effectiveRows = new float[rowCount];
         for (int i = 0; i < colCount; i++)
-            effectiveCols[i] = cols.Length > i ? cols[i] : Math.Max(0, available.Width - gap * Math.Max(0, colCount - 1)) / colCount;
+            effectiveCols[i] = cols.Length > i ? cols[i] : Math.Max(0, available.Width - columnGap * Math.Max(0, colCount - 1)) / colCount;
         for (int i = 0; i < rowCount; i++)
-            effectiveRows[i] = rows.Length > i ? rows[i] : Math.Max(0, available.Height - gap * Math.Max(0, rowCount - 1)) / rowCount;
+            effectiveRows[i] = rows.Length > i ? rows[i] : Math.Max(0, available.Height - rowGap * Math.Max(0, rowCount - 1)) / rowCount;
 
         var areas = ParseGridAreas(element.Style.Get("grid-template-areas"));
         var placements = ResolveGridPlacements(element, available.Width, available.Height, colCount, rowCount, areas);
@@ -738,33 +786,34 @@ public sealed class LayoutEngine
             var colSpan = Math.Min(cs.GridColumnSpan, colCount - col);
             var rowSpan = Math.Min(cs.GridRowSpan, rowCount - row);
             var w = 0f; for (int i = 0; i < colSpan; i++) w += effectiveCols[col + i];
-            w += gap * Math.Max(0, colSpan - 1);
+            w += columnGap * Math.Max(0, colSpan - 1);
             var h = 0f; for (int i = 0; i < rowSpan; i++) h += effectiveRows[row + i];
-            h += gap * Math.Max(0, rowSpan - 1);
+            h += rowGap * Math.Max(0, rowSpan - 1);
             Measure(child, new Size(w, h));
         }
     }
 
     private void ArrangeGrid(Element element, ComputedStyle style, Rect inner)
     {
-        var gap = style.Gap;
-        var cols = ParseGridTemplate(style.GridTemplateColumns, inner.Width, gap);
-        var rows = ParseGridTemplate(style.GridTemplateRows, inner.Height, gap);
+        var rowGap = style.RowGap;
+        var columnGap = style.ColumnGap;
+        var cols = ParseGridTemplate(style.GridTemplateColumns, inner.Width, columnGap);
+        var rows = ParseGridTemplate(style.GridTemplateRows, inner.Height, rowGap);
         ApplyIntrinsicGridTracks(element, style.GridTemplateColumns, cols, isColumns: true);
         ApplyIntrinsicGridTracks(element, style.GridTemplateRows, rows, isColumns: false);
-        RecomputeFlexibleGridTracks(style.GridTemplateColumns, cols, inner.Width, gap);
-        RecomputeFlexibleGridTracks(style.GridTemplateRows, rows, inner.Height, gap);
+        RecomputeFlexibleGridTracks(style.GridTemplateColumns, cols, inner.Width, columnGap);
+        RecomputeFlexibleGridTracks(style.GridTemplateRows, rows, inner.Height, rowGap);
 
         var colCount = Math.Max(1, cols.Length);
         var rowCount = Math.Max(1, rows.Length);
         var colX = new float[colCount + 1];
         colX[0] = inner.Left;
         for (int i = 0; i < colCount; i++)
-            colX[i + 1] = colX[i] + (cols.Length > i ? cols[i] : Math.Max(0, inner.Width - gap * Math.Max(0, colCount - 1)) / colCount) + gap;
+            colX[i + 1] = colX[i] + (cols.Length > i ? cols[i] : Math.Max(0, inner.Width - columnGap * Math.Max(0, colCount - 1)) / colCount) + columnGap;
         var rowY = new float[rowCount + 1];
         rowY[0] = inner.Top;
         for (int i = 0; i < rowCount; i++)
-            rowY[i + 1] = rowY[i] + (rows.Length > i ? rows[i] : Math.Max(0, inner.Height - gap * Math.Max(0, rowCount - 1)) / rowCount) + gap;
+            rowY[i + 1] = rowY[i] + (rows.Length > i ? rows[i] : Math.Max(0, inner.Height - rowGap * Math.Max(0, rowCount - 1)) / rowCount) + rowGap;
 
         var areas = ParseGridAreas(element.Style.Get("grid-template-areas"));
         var placements = ResolveGridPlacements(element, inner.Width, inner.Height, colCount, rowCount, areas);
@@ -776,8 +825,8 @@ public sealed class LayoutEngine
             var rowEnd = Math.Min(row + cs.GridRowSpan, rowCount);
             var x = colX[col];
             var y = rowY[row];
-            var w = colX[colEnd] - colX[col] - gap;
-            var h = rowY[rowEnd] - rowY[row] - gap;
+            var w = colX[colEnd] - colX[col] - columnGap;
+            var h = rowY[rowEnd] - rowY[row] - rowGap;
             Arrange(child, new Rect(x, y, w, h));
         }
     }
@@ -1018,8 +1067,7 @@ public sealed class LayoutEngine
         var result = new Dictionary<string, (int col, int row, int colSpan, int rowSpan)>(StringComparer.Ordinal);
         if (string.IsNullOrWhiteSpace(value)) return result;
 
-        // Square 约定：行用 | 分隔，单元格空格分隔（如 "header header | nav main"）
-        var rows = value.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var rows = ParseGridAreaRows(value);
         for (var row = 0; row < rows.Length; row++)
         {
             var cells = rows[row].Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1038,6 +1086,22 @@ public sealed class LayoutEngine
             }
         }
         return result;
+    }
+
+    private static string[] ParseGridAreaRows(string value)
+    {
+        var quoted = new List<string>();
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] is not ('\'' or '"')) continue;
+            var quote = value[index++];
+            var start = index;
+            while (index < value.Length && value[index] != quote) index++;
+            quoted.Add(value[start..Math.Min(index, value.Length)]);
+        }
+        return quoted.Count > 0
+            ? quoted.ToArray()
+            : value.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
     }
 
     private static string[] SplitGridTemplate(string template)
@@ -1116,6 +1180,18 @@ public sealed class LayoutEngine
         var remSize = GetRootFontSize(element);
         if (TryParsePoints(element.Style.Get("gap"), parentWidth, parentHeight, emSize, remSize, out var gapVal))
             style.Gap = gapVal;
+        style.RowGap = style.Gap;
+        style.ColumnGap = style.Gap;
+        var gapParts = element.Style.Get("gap")?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (gapParts is { Length: 2 })
+        {
+            if (TryParsePoints(gapParts[0], parentWidth, parentHeight, emSize, remSize, out var rowGap)) style.RowGap = rowGap;
+            if (TryParsePoints(gapParts[1], parentWidth, parentHeight, emSize, remSize, out var columnGap)) style.ColumnGap = columnGap;
+        }
+        if (TryParsePoints(element.Style.Get("row-gap"), parentWidth, parentHeight, emSize, remSize, out var rowGapValue))
+            style.RowGap = rowGapValue;
+        if (TryParsePoints(element.Style.Get("column-gap"), parentWidth, parentHeight, emSize, remSize, out var columnGapValue))
+            style.ColumnGap = columnGapValue;
         if (TryParsePoints(element.Style.Get("padding"), parentWidth, parentHeight, emSize, remSize, out var paddingVal))
             style.Padding = paddingVal;
         if (TryParseBoxShorthand(element.Style.Get("padding"), parentWidth, parentHeight, emSize, remSize, allowAuto: false, out var padding))
@@ -1155,8 +1231,12 @@ public sealed class LayoutEngine
 
         var gridCol = element.Style.Get("grid-column");
         if (gridCol != null) ApplyGridPlacement(gridCol, v => style.GridColumn = v, v => style.GridColumnSpan = v);
+        if (int.TryParse(element.Style.Get("grid-column-span"), out var gridColumnSpan))
+            style.GridColumnSpan = Math.Max(1, gridColumnSpan);
         var gridRow = element.Style.Get("grid-row");
         if (gridRow != null) ApplyGridPlacement(gridRow, v => style.GridRow = v, v => style.GridRowSpan = v);
+        if (int.TryParse(element.Style.Get("grid-row-span"), out var gridRowSpan))
+            style.GridRowSpan = Math.Max(1, gridRowSpan);
         var gridArea = element.Style.Get("grid-area");
         if (gridArea != null) style.GridArea = gridArea;
 
@@ -1383,12 +1463,16 @@ public sealed class LayoutEngine
         var text = value.Replace(" ", "", StringComparison.Ordinal).Trim();
         if (text.EndsWith("vw", StringComparison.OrdinalIgnoreCase) &&
             float.TryParse(text[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out var vw) &&
-            float.IsFinite(parentW))
-            return parentW * vw / 100f;
+            float.IsFinite(_viewportWidth))
+            return _viewportWidth * vw / 100f;
         if (text.EndsWith("vh", StringComparison.OrdinalIgnoreCase) &&
             float.TryParse(text[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out var vh) &&
-            float.IsFinite(parentH))
-            return parentH * vh / 100f;
+            float.IsFinite(_viewportHeight))
+            return _viewportHeight * vh / 100f;
+        if (text.EndsWith("rp", StringComparison.OrdinalIgnoreCase) &&
+            float.TryParse(text[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out var rp) &&
+            float.IsFinite(parentW))
+            return parentW * rp / 100f;
         if (text.EndsWith("rem", StringComparison.OrdinalIgnoreCase) &&
             float.TryParse(text[..^3], NumberStyles.Float, CultureInfo.InvariantCulture, out var remV))
             return remV * rem;

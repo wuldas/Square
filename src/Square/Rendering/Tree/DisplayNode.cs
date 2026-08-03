@@ -89,14 +89,14 @@ public sealed class DisplayNode
         if (element == null || !element.IsVisible) return;
         element.ClearPaintDirty();
         var collector = new CommandCollector(commands);
-        if (element is not IPopupElement && BoxShadow.TryParseList(element.Style.GetPropertyValue("box-shadow"), out var shadows))
+        if (element is not IPopupElement && BoxShadow.TryParseList(element.Style.Get("box-shadow"), out var shadows))
             BoxShadowRendering.Draw(collector, element.Geometry, GetCornerRadius(element), shadows);
         element.Paint(collector);
     }
 
     private static float GetCornerRadius(Element element)
     {
-        var raw = element.Style.GetPropertyValue("border-radius");
+        var raw = element.Style.Get("border-radius") ?? "";
         if (string.IsNullOrWhiteSpace(raw)) return 0;
         var token = raw.Trim().Split([' ', '/'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
         if (string.IsNullOrWhiteSpace(token)) return 0;

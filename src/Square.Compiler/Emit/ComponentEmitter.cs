@@ -309,14 +309,7 @@ namespace Square.Compiler.Emit
 
             if (attribute.Name == "style" && !attribute.IsExpression)
             {
-                foreach (var declaration in Split(attribute.RawValue, ';'))
-                {
-                    var separator = declaration.IndexOf(':');
-                    if (separator <= 0) continue;
-                    var property = declaration.Substring(0, separator).Trim();
-                    var value = declaration.Substring(separator + 1).Trim();
-                    _sb.AppendLine(indent + variableName + ".Style.Set(\"" + Escape(property) + "\", \"" + Escape(value) + "\");");
-                }
+                _sb.AppendLine(indent + variableName + ".Style.CssText = \"" + Escape(attribute.RawValue) + "\";");
                 return;
             }
 
