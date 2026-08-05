@@ -79,6 +79,30 @@ public sealed class CssTokenizer
             if (_source[_pos] == '\\' && _pos + 1 < _source.Length)
             {
                 _pos++;
+                if (_source[_pos] is '\r' or '\n')
+                {
+                    if (_source[_pos] == '\r' && Peek(1) == '\n') _pos++;
+                    _line++;
+                    _pos++;
+                    continue;
+                }
+
+                var hexStart = _pos;
+                while (_pos < _source.Length && _pos - hexStart < 6 && Uri.IsHexDigit(_source[_pos])) _pos++;
+                if (_pos > hexStart)
+                {
+                    var codePoint = Convert.ToInt32(_source[hexStart.._pos], 16);
+                    result.Append(codePoint is > 0 and <= 0x10ffff and not (>= 0xd800 and <= 0xdfff)
+                        ? char.ConvertFromUtf32(codePoint)
+                        : "\ufffd");
+                    if (_pos < _source.Length && char.IsWhiteSpace(_source[_pos]))
+                    {
+                        if (_source[_pos] == '\n') _line++;
+                        _pos++;
+                    }
+                    continue;
+                }
+
                 result.Append(_source[_pos++]);
                 continue;
             }

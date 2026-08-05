@@ -42,6 +42,8 @@ public static class CssStyleReconciler
         {
             RegisterScope(engine, root);
             engine.ApplyStylesToTreeCore(root);
+            foreach (var changed in CssEngine.FinalizePseudoElements(root))
+                changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
             RefreshAnimations(engine, root);
         }
     }
@@ -77,6 +79,7 @@ public static class CssStyleReconciler
                 var styleRoots = MinimizeRoots(dirtyElements
                     .Select(element => expandToParent && element.Parent != null ? element.Parent : element));
                 var styleSnapshots = styleRoots.Select(CaptureStyleSnapshot).ToArray();
+                var pseudoElementChanges = new HashSet<Element>();
 
                 using (Element.SuppressInvalidation())
                 {
@@ -92,12 +95,16 @@ public static class CssStyleReconciler
                                 scope.Engine.ApplyStylesToTreeCore(target);
                         }
                     }
+                    foreach (var root in styleRoots)
+                        pseudoElementChanges.UnionWith(CssEngine.FinalizePseudoElements(root));
                     foreach (var scope in scopes)
                         scope.Animations.Attach(scope.Root);
                 }
 
                 foreach (var snapshot in styleSnapshots)
                     ApplyStyleDifferences(snapshot);
+                foreach (var changed in pseudoElementChanges)
+                    changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
             }
             finally
             {
@@ -126,6 +133,7 @@ public static class CssStyleReconciler
             scopes = Scopes.Where(scope => ReferenceEquals(FindTreeRoot(scope.Root), root)).ToArray();
         if (scopes.Length == 0) return;
 
+        IReadOnlyCollection<Element> pseudoElementChanges;
         using (Element.SuppressInvalidation())
         {
             ClearCascadedSubtree(root);
@@ -134,7 +142,10 @@ public static class CssStyleReconciler
                 scope.Engine.ApplyStylesToTreeCore(scope.Root);
                 scope.Animations.Attach(scope.Root);
             }
+            pseudoElementChanges = CssEngine.FinalizePseudoElements(root);
         }
+        foreach (var changed in pseudoElementChanges)
+            changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
     }
 
     /// <summary>释放与指定元素树关联的 CSS scope 和待处理样式失效。</summary>

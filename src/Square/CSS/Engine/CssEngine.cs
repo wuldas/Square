@@ -58,14 +58,22 @@ public sealed class CssEngine
     /// <param name="Element">目标元素。</param>
     public void ApplyStyles(Element Element)
     {
+        ApplyStylesCore(Element);
+        foreach (var changed in FinalizePseudoElements(Element))
+            changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+    }
+
+    private void ApplyStylesCore(Element Element)
+    {
+        if (Element is CssGeneratedPseudoElement) return;
         ApplyInheritedProperties(Element);
-        var matched = new List<(CssRule rule, CssSpecificity specificity, int order)>();
+        var matched = new List<(CssRule rule, CssSpecificity specificity, int order, string? pseudoElement)>();
 
         for (var i = 0; i < _rules.Count; i++)
         {
             var rule = _rules[i];
             if (TryMatchSelector(rule.Selector, Element, out var spec))
-                matched.Add((rule, spec, i));
+                matched.Add((rule, spec, i, GetPseudoElement(rule.Selector)));
         }
 
         matched.Sort((a, b) =>
@@ -74,9 +82,11 @@ public sealed class CssEngine
             return specificity != 0 ? specificity : a.order.CompareTo(b.order);
         });
 
-        foreach (var (rule, specificity, _) in matched)
+        foreach (var (rule, specificity, _, pseudoElement) in matched)
         {
-            var isSelectionRule = IsSelectionRule(rule.Selector);
+            if (pseudoElement is "before" or "after" or "invalid") continue;
+            var isSelectionRule = string.Equals(pseudoElement, "selection", StringComparison.OrdinalIgnoreCase) ||
+                                  IsLegacySelectionRule(rule.Selector);
             foreach (var decl in rule.Declarations)
             {
                 var property = isSelectionRule ? MapSelectionProperty(decl.Property) : decl.Property;
@@ -86,6 +96,20 @@ public sealed class CssEngine
         }
 
         ApplyThemeVariables(Element);
+
+        foreach (var pseudoElement in new[] { "before", "after" })
+        {
+            CssGeneratedPseudoElement? generated = null;
+            foreach (var (rule, specificity, _, _) in matched.Where(match =>
+                         string.Equals(match.pseudoElement, pseudoElement, StringComparison.OrdinalIgnoreCase)))
+            {
+                generated ??= EnsurePseudoElement(Element, pseudoElement);
+                ApplyInheritedProperties(generated);
+                foreach (var declaration in rule.Declarations)
+                    ApplyDeclaration(generated, declaration.Property, declaration.Value, specificity, declaration.Important);
+                ApplyThemeVariables(generated);
+            }
+        }
     }
 
     /// <summary>对整棵元素树应用样式并刷新动画。</summary>
@@ -97,8 +121,8 @@ public sealed class CssEngine
 
     internal void ApplyStylesToTreeCore(Element Element)
     {
-        ApplyStyles(Element);
-        foreach (var child in Element.Children)
+        ApplyStylesCore(Element);
+        foreach (var child in Element.Children.ToArray())
             ApplyStylesToTreeCore(child);
     }
 
@@ -204,12 +228,13 @@ public sealed class CssEngine
             {
                 var parent = current.Parent;
                 if (parent == null) return false;
-                var currentIndex = parent.Children.IndexOf(current);
+                var siblings = SelectorChildren(parent);
+                var currentIndex = siblings.IndexOf(current);
                 var matchedSibling = false;
                 for (var siblingIndex = currentIndex - 1; siblingIndex >= 0; siblingIndex--)
                 {
                     var s = default(CssSpecificity);
-                    var sibling = parent.Children[siblingIndex];
+                    var sibling = siblings[siblingIndex];
                     if (!MatchCompound(step.Selector, sibling, ref s)) continue;
                     specificity += s;
                     current = sibling;
@@ -243,8 +268,9 @@ public sealed class CssEngine
     {
         var parent = Element.Parent;
         if (parent == null) return null;
-        var index = parent.Children.IndexOf(Element);
-        return index > 0 ? parent.Children[index - 1] : null;
+        var siblings = SelectorChildren(parent);
+        var index = siblings.IndexOf(Element);
+        return index > 0 ? siblings[index - 1] : null;
     }
 
     private static bool MatchCompound(CompoundSelector compound, Element Element, ref CssSpecificity specificity)
@@ -271,6 +297,10 @@ public sealed class CssEngine
                 case SimpleSelectorKind.PseudoClass:
                     if (!MatchPseudoClass(Element, part.Name)) return false;
                     specificity += GetPseudoClassSpecificity(part.Name);
+                    break;
+                case SimpleSelectorKind.PseudoElement:
+                    if (!IsSupportedPseudoElement(part.Name)) return false;
+                    specificity += new CssSpecificity(0, 0, 1);
                     break;
                 case SimpleSelectorKind.Attribute:
                     if (!MatchAttribute(Element, part)) return false;
@@ -332,7 +362,7 @@ public sealed class CssEngine
         {
             var argument = lower[10..^1].Trim();
             if (Element.Parent == null) return false;
-            var index = Element.Parent.Children.IndexOf(Element) + 1;
+            var index = SelectorChildren(Element.Parent).IndexOf(Element) + 1;
             return MatchesNthChild(argument, index);
         }
 
@@ -347,10 +377,10 @@ public sealed class CssEngine
             "disabled" => Element.HasState(ElementState.Disabled),
             "checked" => Element.HasState(ElementState.Checked),
             "open" => Element.HasState(ElementState.Open),
-            "empty" => Element.ChildNodes.Count == 0,
-            "first-child" => Element.Parent?.Children[0] == Element,
-            "last-child" => Element.Parent?.Children[^1] == Element,
-            "only-child" => Element.Parent?.Children.Count == 1,
+            "empty" => Element.ChildNodes.All(node => node is CssGeneratedPseudoElement),
+            "first-child" => Element.Parent != null && SelectorChildren(Element.Parent).FirstOrDefault() == Element,
+            "last-child" => Element.Parent != null && SelectorChildren(Element.Parent).LastOrDefault() == Element,
+            "only-child" => Element.Parent != null && SelectorChildren(Element.Parent).Count == 1,
             "root" => Element.Parent == null,
             "selection" => true,
             _ => false
@@ -386,9 +416,132 @@ public sealed class CssEngine
         return delta % coefficient == 0 && delta / coefficient >= 0;
     }
 
-    private static bool IsSelectionRule(ComplexSelector selector) => selector.Steps.Any(step =>
+    private static bool IsLegacySelectionRule(ComplexSelector selector) => selector.Steps.Any(step =>
         step.Selector.Parts.Any(part => part.Kind == SimpleSelectorKind.PseudoClass &&
             string.Equals(part.Name, "selection", StringComparison.OrdinalIgnoreCase)));
+
+    private static string? GetPseudoElement(ComplexSelector selector)
+    {
+        string? result = null;
+        for (var stepIndex = 0; stepIndex < selector.Steps.Count; stepIndex++)
+        {
+            foreach (var part in selector.Steps[stepIndex].Selector.Parts)
+            {
+                if (part.Kind != SimpleSelectorKind.PseudoElement) continue;
+                if (stepIndex != selector.Steps.Count - 1 || result != null) return "invalid";
+                result = part.Name.ToLowerInvariant();
+            }
+        }
+        return result;
+    }
+
+    private static bool IsSupportedPseudoElement(string name) =>
+        name.Equals("before", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("after", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("selection", StringComparison.OrdinalIgnoreCase);
+
+    private static List<Element> SelectorChildren(Element parent) =>
+        parent.Children.Where(child => child is not CssGeneratedPseudoElement).ToList();
+
+    private static CssGeneratedPseudoElement EnsurePseudoElement(Element owner, string name)
+    {
+        var existing = owner.Children.OfType<CssGeneratedPseudoElement>()
+            .FirstOrDefault(child => child.PseudoElementName == name);
+        if (existing != null) return existing;
+
+        var generated = new CssGeneratedPseudoElement(name);
+        using (Element.SuppressInvalidation())
+        {
+            if (name == "before") owner.Children.Insert(0, generated);
+            else owner.Children.Add(generated);
+        }
+        return generated;
+    }
+
+    internal static IReadOnlyCollection<Element> FinalizePseudoElements(Element root)
+    {
+        var changed = new HashSet<Element>();
+        FinalizePseudoElementsCore(root, changed);
+        return changed;
+    }
+
+    private static void FinalizePseudoElementsCore(Element owner, HashSet<Element> changed)
+    {
+        foreach (var generated in owner.Children.OfType<CssGeneratedPseudoElement>().ToArray())
+        {
+            if (!TryParseGeneratedContent(generated.Style.Get("content"), out var content))
+            {
+                using (Element.SuppressInvalidation()) owner.Children.Remove(generated);
+                changed.Add(owner);
+                continue;
+            }
+
+            var targetIndex = generated.PseudoElementName == "before" ? 0 : owner.Children.Count - 1;
+            var currentIndex = owner.Children.IndexOf(generated);
+            if (currentIndex != targetIndex)
+            {
+                using (Element.SuppressInvalidation()) owner.Children.Move(currentIndex, targetIndex);
+                changed.Add(owner);
+            }
+            if (generated.TextContent != content)
+            {
+                using (Element.SuppressInvalidation()) generated.TextContent = content;
+                changed.Add(owner);
+            }
+            if (generated.IsNew)
+            {
+                generated.IsNew = false;
+                changed.Add(owner);
+            }
+        }
+
+        foreach (var child in owner.Children.Where(child => child is not CssGeneratedPseudoElement).ToArray())
+            FinalizePseudoElementsCore(child, changed);
+    }
+
+    private static bool TryParseGeneratedContent(string? value, out string content)
+    {
+        content = "";
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        value = value.Trim();
+        if (value.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("normal", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var result = new System.Text.StringBuilder();
+        var index = 0;
+        var foundString = false;
+        while (index < value.Length)
+        {
+            while (index < value.Length && char.IsWhiteSpace(value[index])) index++;
+            if (index >= value.Length) break;
+            if (value[index] is not ('\'' or '"')) return false;
+            foundString = true;
+            var quote = value[index++];
+            var closed = false;
+            while (index < value.Length)
+            {
+                var character = value[index++];
+                if (character == quote)
+                {
+                    closed = true;
+                    break;
+                }
+                if (character == '\\' && index < value.Length) character = value[index++];
+                result.Append(character);
+            }
+            if (!closed) return false;
+        }
+
+        if (!foundString) return false;
+        content = result.ToString();
+        return true;
+    }
+
+    private sealed class CssGeneratedPseudoElement(string pseudoElementName) : Square.Controls.Text
+    {
+        public string PseudoElementName { get; } = pseudoElementName;
+        public bool IsNew { get; set; } = true;
+    }
 
     private static string? MapSelectionProperty(string property) => property.ToLowerInvariant() switch
     {

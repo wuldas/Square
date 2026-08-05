@@ -281,6 +281,7 @@ public sealed class CssParser
             }
             else if (token.Type is CssTokenType.Colon or CssTokenType.DoubleColon)
             {
+                var pseudoTokenType = token.Type;
                 Advance();
                 while (Peek().Type == CssTokenType.Whitespace) Advance();
                 var name = Advance().Text;
@@ -293,7 +294,12 @@ public sealed class CssParser
                     if (Peek().Type == CssTokenType.CloseParen) Advance();
                     name += "(" + argument + ")";
                 }
-                parts.Add(new SimpleSelector(SimpleSelectorKind.PseudoClass, name));
+                var kind = pseudoTokenType == CssTokenType.DoubleColon ||
+                           string.Equals(name, "before", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(name, "after", StringComparison.OrdinalIgnoreCase)
+                    ? SimpleSelectorKind.PseudoElement
+                    : SimpleSelectorKind.PseudoClass;
+                parts.Add(new SimpleSelector(kind, name));
             }
             else
             {

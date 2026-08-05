@@ -6,6 +6,13 @@
     <Input class="editor-roomy" value="宽松行高 / 28px line-height / 20px font" />
     <TextArea ref={NotesInput} class="editor-multiline" value={Notes} placeholder="Multiline input" onInput={OnNotesInput} />
     <TextArea class="editor-multiline-roomy" value={StyledNotes} />
+    <View class="icon-example">
+      <View class="icon" />
+      <View class="icon-copy">
+        <Text class="icon-title" text=".icon::before" />
+        <Text class="icon-code" text="content: '\2605';" />
+      </View>
+    </View>
   </View>
 </template>
 <script lang="csharp">
@@ -31,4 +38,10 @@
   .editor-roomy { height: 44px; font-size: 20px; line-height: 28px; color: #067647; caret-color: #067647; }
   .editor-multiline { height: 112px; line-height: 22px; color: #175cd3; }
   .editor-multiline-roomy { height: 132px; line-height: 30px; color: #6938a8; selection-background: #b692f6; selection-color: #1f1235; }
+  .icon-example { display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; }
+  .icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; background: #ffedd5; border-radius: 22px; }
+  .icon::before { content: "\2605"; color: #ea580c; font-size: 24px; }
+  .icon-copy { display: flex; flex-direction: column; gap: 2px; }
+  .icon-title { color: #9a3412; font-size: 15px; font-weight: 600; }
+  .icon-code { color: #c2410c; font-size: 13px; }
 </style>

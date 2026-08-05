@@ -13,6 +13,8 @@ public enum SimpleSelectorKind
     Universal,
     /// <summary>伪类选择器。</summary>
     PseudoClass,
+    /// <summary>伪元素选择器。</summary>
+    PseudoElement,
     /// <summary>属性选择器。</summary>
     Attribute
 }

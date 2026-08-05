@@ -216,6 +216,91 @@ public class CssParserTests
     }
 
     [Fact]
+    public void ParseBeforeAndAfterPseudoElements()
+    {
+        var sheet = new CssParser(new CssTokenizer("View::before, View::after { content: '*'; }").Tokenize()).Parse();
+
+        Assert.Equal(2, sheet.Rules.Count);
+        Assert.All(sheet.Rules, rule => Assert.Contains(rule.Selector.Steps[0].Selector.Parts,
+            part => part.Kind == SimpleSelectorKind.PseudoElement));
+    }
+
+    [Fact]
+    public void BeforeAndAfterGenerateStyledContentInVisualOrder()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".target::before { content: '['; color: red; } .target::after { content: ']'; color: blue; }").Tokenize()).Parse());
+        var host = new View();
+        host.ClassList.Add("target");
+        var content = new Square.Controls.Text("content");
+        host.Children.Add(content);
+
+        engine.ApplyStylesToTree(host);
+
+        Assert.Equal(3, host.Children.Count);
+        var before = Assert.IsAssignableFrom<Square.Controls.Text>(host.Children[0]);
+        var after = Assert.IsAssignableFrom<Square.Controls.Text>(host.Children[^1]);
+        Assert.Equal("[", before.TextContent);
+        Assert.Equal("red", before.Style.Get("color"));
+        Assert.Same(content, host.Children[1]);
+        Assert.Equal("]", after.TextContent);
+        Assert.Equal("blue", after.Style.Get("color"));
+        Assert.Null(host.Style.Get("content"));
+        Assert.Null(host.Style.Get("color"));
+    }
+
+    [Fact]
+    public void PseudoElementsRequireContentAndReconcileRemoval()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".active::before { content: 'prefix'; } .active::after { content: none; }").Tokenize()).Parse());
+        var host = new View();
+        host.ClassList.Add("active");
+        engine.ApplyStylesToTree(host);
+        Assert.Single(host.Children);
+
+        host.ClassList.Remove("active");
+        CssStyleReconciler.Flush();
+
+        Assert.Empty(host.Children);
+    }
+
+    [Fact]
+    public void GeneratedPseudoElementsDoNotAffectStructuralPseudoClasses()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "View::before { content: 'prefix'; } View > Text:first-child { color: red; } View > Text:nth-child(2) { background: blue; }").Tokenize()).Parse());
+        var host = new View();
+        var first = new Square.Controls.Text("first");
+        var second = new Square.Controls.Text("second");
+        host.Children.Add(first);
+        host.Children.Add(second);
+
+        engine.ApplyStylesToTree(host);
+
+        Assert.Equal("red", first.Style.Get("color"));
+        Assert.Equal("blue", second.Style.Get("background"));
+    }
+
+    [Fact]
+    public void LegacySingleColonBeforeSupportsCssEscapedGlyphContent()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".icon:before { content: '\\e669'; }").Tokenize()).Parse());
+        var host = new View();
+        host.ClassList.Add("icon");
+
+        engine.ApplyStylesToTree(host);
+
+        var generated = Assert.IsAssignableFrom<Square.Controls.Text>(Assert.Single(host.Children));
+        Assert.Equal("\ue669", generated.TextContent);
+    }
+
+    [Fact]
     public void StyleReconcilerReappliesDynamicClassMatchesAndRemovals()
     {
         var sheet = new CssParser(new CssTokenizer(".active { color: red; width: 120px; }").Tokenize()).Parse();
