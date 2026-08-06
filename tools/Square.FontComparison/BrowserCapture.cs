@@ -82,8 +82,24 @@ internal static class BrowserCapture
                   node.style.fontStyle = config.fontStyle;
                   node.style.lineHeight = config.lineHeight;
                   node.style.textAlign = config.textAlign;
-                  node.style.width = config.width;
-                }
+                   node.style.width = config.width;
+                   node.style.whiteSpace = config.whiteSpace;
+                   node.style.letterSpacing = config.letterSpacing;
+                   node.style.wordSpacing = config.wordSpacing;
+                   node.style.textIndent = config.textIndent;
+                   node.style.textTransform = config.textTransform;
+                   node.style.textDecoration = config.textDecoration;
+                   const container = document.querySelector('#container');
+                   container.style.boxSizing = 'border-box';
+                   container.style.overflow = 'hidden';
+                   const containerWidth = config.containerWidthCss;
+                   const containerHeight = config.containerHeightCss;
+                   container.style.display = containerWidth == null && containerHeight == null ? 'block' : 'flex';
+                   container.style.width = containerWidth || '';
+                   container.style.height = containerHeight || '';
+                   container.style.justifyContent = containerWidth == null ? '' : 'center';
+                   container.style.alignItems = containerHeight == null ? '' : 'center';
+                 }
                 """, new
             {
                 text = item.Text,
@@ -93,13 +109,28 @@ internal static class BrowserCapture
                 fontStyle = item.FontStyle,
                 lineHeight = item.LineHeight,
                 textAlign = item.TextAlign,
-                width = item.Width.HasValue
-                    ? item.Width.Value.ToString(CultureInfo.InvariantCulture) + "px"
-                    : "max-content"
-            });
+                 width = item.Width.HasValue
+                     ? item.Width.Value.ToString(CultureInfo.InvariantCulture) + "px"
+                     : "max-content",
+                 whiteSpace = item.WhiteSpace,
+                 letterSpacing = item.LetterSpacing,
+                 wordSpacing = item.WordSpacing,
+                 textIndent = item.TextIndent,
+                 textTransform = item.TextTransform,
+                 textDecoration = item.TextDecoration
+                   ,containerWidthCss = item.ContainerWidth.HasValue
+                       ? item.ContainerWidth.Value.ToString(CultureInfo.InvariantCulture) + "px"
+                       : ""
+                   ,containerHeightCss = item.ContainerHeight.HasValue
+                       ? item.ContainerHeight.Value.ToString(CultureInfo.InvariantCulture) + "px"
+                       : ""
+              });
 
             var screenshotName = item.Id + ".png";
-            await element.ScreenshotAsync(new LocatorScreenshotOptions
+            var screenshotTarget = item.ContainerWidth.HasValue || item.ContainerHeight.HasValue
+                ? page.Locator("#container")
+                : element;
+            await screenshotTarget.ScreenshotAsync(new LocatorScreenshotOptions
             {
                 Path = Path.Combine(screenshotDirectory, screenshotName),
                 Animations = ScreenshotAnimations.Disabled,
@@ -109,7 +140,9 @@ internal static class BrowserCapture
             var valueJson = await element.EvaluateAsync<string>("""
                 node => {
                   const text = node.textContent || '';
-                  const box = node.getBoundingClientRect();
+                   const box = node.getBoundingClientRect();
+                   const containerBox = document.querySelector('#container').getBoundingClientRect();
+                   const containerStyle = getComputedStyle(document.querySelector('#container'));
                   const style = getComputedStyle(node);
                   const characters = [];
                   for (let offset = 0; offset < text.length;) {
@@ -122,7 +155,7 @@ internal static class BrowserCapture
                     characters.push({
                       startOffset: offset,
                       endOffset: offset + consumed,
-                      x: rect.x - box.x,
+                     x: rect.x - box.x,
                       y: rect.y - box.y,
                       width: rect.width,
                       height: rect.height
@@ -136,13 +169,20 @@ internal static class BrowserCapture
                   const lineHeight = Number.parseFloat(style.lineHeight);
                   const fontAscent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent;
                   const fontDescent = metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent;
-                  return JSON.stringify({
+                   return JSON.stringify({
                     fontFamily: style.fontFamily.replaceAll('"', '').replaceAll("'", ''),
                     fontSize: Number.parseFloat(style.fontSize),
                     fontWeight: Number.parseInt(style.fontWeight, 10),
                     fontStyle: style.fontStyle,
-                    width: box.width,
-                    height: box.height,
+                     width: box.width,
+                     height: box.height,
+                     x: box.x - containerBox.x,
+                     y: box.y - containerBox.y,
+                     containerWidth: containerBox.width,
+                     containerHeight: containerBox.height,
+                     containerDisplay: containerStyle.display,
+                     containerInlineWidth: container.style.width,
+                     containerInlineHeight: container.style.height,
                     baseline: (lineHeight - fontAscent - fontDescent) / 2 + fontAscent,
                     ascent: fontAscent,
                     descent: fontDescent,
@@ -159,6 +199,14 @@ internal static class BrowserCapture
                 || value.FontWeight != item.FontWeight
                 || !string.Equals(value.FontStyle, item.FontStyle, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"Chromium computed font does not match case '{item.Id}'.");
+            if (item.ContainerWidth.HasValue &&
+                (Math.Abs(value.ContainerWidth - item.ContainerWidth.Value) > 0.01f ||
+                 Math.Abs(value.ContainerHeight - item.ContainerHeight.GetValueOrDefault()) > 0.01f ||
+                 value.ContainerDisplay != "flex"))
+                throw new InvalidOperationException(
+                    $"Chromium container did not apply for '{item.Id}': " +
+                    $"display={value.ContainerDisplay}, width={value.ContainerWidth}, height={value.ContainerHeight}, " +
+                    $"inline={value.ContainerInlineWidth}/{value.ContainerInlineHeight}.");
             captures.Add(new CaseCapture
             {
                 Id = item.Id,
@@ -171,6 +219,9 @@ internal static class BrowserCapture
                 TextAlign = item.TextAlign,
                 Width = value.Width,
                 Height = value.Height,
+                X = value.X,
+                Y = value.Y,
+                ContainerLayout = item.ContainerWidth.HasValue || item.ContainerHeight.HasValue,
                 Baseline = value.Baseline,
                 Ascent = value.Ascent,
                 Descent = value.Descent,
@@ -219,7 +270,8 @@ internal static class BrowserCapture
               font-kerning: none;
               font-variant-ligatures: none;
             }
-            </style></head><body><div id="case"></div></body></html>
+            #container { display: block; margin: 0; padding: 0; background: white; }
+            </style></head><body><div id="container"><div id="case"></div></div></body></html>
             """;
     }
 
@@ -234,6 +286,13 @@ internal static class BrowserCapture
         public required string FontStyle { get; init; }
         public float Width { get; init; }
         public float Height { get; init; }
+        public float X { get; init; }
+        public float Y { get; init; }
+        public float ContainerWidth { get; init; }
+        public float ContainerHeight { get; init; }
+        public required string ContainerDisplay { get; init; }
+        public required string ContainerInlineWidth { get; init; }
+        public required string ContainerInlineHeight { get; init; }
         public float Baseline { get; init; }
         public float Ascent { get; init; }
         public float Descent { get; init; }

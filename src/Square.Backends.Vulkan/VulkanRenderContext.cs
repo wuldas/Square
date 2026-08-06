@@ -427,32 +427,29 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         if (IsDpiOnlyTransform())
         {
             DrawPixelAlignedText(text, origin, packed);
+            foreach (var rect in text.GetDecorationRects(origin))
+                FillRectColor(rect, color);
             return;
         }
 
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight);
-        var advances = new Dictionary<int, float>();
         var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width, (offset, rune) =>
-        {
-            var advance = TextLayout.MeasureRuneAdvance(rune, text.Font);
-            advances[offset] = advance;
-            return advance;
-        });
+            TextLayout.MeasureRuneAdvance(rune, text.Font), text.WrappingOptions);
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X + GetTextAlignmentOffset(text, line.Width);
+            var indent = text.GetLineIndent(lineIndex);
+            var x = origin.X + indent + GetTextAlignmentOffset(text, line.Width + indent);
             var y = origin.Y + lineIndex * lineHeight;
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            foreach (var visualRune in text.EnumerateVisualRunes(line))
             {
-                var status = Rune.DecodeFromUtf16(text.Text.AsSpan(offset), out var rune, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var advance = advances[offset];
-                if (!rune.IsBmp) { x += advance; offset += consumed; continue; }
+                var rune = visualRune.Glyph;
+                var advance = visualRune.Advance;
+                if (!rune.IsBmp) { x += advance; continue; }
 
                 var glyph = GetOrRasterizeGlyph(text.Font, (char)rune.Value);
-                if (glyph is not { } resolvedGlyph) { x += advance; offset += consumed; continue; }
+                if (glyph is not { } resolvedGlyph) { x += advance; continue; }
 
                 if (resolvedGlyph.AtlasW > 0 && resolvedGlyph.AtlasH > 0)
                 {
@@ -476,9 +473,11 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
                     AddBatch(verts, idx);
                 }
                 x += advance;
-                offset += consumed;
             }
         }
+
+        foreach (var rect in text.GetDecorationRects(origin))
+            FillRectColor(rect, color);
     }
 
     public void DrawImage(Image image, Rect dest, Rect? source = null)
@@ -622,31 +621,25 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
     {
         var physicalOrigin = TransformPoint(origin);
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight) * DpiScale;
-        var advances = new Dictionary<int, float>();
         var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width * DpiScale, (offset, rune) =>
-        {
-            var advance = TextLayout.MeasureRuneAdvance(rune, text.Font) * DpiScale;
-            advances[offset] = advance;
-            return advance;
-        });
+            TextLayout.MeasureRuneAdvance(rune, text.Font) * DpiScale, text.WrappingOptions);
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = physicalOrigin.X + GetTextAlignmentOffset(text, line.Width / DpiScale) * DpiScale;
+            var indent = text.GetLineIndent(lineIndex);
+            var x = physicalOrigin.X + (indent + GetTextAlignmentOffset(text, line.Width / DpiScale + indent)) * DpiScale;
             var y = physicalOrigin.Y + lineIndex * lineHeight;
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            foreach (var visualRune in text.EnumerateVisualRunes(line))
             {
-                var status = Rune.DecodeFromUtf16(text.Text.AsSpan(offset), out var rune, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var advance = advances[offset];
-                if (!rune.IsBmp) { x += advance; offset += consumed; continue; }
+                var rune = visualRune.Glyph;
+                var advance = visualRune.Advance * DpiScale;
+                if (!rune.IsBmp) { x += advance; continue; }
 
                 var glyph = GetOrRasterizeGlyph(text.Font, (char)rune.Value);
                 if (glyph is not { } resolvedGlyph)
                 {
                     x += advance;
-                    offset += consumed;
                     continue;
                 }
 
@@ -672,9 +665,9 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
                     AddBatch(vertices, indices);
                 }
                 x += advance;
-                offset += consumed;
             }
         }
+
     }
 
     private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)

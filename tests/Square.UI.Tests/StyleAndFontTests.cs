@@ -2,6 +2,7 @@ using System;
 using Square.Controls;
 using Square.Graphics;
 using Square.UI;
+using Square.UI.ElementApi;
 using Xunit;
 
 namespace Square.UI.Tests;
@@ -140,6 +141,117 @@ public class StyleAndFontTests
         Assert.Equal("", view.Style.GetPropertyValue("color"));
         Assert.Equal("", view.Style.CssText);
         Assert.Equal(0, view.Style.Length);
+    }
+
+    [Fact]
+    public void CssInitialInheritAndUnsetUsePropertyRegistry()
+    {
+        var parent = new View();
+        var child = new View();
+        parent.Children.Add(child);
+        parent.Style.SetProperty("color", "red");
+        parent.Style.SetProperty("white-space", "pre");
+        parent.Style.SetProperty("width", "120px");
+
+        Assert.Equal("red", child.Style.Get("color"));
+        Assert.Equal("pre", child.Style.Get("white-space"));
+
+        child.Style.SetProperty("width", "inherit");
+        Assert.Equal("120px", child.Style.Get("width"));
+
+        child.Style.SetProperty("color", "initial");
+        child.Style.SetProperty("width", "initial");
+        Assert.Equal("black", child.Style.Get("color"));
+        Assert.Equal("auto", child.Style.Get("width"));
+
+        child.Style.SetProperty("color", "unset");
+        child.Style.SetProperty("width", "unset");
+        Assert.Equal("red", child.Style.Get("color"));
+        Assert.Equal("auto", child.Style.Get("width"));
+    }
+
+    [Fact]
+    public void CssShorthandsExpandToValidatedLonghands()
+    {
+        var view = new View();
+
+        view.Style.SetProperty("margin", "1px 2px 3px 4px", "important");
+        view.Style.SetProperty("padding", "5px 6px");
+        view.Style.SetProperty("border-width", "1px 2px 3px 4px");
+        view.Style.SetProperty("border-color", "red green blue black");
+        view.Style.SetProperty("border-style", "solid dashed dotted double");
+        view.Style.SetProperty("border", "7px solid #123456");
+        view.Style.SetProperty("border-left", "9px dashed red");
+        view.Style.SetProperty("background", "#abcdef");
+        view.Style.SetProperty("font", "italic small-caps 700 16px/24px 'Segoe UI', sans-serif");
+        view.Style.SetProperty("outline", "2px dotted blue");
+        view.Style.SetProperty("list-style", "square inside");
+
+        Assert.Equal("1px", view.Style.GetPropertyValue("margin-top"));
+        Assert.Equal("2px", view.Style.GetPropertyValue("margin-right"));
+        Assert.Equal("3px", view.Style.GetPropertyValue("margin-bottom"));
+        Assert.Equal("4px", view.Style.GetPropertyValue("margin-left"));
+        Assert.Equal("important", view.Style.GetPropertyPriority("margin-left"));
+        Assert.Equal("5px", view.Style.GetPropertyValue("padding-top"));
+        Assert.Equal("6px", view.Style.GetPropertyValue("padding-left"));
+        Assert.Equal("7px", view.Style.GetPropertyValue("border-top-width"));
+        Assert.Equal("solid", view.Style.GetPropertyValue("border-right-style"));
+        Assert.Equal("#123456", view.Style.GetPropertyValue("border-bottom-color"));
+        Assert.Equal("9px", view.Style.GetPropertyValue("border-left-width"));
+        Assert.Equal("dashed", view.Style.GetPropertyValue("border-left-style"));
+        Assert.Equal("red", view.Style.GetPropertyValue("border-left-color"));
+        Assert.Equal("#abcdef", view.Style.GetPropertyValue("background-color"));
+        Assert.Equal("italic", view.Style.GetPropertyValue("font-style"));
+        Assert.Equal("small-caps", view.Style.GetPropertyValue("font-variant"));
+        Assert.Equal("700", view.Style.GetPropertyValue("font-weight"));
+        Assert.Equal("16px", view.Style.GetPropertyValue("font-size"));
+        Assert.Equal("24px", view.Style.GetPropertyValue("line-height"));
+        Assert.Equal("'Segoe UI', sans-serif", view.Style.GetPropertyValue("font-family"));
+        Assert.Equal("2px", view.Style.GetPropertyValue("outline-width"));
+        Assert.Equal("dotted", view.Style.GetPropertyValue("outline-style"));
+        Assert.Equal("blue", view.Style.GetPropertyValue("outline-color"));
+        Assert.Equal("square", view.Style.GetPropertyValue("list-style-type"));
+        Assert.Equal("inside", view.Style.GetPropertyValue("list-style-position"));
+        Assert.Equal("none", view.Style.GetPropertyValue("list-style-image"));
+    }
+
+    [Fact]
+    public void CascadedShorthandLonghandsKeepDeclarationPriority()
+    {
+        var view = new View();
+        view.Style.SetCascaded("margin-left", "9px", new CssSpecificity(0, 1, 0), important: false);
+        view.Style.SetCascaded("margin", "1px 2px", new CssSpecificity(0, 0, 1), important: false);
+
+        Assert.Equal("1px", view.Style.Get("margin-top"));
+        Assert.Equal("9px", view.Style.Get("margin-left"));
+
+        view.Style.SetCascaded("margin", "3px", new CssSpecificity(0, 0, 0), important: true);
+
+        Assert.Equal("3px", view.Style.Get("margin-top"));
+        Assert.Equal("3px", view.Style.Get("margin-left"));
+    }
+
+    [Fact]
+    public void InvalidCssDeclarationsAreRejectedWithoutPartialMutation()
+    {
+        var view = new View();
+        view.Style.SetProperty("width", "20px");
+        view.Style.SetProperty("padding", "4px");
+
+        view.Style.SetProperty("width", "wide");
+        view.Style.SetProperty("padding", "1px -2px 3px");
+        view.Style.SetProperty("border", "1px solid red extra");
+        view.Style.SetProperty("background", "url(image.png)");
+
+        Assert.Equal("20px", view.Style.GetPropertyValue("width"));
+        Assert.Equal("4px", view.Style.GetPropertyValue("padding"));
+        Assert.Equal("4px", view.Style.GetPropertyValue("padding-top"));
+        Assert.Equal("", view.Style.GetPropertyValue("border"));
+        Assert.Equal("", view.Style.GetPropertyValue("border-top-width"));
+        Assert.Equal("", view.Style.GetPropertyValue("background"));
+        Assert.Equal("", view.Style.GetPropertyValue("background-color"));
+        Assert.False(view.Style.SetCascaded("display", "sideways", 10));
+        Assert.Null(view.Style.Get("display"));
     }
 
     [Fact]

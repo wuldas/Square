@@ -1,6 +1,6 @@
 # 字体与 Chromium 渲染一致性计划
 
-> Document Revision: 0.1
+> Document Revision: 0.2
 > 基准平台：Windows
 > 浏览器基准：Microsoft.Playwright 随包 Chromium
 > Square 后端：Software / Skia / Vulkan
@@ -55,6 +55,7 @@
 - 已有 `font-family`、`font-size`、`font-weight`、`font-style` 和部分 `line-height` 支持。
 - 普通 `Text`、编辑器、DisplayTree 和各后端必须验证使用同一套 line-height、baseline 与 advance。
 - `text-align` 的 CSS 到 `TextLayout.Alignment` 链路需要补齐和验证。
+- 固定尺寸容器内的水平/垂直居中需要比较文本盒相对容器的 `left/top`，不能只比较文本自身的宽高。
 - 字体相关继承必须覆盖 weight、style、line-height 和 text-align，而不只 family/size/color。
 
 ## 4. 交付结构
@@ -175,6 +176,8 @@ font-variant-ligatures: none;
 - `font-weight: 500/600` 字体匹配。
 - synthetic bold/italic。
 - `letter-spacing`、`word-spacing`、`text-align: justify`。
+- `white-space`、`text-indent`、`text-transform` 和 `text-decoration`。
+- 固定尺寸容器中的单行和换行文本水平/垂直居中。
 - 多字体 run 级 fallback。
 
 ## 7. 采集数据
@@ -403,6 +406,35 @@ dotnet run --project tools/Square.FontComparison/Square.FontComparison.csproj -c
   --backends Software,Skia `
   --output artifacts/font-comparison
 ```
+
+## 10.1 2026-08-06 实际 Chromium 基线
+
+已在 Windows 上运行当前工具链：
+
+```text
+Chromium: 149.0.7827.55
+Fonts: 6 fixed local font faces
+Cases: 21 total, 14 supported, 7 probes
+Software: 14 passed, 0 failed, 7 probes
+Skia: 14 passed, 0 failed, 7 probes
+```
+
+输出目录为 `artifacts/chrome-conformance-text/`，包含 `report.json`、离线 `index.html`、Chromium/Square 截图和差分图。该目录被 `.gitignore` 忽略，不作为源码基线提交。
+
+新增 CSS Text probe 已覆盖：
+
+- `white-space: pre-wrap` 与 `text-indent`；
+- `white-space: pre-line`、`letter-spacing`、`word-spacing` 与 `text-transform`；
+- `text-decoration: underline line-through`。
+
+容器居中 supported cases：
+
+- `container-center-single-line`：320x120 容器内单行文本；
+- `container-center-wrapped`：320x180 容器内固定宽度换行文本。
+
+两组 case 的 Chromium/Square 文本盒位置差均小于 `0.004px`，字符 X 位置差小于 `0.016px`。比较器仅对 manifest 明确声明 `containerWidth`/`containerHeight` 的 case 比较容器相对 `X/Y`，不会改变普通字体 case 的基线语义。
+
+新增 probe 的几何指标与 Chromium 对齐；像素差异仍按 probe 报告，不作为阻塞通过条件。现有已支持字体用例的布局阈值全部通过。`probe-bidi` 和 `probe-combining-mark` 仍显示预期差异，分别对应完整 Unicode bidi/shaping 与 grapheme shaping 尚未实现。
 
 运行真实 Vulkan：
 

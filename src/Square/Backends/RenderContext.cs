@@ -303,6 +303,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         if (brush is not SolidColorBrush sc) return;
         if (string.IsNullOrEmpty(text.Text)) return;
         RenderText(text, TransformPoint(origin), sc.Color);
+        RenderTextDecorations(text, TransformPoint(origin), sc.Color);
     }
 
     public void DrawImage(Image image, Rect dest, Rect? source = null)
@@ -434,7 +435,16 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         {
             MaxSize = new Size(text.MaxSize.Width * _dpiScale, text.MaxSize.Height * _dpiScale),
             Alignment = text.Alignment,
-            LineHeight = text.LineHeight
+            LineHeight = text.LineHeight,
+            Direction = text.Direction,
+            UnicodeBidi = text.UnicodeBidi,
+            WhiteSpace = text.WhiteSpace,
+            LetterSpacing = text.LetterSpacing * _dpiScale,
+            WordSpacing = text.WordSpacing * _dpiScale,
+            TextTransform = text.TextTransform,
+            TextIndent = text.TextIndent * _dpiScale,
+            CollapseNewlines = text.CollapseNewlines,
+            TextDecorationLines = text.TextDecorationLines
         };
     }
 
@@ -1822,29 +1832,26 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         }
 
         textLayout = ScaleTextLayout(textLayout);
-        var text = textLayout.Text;
         var fontSize = textLayout.Font.Size;
         var lineHeight = fontSize * textLayout.LineHeight;
         var pixelSize = Math.Max(1, (int)MathF.Ceiling(fontSize / 8f));
         var charWidth = pixelSize * 6;
 
-        var x = (int)Math.Round(origin.X);
-        var y = (int)Math.Round(origin.Y);
-        var maxWidth = textLayout.MaxSize.Width;
-        var constrainWidth = float.IsFinite(maxWidth) && maxWidth > 0;
-
-        for (int i = 0; i < text.Length; i++)
+        var lines = TextWrapping.Wrap(textLayout.Text, textLayout.MaxSize.Width,
+            (_, _) => charWidth, textLayout.WrappingOptions);
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
-            var c = text[i];
-            if (c == '\n') { x = (int)Math.Round(origin.X); y += (int)Math.Round(lineHeight); continue; }
-            if (constrainWidth && x > origin.X && x - origin.X + charWidth > maxWidth)
+            var line = lines[lineIndex];
+            var indent = textLayout.GetLineIndent(lineIndex);
+            var x = (int)Math.Round(origin.X + indent +
+                GetTextAlignmentOffset(textLayout, line.Width + indent));
+            var y = (int)Math.Round(origin.Y + lineIndex * lineHeight);
+            foreach (var rune in textLayout.EnumerateVisualRunes(line))
             {
-                x = (int)Math.Round(origin.X);
-                y += (int)Math.Round(lineHeight);
+                if (rune.Rune.Value != ' ')
+                    DrawGlyph(rune.Glyph.IsBmp ? (char)rune.Glyph.Value : '?', x, y, pixelSize, color);
+                x += charWidth;
             }
-            if (c == ' ') { x += charWidth; continue; }
-            DrawGlyph(c, x, y, pixelSize, color);
-            x += charWidth;
         }
     }
 
@@ -1854,7 +1861,6 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         var maxWidth = textLayout.MaxSize.Width * _dpiScale;
         var physicalFont = textLayout.Font.WithSize(textLayout.Font.Size * _dpiScale);
         var glyphs = new Dictionary<int, RasterizedGlyph?>();
-        var advances = new Dictionary<int, float>();
         var lines = TextWrapping.Wrap(textLayout.Text, maxWidth, (offset, rune) =>
         {
             if (!rune.IsBmp) return TextLayout.MeasureRuneAdvance(rune, textLayout.Font) * _dpiScale;
@@ -1862,23 +1868,26 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             var glyph = _glyphRasterizer.Rasterize(physicalFont, character);
             var advance = TextLayout.MeasureRuneAdvance(rune, textLayout.Font) * _dpiScale;
             glyphs[offset] = glyph;
-            advances[offset] = advance;
             return advance;
-        });
+        }, textLayout.WrappingOptions);
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X + GetTextAlignmentOffset(textLayout, line.Width / _dpiScale) * _dpiScale;
+            var indent = textLayout.GetLineIndent(lineIndex);
+            var x = origin.X + (indent + GetTextAlignmentOffset(textLayout, line.Width / _dpiScale + indent)) * _dpiScale;
             var y = origin.Y + lineIndex * lineHeight;
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            foreach (var visualRune in textLayout.EnumerateVisualRunes(line))
             {
-                var status = Rune.DecodeFromUtf16(textLayout.Text.AsSpan(offset), out var rune, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var advance = advances.TryGetValue(offset, out var measured)
-                    ? measured
-                    : TextLayout.MeasureRuneAdvance(rune, textLayout.Font) * _dpiScale;
-                var glyph = rune.IsBmp && glyphs.TryGetValue(offset, out var cached) ? cached : null;
+                var rune = visualRune.Glyph;
+                var advance = visualRune.Advance * _dpiScale;
+                RasterizedGlyph? glyph = null;
+                if (rune.IsBmp)
+                {
+                    glyph = visualRune.Glyph == visualRune.Rune && glyphs.TryGetValue(visualRune.StartOffset, out var cached)
+                        ? cached
+                        : _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
+                }
                 if (glyph != null)
                 {
                     var glyphX = (int)MathF.Round(x);
@@ -1908,9 +1917,15 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                     }
                 }
                 x += advance;
-                offset += consumed;
             }
         }
+    }
+
+    private void RenderTextDecorations(TextLayout textLayout, Point origin, Color color)
+    {
+        var scaled = ScaleTextLayout(textLayout);
+        foreach (var rect in scaled.GetDecorationRects(origin))
+            BlendRect(rect, color);
     }
 
     private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)

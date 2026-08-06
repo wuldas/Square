@@ -95,7 +95,7 @@ public static class CssStyleReconciler
                                 scope.Engine.ApplyStylesToTreeCore(target);
                         }
                     }
-                    foreach (var root in styleRoots)
+                    foreach (var root in MinimizeRoots(scopes.Select(scope => scope.Root)))
                         pseudoElementChanges.UnionWith(CssEngine.FinalizePseudoElements(root));
                     foreach (var scope in scopes)
                         scope.Animations.Attach(scope.Root);
@@ -146,6 +146,18 @@ public static class CssStyleReconciler
         }
         foreach (var changed in pseudoElementChanges)
             changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+    }
+
+    internal static void InvalidateScopes(CssEngine engine)
+    {
+        Element[] roots;
+        lock (Gate)
+            roots = Scopes.Where(scope => ReferenceEquals(scope.Engine, engine))
+                .Select(scope => scope.Root)
+                .Distinct()
+                .ToArray();
+        foreach (var root in roots)
+            root.Invalidate(ElementInvalidation.Style);
     }
 
     /// <summary>释放与指定元素树关联的 CSS scope 和待处理样式失效。</summary>

@@ -12,7 +12,21 @@ using YogaNode = Facebook.Yoga.Node;
 namespace Square.Rendering;
 
 /// <summary>显示模式（对齐 CSS <c>display</c> 子集）。</summary>
-public enum DisplayMode { Block, Flex, Grid, None }
+public enum DisplayMode
+{
+    Block,
+    Flex,
+    Grid,
+    None,
+    Table,
+    InlineTable,
+    TableRowGroup,
+    TableHeaderGroup,
+    TableFooterGroup,
+    TableRow,
+    TableCell,
+    TableCaption
+}
 
 /// <summary>Flex 主轴方向（对齐 <c>flex-direction</c>）。</summary>
 public enum FlexDirection { Row, Column, RowReverse, ColumnReverse }
@@ -95,7 +109,7 @@ public sealed class ComputedStyle
 /// 布局引擎：Flex/Block 由 Meta Yoga（Yoga.Net）计算；Grid 使用内置实现。
 /// CSS 经 <see cref="Element.Style"/> 映射到 Yoga 样式或 Grid 算法。
 /// </summary>
-public sealed class LayoutEngine
+public sealed partial class LayoutEngine
 {
     [ThreadStatic]
     private static int _layoutDepth;
@@ -148,6 +162,20 @@ public sealed class LayoutEngine
             return;
         }
 
+        if (IsTableRoot(style.Display))
+        {
+            new TableLayoutEngine(this).Measure(element, availableSize);
+            element.ClearLayoutDirty();
+            return;
+        }
+
+        if (UsesCssNormalFlow(element))
+        {
+            MeasureCssNormalFlow(element, availableSize);
+            ClearDirtyRecursive(element);
+            return;
+        }
+
         // Flex / Block：Yoga 一次计算
         using var session = BuildYogaTree(element, availableSize.Width, availableSize.Height);
         element.ClearLayoutDirty();
@@ -191,6 +219,20 @@ public sealed class LayoutEngine
             return;
         }
 
+        if (IsTableRoot(style.Display))
+        {
+            new TableLayoutEngine(this).Arrange(element, finalRect);
+            return;
+        }
+
+        if (UsesCssNormalFlow(element))
+        {
+            ArrangeCssNormalFlow(element, finalRect);
+            ArrangePopupSubtrees(element);
+            ClearDirtyRecursive(element);
+            return;
+        }
+
         using var session = BuildYogaTree(element, finalRect.Width, finalRect.Height);
         ApplyYogaLayout(element, session.Root, finalRect.X, finalRect.Y);
         ArrangePopupSubtrees(element);
@@ -200,29 +242,61 @@ public sealed class LayoutEngine
     /// <summary>在可用尺寸等于最终尺寸时复用同一棵 Yoga 树完成测量和排列。</summary>
     public void MeasureAndArrange(Element element, Size availableSize)
     {
-        var style = GetComputedStyle(element, availableSize.Width, availableSize.Height);
-        if (!element.IsVisible || style.Display == DisplayMode.None)
+        var outermost = _layoutDepth++ == 0;
+        if (outermost)
         {
-            element.ClearLayoutDirty();
-            element.Arrange(new Rect(0, 0, 0, 0));
-            return;
+            _viewportWidth = availableSize.Width;
+            _viewportHeight = availableSize.Height;
         }
 
-        if (style.Display == DisplayMode.Grid)
+        try
         {
-            MeasureGrid(element, style, availableSize);
-            var inner = Inset(new Rect(0, 0, availableSize.Width, availableSize.Height),
-                style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
-            ArrangeGrid(element, style, inner);
-            element.Arrange(new Rect(0, 0, availableSize.Width, availableSize.Height));
-            element.ClearLayoutDirty();
-            return;
-        }
+            var style = GetComputedStyle(element, availableSize.Width, availableSize.Height);
+            if (!element.IsVisible || style.Display == DisplayMode.None)
+            {
+                element.ClearLayoutDirty();
+                element.Arrange(new Rect(0, 0, 0, 0));
+                return;
+            }
 
-        using var session = BuildYogaTree(element, availableSize.Width, availableSize.Height);
-        ApplyYogaLayout(element, session.Root, 0, 0);
-        ArrangePopupSubtrees(element);
-        ClearDirtyRecursive(element);
+            if (style.Display == DisplayMode.Grid)
+            {
+                MeasureGrid(element, style, availableSize);
+                var inner = Inset(new Rect(0, 0, availableSize.Width, availableSize.Height),
+                    style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
+                ArrangeGrid(element, style, inner);
+                element.Arrange(new Rect(0, 0, availableSize.Width, availableSize.Height));
+                element.ClearLayoutDirty();
+                return;
+            }
+
+            if (IsTableRoot(style.Display))
+            {
+                var tableLayout = new TableLayoutEngine(this);
+                tableLayout.Measure(element, availableSize);
+                tableLayout.Arrange(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
+                element.ClearLayoutDirty();
+                return;
+            }
+
+            if (UsesCssNormalFlow(element))
+            {
+                MeasureCssNormalFlow(element, availableSize);
+                ArrangeCssNormalFlow(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
+                ArrangePopupSubtrees(element);
+                ClearDirtyRecursive(element);
+                return;
+            }
+
+            using var session = BuildYogaTree(element, availableSize.Width, availableSize.Height);
+            ApplyYogaLayout(element, session.Root, 0, 0);
+            ArrangePopupSubtrees(element);
+            ClearDirtyRecursive(element);
+        }
+        finally
+        {
+            _layoutDepth--;
+        }
     }
 
     // ——— Yoga Flex/Block ———
@@ -272,6 +346,15 @@ public sealed class LayoutEngine
             YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
             ApplyBoxModel(element, node, parentW, parentH, em, rem);
             YGNodeSetMeasureFunc(node, GridHostMeasureCallback);
+            return node;
+        }
+
+        if (IsTableRoot(ParseDisplayMode(display)))
+        {
+            YGNodeStyleSetDisplay(node, YGDisplay.Flex);
+            YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
+            ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            YGNodeSetMeasureFunc(node, TableHostMeasureCallback);
             return node;
         }
 
@@ -413,6 +496,26 @@ public sealed class LayoutEngine
         };
     }
 
+    private YGSize TableHostMeasureCallback(
+        YogaNode node, float availableWidth, MeasureMode widthMode,
+        float availableHeight, MeasureMode heightMode)
+    {
+        var element = YGNodeGetContext(node) as Element;
+        if (element == null) return new YGSize { Width = 0, Height = 0 };
+
+        var available = new Size(
+            widthMode == MeasureMode.Undefined ? float.PositiveInfinity : Math.Max(0, availableWidth),
+            heightMode == MeasureMode.Undefined ? float.PositiveInfinity : Math.Max(0, availableHeight));
+        var measured = new TableLayoutEngine(this).Measure(element, available);
+        return new YGSize
+        {
+            Width = widthMode == MeasureMode.Exactly ? availableWidth :
+                widthMode == MeasureMode.AtMost ? Math.Min(measured.Width, availableWidth) : measured.Width,
+            Height = heightMode == MeasureMode.Exactly ? availableHeight :
+                heightMode == MeasureMode.AtMost ? Math.Min(measured.Height, availableHeight) : measured.Height
+        };
+    }
+
     private void ApplyYogaLayout(Element element, YogaNode yoga, float parentAbsX, float parentAbsY)
     {
         var left = YGNodeLayoutGetLeft(yoga);
@@ -430,6 +533,12 @@ public sealed class LayoutEngine
             var inner = Inset(rect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
             ArrangeGrid(element, style, inner);
             element.Arrange(rect);
+            return;
+        }
+
+        if (IsTableRoot(ParseDisplayMode(display)))
+        {
+            new TableLayoutEngine(this).Arrange(element, rect);
             return;
         }
 
@@ -1147,10 +1256,7 @@ public sealed class LayoutEngine
     private static ComputedStyle GetComputedStyle(Element element, float parentWidth, float parentHeight)
     {
         var style = new ComputedStyle();
-        var display = element.Style.Get("display");
-        if (display == "flex") style.Display = DisplayMode.Flex;
-        if (display == "grid") style.Display = DisplayMode.Grid;
-        if (display == "none") style.Display = DisplayMode.None;
+        style.Display = ParseDisplayMode(element.Style.Get("display"));
         style.BoxSizing = ParseBoxSizing(element.Style.Get("box-sizing"));
 
         style.FlexDirection = element.Style.Get("flex-direction")?.Trim() switch
@@ -1242,6 +1348,24 @@ public sealed class LayoutEngine
 
         return style;
     }
+
+    internal static DisplayMode ParseDisplayMode(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "flex" => DisplayMode.Flex,
+        "grid" => DisplayMode.Grid,
+        "none" => DisplayMode.None,
+        "table" => DisplayMode.Table,
+        "inline-table" => DisplayMode.InlineTable,
+        "table-row-group" => DisplayMode.TableRowGroup,
+        "table-header-group" => DisplayMode.TableHeaderGroup,
+        "table-footer-group" => DisplayMode.TableFooterGroup,
+        "table-row" => DisplayMode.TableRow,
+        "table-cell" => DisplayMode.TableCell,
+        "table-caption" => DisplayMode.TableCaption,
+        _ => DisplayMode.Block
+    };
+
+    private static bool IsTableRoot(DisplayMode display) => display is DisplayMode.Table or DisplayMode.InlineTable;
 
     private static void ApplyGridPlacement(string value, Action<int> setStart, Action<int> setSpan)
     {

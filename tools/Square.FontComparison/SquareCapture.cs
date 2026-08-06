@@ -47,51 +47,51 @@ internal static class SquareCapture
             {
                 MaxSize = new Size(maxWidth, float.MaxValue),
                 LineHeight = lineHeight / item.FontSize,
-                Alignment = ParseAlignment(item.TextAlign)
+                Alignment = ParseAlignment(item.TextAlign),
+                WhiteSpace = ParseWhiteSpace(item.WhiteSpace),
+                LetterSpacing = ParseLength(item.LetterSpacing, item.FontSize),
+                WordSpacing = ParseLength(item.WordSpacing, item.FontSize),
+                TextIndent = ParseLength(item.TextIndent, item.FontSize),
+                TextTransform = ParseTextTransform(item.TextTransform),
+                TextDecorationLines = ParseTextDecoration(item.TextDecoration)
             };
             var measured = layout.Measure();
             var width = item.Width ?? Math.Max(1, measured.Width);
             var height = Math.Max(1, measured.Height);
+            var canvasWidth = item.ContainerWidth ?? width;
+            var canvasHeight = item.ContainerHeight ?? height;
+            var originX = item.ContainerWidth.HasValue ? Math.Max(0, (canvasWidth - width) / 2f) : 0;
+            var originY = item.ContainerHeight.HasValue ? Math.Max(0, (canvasHeight - height) / 2f) : 0;
             using var context = factory.CreateContext(new RenderContextCreateInfo
             {
-                CanvasSize = new Size(width, height),
+                CanvasSize = new Size(canvasWidth, canvasHeight),
                 DpiScale = 1
             });
             context.Clear(Color.White);
-            context.DrawText(layout, Point.Zero, Brush.FromColor(Color.Black));
+            context.DrawText(layout, new Point(originX, originY), Brush.FromColor(Color.Black));
             using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
             var screenshotName = item.Id + ".png";
             BitmapPngEncoder.Save(bitmap, Path.Combine(screenshotDirectory, screenshotName));
 
             var characters = new List<CharacterCapture>();
-            var advances = new Dictionary<int, float>();
-            var lines = TextWrapping.Wrap(item.Text, maxWidth, (offset, rune) =>
-            {
-                var advance = TextMetrics.GetGlyphMetrics(font, rune).AdvanceX;
-                advances[offset] = advance;
-                return advance;
-            });
+            var lines = layout.GetVisualLines();
             for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
             {
                 var line = lines[lineIndex];
-                var x = GetTextAlignmentOffset(layout, line.Width);
+                var x = layout.GetLineOriginX(0, lineIndex, line.Width);
                 var y = lineIndex * lineHeight;
-                for (var offset = line.StartOffset; offset < line.EndOffset;)
+                foreach (var visualRune in line.Runes)
                 {
-                    var status = System.Text.Rune.DecodeFromUtf16(item.Text.AsSpan(offset), out var rune, out var consumed);
-                    if (status != System.Buffers.OperationStatus.Done) break;
-                    var advance = advances[offset];
                     characters.Add(new CharacterCapture
                     {
-                        StartOffset = offset,
-                        EndOffset = offset + consumed,
+                        StartOffset = visualRune.StartOffset,
+                        EndOffset = visualRune.EndOffset,
                         X = x,
                         Y = y,
-                        Width = advance,
+                        Width = visualRune.Advance,
                         Height = lineHeight
                     });
-                    x += advance;
-                    offset += consumed;
+                    x += visualRune.Advance;
                 }
             }
             var metrics = TextMetrics.GetFontMetrics(font);
@@ -107,6 +107,9 @@ internal static class SquareCapture
                 TextAlign = item.TextAlign,
                 Width = width,
                 Height = height,
+                X = originX,
+                Y = originY,
+                ContainerLayout = item.ContainerWidth.HasValue || item.ContainerHeight.HasValue,
                 Baseline = TextMetrics.GetBaselineOffset(font, lineHeight),
                 Ascent = -metrics.Ascent,
                 Descent = metrics.Descent,
@@ -154,28 +157,38 @@ internal static class SquareCapture
             {
                 MaxSize = new Size(maxWidth, float.MaxValue),
                 LineHeight = lineHeight / item.FontSize,
-                Alignment = ParseAlignment(item.TextAlign)
+                Alignment = ParseAlignment(item.TextAlign),
+                WhiteSpace = ParseWhiteSpace(item.WhiteSpace),
+                LetterSpacing = ParseLength(item.LetterSpacing, item.FontSize),
+                WordSpacing = ParseLength(item.WordSpacing, item.FontSize),
+                TextIndent = ParseLength(item.TextIndent, item.FontSize),
+                TextTransform = ParseTextTransform(item.TextTransform),
+                TextDecorationLines = ParseTextDecoration(item.TextDecoration)
             };
             var measured = layout.Measure();
             var width = Math.Max(1, (int)MathF.Ceiling(item.Width ?? measured.Width));
             var height = Math.Max(1, (int)MathF.Ceiling(measured.Height));
+            var canvasWidth = Math.Max(1, (int)MathF.Ceiling(item.ContainerWidth ?? width));
+            var canvasHeight = Math.Max(1, (int)MathF.Ceiling(item.ContainerHeight ?? height));
+            var originX = item.ContainerWidth.HasValue ? Math.Max(0, (canvasWidth - width) / 2f) : 0;
+            var originY = item.ContainerHeight.HasValue ? Math.Max(0, (canvasHeight - height) / 2f) : 0;
             using var host = new Win32PlatformFactory().CreateHost(new PlatformHostCreateInfo
             {
                 Title = "Square font Vulkan conformance",
-                Width = width,
-                Height = height,
+                Width = canvasWidth,
+                Height = canvasHeight,
                 RenderBackend = "Vulkan"
             });
             host.Show();
             using var context = host.CreateRenderContext();
             context.Clear(Color.White);
-            context.DrawText(layout, Point.Zero, Brush.FromColor(Color.Black));
+            context.DrawText(layout, new Point(originX, originY), Brush.FromColor(Color.Black));
             context.Present();
             host.ShowAfterFirstFrame();
             using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
             var screenshotName = item.Id + ".png";
             BitmapPngEncoder.Save(bitmap, Path.Combine(screenshotDirectory, screenshotName));
-            captures.Add(CreateMetrics(item, layout, font, lineHeight, width, height, screenshotName));
+            captures.Add(CreateMetrics(item, layout, font, lineHeight, width, height, originX, originY, screenshotName));
             host.Close();
         }
 
@@ -203,36 +216,28 @@ internal static class SquareCapture
         float lineHeight,
         float width,
         float height,
+        float originX,
+        float originY,
         string screenshotName)
     {
         var characters = new List<CharacterCapture>();
-        var advances = new Dictionary<int, float>();
-        var lines = TextWrapping.Wrap(item.Text, layout.MaxSize.Width, (offset, rune) =>
-        {
-            var advance = TextMetrics.GetGlyphMetrics(font, rune).AdvanceX;
-            advances[offset] = advance;
-            return advance;
-        });
+        var lines = layout.GetVisualLines();
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = GetTextAlignmentOffset(layout, line.Width);
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            var x = layout.GetLineOriginX(0, lineIndex, line.Width);
+            foreach (var visualRune in line.Runes)
             {
-                var status = System.Text.Rune.DecodeFromUtf16(item.Text.AsSpan(offset), out _, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var advance = advances[offset];
                 characters.Add(new CharacterCapture
                 {
-                    StartOffset = offset,
-                    EndOffset = offset + consumed,
+                    StartOffset = visualRune.StartOffset,
+                    EndOffset = visualRune.EndOffset,
                     X = x,
                     Y = lineIndex * lineHeight,
-                    Width = advance,
+                    Width = visualRune.Advance,
                     Height = lineHeight
                 });
-                x += advance;
-                offset += consumed;
+                x += visualRune.Advance;
             }
         }
         var metrics = TextMetrics.GetFontMetrics(font);
@@ -248,6 +253,9 @@ internal static class SquareCapture
             TextAlign = item.TextAlign,
             Width = width,
             Height = height,
+            X = originX,
+            Y = originY,
+            ContainerLayout = item.ContainerWidth.HasValue || item.ContainerHeight.HasValue,
             Baseline = TextMetrics.GetBaselineOffset(font, lineHeight),
             Ascent = -metrics.Ascent,
             Descent = metrics.Descent,
@@ -292,5 +300,49 @@ internal static class SquareCapture
             System.Globalization.CultureInfo.InvariantCulture, out var multiplier)
             ? multiplier * fontSize
             : TextMetrics.GetLineHeight(new Font("sans-serif", fontSize), TextLayout.DefaultLineHeight);
+    }
+
+    private static TextWhiteSpaceMode ParseWhiteSpace(string value) => value.ToLowerInvariant() switch
+    {
+        "pre" => TextWhiteSpaceMode.Pre,
+        "nowrap" => TextWhiteSpaceMode.Nowrap,
+        "pre-wrap" => TextWhiteSpaceMode.PreWrap,
+        "pre-line" => TextWhiteSpaceMode.PreLine,
+        _ => TextWhiteSpaceMode.Normal
+    };
+
+    private static TextTransformMode ParseTextTransform(string value) => value.ToLowerInvariant() switch
+    {
+        "capitalize" => TextTransformMode.Capitalize,
+        "uppercase" => TextTransformMode.Uppercase,
+        "lowercase" => TextTransformMode.Lowercase,
+        _ => TextTransformMode.None
+    };
+
+    private static TextDecorationLine ParseTextDecoration(string value)
+    {
+        var result = TextDecorationLine.None;
+        foreach (var token in value.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            result |= token switch
+            {
+                "underline" => TextDecorationLine.Underline,
+                "overline" => TextDecorationLine.Overline,
+                "line-through" => TextDecorationLine.LineThrough,
+                _ => TextDecorationLine.None
+            };
+        return result;
+    }
+
+    private static float ParseLength(string value, float fontSize)
+    {
+        value = value.Trim();
+        if (value.Equals("normal", StringComparison.OrdinalIgnoreCase) || value.Length == 0) return 0;
+        if (value.EndsWith("em", StringComparison.OrdinalIgnoreCase) &&
+            float.TryParse(value[..^2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var em))
+            return em * fontSize;
+        if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase)) value = value[..^2].Trim();
+        return float.TryParse(value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var pixels) ? pixels : 0;
     }
 }

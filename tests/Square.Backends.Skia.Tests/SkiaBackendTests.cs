@@ -163,6 +163,22 @@ public sealed class SkiaBackendTests
     }
 
     [Fact]
+    public void LayerOpacityCompositesOverlappingPrimitivesOnce()
+    {
+        using var context = CreateContext(3, 1);
+        context.Clear(Color.Transparent);
+        context.PushLayer(new Rect(0, 0, 2, 1), 0.5f);
+        context.FillRect(new Rect(0, 0, 2, 1), Brush.FromColor(Color.Red));
+        context.FillRect(new Rect(1, 0, 1, 1), Brush.FromColor(Color.Red));
+        context.PopLayer();
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        Assert.InRange(bitmap.GetPixel(0, 0)[3], (byte)126, (byte)129);
+        Assert.InRange(bitmap.GetPixel(1, 0)[3], (byte)126, (byte)129);
+        AssertPixel(bitmap, 2, 0, 0, 0, 0, 0);
+    }
+
+    [Fact]
     public void DrawsAndRefreshesBitmapImages()
     {
         using var source = new Bitmap(1, 1);

@@ -127,4 +127,26 @@ public class TextSelectionMeasurementTests
         Assert.InRange(Math.Abs(lastCharacter.SelectionBounds.Right - expectedRight), 0, 0.0001f);
         Assert.True(lastCharacter.SelectionBounds.Right >= lastCharacter.Bounds.Right);
     }
+
+    [Fact]
+    public void DisplayTextFragmentsUseVisualOrderAndPreserveLogicalOffsets()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 300, 60) };
+        var text = new Square.Controls.Text("A אבג 123")
+        {
+            FontSize = 20,
+            Geometry = new Rect(0, 0, 300, 30)
+        };
+        root.Children.Add(text);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        var fragment = Assert.Single(tree.CollectTextFragments(root));
+        Assert.Equal(new[] { 0, 1, 4, 3, 2, 5, 6, 7, 8 },
+            fragment.Characters.Select(character => character.StartOffset));
+
+        var rtlCharacter = fragment.Characters[2];
+        Assert.Equal(5, fragment.HitTestOffset(new Point(rtlCharacter.Bounds.Left + 0.1f, rtlCharacter.Bounds.Y + 1)));
+        Assert.Equal(4, fragment.HitTestOffset(new Point(rtlCharacter.Bounds.Right - 0.1f, rtlCharacter.Bounds.Y + 1)));
+    }
 }

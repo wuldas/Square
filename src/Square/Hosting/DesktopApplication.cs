@@ -516,7 +516,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return hadWork;
     }
 
-    private Element? HitTest(Point point) => _displayTree.HitTestPopups(point) ?? _root.HitTest(point);
+    private Element? HitTest(Point point) =>
+        _displayTree.HitTestPopups(point) ?? _displayTree.HitTestFixed(point) ?? _displayTree.HitTestRoot(point);
 
     private static bool AreLayoutSizesEquivalent(Size actual, Size requested) =>
         MathF.Abs(actual.Width - requested.Width) < 0.5f &&
@@ -1157,7 +1158,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                     Math.Min(selectableText.Length, fragmentStart + character.StartOffset),
                     Math.Min(selectableText.Length, fragmentStart + character.EndOffset),
                     character.Bounds,
-                    character.SelectionBounds));
+                    character.SelectionBounds)
+                    {
+                        Direction = character.Direction
+                    });
             }
             searchFrom = Math.Min(selectableText.Length, fragmentStart + fragment.Text.Length);
         }

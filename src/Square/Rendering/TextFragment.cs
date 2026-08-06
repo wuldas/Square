@@ -19,8 +19,14 @@ public sealed record TextFragment(Element Element, string Text, Font Font, Rect 
             var character = Characters[i];
             if (!character.Bounds.Contains(point)) continue;
             var midpoint = character.Bounds.X + character.Bounds.Width / 2f;
+            var leadingOffset = character.Direction == BidiDirection.Rtl
+                ? character.EndOffset
+                : character.StartOffset;
+            var trailingOffset = character.Direction == BidiDirection.Rtl
+                ? character.StartOffset
+                : character.EndOffset;
             return SnapToTextElementBoundary(
-                point.X < midpoint ? character.StartOffset : character.EndOffset,
+                point.X < midpoint ? leadingOffset : trailingOffset,
                 forward: point.X >= midpoint);
         }
 
@@ -36,7 +42,9 @@ public sealed record TextFragment(Element Element, string Text, Font Font, Rect 
             if (distance >= nearestDistance) continue;
             nearestDistance = distance;
             nearestForward = point.X > bounds.X + bounds.Width / 2f;
-            nearest = nearestForward ? Characters[i].EndOffset : Characters[i].StartOffset;
+            nearest = Characters[i].Direction == BidiDirection.Rtl
+                ? nearestForward ? Characters[i].StartOffset : Characters[i].EndOffset
+                : nearestForward ? Characters[i].EndOffset : Characters[i].StartOffset;
         }
         return SnapToTextElementBoundary(nearest, nearestForward);
     }
@@ -52,4 +60,7 @@ public sealed record TextFragment(Element Element, string Text, Font Font, Rect 
 }
 
 /// <summary>字符级片段，包含偏移范围、布局边界和选择边界。</summary>
-public readonly record struct TextCharacterFragment(int StartOffset, int EndOffset, Rect Bounds, Rect SelectionBounds);
+public readonly record struct TextCharacterFragment(int StartOffset, int EndOffset, Rect Bounds, Rect SelectionBounds)
+{
+    public BidiDirection Direction { get; init; }
+}

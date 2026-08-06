@@ -102,9 +102,15 @@ public sealed class Font
         if (string.IsNullOrWhiteSpace(fontFamily))
             return ["sans-serif"];
 
-        var result = new List<string>();
+        return ParseFamilyEntries(fontFamily).Select(entry => entry.Name).ToArray();
+    }
+
+    private static IReadOnlyList<(string Name, bool Quoted)> ParseFamilyEntries(string fontFamily)
+    {
+        var result = new List<(string Name, bool Quoted)>();
         var current = new System.Text.StringBuilder();
         var inQuotes = false;
+        var quoted = false;
         char quoteChar = '\0';
 
         for (var i = 0; i < fontFamily.Length; i++)
@@ -112,6 +118,11 @@ public sealed class Font
             var c = fontFamily[i];
             if (inQuotes)
             {
+                if (c == '\\' && i + 1 < fontFamily.Length)
+                {
+                    current.Append(fontFamily[++i]);
+                    continue;
+                }
                 if (c == quoteChar) inQuotes = false;
                 else current.Append(c);
                 continue;
@@ -120,21 +131,23 @@ public sealed class Font
             if (c is '"' or '\'')
             {
                 inQuotes = true;
+                quoted = true;
                 quoteChar = c;
                 continue;
             }
 
             if (c == ',')
             {
-                AddFamilyToken(result, current);
+                AddFamilyToken(result, current, quoted);
+                quoted = false;
                 continue;
             }
 
             current.Append(c);
         }
 
-        AddFamilyToken(result, current);
-        return result.Count > 0 ? result : ["sans-serif"];
+        AddFamilyToken(result, current, quoted);
+        return result.Count > 0 ? result : [("sans-serif", false)];
     }
 
     /// <summary>解析 CSS <c>font-weight</c>（normal/bold/lighter/bolder/100–900）。</summary>
@@ -195,13 +208,24 @@ public sealed class Font
         string family;
         if (resolveFamily != null)
         {
-            family = resolveFamily(fontFamily ?? "sans-serif");
+            var first = ParseFamilyEntries(fontFamily ?? "sans-serif")[0];
+            family = first.Quoted && (IsGenericFamily(first.Name) || IsFontFamilyKeyword(first.Name))
+                ? first.Name
+                : !first.Quoted && IsFontFamilyKeyword(first.Name)
+                    ? resolveFamily("sans-serif")
+                    : resolveFamily(fontFamily ?? "sans-serif");
         }
         else
         {
-            var families = ParseFamilyList(fontFamily);
+            var families = ParseFamilyEntries(fontFamily ?? "sans-serif");
             var first = families[0];
-            family = IsGenericFamily(first) ? ResolveGenericFamily(first) : first;
+            family = first.Quoted
+                ? first.Name
+                : IsGenericFamily(first.Name)
+                    ? ResolveGenericFamily(first.Name)
+                    : IsFontFamilyKeyword(first.Name)
+                        ? "sans-serif"
+                        : first.Name;
         }
 
         var size = ParseSize(fontSize, defaultSize);
@@ -213,7 +237,7 @@ public sealed class Font
     /// <summary>是否为 CSS 通用字体族关键字。</summary>
     public static bool IsGenericFamily(string family)
     {
-        family = family.Trim().Trim('\'', '"');
+        family = family.Trim();
         return string.Equals(family, "sans-serif", StringComparison.OrdinalIgnoreCase)
             || string.Equals(family, "serif", StringComparison.OrdinalIgnoreCase)
             || string.Equals(family, "monospace", StringComparison.OrdinalIgnoreCase)
@@ -240,11 +264,17 @@ public sealed class Font
         return family;
     }
 
-    private static void AddFamilyToken(List<string> result, System.Text.StringBuilder current)
+    private static bool IsFontFamilyKeyword(string family) => family.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+                                                               family.Equals("initial", StringComparison.OrdinalIgnoreCase) ||
+                                                               family.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+                                                               family.Equals("default", StringComparison.OrdinalIgnoreCase);
+
+    private static void AddFamilyToken(List<(string Name, bool Quoted)> result,
+        System.Text.StringBuilder current, bool quoted)
     {
-        var token = current.ToString().Trim().Trim('\'', '"');
+        var token = current.ToString().Trim();
         current.Clear();
         if (token.Length > 0)
-            result.Add(token);
+            result.Add((token, quoted));
     }
 }

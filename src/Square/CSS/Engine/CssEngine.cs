@@ -1,4 +1,6 @@
 using Square.CSS.Ast;
+using Square.Graphics;
+using Square.Text.Fonts;
 using Square.UI;
 using Square.UI.ElementApi;
 using System.Globalization;
@@ -9,23 +11,311 @@ namespace Square.CSS.Engine;
 public sealed class CssEngine
 {
     private readonly List<CssRule> _rules = [];
+    private readonly List<CssStyleSheet> _styleSheets = [];
+    private readonly List<CssFontFaceDescriptor> _fontFaceDescriptors = [];
+    private readonly Dictionary<(CssFontFaceDescriptor Descriptor, string Path), FontFace> _fontFaces = [];
     private readonly Dictionary<string, KeyFramesRule> _keyFrames = new();
     private readonly Dictionary<string, Dictionary<string, string>> _themes = new();
     private string? _activeTheme;
 
     internal bool HasSiblingCombinators { get; private set; }
+    public string MediaType { get; private set; } = "screen";
+
+    /// <summary>与此 CSS 引擎关联的字体面集合；加载样式表时不自动加载字体。</summary>
+    public FontFaceSet Fonts { get; } = new();
+
+    /// <summary>已从所加载样式表中解析出的有效 <c>@font-face</c> 描述符。</summary>
+    public IReadOnlyList<CssFontFaceDescriptor> FontFaceDescriptors => _fontFaceDescriptors;
+
+    public CssEngine(string mediaType = "screen")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(mediaType);
+        MediaType = mediaType.Trim().ToLowerInvariant();
+    }
 
     /// <summary>加载样式表规则与关键帧。</summary>
     /// <param name="sheet">待加载的样式表。</param>
     public void LoadStyleSheet(CssStyleSheet sheet)
     {
-        foreach (var rule in sheet.Rules)
+        ArgumentNullException.ThrowIfNull(sheet);
+        _styleSheets.Add(sheet);
+        foreach (var atRule in sheet.AtRules)
+        {
+            if (!string.Equals(atRule.Name, "font-face", StringComparison.OrdinalIgnoreCase)) continue;
+            var descriptor = ParseFontFaceDescriptor(atRule.Declarations);
+            if (descriptor != null) _fontFaceDescriptors.Add(descriptor);
+        }
+        RebuildRules();
+        foreach (var kf in sheet.KeyFrames) _keyFrames[kf.Name] = kf;
+    }
+
+    /// <summary>
+    /// 加载样式表中的本地 <c>@font-face</c> 字体并注册到字体管理器。
+    /// 网络、data 和其它非文件 URL 会被跳过；相对路径需要提供基目录。
+    /// </summary>
+    /// <param name="baseDirectory">相对字体路径的解析基目录。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    public async Task LoadFontsAsync(string? baseDirectory = null, CancellationToken cancellationToken = default)
+    {
+        var resolvedBaseDirectory = baseDirectory == null ? null : Path.GetFullPath(baseDirectory);
+        foreach (var descriptor in _fontFaceDescriptors)
+        {
+            if (!descriptor.IsLocal) continue;
+            var path = ResolveLocalFontPath(descriptor.Source, resolvedBaseDirectory);
+            if (path == null) continue;
+
+            if (!_fontFaces.TryGetValue((descriptor, path), out var face))
+            {
+                face = new FontFace(descriptor.Family, path, descriptor.Weight, descriptor.Style);
+                _fontFaces[(descriptor, path)] = face;
+                Fonts.Add(face);
+            }
+
+            await face.LoadAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public void SetMediaType(string mediaType)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(mediaType);
+        mediaType = mediaType.Trim().ToLowerInvariant();
+        if (MediaType == mediaType) return;
+        MediaType = mediaType;
+        RebuildRules();
+        CssStyleReconciler.InvalidateScopes(this);
+    }
+
+    private void RebuildRules()
+    {
+        _rules.Clear();
+        HasSiblingCombinators = false;
+        foreach (var sheet in _styleSheets)
+        {
+            AddRules(sheet.Rules);
+            foreach (var mediaRule in sheet.MediaRules)
+                if (mediaRule.MediaTypes.Any(MatchesMediaType))
+                    AddRules(mediaRule.Rules);
+        }
+    }
+
+    private bool MatchesMediaType(string mediaType)
+    {
+        mediaType = mediaType.Trim();
+        if (mediaType.Equals("all", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!mediaType.Equals("screen", StringComparison.OrdinalIgnoreCase) &&
+            !mediaType.Equals("print", StringComparison.OrdinalIgnoreCase)) return false;
+        return mediaType.Equals(MediaType, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void AddRules(IEnumerable<CssRule> rules)
+    {
+        foreach (var rule in rules)
         {
             _rules.Add(rule);
             HasSiblingCombinators |= rule.Selector.Steps.Any(step =>
                 step.Combinator is Combinator.Adjacent or Combinator.GeneralSibling);
         }
-        foreach (var kf in sheet.KeyFrames) _keyFrames[kf.Name] = kf;
+    }
+
+    private static CssFontFaceDescriptor? ParseFontFaceDescriptor(IReadOnlyList<Declaration> declarations)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var declaration in declarations)
+        {
+            if (declaration.Property.Equals("font-family", StringComparison.OrdinalIgnoreCase) ||
+                declaration.Property.Equals("src", StringComparison.OrdinalIgnoreCase) ||
+                declaration.Property.Equals("font-weight", StringComparison.OrdinalIgnoreCase) ||
+                declaration.Property.Equals("font-style", StringComparison.OrdinalIgnoreCase))
+                values[declaration.Property] = declaration.Value;
+        }
+
+        if (!values.TryGetValue("font-family", out var family) ||
+            !TryNormalizeFamily(family, out family) ||
+            !values.TryGetValue("src", out var source) ||
+            !TryFindSource(source, out source) ||
+            !TryParseWeight(values.GetValueOrDefault("font-weight"), out var weight) ||
+            !TryParseStyle(values.GetValueOrDefault("font-style"), out var style))
+            return null;
+
+        return new CssFontFaceDescriptor(family, source, weight, style, IsLocalSource(source));
+    }
+
+    private static bool TryNormalizeFamily(string value, out string family)
+    {
+        family = value.Trim();
+        if (family.Length >= 2 && family[0] is '\'' or '"' && family[^1] == family[0])
+            family = family[1..^1];
+        return !string.IsNullOrWhiteSpace(family) &&
+               !family.Contains(',', StringComparison.Ordinal);
+    }
+
+    private static bool TryFindSource(string value, out string source)
+    {
+        source = "";
+        string? firstCandidate = null;
+        var index = 0;
+        var depth = 0;
+        var quote = '\0';
+        while (index < value.Length)
+        {
+            var character = value[index];
+            if (quote != '\0')
+            {
+                if (character == '\\') index += 2;
+                else
+                {
+                    if (character == quote) quote = '\0';
+                    index++;
+                }
+                continue;
+            }
+
+            if (character is '\'' or '"')
+            {
+                quote = character;
+                index++;
+                continue;
+            }
+
+            if (character == '(')
+            {
+                depth++;
+                index++;
+                continue;
+            }
+
+            if (character == ')')
+            {
+                if (depth > 0) depth--;
+                index++;
+                continue;
+            }
+
+            if (depth != 0 || index + 3 > value.Length ||
+                !value.AsSpan(index, 3).Equals("url".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+                (index > 0 && IsIdentifierCharacter(value[index - 1])) ||
+                (index + 3 < value.Length && IsIdentifierCharacter(value[index + 3])))
+            {
+                index++;
+                continue;
+            }
+
+            var urlIndex = index;
+            var openParen = urlIndex + 3;
+            while (openParen < value.Length && char.IsWhiteSpace(value[openParen])) openParen++;
+            if (openParen >= value.Length || value[openParen] != '(')
+            {
+                index = urlIndex + 3;
+                continue;
+            }
+
+            var closeParen = FindClosingParen(value, openParen + 1);
+            if (closeParen < 0) return false;
+            var candidate = value[(openParen + 1)..closeParen].Trim();
+            if (candidate.Length >= 2 && candidate[0] is '\'' or '"' && candidate[^1] == candidate[0])
+                candidate = candidate[1..^1];
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                firstCandidate ??= candidate;
+                if (IsLocalSource(candidate))
+                {
+                    source = candidate;
+                    return true;
+                }
+            }
+
+            index = closeParen + 1;
+        }
+
+        source = firstCandidate ?? "";
+        return source.Length > 0;
+    }
+
+    private static int FindClosingParen(string value, int start)
+    {
+        var quote = '\0';
+        for (var index = start; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (quote != '\0')
+            {
+                if (character == '\\') index++;
+                else if (character == quote) quote = '\0';
+                continue;
+            }
+
+            if (character is '\'' or '"') quote = character;
+            else if (character == ')') return index;
+        }
+
+        return -1;
+    }
+
+    private static bool IsIdentifierCharacter(char character) =>
+        char.IsLetterOrDigit(character) || character is '_' or '-';
+
+    private static bool IsLocalSource(string source)
+    {
+        if (Path.IsPathRooted(source)) return true;
+        if (!Uri.TryCreate(source, UriKind.Absolute, out var uri)) return true;
+        return uri.IsFile;
+    }
+
+    private static string? ResolveLocalFontPath(string source, string? baseDirectory)
+    {
+        try
+        {
+            if (Path.IsPathRooted(source)) return Path.GetFullPath(source);
+            if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
+            {
+                if (!uri.IsFile) return null;
+                return Path.GetFullPath(uri.LocalPath);
+            }
+
+            if (baseDirectory == null) return null;
+            return Path.GetFullPath(Path.Combine(baseDirectory, source.Replace('/', Path.DirectorySeparatorChar)));
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryParseWeight(string? value, out FontWeight weight)
+    {
+        weight = FontWeight.Normal;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        value = value.Trim();
+        if (value.Equals("normal", StringComparison.OrdinalIgnoreCase)) return true;
+        if (value.Equals("bold", StringComparison.OrdinalIgnoreCase))
+        {
+            weight = FontWeight.Bold;
+            return true;
+        }
+
+        if (!ushort.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ||
+            number is < 100 or > 900)
+            return false;
+        weight = (FontWeight)(number / 100 * 100);
+        return true;
+    }
+
+    private static bool TryParseStyle(string? value, out FontStyle style)
+    {
+        style = FontStyle.Normal;
+        if (string.IsNullOrWhiteSpace(value) || value.Equals("normal", StringComparison.OrdinalIgnoreCase)) return true;
+        if (value.Equals("italic", StringComparison.OrdinalIgnoreCase))
+        {
+            style = FontStyle.Italic;
+            return true;
+        }
+        if (value.Equals("oblique", StringComparison.OrdinalIgnoreCase))
+        {
+            style = FontStyle.Oblique;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>按名称查找关键帧规则。</summary>
@@ -84,7 +374,7 @@ public sealed class CssEngine
 
         foreach (var (rule, specificity, _, pseudoElement) in matched)
         {
-            if (pseudoElement is "before" or "after" or "invalid") continue;
+            if (pseudoElement is "before" or "after" or "marker" or "invalid") continue;
             var isSelectionRule = string.Equals(pseudoElement, "selection", StringComparison.OrdinalIgnoreCase) ||
                                   IsLegacySelectionRule(rule.Selector);
             foreach (var decl in rule.Declarations)
@@ -97,8 +387,9 @@ public sealed class CssEngine
 
         ApplyThemeVariables(Element);
 
-        foreach (var pseudoElement in new[] { "before", "after" })
+        foreach (var pseudoElement in new[] { "marker", "before", "after" })
         {
+            if (pseudoElement == "marker" && !IsListItem(Element)) continue;
             CssGeneratedPseudoElement? generated = null;
             foreach (var (rule, specificity, _, _) in matched.Where(match =>
                          string.Equals(match.pseudoElement, pseudoElement, StringComparison.OrdinalIgnoreCase)))
@@ -109,6 +400,13 @@ public sealed class CssEngine
                     ApplyDeclaration(generated, declaration.Property, declaration.Value, specificity, declaration.Important);
                 ApplyThemeVariables(generated);
             }
+        }
+
+        if (IsListItem(Element))
+        {
+            var marker = EnsurePseudoElement(Element, "marker");
+            ApplyInheritedProperties(marker);
+            ApplyThemeVariables(marker);
         }
     }
 
@@ -438,6 +736,7 @@ public sealed class CssEngine
     private static bool IsSupportedPseudoElement(string name) =>
         name.Equals("before", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("after", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("marker", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("selection", StringComparison.OrdinalIgnoreCase);
 
     private static List<Element> SelectorChildren(Element parent) =>
@@ -452,96 +751,17 @@ public sealed class CssEngine
         var generated = new CssGeneratedPseudoElement(name);
         using (Element.SuppressInvalidation())
         {
-            if (name == "before") owner.Children.Insert(0, generated);
+            if (name is "before" or "marker") owner.Children.Insert(0, generated);
             else owner.Children.Add(generated);
         }
         return generated;
     }
 
-    internal static IReadOnlyCollection<Element> FinalizePseudoElements(Element root)
-    {
-        var changed = new HashSet<Element>();
-        FinalizePseudoElementsCore(root, changed);
-        return changed;
-    }
+    internal static IReadOnlyCollection<Element> FinalizePseudoElements(Element root) =>
+        CssGeneratedContentEvaluator.Evaluate(root);
 
-    private static void FinalizePseudoElementsCore(Element owner, HashSet<Element> changed)
-    {
-        foreach (var generated in owner.Children.OfType<CssGeneratedPseudoElement>().ToArray())
-        {
-            if (!TryParseGeneratedContent(generated.Style.Get("content"), out var content))
-            {
-                using (Element.SuppressInvalidation()) owner.Children.Remove(generated);
-                changed.Add(owner);
-                continue;
-            }
-
-            var targetIndex = generated.PseudoElementName == "before" ? 0 : owner.Children.Count - 1;
-            var currentIndex = owner.Children.IndexOf(generated);
-            if (currentIndex != targetIndex)
-            {
-                using (Element.SuppressInvalidation()) owner.Children.Move(currentIndex, targetIndex);
-                changed.Add(owner);
-            }
-            if (generated.TextContent != content)
-            {
-                using (Element.SuppressInvalidation()) generated.TextContent = content;
-                changed.Add(owner);
-            }
-            if (generated.IsNew)
-            {
-                generated.IsNew = false;
-                changed.Add(owner);
-            }
-        }
-
-        foreach (var child in owner.Children.Where(child => child is not CssGeneratedPseudoElement).ToArray())
-            FinalizePseudoElementsCore(child, changed);
-    }
-
-    private static bool TryParseGeneratedContent(string? value, out string content)
-    {
-        content = "";
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        value = value.Trim();
-        if (value.Equals("none", StringComparison.OrdinalIgnoreCase) ||
-            value.Equals("normal", StringComparison.OrdinalIgnoreCase)) return false;
-
-        var result = new System.Text.StringBuilder();
-        var index = 0;
-        var foundString = false;
-        while (index < value.Length)
-        {
-            while (index < value.Length && char.IsWhiteSpace(value[index])) index++;
-            if (index >= value.Length) break;
-            if (value[index] is not ('\'' or '"')) return false;
-            foundString = true;
-            var quote = value[index++];
-            var closed = false;
-            while (index < value.Length)
-            {
-                var character = value[index++];
-                if (character == quote)
-                {
-                    closed = true;
-                    break;
-                }
-                if (character == '\\' && index < value.Length) character = value[index++];
-                result.Append(character);
-            }
-            if (!closed) return false;
-        }
-
-        if (!foundString) return false;
-        content = result.ToString();
-        return true;
-    }
-
-    private sealed class CssGeneratedPseudoElement(string pseudoElementName) : Square.Controls.Text
-    {
-        public string PseudoElementName { get; } = pseudoElementName;
-        public bool IsNew { get; set; } = true;
-    }
+    private static bool IsListItem(Element element) =>
+        string.Equals(element.Style.Get("display")?.Trim(), "list-item", StringComparison.OrdinalIgnoreCase);
 
     private static string? MapSelectionProperty(string property) => property.ToLowerInvariant() switch
     {

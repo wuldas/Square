@@ -13,14 +13,13 @@ namespace Square.Backends.Skia;
 internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderContext, IRenderBitmapSource
 {
     private readonly PresentFrameHandler? _presentFrame;
-    private readonly Stack<float> _opacityStack = [];
     private readonly Dictionary<Bitmap, CachedBitmap> _imageCache = [];
     private SKBitmap _framebuffer = null!;
     private SKCanvas _canvas = null!;
     private Bitmap _presentBitmap = null!;
     private Size _canvasSize;
     private float _dpiScale;
-    private float _opacity = 1f;
+    private int _layerDepth;
     private bool _disposed;
 
     public SkiaRenderContext(Size canvasSize, float dpiScale, PresentFrameHandler? presentFrame)
@@ -116,13 +115,8 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         if (string.IsNullOrEmpty(text.Text) || brush is not SolidColorBrush solid)
             return;
 
-        var advances = new Dictionary<int, float>();
         var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width, (offset, rune) =>
-        {
-            var advance = TextLayout.MeasureRuneAdvance(rune, text.Font);
-            advances[offset] = advance;
-            return advance;
-        });
+            TextLayout.MeasureRuneAdvance(rune, text.Font), text.WrappingOptions);
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight);
         var baselineOffset = TextMetrics.GetBaselineOffset(text.Font, lineHeight);
         using var paint = CreatePaint(solid, SKPaintStyle.Fill);
@@ -131,15 +125,12 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X + GetTextAlignmentOffset(text, line.Width);
+            var indent = text.GetLineIndent(lineIndex);
+            var x = origin.X + indent + GetTextAlignmentOffset(text, line.Width + indent);
             var baseline = origin.Y + lineIndex * lineHeight + baselineOffset;
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            foreach (var visualRune in text.EnumerateVisualRunes(line))
             {
-                var status = Rune.DecodeFromUtf16(text.Text.AsSpan(offset), out var rune, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var advance = advances.TryGetValue(offset, out var measured)
-                    ? measured
-                    : TextLayout.MeasureRuneAdvance(rune, text.Font);
+                var rune = visualRune.Glyph;
                 using var skFont = SkiaRegistration.TextMetricsProvider.CreateFont(text.Font, rune.Value);
                 _canvas.DrawText(
                     rune.ToString(),
@@ -148,10 +139,13 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
                     SKTextAlign.Left,
                     skFont,
                     paint);
-                x += advance;
-                offset += consumed;
+                x += visualRune.Advance;
             }
         }
+
+        using var decorationPaint = CreatePaint(solid, SKPaintStyle.Fill);
+        foreach (var rect in text.GetDecorationRects(origin))
+            _canvas.DrawRect(ToSkRect(rect), decorationPaint);
     }
 
     public void DrawImage(Image image, Rect dest, Rect? source = null)
@@ -163,7 +157,7 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         using var paint = new SKPaint
         {
             IsAntialias = true,
-            Color = new SKColor(255, 255, 255, OpacityByte(255))
+            Color = SKColors.White
         };
         _canvas.DrawBitmap(
             cached.Bitmap,
@@ -176,20 +170,24 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
     public void PushLayer(Rect bounds, float opacity)
     {
         ThrowIfDisposed();
-        _opacityStack.Push(_opacity);
-        _opacity *= Math.Clamp(opacity, 0f, 1f);
+        var alpha = (byte)Math.Clamp((int)MathF.Round(Math.Clamp(opacity, 0f, 1f) * 255f), 0, 255);
+        using var paint = new SKPaint { Color = SKColors.White.WithAlpha(alpha) };
+        _canvas.SaveLayer(ToSkRect(bounds), paint);
+        _layerDepth++;
     }
 
     public void PopLayer()
     {
         ThrowIfDisposed();
-        _opacity = _opacityStack.Count > 0 ? _opacityStack.Pop() : 1f;
+        if (_layerDepth == 0) return;
+        _canvas.Restore();
+        _layerDepth--;
     }
 
     public void Clear(Color color)
     {
         ThrowIfDisposed();
-        _canvas.Clear(ToSkColor(color, applyOpacity: false));
+        _canvas.Clear(ToSkColor(color));
     }
 
     public void Clear(Color color, Rect rect)
@@ -199,7 +197,7 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = false,
-            Color = ToSkColor(color, applyOpacity: false)
+            Color = ToSkColor(color)
         };
         _canvas.DrawRect(ToSkRect(rect), paint);
     }
@@ -232,8 +230,7 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         var height = Math.Max(1, (int)MathF.Ceiling(canvasSize.Height * dpiScale));
         _canvasSize = canvasSize;
         _dpiScale = dpiScale;
-        _opacity = 1f;
-        _opacityStack.Clear();
+        _layerDepth = 0;
 
         _canvas?.Dispose();
         _framebuffer?.Dispose();
@@ -435,11 +432,8 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
             Marshal.Copy(IntPtr.Add(_framebuffer.GetPixels(), row * _framebuffer.RowBytes), bitmap.Pixels, row * bitmap.Stride, bitmap.Stride);
     }
 
-    private SKColor ToSkColor(Color color, bool applyOpacity = true)
-        => new(color.R, color.G, color.B, applyOpacity ? OpacityByte(color.A) : color.A);
-
-    private byte OpacityByte(byte alpha)
-        => (byte)Math.Clamp((int)MathF.Round(alpha * _opacity), 0, 255);
+    private static SKColor ToSkColor(Color color)
+        => new(color.R, color.G, color.B, color.A);
 
     private static SKRect ToSkRect(Rect rect)
         => new(rect.Left, rect.Top, rect.Right, rect.Bottom);

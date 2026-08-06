@@ -17,7 +17,13 @@ public abstract class CharacterData : Node
     public string Data
     {
         get => _data;
-        set => _data = value ?? "";
+        set
+        {
+            var next = value ?? "";
+            if (_data == next) return;
+            _data = next;
+            ParentElement?.InvalidateLayout();
+        }
     }
 
     /// <summary>字符数据长度。</summary>
@@ -32,13 +38,13 @@ public abstract class CharacterData : Node
     }
 
     /// <summary>追加字符数据（对齐 <c>appendData</c>）。</summary>
-    public void AppendData(string data) => _data += data ?? "";
+    public void AppendData(string data) => Data = _data + (data ?? "");
 
     /// <summary>在指定偏移处插入字符数据（对齐 <c>insertData</c>）。</summary>
     public void InsertData(int offset, string data)
     {
         ValidateOffset(offset);
-        _data = _data.Insert(offset, data ?? "");
+        Data = _data.Insert(offset, data ?? "");
     }
 
     /// <summary>从指定偏移处删除指定长度的字符（对齐 <c>deleteData</c>）。</summary>
@@ -46,7 +52,7 @@ public abstract class CharacterData : Node
     {
         ValidateOffset(offset);
         if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
-        _data = _data.Remove(offset, Math.Min(count, _data.Length - offset));
+        Data = _data.Remove(offset, Math.Min(count, _data.Length - offset));
     }
 
     /// <summary>替换指定区间的字符数据（对齐 <c>replaceData</c>）。</summary>

@@ -3,6 +3,7 @@ using Square.Graphics;
 using Square.Graphics.Codecs;
 using System.Buffers.Binary;
 using System.IO;
+using System.Text;
 using Xunit;
 
 namespace Square.Graphics.Tests;
@@ -196,6 +197,70 @@ public class SizeTests
 public class TextLayoutTests
 {
     [Fact]
+    public void CssTextSpacingAndTransformAffectMeasuredWidth()
+    {
+        var plain = new TextLayout("a b", new Font("Segoe UI", 20));
+        var styled = new TextLayout("a b", new Font("Segoe UI", 20))
+        {
+            LetterSpacing = 2,
+            WordSpacing = 3,
+            TextTransform = TextTransformMode.Uppercase
+        };
+
+        Assert.True(styled.Measure().Width > plain.Measure().Width);
+        Assert.Equal("A", styled.GetVisualLines()[0].Runes[0].Glyph.ToString());
+    }
+
+    [Fact]
+    public void CssWhiteSpacePreservesNewlinesAndDisablesWrappingWhenRequested()
+    {
+        var pre = new TextLayout("a  b\nc", new Font("Segoe UI", 20))
+        {
+            WhiteSpace = TextWhiteSpaceMode.Pre,
+            MaxSize = new Size(1, float.MaxValue)
+        };
+        var nowrap = new TextLayout("a b c", new Font("Segoe UI", 20))
+        {
+            WhiteSpace = TextWhiteSpaceMode.Nowrap,
+            MaxSize = new Size(1, float.MaxValue)
+        };
+
+        Assert.Equal(2, pre.GetVisualLines().Count);
+        Assert.Single(nowrap.GetVisualLines());
+    }
+
+    [Fact]
+    public void CssTextIndentOnlyAffectsTheFirstLine()
+    {
+        var layout = new TextLayout("a b c", new Font("Segoe UI", 20))
+        {
+            TextIndent = 10,
+            MaxSize = new Size(25, float.MaxValue)
+        };
+
+        var lines = layout.GetVisualLines();
+
+        Assert.Equal(10, lines[0].Indent);
+        Assert.All(lines.Skip(1), line => Assert.Equal(0, line.Indent));
+    }
+
+    [Fact]
+    public void CssTextDecorationProducesPerLineDecorationRects()
+    {
+        var layout = new TextLayout("one two", new Font("Segoe UI", 20))
+        {
+            MaxSize = new Size(45, float.MaxValue),
+            TextDecorationLines = TextDecorationLine.Underline | TextDecorationLine.LineThrough
+        };
+
+        var lines = layout.GetVisualLines();
+        var decorations = layout.GetDecorationRects(Point.Zero);
+
+        Assert.Equal(lines.Count * 2, decorations.Count);
+        Assert.All(decorations, rect => Assert.True(rect.Width > 0));
+    }
+
+    [Fact]
     public void MeasuresHalfWidthAndFullWidthCharacters()
     {
         var font = new Font("Segoe UI", 20);
@@ -229,6 +294,38 @@ public class TextLayoutTests
         Assert.Equal(1, layout.HitTestOffset(first * 0.75f));
         Assert.Equal(2, layout.HitTestOffset(first + (second - first) * 0.75f));
         Assert.Equal(3, layout.HitTestOffset(second + (end - second) * 0.75f));
+    }
+
+    [Fact]
+    public void VisualLinesKeepLogicalUtf16OffsetsForMixedDirectionText()
+    {
+        var text = "A אבג 123";
+        var layout = new TextLayout(text, new Font("Segoe UI", 20));
+
+        var line = Assert.Single(layout.GetVisualLines());
+
+        Assert.Equal(text.Length, line.Runes.Sum(rune => rune.EndOffset - rune.StartOffset));
+        Assert.Equal(
+            new[] { 0, 1, 4, 3, 2, 5, 6, 7, 8 },
+            line.Runes.Select(rune => rune.StartOffset));
+        Assert.Equal(new Rune('\u05d2'), line.Runes[2].Rune);
+        Assert.Equal(new Rune('\u05d0'), line.Runes[4].Rune);
+        Assert.All(line.Runes.Where(rune => rune.StartOffset is >= 2 and <= 4),
+            rune => Assert.Equal(BidiDirection.Rtl, rune.Direction));
+    }
+
+    [Fact]
+    public void RtlVisualEdgesReturnLogicalOffsets()
+    {
+        var layout = new TextLayout("אבג A", new Font("Segoe UI", 20))
+        {
+            Direction = BidiDirection.Rtl
+        };
+
+        var line = Assert.Single(layout.GetVisualLines());
+        var rtlRunes = line.Runes.Where(rune => rune.Direction == BidiDirection.Rtl).ToArray();
+        Assert.Equal(new[] { 3, 2, 1, 0 }, rtlRunes.Select(rune => rune.StartOffset));
+        Assert.Equal(0, layout.HitTestOffset(float.MaxValue));
     }
 }
 

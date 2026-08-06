@@ -761,6 +761,71 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void FixedElementRendersWithoutAncestorScrollTransformOrClip()
+    {
+        var root = new View();
+        root.Style.Set("display", "block");
+        root.Style.Set("overflow-y", "auto");
+        var normal = new View();
+        normal.Style.Set("display", "block");
+        normal.Style.Set("height", "80px");
+        var fixedElement = new View();
+        fixedElement.Style.Set("display", "block");
+        fixedElement.Style.Set("position", "fixed");
+        fixedElement.Style.Set("top", "25px");
+        fixedElement.Style.Set("width", "20px");
+        fixedElement.Style.Set("height", "10px");
+        fixedElement.Style.Set("background", "#ff0000");
+        root.Children.Add(normal);
+        root.Children.Add(fixedElement);
+        var layout = new LayoutEngine();
+        layout.Measure(root, new Size(40, 20));
+        layout.Arrange(root, new Rect(0, 0, 40, 20));
+        root.ScrollTop = 20;
+        var context = CreateContext(40, 40);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        tree.Render(context);
+
+        Assert.Equal(255, context.GetBitmap().GetPixel(5, 28)[2]);
+        Assert.Equal(0, context.GetBitmap().GetPixel(5, 8)[3]);
+    }
+
+    [Fact]
+    public void PopupRendersAboveFixedLayer()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 40, 40) };
+        var fixedElement = new View { Geometry = new Rect(5, 5, 20, 20) };
+        fixedElement.Style.Set("position", "fixed");
+        fixedElement.Style.Set("background", "#0000ff");
+        var popup = new TestPopup(new Rect(5, 5, 20, 20));
+        root.Children.Add(fixedElement);
+        root.Children.Add(popup);
+        var layout = new LayoutEngine();
+        root.Style.Set("display", "block");
+        fixedElement.Style.Set("display", "block");
+        fixedElement.Style.Set("width", "20px");
+        fixedElement.Style.Set("height", "20px");
+        fixedElement.Style.Set("left", "5px");
+        fixedElement.Style.Set("top", "5px");
+        popup.Style.Set("display", "block");
+        layout.Measure(root, new Size(40, 40));
+        layout.Arrange(root, new Rect(0, 0, 40, 40));
+        var context = CreateContext(40, 40);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        tree.Render(context);
+
+        var pixel = context.GetBitmap().GetPixel(10, 10);
+        Assert.Equal(255, pixel[2]);
+        Assert.Equal(0, pixel[0]);
+    }
+
+    [Fact]
     public void PopupRendersChildrenOnlyInTopLevelAnchoredPosition()
     {
         var root = new View { Geometry = new Rect(0, 0, 120, 100) };
@@ -2034,6 +2099,190 @@ public class SoftwareRendererTests
         AssertPixel(bitmap, 47, 30, 255, 0, 0, 255);
     }
 
+    private sealed class TestPopup(Rect bounds) : UIElement, IPopupElement
+    {
+        public bool IsPopupOpen => true;
+        public Rect PopupBounds => bounds;
+        public bool DismissOnPointerDownOutside => false;
+        public bool CloseOnEscape => false;
+        public bool ContainsPopupInteraction(Point point) => bounds.Contains(point);
+        public bool HandlePopupKey(int keyCode, bool shift, bool control, bool alt) => false;
+        public Point MapPointToContent(Point point) => point;
+        public void ClosePopup() { }
+        public Element? HitTestPopup(Point point) => bounds.Contains(point) ? this : null;
+        public void PaintPopup(IRenderContext context) =>
+            context.FillRect(bounds, new SolidColorBrush(Color.Red));
+    }
+
+    [Fact]
+    public void DisplayTreeGenericallyPaintsBackgroundBorderAndOutline()
+    {
+        var element = new InsetPaintElement(Color.FromRgb(255, 255, 0), 6)
+        {
+            Geometry = new Rect(10, 10, 30, 24)
+        };
+        element.Style.Set("background-color", "#123456");
+        element.Style.Set("border-width", "2px 3px 4px 5px");
+        element.Style.Set("border-color", "#ff0000 #00ff00 #0000ff #ffffff");
+        element.Style.Set("border-style", "solid none solid solid");
+        element.Style.Set("outline", "2px solid #ff00ff");
+        var context = CreateContext(54, 48);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        AssertPixel(bitmap, 25, 20, 255, 255, 0, 255);
+        AssertPixel(bitmap, 25, 10, 255, 0, 0, 255);
+        AssertPixel(bitmap, 39, 20, 18, 52, 86, 255);
+        AssertPixel(bitmap, 25, 33, 0, 0, 255, 255);
+        AssertPixel(bitmap, 10, 20, 255, 255, 255, 255);
+        AssertPixel(bitmap, 25, 8, 255, 0, 255, 255);
+    }
+
+    [Fact]
+    public void DisplayTreePaintsOutlineAboveOverflowingChild()
+    {
+        var parent = new EmptyPaintElement { Geometry = new Rect(10, 10, 20, 20) };
+        parent.Style.Set("outline", "4px solid #ff00ff");
+        parent.Children.Add(new PaintFillElement(Color.Blue) { Geometry = new Rect(6, 6, 12, 12) });
+        var context = CreateContext(36, 36);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(parent);
+
+        tree.Render(context);
+
+        AssertPixel(context.GetBitmap(), 12, 7, 255, 0, 255, 255);
+    }
+
+    [Fact]
+    public void DisplayTreeAppliesParentOpacityOnceToTheWholeSubtree()
+    {
+        var parent = new PaintFillElement(Color.Red) { Geometry = new Rect(2, 2, 12, 8) };
+        parent.Style.Set("opacity", "0.5");
+        parent.Children.Add(new PaintFillElement(Color.Red) { Geometry = new Rect(12, 2, 8, 8) });
+        var context = CreateContext(22, 12);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(parent);
+
+        tree.Render(context);
+
+        Assert.InRange(AlphaAt(context.GetBitmap(), 3, 4), 127, 128);
+        Assert.InRange(AlphaAt(context.GetBitmap(), 13, 4), 127, 128);
+        Assert.InRange(AlphaAt(context.GetBitmap(), 18, 4), 127, 128);
+    }
+
+    [Fact]
+    public void DisplayTreeGenericallyPaintsBackgroundForElementsWithoutCustomPaint()
+    {
+        var element = new EmptyPaintElement { Geometry = new Rect(4, 4, 20, 16) };
+        element.Style.Set("background", "rgb(18, 52, 86)");
+        var context = CreateContext(28, 24);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+
+        tree.Render(context);
+
+        AssertPixel(context.GetBitmap(), 12, 10, 18, 52, 86, 255);
+    }
+
+    [Fact]
+    public void DisplayTreeDoesNotDoublePaintExplicitViewBackground()
+    {
+        var view = new View { Geometry = new Rect(4, 4, 20, 16) };
+        view.Style.Set("background", "#80ff0000");
+        var context = CreateContext(28, 24);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(view);
+
+        tree.Render(context);
+
+        Assert.InRange(AlphaAt(context.GetBitmap(), 12, 10), 127, 128);
+    }
+
+    [Fact]
+    public void DisplayTreeGenericallyPaintsOnlyDeclaredBorderEdge()
+    {
+        var element = new EmptyPaintElement { Geometry = new Rect(4, 4, 20, 16) };
+        element.Style.Set("border-left-width", "3px");
+        element.Style.Set("border-left-color", "#ff0000");
+        var context = CreateContext(28, 24);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+
+        tree.Render(context);
+
+        AssertPixel(context.GetBitmap(), 4, 10, 255, 0, 0, 255);
+        Assert.Equal(0, AlphaAt(context.GetBitmap(), 12, 4));
+        Assert.Equal(0, AlphaAt(context.GetBitmap(), 23, 10));
+        Assert.Equal(0, AlphaAt(context.GetBitmap(), 12, 19));
+    }
+
+    [Fact]
+    public void GenericPainterDoesNotPaintAbsentBackgroundOrBorderFallbacks()
+    {
+        var element = new PaintFillElement(Color.Blue) { Geometry = new Rect(4, 4, 20, 20) };
+        var context = CreateContext(28, 28);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        AssertPixel(bitmap, 4, 4, 0, 0, 255, 255);
+        AssertPixel(bitmap, 14, 14, 0, 0, 255, 255);
+        Assert.Equal(0, AlphaAt(bitmap, 2, 2));
+    }
+
+    [Fact]
+    public void VisibilityHiddenSuppressesOnlyTheHiddenElementsPaint()
+    {
+        var parent = new PaintFillElement(Color.Red) { Geometry = new Rect(0, 0, 40, 30) };
+        parent.Style.Set("visibility", "hidden");
+        var child = new PaintFillElement(Color.Blue) { Geometry = new Rect(10, 8, 12, 10) };
+        child.Style.Set("visibility", "visible");
+        parent.Children.Add(child);
+        var context = CreateContext(40, 30);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(parent);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(0, AlphaAt(bitmap, 2, 2));
+        AssertPixel(bitmap, 12, 10, 0, 0, 255, 255);
+        Assert.Same(child, parent.HitTest(new Point(12, 10)));
+        Assert.Null(parent.HitTest(new Point(2, 2)));
+    }
+
+    [Fact]
+    public void DisplayNoneIsExcludedFromPaintAndHitTesting()
+    {
+        var parent = new PaintFillElement(Color.Red) { Geometry = new Rect(0, 0, 40, 30) };
+        parent.Style.Set("display", "none");
+        var child = new PaintFillElement(Color.Blue) { Geometry = new Rect(10, 8, 12, 10) };
+        parent.Children.Add(child);
+        var context = CreateContext(40, 30);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(parent);
+
+        tree.Render(context);
+
+        Assert.All(AlphaValues(context.GetBitmap()), alpha => Assert.Equal(0, alpha));
+        Assert.Null(parent.HitTest(new Point(12, 10)));
+        Assert.Null(child.HitTest(new Point(12, 10)));
+    }
+
     [Fact]
     public void DefaultMenuShadowIsVisibleOnWhiteBackground()
     {
@@ -2069,6 +2318,25 @@ public class SoftwareRendererTests
     }
 
     private static byte AlphaAt(Bitmap bitmap, int x, int y) => bitmap.Pixels[y * bitmap.Stride + x * 4 + 3];
+
+    private sealed class PaintFillElement(Color color) : UIElement
+    {
+        public override void Paint(IRenderContext context) =>
+            context.FillRect(Geometry, new SolidColorBrush(color));
+    }
+
+    private sealed class InsetPaintElement(Color color, float inset) : UIElement
+    {
+        public override void Paint(IRenderContext context) => context.FillRect(
+            new Rect(
+                Geometry.X + inset,
+                Geometry.Y + inset,
+                Math.Max(0, Geometry.Width - inset * 2),
+                Math.Max(0, Geometry.Height - inset * 2)),
+            new SolidColorBrush(color));
+    }
+
+    private sealed class EmptyPaintElement : UIElement { }
 
     private static int CountColorNear(Bitmap bitmap, Color color, int tolerance)
     {
@@ -2142,6 +2410,30 @@ public class SoftwareRendererTests
         for (int i = 0; i < bmp.Pixels.Length; i += 4)
             if (bmp.Pixels[i + 3] > 0 && bmp.Pixels[i + 2] > 0) { hasWhite = true; break; }
         Assert.True(hasWhite);
+    }
+
+    [Fact]
+    public void DrawTextUsesVisualOrderForMixedHebrewAndLatin()
+    {
+        using var context = CreateContext(180, 40);
+        using var expectedContext = CreateContext(180, 40);
+        context.Clear(Color.Black);
+        expectedContext.Clear(Color.Black);
+        context.DrawText(
+            new TextLayout("A אבג 123", new Font("Segoe UI", 18)),
+            new Point(4, 4),
+            new SolidColorBrush(Color.White));
+        expectedContext.DrawText(
+            new TextLayout("A גבא 123", new Font("Segoe UI", 18))
+            {
+                Direction = BidiDirection.Ltr,
+                UnicodeBidi = BidiTextMode.BidiOverride
+            },
+            new Point(4, 4),
+            new SolidColorBrush(Color.White));
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(expectedContext.GetBitmap().Pixels, bitmap.Pixels);
     }
 
     [Fact]

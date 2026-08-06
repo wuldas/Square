@@ -63,6 +63,30 @@ internal sealed class FontComparisonCase
 
     [JsonPropertyName("text")]
     public required string Text { get; init; }
+
+    [JsonPropertyName("whiteSpace")]
+    public string WhiteSpace { get; init; } = "pre-wrap";
+
+    [JsonPropertyName("letterSpacing")]
+    public string LetterSpacing { get; init; } = "normal";
+
+    [JsonPropertyName("wordSpacing")]
+    public string WordSpacing { get; init; } = "normal";
+
+    [JsonPropertyName("textIndent")]
+    public string TextIndent { get; init; } = "0px";
+
+    [JsonPropertyName("textTransform")]
+    public string TextTransform { get; init; } = "none";
+
+    [JsonPropertyName("textDecoration")]
+    public string TextDecoration { get; init; } = "none";
+
+    [JsonPropertyName("containerWidth")]
+    public float? ContainerWidth { get; init; }
+
+    [JsonPropertyName("containerHeight")]
+    public float? ContainerHeight { get; init; }
 }
 
 internal sealed class CaptureReport
@@ -85,6 +109,9 @@ internal sealed class CaseCapture
     public required string TextAlign { get; init; }
     public required float Width { get; init; }
     public required float Height { get; init; }
+    public required float X { get; init; }
+    public required float Y { get; init; }
+    public required bool ContainerLayout { get; init; }
     public required float Baseline { get; init; }
     public required float Ascent { get; init; }
     public required float Descent { get; init; }
@@ -125,6 +152,8 @@ internal sealed class CaseComparison
     public required string Status { get; init; }
     public required float WidthDelta { get; init; }
     public required float HeightDelta { get; init; }
+    public required float XDelta { get; init; }
+    public required float YDelta { get; init; }
     public required float BaselineDelta { get; init; }
     public required float MaxCharacterXDelta { get; init; }
     public required int ChromiumCharacterCount { get; init; }

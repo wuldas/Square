@@ -73,7 +73,7 @@ internal sealed class MarkdownCodeText : UIElement, ITextSelectable
                 var text = line[start..end];
                 var x = Geometry.X + MeasureTextWidth(prefix, font);
                 context.DrawText(
-                    new TextLayout(text, font),
+                    new TextLayout(text, font) { WhiteSpace = TextWhiteSpaceMode.Pre, TextDecorationLines = TextDecorationLine.None },
                     new Point(x, y),
                     new SolidColorBrush(ResolveColor(token.Type)));
             }

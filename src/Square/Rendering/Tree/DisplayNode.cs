@@ -1,13 +1,20 @@
 using Square.Graphics;
 using Square.UI;
 using System.Numerics;
+using System.Globalization;
 using Square.Rendering.Commands;
+using Square.Rendering.Paint;
 
 namespace Square.Rendering.Tree;
 
 /// <summary>显示节点：对应一个文档元素，承载其绘制命令与子树结构。</summary>
 public sealed class DisplayNode
 {
+    private readonly List<DrawCommand> _beforeContentCommands = [];
+    private readonly List<DrawCommand> _afterContentCommands = [];
+    private readonly List<DrawCommand> _afterChildrenCommands = [];
+    private Rect _subtreeVisualBounds;
+
     /// <summary>节点布局边界。</summary>
     public Rect Bounds { get; set; }
     /// <summary>Source document element for this display node.</summary>
@@ -21,7 +28,7 @@ public sealed class DisplayNode
     public Element? Element { get; set; }
     /// <summary>子节点列表。</summary>
     public List<DisplayNode> Children { get; } = [];
-    /// <summary>本节点的绘制命令列表。</summary>
+    /// <summary>本节点的元素内容绘制命令列表，不含 CSS 框与后代。</summary>
     public List<DrawCommand> Commands { get; } = [];
     /// <summary>本节点及其绘制命令的可视边界。</summary>
     public Rect VisualBounds { get; private set; }
@@ -37,24 +44,38 @@ public sealed class DisplayNode
     /// <summary>
     /// 渲染本节点及子树。<paramref name="dirtyClip"/> 非 null 时由 DisplayTree 作为真实裁剪区应用。
     /// </summary>
-    public void Render(IRenderContext ctx, Rect? dirtyClip)
-    {
-        // 使用最新 Geometry 作为 Bounds（局部 Present 依赖）
-        if (Element != null)
-            Bounds = Element.Geometry;
+    public void Render(IRenderContext ctx, Rect? dirtyClip) => Render(ctx, dirtyClip, null);
 
-        if (IsDirty || Commands.Count == 0)
-        {
-            RebuildCommands();
-        }
+    internal void Render(IRenderContext ctx, Rect? dirtyClip, IReadOnlySet<DisplayNode>? excludedRoots)
+    {
+        if (Element?.IsCssDisplayed() == false) return;
+        PrepareSubtreeVisualBounds(excludedRoots);
+        RenderPrepared(ctx, dirtyClip, excludedRoots);
+    }
+
+    private void RenderPrepared(IRenderContext ctx, Rect? dirtyClip, IReadOnlySet<DisplayNode>? excludedRoots)
+    {
+        if (dirtyClip is { } subtreeClip && !_subtreeVisualBounds.IntersectsWith(subtreeClip)) return;
+        var wrapsOpacity = TryGetOpacity(out var opacity);
+        if (wrapsOpacity) ctx.PushLayer(_subtreeVisualBounds, opacity);
 
         var visualBounds = VisualBounds.IsEmpty ? Bounds : VisualBounds;
-        if (dirtyClip == null || visualBounds.IntersectsWith(dirtyClip.Value))
-            ExecuteCommands(ctx);
+        var paintsNode = Element?.IsCssVisibilityHidden() != true &&
+            (dirtyClip == null || visualBounds.IntersectsWith(dirtyClip.Value));
+        if (paintsNode)
+        {
+            ExecuteCommands(ctx, _beforeContentCommands);
+            ExecuteCommands(ctx, Commands);
+            ExecuteCommands(ctx, _afterContentCommands);
+        }
 
         // Popup-hosted children are replayed later by DisplayTree's top-level popup layer.
         if (Element is IPopupElement)
+        {
+            if (paintsNode) ExecuteCommands(ctx, _afterChildrenCommands);
+            if (wrapsOpacity) ctx.PopLayer();
             return;
+        }
 
         var overflowClip = Element?.GetOverflowClipRect() ?? Rect.Empty;
         var clipsChildren = !overflowClip.IsEmpty;
@@ -66,45 +87,56 @@ public sealed class DisplayNode
             ? new Rect(clip.X + scrollOffset.X, clip.Y + scrollOffset.Y, clip.Width, clip.Height)
             : dirtyClip;
         foreach (var child in Children)
-            child.Render(ctx, childDirtyClip);
+        {
+            if (excludedRoots?.Contains(child) == true) continue;
+            child.RenderPrepared(ctx, childDirtyClip, excludedRoots);
+        }
         if (scrollsChildren) ctx.PopTransform();
         if (clipsChildren) ctx.PopClip();
+        if (paintsNode) ExecuteCommands(ctx, _afterChildrenCommands);
+        if (wrapsOpacity) ctx.PopLayer();
     }
 
     internal void RebuildCommands()
     {
         if (Element != null)
             Bounds = Element.Geometry;
+        _beforeContentCommands.Clear();
         Commands.Clear();
-        CollectCommands(Element, Commands);
-        VisualBounds = DrawCommandBounds.Calculate(Commands, Bounds);
+        _afterContentCommands.Clear();
+        _afterChildrenCommands.Clear();
+        CollectCommands(
+            Element,
+            _beforeContentCommands,
+            Commands,
+            _afterContentCommands,
+            _afterChildrenCommands);
+        var beforeBounds = DrawCommandBounds.Calculate(_beforeContentCommands, Bounds, fallbackWhenEmpty: false);
+        var contentBounds = DrawCommandBounds.Calculate(Commands, Bounds, fallbackWhenEmpty: false);
+        var afterContentBounds = DrawCommandBounds.Calculate(_afterContentCommands, Bounds, fallbackWhenEmpty: false);
+        var afterChildrenBounds = DrawCommandBounds.Calculate(_afterChildrenCommands, Bounds, fallbackWhenEmpty: false);
+        VisualBounds = Union(Union(beforeBounds, contentBounds), Union(afterContentBounds, afterChildrenBounds));
+        if (VisualBounds.IsEmpty) VisualBounds = Bounds;
         SortChildrenByZIndex();
         // Clear before Paint so a frame callback can invalidate/request the next frame
         // without that new dirty state being erased after command collection.
         IsDirty = false;
     }
 
-    private static void CollectCommands(Element? element, List<DrawCommand> commands)
+    private static void CollectCommands(
+        Element? element,
+        List<DrawCommand> beforeContent,
+        List<DrawCommand> content,
+        List<DrawCommand> afterContent,
+        List<DrawCommand> afterChildren)
     {
-        if (element == null || !element.IsVisible) return;
+        if (element == null || !element.IsVisible || !element.IsCssDisplayed()) return;
         element.ClearPaintDirty();
-        var collector = new CommandCollector(commands);
-        if (element is not IPopupElement && BoxShadow.TryParseList(element.Style.Get("box-shadow"), out var shadows))
-            BoxShadowRendering.Draw(collector, element.Geometry, GetCornerRadius(element), shadows);
-        element.Paint(collector);
-    }
-
-    private static float GetCornerRadius(Element element)
-    {
-        var raw = element.Style.Get("border-radius") ?? "";
-        if (string.IsNullOrWhiteSpace(raw)) return 0;
-        var token = raw.Trim().Split([' ', '/'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(token)) return 0;
-        var max = MathF.Max(0, MathF.Min(element.Geometry.Width, element.Geometry.Height) / 2f);
-        if (token.EndsWith('%') && float.TryParse(token[..^1], out var percent))
-            return Math.Clamp(max * percent / 100f, 0, max);
-        if (token.EndsWith("px", StringComparison.OrdinalIgnoreCase)) token = token[..^2];
-        return float.TryParse(token, out var pixels) ? Math.Clamp(pixels, 0, max) : 0;
+        if (element.IsCssVisibilityHidden()) return;
+        CssBoxPainter.PaintBeforeContent(new CommandCollector(beforeContent), element);
+        element.Paint(new CommandCollector(content));
+        CssBoxPainter.PaintAfterContent(new CommandCollector(afterContent), element);
+        CssBoxPainter.PaintAfterChildren(new CommandCollector(afterChildren), element);
     }
 
     private void SortChildrenByZIndex()
@@ -114,9 +146,55 @@ public sealed class DisplayNode
             (left.Element?.ZIndex ?? 0).CompareTo(right.Element?.ZIndex ?? 0));
     }
 
-    private void ExecuteCommands(IRenderContext ctx)
+    private Rect PrepareSubtreeVisualBounds(IReadOnlySet<DisplayNode>? excludedRoots)
     {
-        foreach (var cmd in Commands)
+        if (Element?.IsCssDisplayed() == false) return _subtreeVisualBounds = Rect.Empty;
+        if (Element != null) Bounds = Element.Geometry;
+        if (IsDirty) RebuildCommands();
+
+        var bounds = VisualBounds.IsEmpty ? Bounds : VisualBounds;
+        if (Element is IPopupElement) return _subtreeVisualBounds = bounds;
+
+        var overflowClip = Element?.GetOverflowClipRect() ?? Rect.Empty;
+        var scrollOffset = Element?.ScrollOffset ?? default;
+        var scrollsChildren = Element?.MapsScrollOffsetForChildren() == true;
+        foreach (var child in Children)
+        {
+            if (excludedRoots?.Contains(child) == true) continue;
+            var childBounds = child.PrepareSubtreeVisualBounds(excludedRoots);
+            if (scrollsChildren)
+                childBounds = Translate(childBounds, -scrollOffset.X, -scrollOffset.Y);
+            if (!overflowClip.IsEmpty)
+                childBounds = Rect.Intersect(childBounds, overflowClip);
+            bounds = Union(bounds, childBounds);
+        }
+        return _subtreeVisualBounds = bounds;
+    }
+
+    private bool TryGetOpacity(out float opacity)
+    {
+        opacity = 1f;
+        var value = Element?.Style.Get("opacity");
+        return value != null &&
+            float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out opacity) &&
+            float.IsFinite(opacity) &&
+            (opacity = Math.Clamp(opacity, 0f, 1f)) != 1f;
+    }
+
+    private static Rect Translate(Rect rect, float x, float y) => rect.IsEmpty
+        ? rect
+        : new Rect(rect.X + x, rect.Y + y, rect.Width, rect.Height);
+
+    private static Rect Union(Rect left, Rect right)
+    {
+        if (left.IsEmpty) return right;
+        if (right.IsEmpty) return left;
+        return Rect.Union(left, right);
+    }
+
+    private static void ExecuteCommands(IRenderContext ctx, IReadOnlyList<DrawCommand> commands)
+    {
+        foreach (var cmd in commands)
         {
             ExecuteCommand(ctx, cmd);
         }

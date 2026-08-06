@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using Square.Events;
 using Square.Graphics;
@@ -86,6 +87,24 @@ public class Text : UIElement, ITextSelectable
     public override void Paint(IRenderContext ctx)
     {
         if (string.IsNullOrEmpty(TextContent)) return;
+        if (string.Equals(Style.Get("display")?.Trim(), "inline", StringComparison.OrdinalIgnoreCase) &&
+            ElementLayoutStore.TryGet(this, out var layout) && layout.CssTextFragments is { } fragments)
+        {
+            foreach (var fragment in fragments)
+                ControlDrawing.DrawText(ctx, this, fragment.Text, fragment.Bounds.Position, Color, FontSize,
+                    maxSize: fragment.Bounds.Size,
+                    direction: fragment.Direction,
+                    unicodeBidi: fragment.UnicodeBidi,
+                    wrappingOptions: new TextWrappingOptions(
+                        TextWhiteSpaceMode.Nowrap,
+                        ControlDrawing.ResolveTextLength(this, "letter-spacing", FontSize),
+                        ControlDrawing.ResolveTextLength(this, "word-spacing", FontSize),
+                        TextTransformMode.None,
+                        0,
+                        CollapseNewlines: false,
+                        TextDecorationLines: ControlDrawing.ResolveTextDecorationLines(this)));
+            return;
+        }
         ControlDrawing.DrawText(ctx, this, TextContent, Geometry.Position, Color, FontSize, maxSize: Geometry.Size);
     }
 
@@ -1525,10 +1544,19 @@ internal static class ControlDrawing
     internal static Size MeasureText(Element element, string text, float defaultSize, Size? maxSize = null)
     {
         var font = ResolveFont(element, defaultSize);
+        var whiteSpace = ResolveWhiteSpace(element);
         var layout = new TextLayout(text, font)
         {
             MaxSize = maxSize ?? new Size(float.MaxValue, float.MaxValue),
-            Alignment = ResolveTextAlignment(element)
+            Alignment = ResolveTextAlignment(element),
+            Direction = ResolveTextDirection(element),
+            UnicodeBidi = ResolveUnicodeBidi(element),
+            WhiteSpace = whiteSpace,
+            LetterSpacing = ResolveTextLength(element, "letter-spacing", font.Size),
+            WordSpacing = ResolveTextLength(element, "word-spacing", font.Size),
+            TextTransform = ResolveTextTransform(element),
+            TextIndent = ResolveTextLength(element, "text-indent", font.Size),
+            TextDecorationLines = ResolveTextDecorationLines(element)
         };
         var lineHeight = GetStyledLineHeight(element, font.Size);
         layout.LineHeight = lineHeight / font.Size;
@@ -1542,7 +1570,7 @@ internal static class ControlDrawing
         return new Rect(origin.X, origin.Y, size.Width, size.Height);
     }
 
-    internal static float MeasureRenderedTextWidth(string text, Font font)
+    internal static float MeasureRenderedTextWidth(string text, Font font, float letterSpacing = 0, float wordSpacing = 0)
     {
         if (string.IsNullOrEmpty(text)) return 0;
         var lineWidth = 0f;
@@ -1555,7 +1583,8 @@ internal static class ControlDrawing
                 lineWidth = 0;
                 continue;
             }
-            lineWidth += MeasureRenderedRuneAdvance(rune, font);
+            lineWidth += MeasureRenderedRuneAdvance(rune, font) + letterSpacing +
+                (Rune.IsWhiteSpace(rune) ? wordSpacing : 0);
         }
         return Math.Max(maxWidth, lineWidth);
     }
@@ -1573,15 +1602,27 @@ internal static class ControlDrawing
 
     internal static void DrawText(
         IRenderContext context, Element element, string text, Point position, Color defaultColor, float defaultSize,
-        float? lineHeight = null, bool useStyledColor = true, Size? maxSize = null)
+        float? lineHeight = null, bool useStyledColor = true, Size? maxSize = null,
+        BidiDirection? direction = null, BidiTextMode? unicodeBidi = null,
+        TextWrappingOptions? wrappingOptions = null)
     {
         if (string.IsNullOrEmpty(text)) return;
         var font = ResolveFont(element, defaultSize);
         var color = useStyledColor ? GetStyledColor(element, "color", defaultColor) : defaultColor;
+        var whiteSpace = ResolveWhiteSpace(element);
         var layout = new TextLayout(text, font)
         {
             MaxSize = maxSize ?? new Size(float.MaxValue, float.MaxValue),
-            Alignment = ResolveTextAlignment(element)
+            Alignment = ResolveTextAlignment(element),
+            Direction = direction ?? ResolveTextDirection(element),
+            UnicodeBidi = unicodeBidi ?? ResolveUnicodeBidi(element),
+            WhiteSpace = wrappingOptions?.WhiteSpace ?? whiteSpace,
+            LetterSpacing = wrappingOptions?.LetterSpacing ?? ResolveTextLength(element, "letter-spacing", font.Size),
+            WordSpacing = wrappingOptions?.WordSpacing ?? ResolveTextLength(element, "word-spacing", font.Size),
+            TextTransform = wrappingOptions?.TextTransform ?? ResolveTextTransform(element),
+            TextIndent = wrappingOptions?.TextIndent ?? ResolveTextLength(element, "text-indent", font.Size),
+            CollapseNewlines = wrappingOptions?.CollapseNewlines ?? false,
+            TextDecorationLines = wrappingOptions?.TextDecorationLines ?? ResolveTextDecorationLines(element)
         };
         if (font.Size > 0)
             layout.LineHeight = (lineHeight ?? GetStyledLineHeight(element, font.Size)) / font.Size;
@@ -1596,6 +1637,67 @@ internal static class ControlDrawing
             "justify" => TextAlignment.Justify,
             _ => TextAlignment.Left
         };
+
+    internal static BidiDirection ResolveTextDirection(Element element) =>
+        string.Equals(element.Style.Get("direction")?.Trim(), "rtl", StringComparison.OrdinalIgnoreCase)
+            ? BidiDirection.Rtl
+            : BidiDirection.Ltr;
+
+    internal static BidiTextMode ResolveUnicodeBidi(Element element) =>
+        (element.Style.Get("unicode-bidi") ?? "").Trim().ToLowerInvariant() switch
+        {
+            "embed" => BidiTextMode.Embed,
+            "bidi-override" => BidiTextMode.BidiOverride,
+            _ => BidiTextMode.Normal
+        };
+
+    internal static TextWhiteSpaceMode ResolveWhiteSpace(Element element) =>
+        (element.Style.Get("white-space") ?? "normal").Trim().ToLowerInvariant() switch
+        {
+            "pre" => TextWhiteSpaceMode.Pre,
+            "nowrap" => TextWhiteSpaceMode.Nowrap,
+            "pre-wrap" => TextWhiteSpaceMode.PreWrap,
+            "pre-line" => TextWhiteSpaceMode.PreLine,
+            _ => TextWhiteSpaceMode.Normal
+        };
+
+    internal static TextTransformMode ResolveTextTransform(Element element) =>
+        (element.Style.Get("text-transform") ?? "none").Trim().ToLowerInvariant() switch
+        {
+            "capitalize" => TextTransformMode.Capitalize,
+            "uppercase" => TextTransformMode.Uppercase,
+            "lowercase" => TextTransformMode.Lowercase,
+            _ => TextTransformMode.None
+        };
+
+    internal static TextDecorationLine ResolveTextDecorationLines(Element element)
+    {
+        var value = (element.Style.Get("text-decoration-line") ?? element.Style.Get("text-decoration") ?? "none")
+            .Trim().ToLowerInvariant();
+        if (value == "none") return TextDecorationLine.None;
+
+        var result = TextDecorationLine.None;
+        foreach (var token in value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            result |= token switch
+            {
+                "underline" => TextDecorationLine.Underline,
+                "overline" => TextDecorationLine.Overline,
+                "line-through" => TextDecorationLine.LineThrough,
+                _ => TextDecorationLine.None
+            };
+        return result;
+    }
+
+    internal static float ResolveTextLength(Element element, string property, float fontSize)
+    {
+        var value = (element.Style.Get(property) ?? "normal").Trim();
+        if (value.Length == 0 || value.Equals("normal", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (value.EndsWith("em", StringComparison.OrdinalIgnoreCase) &&
+            float.TryParse(value[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out var em))
+            return em * fontSize;
+        if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase)) value = value[..^2].Trim();
+        return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) ? result : 0;
+    }
 
     internal static void DrawInputFrame(IRenderContext context, UIElement element)
     {

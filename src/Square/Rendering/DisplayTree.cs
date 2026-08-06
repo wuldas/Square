@@ -11,6 +11,8 @@ public sealed class DisplayTree
 {
     private readonly DisplayNode _root = new();
     private readonly List<Rect> _dirtyRects = [];
+    private readonly List<DisplayNode> _fixedRoots = [];
+    private readonly HashSet<DisplayNode> _fixedRootSet = [];
     private readonly List<IPopupElement> _popups = [];
 
     /// <summary>以指定元素为根重建整棵显示树。</summary>
@@ -35,18 +37,24 @@ public sealed class DisplayTree
             _root.IsDirty = true;
         }
         SynchronizeChildren(_root, element);
-        RebuildPopupList();
+        RebuildLayerLists();
     }
 
     private static void SynchronizeChildren(DisplayNode parent, Element element)
     {
+        if (!element.IsCssDisplayed())
+        {
+            parent.Children.Clear();
+            return;
+        }
+
         var existing = new Dictionary<Element, DisplayNode>();
         foreach (var child in parent.Children)
             if (child.Element != null) existing[child.Element] = child;
 
         var ordered = element.Children
             .Select(static (child, index) => (Child: child, Index: index))
-            .Where(static item => item.Child.IsVisible)
+            .Where(static item => item.Child.IsVisible && item.Child.IsCssDisplayed())
             .OrderBy(static item => item.Child.ZIndex)
             .ThenBy(static item => item.Index)
             .Select(static item => item.Child)
@@ -81,6 +89,7 @@ public sealed class DisplayTree
 
     private void UpdateDirty(DisplayNode node, Point visualOffset)
     {
+        if (IsFixedRoot(node)) visualOffset = default;
         visualOffset = GetNodeVisualOffset(node, visualOffset);
         if (node.Element != null)
         {
@@ -129,19 +138,30 @@ public sealed class DisplayTree
             UpdateDirty(child, childOffset);
     }
 
-    private void RebuildPopupList()
+    private void RebuildLayerLists()
     {
+        _fixedRoots.Clear();
+        _fixedRootSet.Clear();
         _popups.Clear();
-        CollectPopups(_root);
+        CollectLayers(_root);
     }
 
-    private void CollectPopups(DisplayNode node)
+    private void CollectLayers(DisplayNode node)
     {
+        if (IsFixedRoot(node))
+        {
+            _fixedRoots.Add(node);
+            _fixedRootSet.Add(node);
+        }
         if (node.Element is IPopupElement popup)
             _popups.Add(popup);
         foreach (var child in node.Children)
-            CollectPopups(child);
+            CollectLayers(child);
     }
+
+    private static bool IsFixedRoot(DisplayNode node) =>
+        node.Element != null && (node.Element.IsFixedPositioned() ||
+            ElementLayoutStore.TryGet(node.Element, out var data) && data.IsFixedRoot);
 
     /// <summary>
     /// 收集本帧需要重画的矩形（NeedsPaint / IsDirty 节点的 Geometry，1px 外扩取整）。
@@ -156,6 +176,7 @@ public sealed class DisplayTree
 
     private static bool CollectDirtyRects(DisplayNode node, List<Rect> dest, Point visualOffset)
     {
+        if (IsFixedRoot(node)) visualOffset = default;
         visualOffset = GetNodeVisualOffset(node, visualOffset);
         var subtreeDirty = node.IsDirty || (node.Element != null && node.Element.NeedsPaint);
         if (subtreeDirty)
@@ -293,15 +314,29 @@ public sealed class DisplayTree
         if (dirtyClip is { } clip)
         {
             ctx.PushClip(clip);
-            _root.Render(ctx, clip);
+            RenderNormal(ctx, clip);
+            RenderFixed(ctx, clip);
             RenderPopups(ctx, clip);
             ctx.PopClip();
         }
         else
         {
-            _root.Render(ctx, dirtyClip);
+            RenderNormal(ctx, dirtyClip);
+            RenderFixed(ctx, dirtyClip);
             RenderPopups(ctx, dirtyClip);
         }
+    }
+
+    private void RenderNormal(IRenderContext ctx, Rect? dirtyClip)
+    {
+        if (!_fixedRootSet.Contains(_root))
+            _root.Render(ctx, dirtyClip, _fixedRootSet);
+    }
+
+    private void RenderFixed(IRenderContext ctx, Rect? dirtyClip)
+    {
+        foreach (var root in _fixedRoots)
+            root.Render(ctx, dirtyClip, _fixedRootSet);
     }
 
     /// <summary>对所有打开的弹出层进行命中测试。</summary>
@@ -309,11 +344,50 @@ public sealed class DisplayTree
     {
         for (var i = _popups.Count - 1; i >= 0; i--)
         {
+            if (_popups[i] is Element { IsVisible: false } ||
+                _popups[i] is Element hidden && (!hidden.IsCssDisplayed() || hidden.IsCssVisibilityHidden())) continue;
             if (!_popups[i].IsPopupOpen) continue;
             var hit = _popups[i].HitTestPopup(point);
             if (hit != null) return hit;
         }
         return null;
+    }
+
+    /// <summary>对视口固定层进行命中测试。</summary>
+    public Element? HitTestFixed(Point point)
+    {
+        for (var i = _fixedRoots.Count - 1; i >= 0; i--)
+        {
+            var hit = HitTestLayer(_fixedRoots[i], point, allowFixedRoot: true);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    /// <summary>对普通文档层进行命中测试，不包含固定层和顶层弹出层。</summary>
+    public Element? HitTestRoot(Point point) => HitTestLayer(_root, point, allowFixedRoot: false);
+
+    private Element? HitTestLayer(DisplayNode node, Point point, bool allowFixedRoot)
+    {
+        if (!allowFixedRoot && _fixedRootSet.Contains(node) || node.Element == null || !node.Element.IsVisible ||
+            !node.Element.IsCssDisplayed() || node.Element is IPopupElement { IsLayoutOverlay: true }) return null;
+
+        var element = node.Element;
+        var inside = element.Geometry.Contains(point);
+        var overflowClip = element.GetOverflowClipRect();
+        if (!overflowClip.IsEmpty && !overflowClip.Contains(point)) return null;
+
+        var childPoint = element.MapsScrollOffsetForChildren()
+            ? new Point(point.X + element.ScrollLeft, point.Y + element.ScrollTop)
+            : point;
+        for (var i = node.Children.Count - 1; i >= 0; i--)
+        {
+            var hit = HitTestLayer(node.Children[i], childPoint, allowFixedRoot: false);
+            if (hit != null) return hit;
+        }
+
+        if (!inside || element.IsCssVisibilityHidden()) return null;
+        return element is MenuSeparator ? null : element;
     }
 
     /// <summary>将指针移动事件分发至相关弹出层，返回是否有状态变化。</summary>
@@ -399,28 +473,25 @@ public sealed class DisplayTree
         var lineHeight = TextMetrics.GetLineHeight(command.Text.Font, command.Text.LineHeight);
         var maxWidth = command.Text.MaxSize.Width;
         var characters = new List<TextCharacterFragment>();
-        var advances = new Dictionary<int, float>();
         var lines = TextWrapping.Wrap(text, maxWidth, (offset, rune) =>
         {
             var advance = TextMetrics.GetGlyphMetrics(command.Text.Font, rune).AdvanceX;
-            advances[offset] = advance;
             return advance;
-        });
+        }, command.Text.WrappingOptions);
         var maxRight = command.Origin.X;
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = command.Origin.X + GetTextAlignmentOffset(command.Text, line.Width);
+            var indent = command.Text.GetLineIndent(lineIndex);
+            var x = command.Text.GetLineOriginX(command.Origin.X, lineIndex, line.Width);
             var y = command.Origin.Y + lineIndex * lineHeight;
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            foreach (var visualRune in command.Text.EnumerateVisualRunes(line))
             {
-                var status = Rune.DecodeFromUtf16(text.AsSpan(offset), out var rune, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var startOffset = offset;
-                var advance = advances[offset];
-                offset += consumed;
-                var glyphBounds = TextMetrics.GetGlyphBoundsInLine(command.Text.Font, rune, lineHeight);
+                var startOffset = visualRune.StartOffset;
+                var endOffset = visualRune.EndOffset;
+                var advance = visualRune.Advance;
+                var glyphBounds = TextMetrics.GetGlyphBoundsInLine(command.Text.Font, visualRune.Glyph, lineHeight);
                 var selectionTop = Math.Min(y, y + glyphBounds.Top);
                 var selectionBottom = Math.Max(y + lineHeight, y + glyphBounds.Bottom);
                 var bounds = new Rect(x, y, advance, Math.Max(lineHeight, glyphBounds.Bottom));
@@ -431,7 +502,10 @@ public sealed class DisplayTree
                     selectionTop,
                     selectionRight - selectionLeft,
                     selectionBottom - selectionTop);
-                characters.Add(new TextCharacterFragment(startOffset, offset, bounds, selectionBounds));
+                characters.Add(new TextCharacterFragment(startOffset, endOffset, bounds, selectionBounds)
+                {
+                    Direction = visualRune.Direction
+                });
                 x += advance;
             }
             maxRight = Math.Max(maxRight, x);
@@ -470,6 +544,8 @@ public sealed class DisplayTree
         foreach (var popup in _popups)
         {
             if (!popup.IsPopupOpen) continue;
+            if (popup is Element { IsVisible: false } ||
+                popup is Element hidden && (!hidden.IsCssDisplayed() || hidden.IsCssVisibilityHidden())) continue;
             var visualBounds = popup is Element element ? GetPopupVisualBounds(element) : popup.PopupBounds;
             if (dirtyClip is { } clip && !visualBounds.IntersectsWith(clip)) continue;
             popup.PaintPopup(ctx);

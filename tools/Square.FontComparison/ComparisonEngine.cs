@@ -48,6 +48,9 @@ internal static class ComparisonEngine
 
             var widthDelta = Math.Abs(actual.Width - expected.Width);
             var heightDelta = Math.Abs(actual.Height - expected.Height);
+            var compareContainerPosition = actual.ContainerLayout && expected.ContainerLayout;
+            var xDelta = compareContainerPosition ? Math.Abs(actual.X - expected.X) : 0;
+            var yDelta = compareContainerPosition ? Math.Abs(actual.Y - expected.Y) : 0;
             var baselineDelta = Math.Abs(actual.Baseline - expected.Baseline);
             var expectedCharacters = expected.Characters.Where(character => character.Width > 0.001f).ToArray();
             var characterCount = Math.Min(actual.Characters.Count, expectedCharacters.Length);
@@ -60,6 +63,8 @@ internal static class ComparisonEngine
             var failures = new List<string>();
             if (widthDelta > 0.5f) failures.Add($"width {widthDelta:0.###}px");
             if (heightDelta > 0.5f) failures.Add($"height {heightDelta:0.###}px");
+            if (xDelta > 0.5f) failures.Add($"container x {xDelta:0.###}px");
+            if (yDelta > 0.5f) failures.Add($"container y {yDelta:0.###}px");
             if (baselineDelta > 0.5f) failures.Add($"baseline {baselineDelta:0.###}px");
             if (actual.Characters.Count != expectedCharacters.Length)
                 failures.Add($"character count {actual.Characters.Count}/{expectedCharacters.Length}");
@@ -89,6 +94,8 @@ internal static class ComparisonEngine
                 Status = isProbe ? "probe" : failures.Count == 0 ? "pass" : "fail",
                 WidthDelta = widthDelta,
                 HeightDelta = heightDelta,
+                XDelta = xDelta,
+                YDelta = yDelta,
                 BaselineDelta = baselineDelta,
                 MaxCharacterXDelta = maxCharacterXDelta,
                 ChromiumCharacterCount = expectedCharacters.Length,

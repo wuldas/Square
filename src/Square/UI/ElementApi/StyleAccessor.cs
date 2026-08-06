@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Square.CSS.Properties;
 
 namespace Square.UI.ElementApi;
 
@@ -80,10 +81,15 @@ public sealed class StyleAccessor
         if (priority.Length > 0 && !string.Equals(priority, "important", StringComparison.OrdinalIgnoreCase))
             return;
 
-        var previous = Get(property);
+        value = value.Trim();
+        if (!TryGetAssignments(property, value, out var assignments)) return;
+        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => Get(assignment.Property),
+            StringComparer.Ordinal);
         _inlineStyles ??= [];
-        _inlineStyles[property] = new InlineStyleEntry(value, priority.Length > 0);
-        InvalidateIfEffectiveValueChanged(property, previous);
+        foreach (var assignment in assignments)
+            _inlineStyles[assignment.Property] = new InlineStyleEntry(assignment.Value, priority.Length > 0);
+        foreach (var assignment in assignments)
+            InvalidateIfEffectiveValueChanged(assignment.Property, previous[assignment.Property]);
     }
 
     /// <summary>读取内联声明值；未设置返回空字符串。</summary>
@@ -107,9 +113,10 @@ public sealed class StyleAccessor
     {
         property = NormalizePropertyName(property);
         if (_inlineStyles == null || !_inlineStyles.TryGetValue(property, out var entry)) return "";
-        var previous = Get(property);
-        _inlineStyles.Remove(property);
-        InvalidateIfEffectiveValueChanged(property, previous);
+        var properties = GetDeclarationProperties(property).Where(_inlineStyles.ContainsKey).ToArray();
+        var previous = properties.ToDictionary(name => name, Get, StringComparer.Ordinal);
+        foreach (var name in properties) _inlineStyles.Remove(name);
+        foreach (var name in properties) InvalidateIfEffectiveValueChanged(name, previous[name]);
         return entry.Value ?? "";
     }
 
@@ -145,17 +152,25 @@ public sealed class StyleAccessor
         bool persistent = false)
     {
         property = NormalizePropertyName(property);
-        var previous = Get(property);
-        var candidate = new CascadedStyleEntry(value, specificity, important, persistent,
-            Interlocked.Increment(ref _cascadeSequence));
+        value = value.Trim();
+        if (!TryGetAssignments(property, value, out var assignments)) return false;
         _cascadedStyles ??= [];
-        if (_cascadedStyles.TryGetValue(property, out var current) && current.ComparePriority(candidate) > 0)
-            return false;
-        if (_cascadedStyles.TryGetValue(property, out current) && current.SameValueAndPriority(candidate))
-            return false;
-        _cascadedStyles[property] = candidate;
-        InvalidateIfEffectiveValueChanged(property, previous);
-        return true;
+        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => Get(assignment.Property),
+            StringComparer.Ordinal);
+        var changed = new List<string>(assignments.Length);
+        foreach (var assignment in assignments)
+        {
+            var candidate = new CascadedStyleEntry(assignment.Value, specificity, important, persistent,
+                Interlocked.Increment(ref _cascadeSequence));
+            if (_cascadedStyles.TryGetValue(assignment.Property, out var current) && current.ComparePriority(candidate) > 0)
+                continue;
+            if (_cascadedStyles.TryGetValue(assignment.Property, out current) && current.SameValueAndPriority(candidate))
+                continue;
+            _cascadedStyles[assignment.Property] = candidate;
+            changed.Add(assignment.Property);
+        }
+        foreach (var name in changed) InvalidateIfEffectiveValueChanged(name, previous[name]);
+        return changed.Count > 0;
     }
 
     /// <summary>读取最终应用值；未设置或变量解析失败时返回 null。</summary>
@@ -163,14 +178,21 @@ public sealed class StyleAccessor
     {
         property = NormalizePropertyName(property);
         var raw = GetRaw(property);
-        if (raw == null || property.StartsWith("--", StringComparison.Ordinal)) return raw;
+        if (property.StartsWith("--", StringComparison.Ordinal)) return raw;
+        if (raw == null)
+            return CssPropertyRegistry.IsInherited(property) ? _owner.Parent?.Style.Get(property) : null;
         if (string.Equals(raw, "inherit", StringComparison.OrdinalIgnoreCase))
-            return _owner.Parent?.Style.Get(property);
-        if (string.Equals(raw, "initial", StringComparison.OrdinalIgnoreCase)) return null;
+            return _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property);
+        if (string.Equals(raw, "initial", StringComparison.OrdinalIgnoreCase))
+            return CssPropertyRegistry.GetInitialValue(property);
         if (string.Equals(raw, "unset", StringComparison.OrdinalIgnoreCase))
-            return IsInheritedProperty(property) ? _owner.Parent?.Style.Get(property) : null;
+            return CssPropertyRegistry.IsInherited(property)
+                ? _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property)
+                : CssPropertyRegistry.GetInitialValue(property);
         var resolved = ResolveVariables(raw, []);
-        return resolved ?? (IsInheritedProperty(property) ? _owner.Parent?.Style.Get(property) : null);
+        return resolved ?? (CssPropertyRegistry.IsInherited(property)
+            ? _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property)
+            : CssPropertyRegistry.GetInitialValue(property));
     }
 
     /// <summary>移除内联属性。</summary>
@@ -268,10 +290,6 @@ public sealed class StyleAccessor
         _owner.Invalidate(invalidation);
     }
 
-    private static bool IsInheritedProperty(string property) => property is
-        "color" or "font-family" or "font-size" or "font-weight" or "font-style" or
-        "line-height" or "text-align" or "visibility";
-
     private void SyncOwnerZIndex()
     {
         var value = Get("z-index");
@@ -358,6 +376,40 @@ public sealed class StyleAccessor
             else if (value[i] == ',' && depth == 0) return i;
         }
         return -1;
+    }
+
+    private static bool TryGetAssignments(string property, string value, out CssPropertyAssignment[] assignments)
+    {
+        if (property.Length == 0 || value.Length == 0)
+        {
+            assignments = [];
+            return false;
+        }
+        if (!CssPropertyRegistry.IsValid(property, value))
+        {
+            assignments = [];
+            return false;
+        }
+        if (!CssShorthandExpander.IsShorthand(property))
+        {
+            assignments = [new CssPropertyAssignment(property, value)];
+            return true;
+        }
+        if (!CssShorthandExpander.TryExpand(property, value, out var expanded))
+        {
+            assignments = [];
+            return false;
+        }
+        assignments = [new CssPropertyAssignment(property, value), .. expanded];
+        return true;
+    }
+
+    private static IEnumerable<string> GetDeclarationProperties(string property)
+    {
+        yield return property;
+        if (!CssShorthandExpander.IsShorthand(property) ||
+            !CssShorthandExpander.TryExpand(property, "initial", out var expanded)) yield break;
+        foreach (var assignment in expanded) yield return assignment.Property;
     }
 
     /// <summary>将 camelCase / PascalCase 属性名规范为 kebab-case。</summary>

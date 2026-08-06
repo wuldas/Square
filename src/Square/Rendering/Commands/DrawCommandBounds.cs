@@ -5,8 +5,11 @@ namespace Square.Rendering.Commands;
 
 internal static class DrawCommandBounds
 {
-    /// <summary>计算命令列表在变换与裁剪后的可视边界，无内容时回退到 <paramref name="fallbackBounds"/>。</summary>
-    public static Rect Calculate(IReadOnlyList<DrawCommand> commands, Rect fallbackBounds)
+    /// <summary>计算命令列表在变换与裁剪后的可视边界，可选择在无内容时回退到布局边界。</summary>
+    public static Rect Calculate(
+        IReadOnlyList<DrawCommand> commands,
+        Rect fallbackBounds,
+        bool fallbackWhenEmpty = true)
     {
         var bounds = Rect.Empty;
         var hasBounds = false;
@@ -42,7 +45,7 @@ internal static class DrawCommandBounds
             hasBounds = true;
         }
 
-        return hasBounds ? bounds : fallbackBounds;
+        return hasBounds ? bounds : fallbackWhenEmpty ? fallbackBounds : Rect.Empty;
     }
 
     private static Rect GetBounds(DrawCommand command, Rect fallbackBounds) => command switch

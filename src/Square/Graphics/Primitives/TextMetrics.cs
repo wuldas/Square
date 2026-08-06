@@ -87,31 +87,30 @@ public static class TextMetrics
 
         var lineHeight = GetLineHeight(layout.Font, layout.LineHeight);
         var lines = TextWrapping.Wrap(layout.Text, layout.MaxSize.Width,
-            (_, rune) => GetGlyphMetrics(layout.Font, rune).AdvanceX);
+            (_, rune) => GetGlyphMetrics(layout.Font, rune).AdvanceX, layout.WrappingOptions);
         var result = Rect.Empty;
         var hasBounds = false;
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
-            var x = origin.X;
+            var x = layout.GetLineOriginX(origin.X, lineIndex, line.Width);
             var lineTop = origin.Y + lineIndex * lineHeight;
-            for (var offset = line.StartOffset; offset < line.EndOffset;)
+            foreach (var visualRune in layout.EnumerateVisualRunes(line))
             {
-                var status = Rune.DecodeFromUtf16(layout.Text.AsSpan(offset), out var rune, out var consumed);
-                if (status != System.Buffers.OperationStatus.Done) break;
-                var glyph = GetGlyphMetrics(layout.Font, rune);
-                var ink = GetGlyphBoundsInLine(layout.Font, rune, lineHeight).Offset(x, lineTop);
+                var glyph = GetGlyphMetrics(layout.Font, visualRune.Glyph);
+                var ink = GetGlyphBoundsInLine(layout.Font, visualRune.Glyph, lineHeight).Offset(x, lineTop);
                 if (!ink.IsEmpty)
                 {
                     result = hasBounds ? Rect.Union(result, ink) : ink;
                     hasBounds = true;
                 }
-                x += glyph.AdvanceX;
-                offset += consumed;
+                x += visualRune.Advance;
             }
         }
 
         var layoutBounds = new Rect(origin, layout.Measure());
+        foreach (var decoration in layout.GetDecorationRects(origin))
+            result = hasBounds ? Rect.Union(result, decoration) : decoration;
         return hasBounds ? Rect.Union(layoutBounds, result) : layoutBounds;
     }
 

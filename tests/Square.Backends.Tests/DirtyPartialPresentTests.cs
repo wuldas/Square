@@ -365,6 +365,26 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void DisplayTreeDirtyRectsIncludeOutlineVisualBounds()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 100, 80) };
+        var view = new View { Geometry = new Rect(30, 20, 20, 20) };
+        view.Style.Set("outline", "4px solid #ff0000");
+        root.Children.Add(view);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        root.ClearPaintDirty();
+        view.ClearPaintDirty();
+        tree.Render(new RenderContext(new Bitmap(100, 80), 1f));
+
+        view.InvalidatePaint();
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+
+        Assert.Contains(dirty, rect => rect.Left <= 25 && rect.Top <= 15 && rect.Right >= 55 && rect.Bottom >= 45);
+    }
+
+    [Fact]
     public void DisplayTreeDirtyRectsIncludePopupShadowWhenClosing()
     {
         var root = new View { Geometry = new Rect(0, 0, 200, 120) };
@@ -577,6 +597,63 @@ public class DirtyPartialPresentTests
         expectedTree.Render(expectedContext);
 
         Assert.Equal(expectedBitmap.Pixels, bitmap.Pixels);
+    }
+
+    [Fact]
+    public void FixedRootDirtyRectsStayInViewportCoordinatesAfterAncestorScroll()
+    {
+        var (root, fixedElement) = CreateFixedScrollTree();
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(new CountingRenderContext());
+        root.ClearPaintDirty();
+        fixedElement.ClearPaintDirty();
+
+        root.ScrollTop = 40;
+        tree.UpdateDirty();
+        _ = tree.CollectDirtyRects();
+        root.ClearPaintDirty();
+        fixedElement.InvalidatePaint();
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+
+        Assert.Contains(dirty, rect => rect.Top <= 10 && rect.Bottom >= 30);
+        Assert.DoesNotContain(dirty, rect => rect.Bottom <= 0);
+    }
+
+    [Fact]
+    public void FixedHitTestRunsOutsideAncestorScrollMappingAndNormalLayerSkipsIt()
+    {
+        var (root, fixedElement) = CreateFixedScrollTree();
+        root.ScrollTop = 40;
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        Assert.Same(fixedElement, tree.HitTestFixed(new Point(10, 15)));
+        Assert.NotSame(fixedElement, tree.HitTestRoot(new Point(10, 15)));
+    }
+
+    private static (View Root, View FixedElement) CreateFixedScrollTree()
+    {
+        var root = new View();
+        root.Style.Set("display", "block");
+        root.Style.Set("overflow-y", "auto");
+        var normal = new View();
+        normal.Style.Set("display", "block");
+        normal.Style.Set("height", "100px");
+        var fixedElement = new View();
+        fixedElement.Style.Set("display", "block");
+        fixedElement.Style.Set("position", "fixed");
+        fixedElement.Style.Set("top", "10px");
+        fixedElement.Style.Set("width", "30px");
+        fixedElement.Style.Set("height", "20px");
+        fixedElement.Style.Set("background", "#ff0000");
+        root.Children.Add(normal);
+        root.Children.Add(fixedElement);
+        var layout = new LayoutEngine();
+        layout.Measure(root, new Size(100, 50));
+        layout.Arrange(root, new Rect(0, 0, 100, 50));
+        return (root, fixedElement);
     }
 
     private static View CreateScrolledPixelTree()

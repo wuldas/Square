@@ -20,6 +20,10 @@ public class FontFaceTests
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts", "calibri.ttf"),
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial.ttf",
         };
         return candidates.FirstOrDefault(File.Exists);
     }
@@ -61,6 +65,38 @@ public class FontFaceTests
 
         Assert.Equal(FontFaceLoadStatus.Loaded, face.Status);
         Assert.True(set.Check("SquareSetFace"));
+    }
+
+    [Fact]
+    public async Task FontFaceSetRetainsAndMatchesMultipleFacesFromOneFile()
+    {
+        var path = FindSystemFontPath();
+        if (path is null)
+            return;
+
+        const string family = "SquareMultipleFace";
+        var normal = new FontFace(family, path, FontWeight.Normal, FontStyle.Normal);
+        var boldOblique = new FontFace(family, path, FontWeight.Bold, FontStyle.Oblique);
+        var set = new FontFaceSet();
+        set.Add(normal);
+        set.Add(boldOblique);
+
+        await normal.LoadAsync();
+        await boldOblique.LoadAsync();
+
+        Assert.Equal(2, set.Count);
+        Assert.True(set.Check("bold oblique 16px SquareMultipleFace"));
+        Assert.Same(normal, set.Match(family, FontWeight.Normal, FontStyle.Normal));
+        Assert.Same(boldOblique, set.Match(family, FontWeight.Bold, FontStyle.Oblique));
+
+        var requested = Square.Text.FontManager.Instance.FromCss(
+            family,
+            "16px",
+            "bold",
+            "oblique");
+        Assert.Equal(family, requested.Family);
+        Assert.Equal(FontWeight.Bold, requested.Weight);
+        Assert.Equal(FontStyle.Oblique, requested.Style);
     }
 
     [Fact]

@@ -43,6 +43,14 @@ public static class ControlRegistration
         ElementRegistry.Register("Image", static () => new Controls.Image());
         ElementRegistry.Register("Canvas", static () => new Canvas());
         ElementRegistry.Register("TitleBar", static () => new TitleBar());
+        ElementRegistry.Register("Table", static () => new Table());
+        ElementRegistry.Register("InlineTable", static () => new InlineTable());
+        ElementRegistry.Register("TableRowGroup", static () => new TableRowGroup());
+        ElementRegistry.Register("TableHeaderGroup", static () => new TableHeaderGroup());
+        ElementRegistry.Register("TableFooterGroup", static () => new TableFooterGroup());
+        ElementRegistry.Register("TableRow", static () => new TableRow());
+        ElementRegistry.Register("TableCell", static () => new TableCell());
+        ElementRegistry.Register("TableCaption", static () => new TableCaption());
         ElementRegistry.Register("UI", static () => new UIRootElement());
         ElementRegistry.Register("Head", static () => new UIHeadElement());
         ElementRegistry.Register("Body", static () => new UIBodyElement());

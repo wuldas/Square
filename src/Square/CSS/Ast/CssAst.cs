@@ -110,6 +110,9 @@ public sealed record CssStyleSheet(List<CssRule> Rules, List<CssAtRule> AtRules)
 
     /// <summary>关键帧规则列表。</summary>
     public List<KeyFramesRule> KeyFrames { get; set; } = new();
+
+    /// <summary>媒体规则列表。</summary>
+    public List<CssMediaRule> MediaRules { get; set; } = new();
 };
 
 /// <summary>表示一条 CSS <c>@import</c> 规则。</summary>
@@ -122,6 +125,11 @@ public sealed record CssImportRule(string Href, string Conditions);
 /// <param name="Params">规则参数。</param>
 /// <param name="Declarations">声明列表。</param>
 public sealed record CssAtRule(string Name, string Params, List<Declaration> Declarations);
+
+/// <summary>表示一条 CSS <c>@media</c> 规则。</summary>
+/// <param name="MediaTypes">逗号分隔的媒体类型列表。</param>
+/// <param name="Rules">媒体规则中包含的普通样式规则。</param>
+public sealed record CssMediaRule(List<string> MediaTypes, List<CssRule> Rules);
 
 /// <summary>表示关键帧中的一个停顿点。</summary>
 /// <param name="Selector">停顿选择器（from/to/百分比）。</param>

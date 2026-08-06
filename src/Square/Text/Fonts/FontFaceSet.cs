@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Text.RegularExpressions;
+using Square.Graphics;
 
 namespace Square.Text.Fonts;
 
@@ -10,10 +11,6 @@ namespace Square.Text.Fonts;
 public sealed class FontFaceSet : IReadOnlyCollection<FontFace>
 {
     private static readonly Lazy<FontFaceSet> DefaultLazy = new(() => new FontFaceSet());
-    private static readonly Regex FontShorthandRegex = new(
-        @"^\s*(?:(?<size>\d+(?:\.\d+)?)\s*px\s+)?(?<family>.+?)\s*$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-
     private readonly object _gate = new();
     private readonly List<FontFace> _faces = [];
 
@@ -60,24 +57,37 @@ public sealed class FontFaceSet : IReadOnlyCollection<FontFace>
             return _faces.Contains(face);
     }
 
+    /// <summary>按族名、字重与样式选择已加载的最佳字体面。</summary>
+    public FontFace? Match(
+        string family,
+        FontWeight weight = FontWeight.Normal,
+        FontStyle style = FontStyle.Normal)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(family);
+        family = family.Trim().Trim('\'', '"');
+        lock (_gate)
+        {
+            return _faces
+                .Where(face => face.Status == FontFaceLoadStatus.Loaded &&
+                               string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(face => face.Style == style ? 0 : 1)
+                .ThenBy(face => Math.Abs((int)face.Weight - (int)weight))
+                .FirstOrDefault();
+        }
+    }
+
     /// <summary>
     /// 检查是否已有可用于描述的字体（对齐 <c>check</c> 简化版）。
     /// <paramref name="font"/> 形如 <c>16px MyFont</c> 或 <c>MyFont</c>。
     /// </summary>
     public bool Check(string font)
     {
-        var family = ParseFamilyFromFont(font);
+        var description = ParseFontDescription(font);
+        var family = description.Family;
         if (string.IsNullOrEmpty(family)) return false;
 
-        lock (_gate)
-        {
-            foreach (var face in _faces)
-            {
-                if (string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase) &&
-                    face.Status == FontFaceLoadStatus.Loaded)
-                    return true;
-            }
-        }
+        if (Match(family, description.Weight, description.Style) != null)
+            return true;
 
         return Square.Text.FontManager.Instance.IsFamilyKnown(family);
     }
@@ -144,16 +154,51 @@ public sealed class FontFaceSet : IReadOnlyCollection<FontFace>
     /// <summary>从 <c>16px Family</c> 或 <c>Family</c> 解析族名。</summary>
     public static string ParseFamilyFromFont(string font)
     {
-        if (string.IsNullOrWhiteSpace(font)) return "";
-        var match = FontShorthandRegex.Match(font.Trim());
-        if (!match.Success) return font.Trim().Trim('\'', '"');
-        var family = match.Groups["family"].Value.Trim().Trim('\'', '"');
-        // 去掉可能的 weight/style 前缀词（极简）
-        foreach (var token in new[] { "bold", "italic", "normal", "oblique" })
+        return ParseFontDescription(font).Family;
+    }
+
+    private static (string Family, FontWeight Weight, FontStyle Style) ParseFontDescription(string font)
+    {
+        if (string.IsNullOrWhiteSpace(font))
+            return ("", FontWeight.Normal, FontStyle.Normal);
+
+        var value = font.Trim();
+        var weight = FontWeight.Normal;
+        var style = FontStyle.Normal;
+        while (value.Length > 0)
         {
-            if (family.StartsWith(token + " ", StringComparison.OrdinalIgnoreCase))
-                family = family[(token.Length + 1)..].Trim().Trim('\'', '"');
+            var separator = value.IndexOfAny([' ', '\t', '\r', '\n']);
+            var token = separator < 0 ? value : value[..separator];
+            var remainder = separator < 0 ? "" : value[(separator + 1)..].TrimStart();
+
+            if (token.Equals("italic", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("oblique", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("normal", StringComparison.OrdinalIgnoreCase) && style == FontStyle.Normal)
+            {
+                style = token.Equals("italic", StringComparison.OrdinalIgnoreCase)
+                    ? FontStyle.Italic
+                    : token.Equals("oblique", StringComparison.OrdinalIgnoreCase)
+                        ? FontStyle.Oblique
+                        : FontStyle.Normal;
+                value = remainder;
+                continue;
+            }
+
+            var isNumericWeight = ushort.TryParse(token, out var numericWeight) && numericWeight is >= 100 and <= 900;
+            if (token.Equals("bold", StringComparison.OrdinalIgnoreCase) || isNumericWeight)
+            {
+                weight = token.Equals("bold", StringComparison.OrdinalIgnoreCase)
+                    ? FontWeight.Bold
+                    : (FontWeight)(numericWeight / 100 * 100);
+                value = remainder;
+                continue;
+            }
+
+            if (Regex.IsMatch(token, @"^\d+(?:\.\d+)?px$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                value = remainder;
+            break;
         }
-        return family;
+
+        return (value.Trim().Trim('\'', '"'), weight, style);
     }
 }

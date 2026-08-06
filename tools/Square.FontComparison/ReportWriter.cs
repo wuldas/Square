@@ -46,6 +46,8 @@ internal static class ReportWriter
                     .Append(item.Status).Append("</span></summary><div class=\"metrics\">");
                 AddMetric(html, "width delta", item.WidthDelta);
                 AddMetric(html, "height delta", item.HeightDelta);
+                AddMetric(html, "container x delta", item.XDelta);
+                AddMetric(html, "container y delta", item.YDelta);
                 AddMetric(html, "baseline delta", item.BaselineDelta);
                 AddMetric(html, "max char x delta", item.MaxCharacterXDelta);
                 AddMetric(html, "mask IoU", item.MaskIoU, "");

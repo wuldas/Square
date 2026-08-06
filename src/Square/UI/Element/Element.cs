@@ -478,7 +478,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// </summary>
     public virtual Element? HitTest(Point point)
     {
-        if (!IsVisible) return null;
+        if (!IsVisible || !IsCssDisplayed()) return null;
+        var visibilityHidden = IsCssVisibilityHidden();
         var inside = Geometry.Contains(point);
         if (!inside && ClipsOverflowAt(point)) return null;
 
@@ -495,7 +496,32 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
             if (hit != null) return hit;
         }
 
-        return inside ? this : null;
+        return inside && !visibilityHidden ? this : null;
+    }
+
+    /// <summary>当前元素及其祖先是否参与 CSS display 渲染与命中。</summary>
+    internal bool IsCssDisplayed()
+    {
+        for (Element? current = this; current != null; current = current.Parent)
+            if (string.Equals(current.Style.Get("display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase))
+                return false;
+        return true;
+    }
+
+    internal bool IsFixedPositioned() =>
+        string.Equals(Style.Get("position")?.Trim(), "fixed", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>按最近声明解析 CSS visibility；隐藏自身但不阻止后代覆盖为 visible。</summary>
+    internal bool IsCssVisibilityHidden()
+    {
+        for (Element? current = this; current != null; current = current.Parent)
+        {
+            var value = current.Style.Get("visibility")?.Trim();
+            if (string.IsNullOrEmpty(value)) continue;
+            return string.Equals(value, "hidden", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "collapse", StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
     }
 
     private HitTestEntry[] GetHitTestChildren()
@@ -552,11 +578,22 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
 
     private (bool clipX, bool clipY) GetOverflowClipAxes()
     {
+        var isTable = IsTableFormattingBox();
+        if (!IsOverflowContainer() && !isTable) return (false, false);
         var overflow = Style.Get("overflow");
-        var clipBoth = IsClippingOverflow(overflow);
-        return (clipBoth || IsClippingOverflow(Style.Get("overflow-x")),
-            clipBoth || IsClippingOverflow(Style.Get("overflow-y")));
+        var clipBoth = ClipsOverflowValue(overflow, isTable);
+        return (clipBoth || ClipsOverflowValue(Style.Get("overflow-x"), isTable),
+            clipBoth || ClipsOverflowValue(Style.Get("overflow-y"), isTable));
     }
+
+    private bool IsTableFormattingBox()
+    {
+        var display = Style.Get("display")?.Trim().ToLowerInvariant();
+        return display is "table" or "inline-table";
+    }
+
+    private static bool ClipsOverflowValue(string? value, bool isTable) =>
+        IsClippingOverflow(value) && (!isTable || !IsScrollingOverflow(value));
 
     private static bool IsClippingOverflow(string? value) =>
         string.Equals(value, "hidden", StringComparison.OrdinalIgnoreCase) ||
@@ -567,8 +604,15 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// <summary>是否为滚动容器（由 CSS overflow 推导）。</summary>
     public bool IsScrollContainer()
     {
+        if (!IsOverflowContainer()) return false;
         var (scrollX, scrollY) = GetScrollAxes();
         return scrollX || scrollY;
+    }
+
+    private bool IsOverflowContainer()
+    {
+        var display = Style.Get("display")?.Trim().ToLowerInvariant();
+        return display is null or "" or "block" or "inline-block" or "flow-root" or "flex" or "grid";
     }
 
     /// <summary>当前元素或祖先的 <c>user-select</c> 是否允许文本选择。</summary>
