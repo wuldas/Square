@@ -120,10 +120,10 @@ internal static class BrowserCapture
                  textDecoration = item.TextDecoration
                    ,containerWidthCss = item.ContainerWidth.HasValue
                        ? item.ContainerWidth.Value.ToString(CultureInfo.InvariantCulture) + "px"
-                       : ""
+                       : null
                    ,containerHeightCss = item.ContainerHeight.HasValue
                        ? item.ContainerHeight.Value.ToString(CultureInfo.InvariantCulture) + "px"
-                       : ""
+                       : null
               });
 
             var screenshotName = item.Id + ".png";
@@ -207,6 +207,11 @@ internal static class BrowserCapture
                     $"Chromium container did not apply for '{item.Id}': " +
                     $"display={value.ContainerDisplay}, width={value.ContainerWidth}, height={value.ContainerHeight}, " +
                     $"inline={value.ContainerInlineWidth}/{value.ContainerInlineHeight}.");
+            if (!item.ContainerWidth.HasValue && !item.ContainerHeight.HasValue &&
+                (value.ContainerDisplay != "block" || Math.Abs(value.X) > 0.01f || Math.Abs(value.Y) > 0.01f))
+                throw new InvalidOperationException(
+                    $"Chromium case '{item.Id}' was not captured at the container origin: " +
+                    $"display={value.ContainerDisplay}, position={value.X}/{value.Y}.");
             captures.Add(new CaseCapture
             {
                 Id = item.Id,
