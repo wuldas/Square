@@ -815,6 +815,7 @@ namespace Square.Compiler.Emit
 
         private static string MapPropName(string name) => name.ToLowerInvariant() switch
         {
+            "id" => "Id",
             "text" => "TextContent",
             "glyph" => "Glyph",
             "icon" => "Icon",

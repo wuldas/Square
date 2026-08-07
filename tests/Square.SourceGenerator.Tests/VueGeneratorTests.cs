@@ -712,6 +712,17 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void IdAttributeMapsToElementIdProperty()
+    {
+        const string source = "<template><Input id=\"search-box\" /></template>";
+
+        var generated = Assert.Single(RunGenerator(new InMemoryAdditionalText("Search.sqv", source)).GeneratedTrees)
+            .GetText().ToString();
+
+        Assert.Contains(".SetProperty(\"Id\", \"search-box\")", generated);
+    }
+
+    [Fact]
     public void SplitterLowersToBuiltInControlAndMapsSizingProperties()
     {
         const string source = """

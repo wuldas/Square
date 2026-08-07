@@ -25,7 +25,7 @@
         <Button class="command-search">
           <Text class="command-search-icon" text="⌕" />
           <Text class="command-search-copy" text="Search commands, sessions and files" />
-          <Text class="command-search-shortcut" text="Ctrl+P" />
+          <View class="command-search-shortcut"><Text text="Ctrl+P" /></View>
         </Button>
 
         <View class="toolbar-right">
@@ -66,7 +66,7 @@
 
           <View class="session-search-box">
             <Text class="session-search-icon" text="⌕" />
-            <Input class="session-search-input" placeholder="Search sessions" />
+            <Input id="session-search" class="session-search-input" placeholder="Search sessions" />
           </View>
 
           <Button class="session-filter" text="All time  ▾" />
@@ -136,9 +136,9 @@
                   <Text class="welcome-title" text="A focused coding workspace" />
                   <Text class="welcome-body" text="Investigation, tools, changes and review share one quiet desktop surface." />
                   <View class="welcome-tags">
-                    <Text class="welcome-tag" text="Square UI" />
-                    <Text class="welcome-tag" text="Diff approval" />
-                    <Text class="welcome-tag" text="Local sessions" />
+                    <View class="welcome-tag"><Text text="Square UI" /></View>
+                    <View class="welcome-tag"><Text text="Diff approval" /></View>
+                    <View class="welcome-tag"><Text text="Local sessions" /></View>
                   </View>
                 </View>
               </View>
@@ -193,7 +193,7 @@
 
           <View class="composer-shell">
             <View class="composer-box">
-              <TextArea class="composer-input" placeholder="Ask PiSquared to inspect or change this workspace..." />
+              <TextArea id="composer-input" class="composer-input" placeholder="Ask PiSquared to inspect or change this workspace..." />
               <View class="composer-actions">
                 <View class="composer-left-actions">
                   <Button class="composer-icon-button" text="＋" />
@@ -281,7 +281,7 @@
   .command-search { display: flex; flex-direction: row; align-items: center; gap: 10px; width: 500px; height: 36px; padding: 0 14px; background: #f8fafc; border: 1px solid #d9e2ec; border-radius: 10px; color: #64748b; }
   .command-search-icon { color: #6c757d; font-size: 22px; }
   .command-search-copy { min-width: 0; flex-grow: 1; color: #6c757d; font-size: 14px; text-align: left; }
-  .command-search-shortcut { color: #6c757d; font-size: 11px; background: #f8f9fa; padding: 2px 6px; border: 1px solid #dee2e6; border-radius: 4px; }
+  .command-search-shortcut { display: flex; align-items: center; justify-content: center; height: 20px; color: #6c757d; font-size: 11px; background: #f8f9fa; padding: 2px 6px; border: 1px solid #dee2e6; border-radius: 4px; }
   .toolbar-text-button { height: 32px; padding: 0 10px; border: 0; background: #ffffff; color: #495057; border-radius: 6px; font-size: 12px; }
   .connection-pill { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 32px; padding: 0 9px; }
   .connection-dot { color: #198754; font-size: 9px; }
@@ -301,17 +301,17 @@
   .session-sidebar { display: flex; flex-direction: column; width: 316px; min-width: 316px; min-height: 0; padding: 16px; background: #f8fafc; overflow: hidden; }
   .workspace-heading { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; padding: 0 4px; }
   .workspace-heading-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .workspace-heading-title { color: #212529; font-size: 16px; font-weight: 600; }
-  .workspace-heading-path { color: #6c757d; font-size: 11px; }
+  .workspace-heading-title { color: #212529; font-size: 16px; font-weight: 600; line-height: 21px; }
+  .workspace-heading-path { color: #6c757d; font-size: 11px; line-height: 15px; }
   .small-icon-button { width: 30px; height: 30px; padding: 0; border-radius: 6px; background: #f8f9fa; font-size: 13px; }
   .new-session-button { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; background: #0d6efd; border: 1px solid #0d6efd; border-radius: 6px; color: #ffffff; font-size: 14px; font-weight: 600; }
   .new-session-icon { color: #ffffff; font-size: 20px; margin-right: 8px; }
-  .section-label, .context-section-label { margin: 20px 8px 9px; color: #6c757d; font-size: 11px; font-weight: 600; }
+  .section-label, .context-section-label { margin: 20px 8px 9px; color: #6c757d; font-size: 11px; font-weight: 600; line-height: 15px; }
   .session-search-box { display: flex; flex-direction: row; align-items: center; gap: 8px; height: 38px; padding: 0 11px; margin-bottom: 10px; background: #ffffff; border: 1px solid #d9e2ec; border-radius: 10px; }
   .session-search-icon { color: #6c757d; font-size: 19px; }
   .session-search-input { min-width: 0; height: 30px; flex-grow: 1; padding: 0 8px; background: #ffffff; border: 1px solid transparent; border-radius: 8px; color: #212529; font-size: 13px; }
   .session-filter { width: 100%; height: 34px; padding: 0 10px; margin-bottom: 8px; background: #ffffff; border: 1px solid #ced4da; border-radius: 6px; color: #495057; font-size: 12px; }
-  .session-list-scroll { min-height: 0; flex-grow: 1; overflow-y: auto; }
+  .session-list-scroll { min-height: 0; flex-grow: 1; overflow-y: auto; scrollbar-width: none; }
   .session-list { display: flex; flex-direction: column; gap: 4px; }
   .session-item { display: flex; flex-direction: row; align-items: center; width: 100%; min-height: 60px; gap: 11px; padding: 10px 11px; background: #f8fafc; border: 1px solid #f8fafc; border-radius: 10px; text-align: left; }
   .session-item-active { background: #e7f1ff; border-color: #9ec5fe; }
@@ -329,18 +329,18 @@
   .conversation-subtitle { color: #6c757d; font-size: 12px; }
   .conversation-header-actions { display: flex; flex-direction: row; align-items: center; gap: 6px; }
   .header-chip { height: 30px; padding: 0 10px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; color: #495057; font-size: 12px; }
-  .conversation-scroll { min-height: 0; flex-grow: 1; overflow-y: auto; background: #ffffff; }
+  .conversation-scroll { display: flex; flex-direction: column; min-height: 0; flex-grow: 1; overflow-y: auto; background: #ffffff; scrollbar-width: none; }
   .conversation-document { display: flex; flex-direction: column; width: 860px; max-width: 90%; align-self: center; padding: 32px 0 36px; }
   .welcome-card { display: flex; flex-direction: row; gap: 18px; padding: 20px 22px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 5px 16px rgba(15,23,42,0.05); }
   .welcome-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; min-width: 48px; background: #cfe2ff; border-radius: 8px; }
   .welcome-icon-text { color: #0d6efd; font-size: 28px; }
   .welcome-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .welcome-title { color: #212529; font-size: 17px; font-weight: 600; }
+  .welcome-title { color: #212529; font-size: 17px; font-weight: 600; line-height: 22px; }
   .welcome-body { color: #6c757d; font-size: 14px; line-height: 22px; }
   .welcome-tags { display: flex; flex-direction: row; gap: 6px; margin-top: 4px; }
-  .welcome-tag { padding: 4px 8px; background: #e9ecef; border: 1px solid #dee2e6; border-radius: 5px; color: #495057; font-size: 11px; }
+  .welcome-tag { display: flex; align-items: center; height: 25px; padding: 4px 8px; background: #e9ecef; border: 1px solid #dee2e6; border-radius: 5px; color: #495057; font-size: 11px; }
   .message-block { margin-top: 22px; }
-  .user-message { max-width: 82%; align-self: flex-end; padding: 14px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; }
+  .user-message { width: 82%; max-width: 82%; align-self: flex-end; padding: 14px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; }
   .message-body { color: #212529; font-size: 15px; line-height: 24px; }
   .assistant-message { display: flex; flex-direction: column; gap: 9px; }
   .message-meta { display: flex; flex-direction: row; align-items: center; gap: 7px; }
@@ -350,7 +350,7 @@
   .message-model { color: #6c757d; font-size: 11px; }
   .assistant-paragraph { color: #212529; font-size: 15px; line-height: 24px; }
   .design-summary { display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0d6efd; border-radius: 12px; }
-  .design-summary-title { color: #212529; font-size: 13px; font-weight: 600; }
+  .design-summary-title { color: #212529; font-size: 13px; font-weight: 600; line-height: 17px; }
   .design-summary-line { color: #495057; font-size: 13px; line-height: 19px; }
   .tool-card { margin-top: 18px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 14px rgba(15,23,42,0.045); }
   .tool-card-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 52px; padding: 9px 14px; }
@@ -362,12 +362,12 @@
   .tool-card-summary { color: #6c757d; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
   .tool-duration, .tool-chevron { color: #6c757d; font-size: 11px; }
   .conversation-notice { display: flex; flex-direction: column; gap: 5px; padding: 12px 15px; background: #e7f1ff; border: 1px solid #b6d4fe; border-left: 4px solid #0d6efd; border-radius: 6px; }
-  .notice-title { color: #084298; font-size: 13px; font-weight: 600; }
+  .notice-title { color: #084298; font-size: 13px; font-weight: 600; line-height: 17px; }
   .notice-body { color: #495057; font-size: 12px; line-height: 19px; }
 
   .composer-shell { width: 860px; max-width: 90%; height: 164px; min-height: 164px; align-self: center; padding: 0 0 18px; overflow: hidden; }
   .composer-box { display: flex; flex-direction: column; min-height: 124px; padding: 10px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; box-shadow: 0 10px 28px rgba(15,23,42,0.09); }
-  .composer-input { width: 100%; min-height: 76px; max-height: 116px; padding: 10px 13px; background: #fbfdff; border: 1px solid #e2e8f0; border-radius: 14px; color: #1f2937; font-size: 16px; line-height: 24px; resize: none; }
+  .composer-input { width: 100%; height: 76px; min-height: 76px; max-height: 116px; padding: 10px 13px; background: #fbfdff; border: 1px solid #e2e8f0; border-radius: 14px; color: #1f2937; font-size: 16px; line-height: 24px; resize: none; }
   .composer-actions { display: flex; flex-direction: row; align-items: center; justify-content: space-between; margin-top: 8px; }
   .composer-left-actions { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; }
   .composer-icon-button { width: 32px; height: 32px; padding: 0; border-radius: 6px; background: #ffffff; font-size: 17px; }
@@ -396,9 +396,9 @@
   .change-path { color: #343a40; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
   .change-lines { color: #6c757d; font-size: 10px; }
   .change-summary-card { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; padding: 18px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; box-shadow: 0 6px 18px rgba(15,23,42,0.06); }
-  .change-summary-kicker { color: #0d6efd; font-size: 10px; font-weight: 600; }
-  .change-summary-title { color: #212529; font-size: 14px; font-weight: 600; }
-  .change-summary-body { color: #6c757d; font-size: 12px; line-height: 18px; }
+  .change-summary-kicker { color: #0d6efd; font-size: 10px; font-weight: 600; line-height: 14px; }
+  .change-summary-title { color: #212529; font-size: 14px; font-weight: 600; line-height: 19px; }
+  .change-summary-body { width: 100%; min-width: 0; color: #6c757d; font-size: 12px; line-height: 18px; }
   .change-summary-actions { display: flex; flex-direction: row; gap: 6px; margin-top: 4px; }
   .secondary-action, .primary-action { height: 36px; flex-grow: 1; border-radius: 6px; font-size: 12px; font-weight: 600; }
   .secondary-action { background: #ffffff; border: 1px solid #6c757d; color: #495057; }
