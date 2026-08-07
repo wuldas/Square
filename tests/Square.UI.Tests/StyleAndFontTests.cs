@@ -9,6 +9,37 @@ namespace Square.UI.Tests;
 
 public class StyleAndFontTests
 {
+    [Theory]
+    [InlineData("display")]
+    [InlineData("visibility")]
+    [InlineData("cursor")]
+    [InlineData("overflow-x")]
+    [InlineData("background-color")]
+    public void CanonicalAsciiPropertyNameUsesAllocationFreeFastPath(string property)
+    {
+        Assert.Same(property, StyleAccessor.NormalizePropertyName(property));
+
+        _ = StyleAccessor.NormalizePropertyName(property);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var totalLength = 0;
+        for (var i = 0; i < 10_000; i++)
+            totalLength += StyleAccessor.NormalizePropertyName(property).Length;
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(property.Length * 10_000, totalLength);
+        Assert.InRange(allocated, 0, 1_024);
+    }
+
+    [Fact]
+    public void PropertyNameNormalizationPreservesExistingNameSemantics()
+    {
+        Assert.Equal("font-size", StyleAccessor.NormalizePropertyName(" fontSize "));
+        Assert.Equal("--Accent", StyleAccessor.NormalizePropertyName(" --Accent "));
+        Assert.NotEqual(
+            StyleAccessor.NormalizePropertyName("--Accent"),
+            StyleAccessor.NormalizePropertyName("--accent"));
+    }
+
     [Fact]
     public void StyleAccessorCssomSetPropertyAndGetPropertyValue()
     {

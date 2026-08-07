@@ -416,9 +416,10 @@ public sealed class StyleAccessor
     public static string NormalizePropertyName(string property)
     {
         if (string.IsNullOrEmpty(property)) return property ?? "";
-        property = property.Trim();
+        property = TrimPropertyName(property);
         if (property.Length == 0 || property.StartsWith("--", StringComparison.Ordinal)) return property;
-        if (property.All(c => c is not (>= 'A' and <= 'Z'))) return property.ToLowerInvariant();
+        if (IsAlreadyNormalizedPropertyName(property)) return property;
+        if (!ContainsAsciiUppercase(property)) return property.ToLowerInvariant();
         lock (NormalizeGate)
             if (NormalizedPropertyCache.TryGetValue(property, out var cached)) return cached;
         var sb = new StringBuilder(property.Length + 4);
@@ -437,6 +438,36 @@ public sealed class StyleAccessor
             if (NormalizedPropertyCache.Count < 512) NormalizedPropertyCache[property] = normalized;
         return normalized;
     }
+
+    private static bool IsAlreadyNormalizedPropertyName(string property)
+    {
+        for (var i = 0; i < property.Length; i++)
+        {
+            var c = property[i];
+            if (c is >= 'A' and <= 'Z' || c <= ' ' || c == '\u007f' || c > '\u007f') return false;
+        }
+        return true;
+    }
+
+    private static bool ContainsAsciiUppercase(string property)
+    {
+        for (var i = 0; i < property.Length; i++)
+            if (property[i] is >= 'A' and <= 'Z') return true;
+        return false;
+    }
+
+    private static string TrimPropertyName(string property)
+    {
+        var start = 0;
+        var end = property.Length - 1;
+        while (start <= end && IsPropertyNameTrimChar(property[start])) start++;
+        while (end >= start && IsPropertyNameTrimChar(property[end])) end--;
+        if (start == 0 && end == property.Length - 1) return property;
+        return start > end ? "" : property[start..(end + 1)];
+    }
+
+    private static bool IsPropertyNameTrimChar(char c) =>
+        c <= ' ' || c == '\u007f' || c > '\u007f' && char.IsWhiteSpace(c);
 
     private readonly record struct InlineStyleEntry(string? Value, bool Important);
     private readonly record struct CascadedStyleEntry(

@@ -42,17 +42,21 @@ internal static class CssBoxPainter
                 context.FillRect(geometry, brush);
         }
 
-        if (tableMetadata?.UseCollapsedBorderFragments == true)
-            PaintCollapsedBorderFragments(context, tableMetadata.CollapsedBorderFragments);
-        else
-            PaintBorder(context, element, declarations);
     }
 
     public static void PaintAfterContent(IRenderContext context, Element element)
     {
         if (element is IPopupElement) return;
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
+        {
             context.PopClip();
+            return;
+        }
+
+        if (tableMetadata?.UseCollapsedBorderFragments == true)
+            PaintCollapsedBorderFragments(context, tableMetadata.CollapsedBorderFragments);
+        else
+            PaintBorder(context, element, element.Style.GetAll());
     }
 
     public static void PaintAfterChildren(IRenderContext context, Element element)
@@ -82,6 +86,10 @@ internal static class CssBoxPainter
         var bottom = GetPaintWidth(edges[2], box.Height);
         var left = GetPaintWidth(edges[3], box.Width);
 
+        var radius = GetCornerRadius(element);
+        if (radius > 0 && PaintUniformRoundedBorder(context, box, radius, edges, top, right, bottom, left))
+            return;
+
         if (top > 0)
             context.FillRect(new Rect(box.X, box.Y, box.Width, top), new SolidColorBrush(edges[0].Color));
         if (bottom > 0)
@@ -93,6 +101,25 @@ internal static class CssBoxPainter
             context.FillRect(new Rect(box.X, middleTop, left, middleHeight), new SolidColorBrush(edges[3].Color));
         if (right > 0 && middleHeight > 0)
             context.FillRect(new Rect(box.Right - right, middleTop, right, middleHeight), new SolidColorBrush(edges[1].Color));
+    }
+
+    private static bool PaintUniformRoundedBorder(
+        IRenderContext context, Rect box, float radius,
+        BorderEdge[] edges, float top, float right, float bottom, float left)
+    {
+        if (top != right || top != bottom || top != left) return false;
+        if (top <= 0) return true;
+        var color = edges[0].Color;
+        for (var i = 1; i < edges.Length; i++)
+            if (edges[i].Color != color) return false;
+
+        var half = top / 2f;
+        var strokeBox = new Rect(box.X + half, box.Y + half, box.Width - top, box.Height - top);
+        var strokeRadius = Math.Max(0, radius - half);
+        context.DrawGeometry(
+            new RoundedRectGeometry(strokeBox, strokeRadius, strokeRadius),
+            Pen.FromColor(color, top));
+        return true;
     }
 
     private static void PaintOutline(IRenderContext context, Element element, IReadOnlyDictionary<string, string> declarations)

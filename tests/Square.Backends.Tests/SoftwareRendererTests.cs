@@ -2020,7 +2020,7 @@ public class SoftwareRendererTests
 
         var bitmap = context.GetBitmap();
         Assert.Equal(0, AlphaAt(bitmap, 4, 4));
-        Assert.True(AlphaAt(bitmap, 8, 6) > 0);
+        Assert.True(AlphaAt(bitmap, 6, 6) > 0);
         Assert.Equal(0, AlphaAt(bitmap, 16, 16));
     }
 
@@ -2204,6 +2204,48 @@ public class SoftwareRendererTests
         tree.Render(context);
 
         Assert.InRange(AlphaAt(context.GetBitmap(), 12, 10), 127, 128);
+    }
+
+    [Fact]
+    public void DisplayTreePaintsUniformBorderFollowingBorderRadius()
+    {
+        var element = new EmptyPaintElement { Geometry = new Rect(4, 4, 24, 24) };
+        element.Style.Set("border", "2px solid #ff0000");
+        element.Style.Set("border-radius", "8px");
+        var context = CreateContext(32, 32);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(0, AlphaAt(bitmap, 4, 4));      // 外直角不应被边框覆盖
+        AssertPixel(bitmap, 16, 4, 255, 0, 0, 255);  // 上边中点
+        AssertPixel(bitmap, 4, 16, 255, 0, 0, 255);  // 左边中点
+        Assert.True(AlphaAt(bitmap, 6, 6) > 0);      // 圆角弧上有描边
+        Assert.Equal(0, AlphaAt(bitmap, 16, 16));    // 内部为空
+    }
+
+    [Fact]
+    public void DisplayTreePaintsViewBorderAboveStyledBackground()
+    {
+        var view = new View { Geometry = new Rect(4, 4, 24, 24) };
+        view.Style.Set("background", "#ffffff");
+        view.Style.Set("border", "2px solid #ff0000");
+        view.Style.Set("border-radius", "8px");
+        var context = CreateContext(32, 32);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(view);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(0, AlphaAt(bitmap, 4, 4));
+        AssertPixel(bitmap, 16, 4, 255, 0, 0, 255);
+        AssertPixel(bitmap, 4, 16, 255, 0, 0, 255);
+        AssertPixel(bitmap, 16, 16, 255, 255, 255, 255);
     }
 
     [Fact]

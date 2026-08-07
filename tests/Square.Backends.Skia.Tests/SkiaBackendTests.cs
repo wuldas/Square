@@ -126,7 +126,7 @@ public sealed class SkiaBackendTests
 
         Assert.Equal("Skia", factory.Name);
         Assert.Equal(new Size(8, 6), context.CanvasSize);
-        Assert.False(context.SupportsPartialRendering);
+        Assert.True(context.SupportsPartialRendering);
         Assert.IsAssignableFrom<IRenderBitmapSource>(context);
     }
 
@@ -195,9 +195,10 @@ public sealed class SkiaBackendTests
     }
 
     [Fact]
-    public void PresentSubmitsFullPhysicalFrame()
+    public void PresentSubmitsPhysicalDirtyRects()
     {
         Bitmap? presented = null;
+        IReadOnlyList<Rect>? presentedDirtyRects = null;
         var factory = new SkiaBackendFactory();
         using var context = factory.CreateContext(new RenderContextCreateInfo
         {
@@ -206,17 +207,42 @@ public sealed class SkiaBackendTests
             PresentFrame = (bitmap, dirtyRects) =>
             {
                 presented = bitmap;
-                Assert.Null(dirtyRects);
+                presentedDirtyRects = dirtyRects;
             }
         });
         context.Clear(Color.Green);
+        context.Present(null);
 
+        context.Clear(Color.Red);
         context.Present([new Rect(0, 0, 1, 1)]);
 
         Assert.NotNull(presented);
+        Assert.NotNull(presentedDirtyRects);
+        Assert.Equal(new Rect(0, 0, 2, 2), Assert.Single(presentedDirtyRects));
         Assert.Equal(6, presented.Width);
         Assert.Equal(4, presented.Height);
+        AssertPixel(presented, 0, 0, 255, 0, 0, 255);
         AssertPixel(presented, 5, 3, 0, 255, 0, 255);
+    }
+
+    [Fact]
+    public void PartialPresentUpdatesOnlyTheRequestedPhysicalRegion()
+    {
+        Bitmap? presented = null;
+        using var context = new SkiaBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(4, 3),
+            PresentFrame = (bitmap, _) => presented = bitmap
+        });
+
+        context.Clear(Color.Green);
+        context.Present(null);
+        context.Clear(Color.Red);
+        context.Present([new Rect(0, 0, 1, 1)]);
+
+        Assert.NotNull(presented);
+        AssertPixel(presented, 0, 0, 255, 0, 0, 255);
+        AssertPixel(presented, 3, 2, 0, 255, 0, 255);
     }
 
     [Fact]

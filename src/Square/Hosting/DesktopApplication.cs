@@ -1572,6 +1572,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static bool HasVisualInvalidation(Element element)
     {
+        if (!element.IsVisible || !element.IsCssDisplayed()) return false;
         if (element.IsLayoutDirty || element.NeedsPaint) return true;
         foreach (var child in element.Children)
             if (HasVisualInvalidation(child)) return true;

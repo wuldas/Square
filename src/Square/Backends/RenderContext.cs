@@ -923,7 +923,10 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     {
         var color = (pen.Brush as SolidColorBrush)?.Color ?? Color.Black;
         if (pen.Width <= 0) return;
-        RasterizeRoundedRect(rect, rx, ry, pen.Width * strokeScale, color);
+        // 描边以几何边缘为中心（与 Skia/Vulkan 一致）：外侧膨胀半宽后按内侧描边光栅化。
+        var width = pen.Width * strokeScale;
+        var half = width / 2f;
+        RasterizeRoundedRect(rect.Inflate(half, half), rx + half, ry + half, width, color);
     }
 
     private void RasterizeRoundedRect(Rect rect, float rx, float ry, float strokeWidth, Color color)

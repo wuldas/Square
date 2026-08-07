@@ -32,6 +32,15 @@ public class DocumentTests
         field!.SetValue(application, false);
     }
 
+    private static bool HasVisualInvalidation(Element element)
+    {
+        var method = typeof(DesktopApplication).GetMethod(
+            "HasVisualInvalidation",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return Assert.IsType<bool>(method!.Invoke(null, [element]));
+    }
+
     [Theory]
     [InlineData(885f, 943f, 885.3333f, 942.6667f, true)]
     [InlineData(885f, 943f, 887f, 943f, false)]
@@ -205,6 +214,37 @@ public class DocumentTests
 
         Assert.Null(exception);
         Assert.True(text.IsLayoutDirty);
+    }
+
+    [Fact]
+    public void HiddenDirtySubtreeDoesNotCountAsVisualWork()
+    {
+        var root = new View();
+        var hidden = new View { IsVisible = false };
+        hidden.Children.Add(new Square.Controls.Text("hidden"));
+        root.Children.Add(hidden);
+        root.ClearLayoutDirty();
+        root.ClearPaintDirty();
+
+        Assert.True(hidden.IsLayoutDirty);
+        Assert.True(hidden.NeedsPaint);
+        Assert.False(HasVisualInvalidation(root));
+    }
+
+    [Fact]
+    public void DisplayNoneDirtySubtreeDoesNotCountAsVisualWork()
+    {
+        var root = new View();
+        var hidden = new View();
+        hidden.Style.Set("display", "none");
+        hidden.Children.Add(new Square.Controls.Text("hidden"));
+        root.Children.Add(hidden);
+        root.ClearLayoutDirty();
+        root.ClearPaintDirty();
+
+        Assert.True(hidden.IsLayoutDirty);
+        Assert.True(hidden.NeedsPaint);
+        Assert.False(HasVisualInvalidation(root));
     }
 
     [Fact]

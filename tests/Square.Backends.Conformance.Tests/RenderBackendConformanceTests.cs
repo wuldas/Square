@@ -18,7 +18,7 @@ public sealed class RenderBackendConformanceTests
     public static TheoryData<IRenderBackendFactory, bool> HeadlessFactories => new()
     {
         { new RenderBackendFactory(), true },
-        { new SkiaBackendFactory(), false }
+        { new SkiaBackendFactory(), true }
     };
 
     [Theory]

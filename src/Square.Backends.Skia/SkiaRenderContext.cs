@@ -30,6 +30,7 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
 
     public Size CanvasSize => _canvasSize;
     public float DpiScale => _dpiScale;
+    public bool SupportsPartialRendering => true;
 
     public void PushTransform(Matrix3x2 matrix)
     {
@@ -214,9 +215,10 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
     {
         ThrowIfDisposed();
         if (dirtyRects is { Count: 0 }) return;
-        CopyFramebufferTo(_presentBitmap);
+        var physicalDirtyRects = ScaleDirtyRects(dirtyRects);
+        CopyFramebufferTo(_presentBitmap, physicalDirtyRects);
         _presentBitmap.MarkDirty();
-        _presentFrame?.Invoke(_presentBitmap, null);
+        _presentFrame?.Invoke(_presentBitmap, physicalDirtyRects);
     }
 
     public void Resize(Size canvasSize)
@@ -247,7 +249,7 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
     {
         ThrowIfDisposed();
         var bitmap = new Bitmap(_framebuffer.Width, _framebuffer.Height);
-        CopyFramebufferTo(bitmap);
+        CopyFramebufferTo(bitmap, null);
         bitmap.MarkDirty();
         return bitmap;
     }
@@ -420,8 +422,15 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         return builder.Detach();
     }
 
-    private void CopyFramebufferTo(Bitmap bitmap)
+    private void CopyFramebufferTo(Bitmap bitmap, IReadOnlyList<Rect>? dirtyRects)
     {
+        if (dirtyRects is { Count: > 0 })
+        {
+            foreach (var dirtyRect in dirtyRects)
+                CopyFramebufferRectTo(bitmap, dirtyRect);
+            return;
+        }
+
         var byteCount = checked(_framebuffer.RowBytes * _framebuffer.Height);
         if (_framebuffer.RowBytes == bitmap.Stride)
         {
@@ -430,6 +439,43 @@ internal sealed class SkiaRenderContext : IRenderContext, IDpiResizableRenderCon
         }
         for (var row = 0; row < _framebuffer.Height; row++)
             Marshal.Copy(IntPtr.Add(_framebuffer.GetPixels(), row * _framebuffer.RowBytes), bitmap.Pixels, row * bitmap.Stride, bitmap.Stride);
+    }
+
+    private void CopyFramebufferRectTo(Bitmap bitmap, Rect rect)
+    {
+        var left = Math.Clamp((int)MathF.Floor(rect.Left), 0, bitmap.Width);
+        var top = Math.Clamp((int)MathF.Floor(rect.Top), 0, bitmap.Height);
+        var right = Math.Clamp((int)MathF.Ceiling(rect.Right), left, bitmap.Width);
+        var bottom = Math.Clamp((int)MathF.Ceiling(rect.Bottom), top, bitmap.Height);
+        if (right <= left || bottom <= top) return;
+
+        var bytesPerRow = (right - left) * 4;
+        for (var row = top; row < bottom; row++)
+        {
+            var source = IntPtr.Add(_framebuffer.GetPixels(), row * _framebuffer.RowBytes + left * 4);
+            Marshal.Copy(source, bitmap.Pixels, row * bitmap.Stride + left * 4, bytesPerRow);
+        }
+    }
+
+    private Rect[] _scaledDirtyRects = [];
+
+    private IReadOnlyList<Rect>? ScaleDirtyRects(IReadOnlyList<Rect>? dirtyRects)
+    {
+        if (dirtyRects == null) return null;
+        if (_scaledDirtyRects.Length < dirtyRects.Count)
+            _scaledDirtyRects = new Rect[Math.Max(dirtyRects.Count, _scaledDirtyRects.Length * 2)];
+
+        for (var i = 0; i < dirtyRects.Count; i++)
+        {
+            var rect = dirtyRects[i];
+            _scaledDirtyRects[i] = new Rect(
+                MathF.Floor(rect.Left * _dpiScale),
+                MathF.Floor(rect.Top * _dpiScale),
+                MathF.Ceiling(rect.Right * _dpiScale) - MathF.Floor(rect.Left * _dpiScale),
+                MathF.Ceiling(rect.Bottom * _dpiScale) - MathF.Floor(rect.Top * _dpiScale));
+        }
+
+        return new ArraySegment<Rect>(_scaledDirtyRects, 0, dirtyRects.Count);
     }
 
     private static SKColor ToSkColor(Color color)
