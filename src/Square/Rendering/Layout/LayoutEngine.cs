@@ -433,11 +433,17 @@ public sealed partial class LayoutEngine
         if (!element.HasCustomMeasure) return;
 
         var measured = element.Measure(new Size(float.MaxValue, float.MaxValue));
-        if (element.Style.Get("min-width") == null && element.Style.Get("width") == null && IsFiniteLayoutSize(measured.Width))
+        var preservesIntrinsicWidth = element is not Square.Controls.Text || IsDirectRowItem(element);
+        if (preservesIntrinsicWidth && element.Style.Get("min-width") == null &&
+            element.Style.Get("width") == null && IsFiniteLayoutSize(measured.Width))
             YGNodeStyleSetMinWidth(node, measured.Width);
         if (element.Style.Get("min-height") == null && element.Style.Get("height") == null && IsFiniteLayoutSize(measured.Height))
             YGNodeStyleSetMinHeight(node, measured.Height);
     }
+
+    private static bool IsDirectRowItem(Element element) =>
+        element.Parent != null &&
+        (element.Parent.Style.Get("flex-direction")?.Trim().ToLowerInvariant() is "row" or "row-reverse");
 
     private static bool IsFiniteLayoutSize(float value) =>
         !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0 && value < 1_000_000f;

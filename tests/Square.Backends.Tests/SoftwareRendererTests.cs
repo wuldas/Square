@@ -2077,6 +2077,30 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void OverflowHiddenKeepsRoundedComposerShadowCornersSubtle()
+    {
+        var parent = new View { Geometry = new Rect(20, 20, 160, 164) };
+        parent.Style.Set("background", "#ffffff");
+        parent.Style.Set("overflow", "hidden");
+        var composer = new View { Geometry = new Rect(20, 20, 160, 124) };
+        composer.Style.Set("background", "#ffffff");
+        composer.Style.Set("border-radius", "16px");
+        composer.Style.Set("box-shadow", "0 10px 28px rgba(15,23,42,0.09)");
+        parent.Children.Add(composer);
+        var context = CreateContext(200, 204);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(parent);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        AssertPixel(bitmap, 19, 28, 255, 255, 255, 255);
+        Assert.InRange(bitmap.GetPixel(20, 28)[2], (byte)235, (byte)254);
+        Assert.InRange(bitmap.GetPixel(20, 143)[2], (byte)235, (byte)254);
+    }
+
+    [Fact]
     public void DisplayTreeRendersMultipleStyledBoxShadowsInCssPaintOrder()
     {
         var view = new View { Geometry = new Rect(20, 20, 20, 20) };
@@ -2340,7 +2364,7 @@ public class SoftwareRendererTests
         tree.Render(context);
 
         var pixel = context.GetBitmap().GetPixel(70, 76);
-        Assert.True(pixel[0] < 180 && pixel[1] < 180 && pixel[2] < 180,
+        Assert.True(pixel[0] is >= 170 and <= 220 && pixel[1] is >= 170 and <= 220 && pixel[2] is >= 170 and <= 220,
             $"Expected visible menu shadow, got BGR=({pixel[0]},{pixel[1]},{pixel[2]})");
     }
 

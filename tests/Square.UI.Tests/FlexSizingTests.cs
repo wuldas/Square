@@ -69,6 +69,44 @@ public class FlexSizingTests
         Assert.Equal(160, scroller.ScrollContentSize.Height - scroller.Geometry.Height);
     }
 
+    [Fact]
+    public void WrappedTextGeometryUsesTheWidthThatProducedItsHeight()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "column");
+        var text = new Square.Controls.Text("Investigation, tools, changes and review share one quiet desktop surface.")
+        {
+            FontSize = 14
+        };
+        text.Style.Set("line-height", "22px");
+        root.Children.Add(text);
+
+        Layout(root, new Size(220, 120));
+
+        var measuredAtFinalWidth = text.Measure(new Size(text.Geometry.Width, 120));
+        Assert.InRange(text.Geometry.Width, 0, root.Geometry.Width);
+        Assert.Equal(measuredAtFinalWidth.Height, text.Geometry.Height, 3);
+        Assert.True(text.Geometry.Height > 22);
+    }
+
+    [Fact]
+    public void TextDirectlyInsideRowKeepsIntrinsicSingleLineWidth()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "row");
+        root.Style.Set("align-items", "center");
+        var text = new Square.Controls.Text("PiSquared") { FontSize = 15 };
+        root.Children.Add(text);
+        var unconstrained = text.Measure(new Size(float.MaxValue, float.MaxValue));
+
+        Layout(root, new Size(40, 40));
+
+        Assert.Equal(unconstrained.Width, text.Geometry.Width, 3);
+        Assert.Equal(unconstrained.Height, text.Geometry.Height, 3);
+    }
+
     private static void Layout(View root, Size size)
     {
         var layout = new LayoutEngine();

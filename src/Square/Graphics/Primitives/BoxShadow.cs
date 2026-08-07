@@ -203,20 +203,35 @@ public static class BoxShadowRendering
         var baseRect = box.Offset(shadow.OffsetX, shadow.OffsetY).Inflate(shadow.SpreadRadius, shadow.SpreadRadius);
         if (baseRect.IsEmpty) return;
         var blur = Math.Max(0, shadow.BlurRadius);
-        var steps = blur <= 0 ? 1 : Math.Clamp((int)MathF.Ceiling(blur), 2, 24);
-        for (var i = steps; i >= 1; i--)
+        if (blur <= 0)
         {
-            var t = steps == 1 ? 0 : i / (float)steps;
-            var expansion = blur * t;
-            var alphaScale = steps == 1 ? 1f : MathF.Pow(1f - t, 1.6f) * 0.42f;
-            var alpha = (byte)Math.Clamp(MathF.Round(shadow.Color.A * alphaScale), 0, 255);
+            DrawLayer(context, baseRect, Math.Max(0, cornerRadius + shadow.SpreadRadius), shadow.Color);
+            return;
+        }
+
+        var steps = Math.Clamp((int)MathF.Ceiling(blur), 2, 24);
+        var accumulatedAlpha = 0f;
+        for (var i = steps; i >= 0; i--)
+        {
+            var distanceRatio = i / (float)steps;
+            var expansion = blur * distanceRatio;
+            var coverage = 0.5f * MathF.Exp(-3f * distanceRatio * distanceRatio);
+            var targetAlpha = shadow.Color.A / 255f * coverage;
+            var layerAlpha = (targetAlpha - accumulatedAlpha) / Math.Max(0.0001f, 1f - accumulatedAlpha);
+            var alpha = (byte)Math.Clamp(MathF.Round(layerAlpha * 255f), 0, 255);
             if (alpha == 0) continue;
             var rect = baseRect.Inflate(expansion, expansion);
             var radius = Math.Max(0, cornerRadius + shadow.SpreadRadius + expansion);
             var color = Color.FromRgba(shadow.Color.R, shadow.Color.G, shadow.Color.B, alpha);
-            if (radius <= 0) context.FillRect(rect, new SolidColorBrush(color));
-            else context.FillGeometry(new RoundedRectGeometry(rect, radius, radius), new SolidColorBrush(color));
+            DrawLayer(context, rect, radius, color);
+            accumulatedAlpha += alpha / 255f * (1f - accumulatedAlpha);
         }
+    }
+
+    private static void DrawLayer(IRenderContext context, Rect rect, float radius, Color color)
+    {
+        if (radius <= 0) context.FillRect(rect, new SolidColorBrush(color));
+        else context.FillGeometry(new RoundedRectGeometry(rect, radius, radius), new SolidColorBrush(color));
     }
 
     /// <summary>按 CSS 堆叠顺序绘制全部盒阴影，列表首项位于最上层。</summary>
