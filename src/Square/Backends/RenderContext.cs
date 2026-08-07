@@ -45,6 +45,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     internal int RetainedLayerBufferCount => _layerBufferPool.RetainedBufferCount;
     internal int LayerBufferAllocationCount => _layerBufferPool.AllocationCount;
     internal int LayerBufferReuseCount => _layerBufferPool.ReuseCount;
+    internal int RoundedRectStrokeFastPathCount { get; private set; }
 
     internal RenderContext(Bitmap bitmap, float dpiScale, PresentFrameHandler? presentFrame = null)
         : this(
@@ -1038,6 +1039,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private void DrawRoundedRectFast(Rect rect, float rx, float ry, float strokeWidth, Color color)
     {
+        RoundedRectStrokeFastPathCount++;
         var width = Math.Min(strokeWidth, Math.Min(rect.Width, rect.Height) / 2f);
         BlendRectCoverage(new Rect(rect.X + rx, rect.Y, Math.Max(0, rect.Width - rx * 2), width), color);
         BlendRectCoverage(new Rect(rect.X + rx, rect.Bottom - width, Math.Max(0, rect.Width - rx * 2), width), color);

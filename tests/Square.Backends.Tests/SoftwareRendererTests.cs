@@ -2025,19 +2025,17 @@ public class SoftwareRendererTests
     }
 
     [Fact]
-    public void WideRoundedRectStrokeUsesFastPath()
+    public void WideRoundedRectStrokeSelectsFastPath()
     {
         var context = CreateContext(640, 80);
         context.Clear(Color.Transparent);
+        var fastPathCount = context.RoundedRectStrokeFastPathCount;
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        for (var i = 0; i < 200; i++)
-            context.DrawGeometry(
-                new RoundedRectGeometry(new Rect(8, 8, 600, 38), 6, 6),
-                Pen.FromColor(Color.White, 2));
-        sw.Stop();
+        context.DrawGeometry(
+            new RoundedRectGeometry(new Rect(8, 8, 600, 38), 6, 6),
+            Pen.FromColor(Color.White, 2));
 
-        Assert.True(sw.ElapsedMilliseconds < 500, $"Rounded rect stroke took {sw.ElapsedMilliseconds}ms");
+        Assert.Equal(fastPathCount + 1, context.RoundedRectStrokeFastPathCount);
     }
 
     [Fact]

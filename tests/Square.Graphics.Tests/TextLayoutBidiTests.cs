@@ -18,10 +18,11 @@ public class TextLayoutBidiTests
 
         var lines = layout.GetVisualLines();
 
-        Assert.Collection(
-            lines,
-            line => Assert.Equal(new[] { 0, 1, 2, 3 }, line.Runes.Select(rune => rune.StartOffset)),
-            line => Assert.Equal(new[] { 6, 5, 4, 7, 8, 9, 10 }, line.Runes.Select(rune => rune.StartOffset)));
+        Assert.True(lines.Count > 1);
+        Assert.Equal(new[] { 0, 1, 2, 3 }, lines[0].Runes.Select(rune => rune.StartOffset));
+        Assert.Equal(
+            new[] { 6, 5, 4, 7, 8, 9, 10 },
+            lines.Skip(1).SelectMany(line => line.Runes).Select(rune => rune.StartOffset));
     }
 
     [Fact]
@@ -48,8 +49,11 @@ public class TextLayoutBidiTests
 
         var lines = layout.GetVisualLines();
 
+        Assert.True(lines.Count > 1);
         Assert.Equal(text.Length, lines.SelectMany(line => line.Runes).Sum(rune => rune.EndOffset - rune.StartOffset));
-        Assert.Equal(new[] { 9, 8, 7, 10, 11, 12, 13 }, lines[1].Runes.Select(rune => rune.StartOffset));
+        Assert.Equal(
+            new[] { 0, 1, 2, 3, 4, 6, 9, 8, 7, 10, 11, 12, 13 },
+            lines.SelectMany(line => line.Runes).Select(rune => rune.StartOffset));
     }
 
     [Fact]

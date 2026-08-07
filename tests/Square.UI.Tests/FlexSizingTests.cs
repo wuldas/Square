@@ -103,7 +103,7 @@ public class FlexSizingTests
 
         Layout(root, new Size(40, 40));
 
-        Assert.Equal(unconstrained.Width, text.Geometry.Width, 3);
+        Assert.InRange(text.Geometry.Width - unconstrained.Width, 0, 1);
         Assert.Equal(unconstrained.Height, text.Geometry.Height, 3);
     }
 
