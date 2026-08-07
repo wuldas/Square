@@ -18,8 +18,12 @@ internal static class CssPropertyRegistry
     public static bool TryGet(string property, out CssPropertyDefinition definition) =>
         Properties.TryGetValue(property, out definition);
 
-    public static bool IsInherited(string property) =>
-        Properties.TryGetValue(property, out var definition) && definition.Inherited;
+    public static bool IsInherited(string property) => property is
+        "border-collapse" or "border-spacing" or "caption-side" or "color" or "cursor" or "direction" or
+        "empty-cells" or "font" or "font-family" or "font-size" or "font-style" or "font-variant" or
+        "font-weight" or "letter-spacing" or "line-height" or "list-style" or "list-style-image" or
+        "list-style-position" or "list-style-type" or "orphans" or "quotes" or "text-align" or "text-indent" or
+        "text-transform" or "visibility" or "white-space" or "widows" or "word-spacing";
 
     public static string? GetInitialValue(string property) =>
         Properties.TryGetValue(property, out var definition) ? definition.InitialValue : null;

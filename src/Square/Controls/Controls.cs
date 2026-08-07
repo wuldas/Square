@@ -198,7 +198,9 @@ public class Splitter : UIElement
     {
         var delta = IsVertical ? point.X - _dragStart.X : point.Y - _dragStart.Y;
         if (IsReversed) delta = -delta;
-        Value = _dragStartValue + delta;
+        var value = Clamp(_dragStartValue + delta);
+        if (value.Equals(Value)) return;
+        Value = value;
         DispatchTrusted(StandardEvents.CreateInput());
     }
 

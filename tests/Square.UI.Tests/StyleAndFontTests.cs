@@ -94,6 +94,63 @@ public class StyleAndFontTests
     }
 
     [Fact]
+    public void ComputedStyleCacheTracksInheritedChangesAndReparenting()
+    {
+        var firstParent = new View();
+        var secondParent = new View();
+        var child = new View();
+        firstParent.Style.Set("color", "red");
+        secondParent.Style.Set("color", "blue");
+        firstParent.Children.Add(child);
+
+        Assert.Equal("red", child.Style.Get("color"));
+        firstParent.Style.Set("color", "green");
+        Assert.Equal("green", child.Style.Get("color"));
+
+        child.Style.Set("width", "inherit");
+        firstParent.Style.Set("width", "120px");
+        Assert.Equal("120px", child.Style.Get("width"));
+        firstParent.Style.Set("width", "180px");
+        Assert.Equal("180px", child.Style.Get("width"));
+
+        firstParent.Children.Remove(child);
+        secondParent.Children.Add(child);
+
+        Assert.Equal("blue", child.Style.Get("color"));
+    }
+
+    [Fact]
+    public void SettingUnchangedInlineStyleKeepsLayoutClean()
+    {
+        var view = new View();
+        view.Style.Set("width", "200px");
+        view.ClearLayoutDirty();
+        view.ClearPaintDirty();
+
+        view.Style.Set("width", "200px");
+
+        Assert.False(view.IsLayoutDirty);
+        Assert.False(view.NeedsPaint);
+    }
+
+    [Fact]
+    public void RepeatedComputedStyleReadsUseAllocationFreeCache()
+    {
+        var view = new View();
+        view.Style.Set("display", "flex");
+        _ = view.Style.Get("display");
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var totalLength = 0;
+
+        for (var i = 0; i < 10_000; i++)
+            totalLength += view.Style.Get("display")!.Length;
+
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(40_000, totalLength);
+        Assert.InRange(allocated, 0, 1_024);
+    }
+
+    [Fact]
     public void PaintOnlyStyleChangesDoNotInvalidateLayout()
     {
         var root = new View();

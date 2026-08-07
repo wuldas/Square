@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Square.Backends.Tests" />
+    <InternalsVisibleTo Include="Square.CSS.Tests" />
     <InternalsVisibleTo Include="Square.Images.Tests" />
     <InternalsVisibleTo Include="Square.Platform.Win32" />
     <InternalsVisibleTo Include="Square.Platform.X11" />

@@ -37,6 +37,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private bool _isSelectingText;
     private Element? _pointerDownTarget;
     private Splitter? _draggingSplitter;
+    private Point? _pendingSplitterPoint;
     private Element? _lastClickTarget;
     private Point _lastClickPoint;
     private double _lastClickSeconds = double.NegativeInfinity;
@@ -326,6 +327,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void RenderFrame()
     {
+        FlushPendingSplitterMove();
         var hadPendingTextSelection = _pendingTextSelectionPoint.HasValue;
         var textSelectionChanged = FlushPendingTextSelection();
         var textSelectionOverlayDirtyBounds = _textSelectionOverlayDirtyBounds;
@@ -507,10 +509,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             _document.Context.Reconciler.Flush();
         }
 
-        if (CssStyleReconciler.HasWork)
+        if (CssStyleReconciler.HasWorkForTree(_root))
         {
             hadWork = true;
-            CssStyleReconciler.Flush();
+            CssStyleReconciler.Flush(_root);
         }
 
         return hadWork;
@@ -605,6 +607,29 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (_host == null) return;
 
+        if (_draggingSplitter != null && action == MouseAction.Move)
+        {
+            _pendingSplitterPoint = point;
+            RequestRender();
+            return;
+        }
+
+        if (_draggingSplitter != null && action == MouseAction.Up)
+        {
+            var releaseHit = HitTest(point);
+            _pendingSplitterPoint = null;
+            _draggingSplitter.HandlePointerUp(point);
+            _draggingSplitter = null;
+            UpdateHoverPath(releaseHit);
+            _host.Cursor = ResolveCursor(releaseHit, point);
+            if (_pointerDownTarget != null && releaseHit == _pointerDownTarget)
+                releaseHit?.DispatchTrusted(StandardEvents.CreateClick());
+            _pointerDownTarget = null;
+            ClearActivePath();
+            RenderFrame();
+            return;
+        }
+
         var hit = HitTest(point);
         if (action == MouseAction.Down && MainWindow.TitleStyle == TitleStyle.Custom &&
             _document.Head.Geometry.Contains(point) && !IsInteractiveTitleBarElement(hit))
@@ -621,12 +646,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             if (!isSelectingDocumentText) UpdateHoverPath(hit);
             var needsRender = false;
             _host.Cursor = ResolveCursor(hit, point);
-            if (_draggingSplitter != null)
-            {
-                _draggingSplitter.HandlePointerMove(point);
-                needsRender = true;
-            }
-            else if (_isSelectingText && _focusedEditor != null)
+            if (_isSelectingText && _focusedEditor != null)
             {
                 _focusedEditor.HandlePointerMove(MapPointerPoint(_focusedInput, point));
                 needsRender = true;
@@ -660,12 +680,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (action == MouseAction.Up)
         {
-            if (_draggingSplitter != null)
-            {
-                _draggingSplitter.HandlePointerUp(point);
-                _draggingSplitter = null;
-            }
-
             if (_isSelectingText && _focusedEditor != null)
             {
                 _focusedEditor.HandlePointerUp(MapPointerPoint(_focusedInput, point));
@@ -707,11 +721,19 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         UpdateActivePath(hit);
         hit?.DispatchTrusted(StandardEvents.CreatePointerDown());
         _draggingSplitter = FindAncestor<Splitter>(hit);
+        _pendingSplitterPoint = null;
         _draggingSplitter?.HandlePointerDown(point);
         UpdateFocus(hit, point, isDoubleClick);
 
         if (hit is Select selected) selected.HandlePointerDown(point);
         RenderFrame();
+    }
+
+    private void FlushPendingSplitterMove()
+    {
+        if (_draggingSplitter == null || _pendingSplitterPoint is not { } point) return;
+        _pendingSplitterPoint = null;
+        _draggingSplitter.HandlePointerMove(point);
     }
 
     private void UpdateFocus(Element? hit, Point point, bool selectWord)
@@ -1558,7 +1580,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                           || animationsRunning
                           || Volatile.Read(ref _renderRequested)
                           || _document.Context.Reconciler.HasWork
-                          || CssStyleReconciler.HasWork
+                          || CssStyleReconciler.HasWorkForTree(_root)
                           || Dispatcher.HasWork;
         if (_focusedEditor?.ToggleCaretBlink() == true) needsRender = true;
         if (needsRender && HasVisualWork()) RenderFrame();

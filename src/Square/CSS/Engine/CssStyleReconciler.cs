@@ -22,6 +22,13 @@ public static class CssStyleReconciler
         get { lock (Gate) return DirtyElements.Count > 0; }
     }
 
+    internal static bool HasWorkForTree(Element root)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        lock (Gate)
+            return DirtyElements.Any(element => ReferenceEquals(FindTreeRoot(element), root));
+    }
+
     internal static void RegisterScope(CssEngine engine, Element root)
     {
         _ = HasWork; // Ensures the static constructor subscribed to Element.StyleInvalidated.
@@ -51,6 +58,17 @@ public static class CssStyleReconciler
     /// <summary>刷新所有脏元素的样式，重新应用级联样式并推进动画。</summary>
     public static void Flush()
     {
+        FlushCore(root: null);
+    }
+
+    internal static void Flush(Element root)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        FlushCore(root);
+    }
+
+    private static void FlushCore(Element? root)
+    {
         lock (ApplyGate)
         {
             StyleScope[] scopes;
@@ -58,8 +76,20 @@ public static class CssStyleReconciler
             lock (Gate)
             {
                 if (DirtyElements.Count == 0) return;
-                dirtyElements = DirtyElements.ToArray();
-                DirtyElements.Clear();
+                if (root == null)
+                {
+                    dirtyElements = DirtyElements.ToArray();
+                    DirtyElements.Clear();
+                }
+                else
+                {
+                    dirtyElements = DirtyElements
+                        .Where(element => ReferenceEquals(FindTreeRoot(element), root))
+                        .ToArray();
+                    if (dirtyElements.Length == 0) return;
+                    foreach (var element in dirtyElements)
+                        DirtyElements.Remove(element);
+                }
                 var candidateScopes = Scopes
                     .Where(scope => dirtyElements.Any(element => AreInSameStyleBranch(scope.Root, element)))
                     .ToArray();
@@ -83,20 +113,23 @@ public static class CssStyleReconciler
 
                 using (Element.SuppressInvalidation())
                 {
-                    foreach (var root in styleRoots)
-                        ClearCascadedSubtree(root);
+                    foreach (var styleRoot in styleRoots)
+                    {
+                        styleRoot.Style.ClearComputedStylesRecursive();
+                        ClearCascadedSubtree(styleRoot);
+                    }
 
-                    foreach (var root in styleRoots)
+                    foreach (var styleRoot in styleRoots)
                     {
                         foreach (var scope in scopes)
                         {
-                            var target = IsAncestorOrSelf(scope.Root, root) ? root : scope.Root;
-                            if (AreInSameStyleBranch(target, root))
+                            var target = IsAncestorOrSelf(scope.Root, styleRoot) ? styleRoot : scope.Root;
+                            if (AreInSameStyleBranch(target, styleRoot))
                                 scope.Engine.ApplyStylesToTreeCore(target);
                         }
                     }
-                    foreach (var root in MinimizeRoots(scopes.Select(scope => scope.Root)))
-                        pseudoElementChanges.UnionWith(CssEngine.FinalizePseudoElements(root));
+                    foreach (var scopeRoot in MinimizeRoots(scopes.Select(scope => scope.Root)))
+                        pseudoElementChanges.UnionWith(CssEngine.FinalizePseudoElements(scopeRoot));
                     foreach (var scope in scopes)
                         scope.Animations.Attach(scope.Root);
                 }
@@ -128,24 +161,28 @@ public static class CssStyleReconciler
 
     internal static void ReapplyScopesToTree(Element root)
     {
-        StyleScope[] scopes;
-        lock (Gate)
-            scopes = Scopes.Where(scope => ReferenceEquals(FindTreeRoot(scope.Root), root)).ToArray();
-        if (scopes.Length == 0) return;
-
-        IReadOnlyCollection<Element> pseudoElementChanges;
-        using (Element.SuppressInvalidation())
+        lock (ApplyGate)
         {
-            ClearCascadedSubtree(root);
-            foreach (var scope in scopes)
+            StyleScope[] scopes;
+            lock (Gate)
+                scopes = Scopes.Where(scope => ReferenceEquals(FindTreeRoot(scope.Root), root)).ToArray();
+            if (scopes.Length == 0) return;
+
+            IReadOnlyCollection<Element> pseudoElementChanges;
+            using (Element.SuppressInvalidation())
             {
-                scope.Engine.ApplyStylesToTreeCore(scope.Root);
-                scope.Animations.Attach(scope.Root);
+                root.Style.ClearComputedStylesRecursive();
+                ClearCascadedSubtree(root);
+                foreach (var scope in scopes)
+                {
+                    scope.Engine.ApplyStylesToTreeCore(scope.Root);
+                    scope.Animations.Attach(scope.Root);
+                }
+                pseudoElementChanges = CssEngine.FinalizePseudoElements(root);
             }
-            pseudoElementChanges = CssEngine.FinalizePseudoElements(root);
+            foreach (var changed in pseudoElementChanges)
+                changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
         }
-        foreach (var changed in pseudoElementChanges)
-            changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
     }
 
     internal static void InvalidateScopes(CssEngine engine)

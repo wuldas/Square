@@ -178,6 +178,41 @@ public class PseudoClassTests
     }
 
     [Fact]
+    public void TreeScopedFlushLeavesOtherWindowStyleWorkPending()
+    {
+        var sheet = new CssParser(new CssTokenizer("Button:hover { background: blue; }").Tokenize()).Parse();
+        var firstEngine = new CssEngine();
+        var secondEngine = new CssEngine();
+        firstEngine.LoadStyleSheet(sheet);
+        secondEngine.LoadStyleSheet(sheet);
+        var firstRoot = new Square.Controls.View();
+        var secondRoot = new Square.Controls.View();
+        var firstButton = new Square.Controls.Button();
+        var secondButton = new Square.Controls.Button();
+        firstRoot.Children.Add(firstButton);
+        secondRoot.Children.Add(secondButton);
+        firstEngine.ApplyStylesToTree(firstRoot);
+        secondEngine.ApplyStylesToTree(secondRoot);
+
+        firstButton.SetState(ElementState.Hover, true);
+        secondButton.SetState(ElementState.Hover, true);
+        Assert.True(CssStyleReconciler.HasWorkForTree(firstRoot));
+        Assert.True(CssStyleReconciler.HasWorkForTree(secondRoot));
+
+        CssStyleReconciler.Flush(firstRoot);
+
+        Assert.Equal("blue", firstButton.Style.Get("background"));
+        Assert.Null(secondButton.Style.Get("background"));
+        Assert.False(CssStyleReconciler.HasWorkForTree(firstRoot));
+        Assert.True(CssStyleReconciler.HasWorkForTree(secondRoot));
+
+        CssStyleReconciler.Flush(secondRoot);
+
+        Assert.Equal("blue", secondButton.Style.Get("background"));
+        Assert.False(CssStyleReconciler.HasWorkForTree(secondRoot));
+    }
+
+    [Fact]
     public void HoverWithoutDynamicRulesKeepsLayoutClean()
     {
         var sheet = new CssParser(new CssTokenizer("View { width: 120px; color: red; }").Tokenize()).Parse();

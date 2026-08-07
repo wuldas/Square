@@ -80,7 +80,11 @@ public sealed class ChildNodeCollection : IList<Node>
         DetachIfNeeded(item);
         _list.RemoveAt(index);
         item.ParentNode = null;
-        if (item is Element element) _owner.OnChildRemoved(element);
+        if (item is Element element)
+        {
+            element.Style.ClearComputedStylesRecursive();
+            _owner.OnChildRemoved(element);
+        }
         InvalidateStructure();
     }
 
@@ -91,7 +95,11 @@ public sealed class ChildNodeCollection : IList<Node>
         {
             DetachIfNeeded(item);
             item.ParentNode = null;
-            if (item is Element element) _owner.OnChildRemoved(element);
+            if (item is Element element)
+            {
+                element.Style.ClearComputedStylesRecursive();
+                _owner.OnChildRemoved(element);
+            }
         }
         _list.Clear();
         InvalidateStructure();
@@ -122,6 +130,7 @@ public sealed class ChildNodeCollection : IList<Node>
     private void Attach(Node item)
     {
         item.ParentNode = _owner;
+        if (item is Element attachedElement) attachedElement.Style.ClearComputedStylesRecursive();
         item.OwnerDocument = _owner.OwnerDocument;
         if (_owner.OwnerDocument != null)
             _owner.OwnerDocument.AssignOwnerDocument(item);

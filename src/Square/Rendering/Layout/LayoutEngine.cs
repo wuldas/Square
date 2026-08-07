@@ -304,7 +304,8 @@ public sealed partial class LayoutEngine
     private YogaSession BuildYogaTree(Element root, float width, float height)
     {
         var session = new YogaSession();
-        var yogaRoot = CreateYogaSubtree(root, session, width, height, isRoot: true);
+        var rootFontSize = GetRootFontSize(root);
+        var yogaRoot = CreateYogaSubtree(root, session, width, height, rootFontSize, isRoot: true);
         session.Root = yogaRoot;
 
         if (!float.IsNaN(width) && !float.IsInfinity(width) && width >= 0)
@@ -320,7 +321,8 @@ public sealed partial class LayoutEngine
         return session;
     }
 
-    private YogaNode CreateYogaSubtree(Element element, YogaSession session, float parentW, float parentH, bool isRoot)
+    private YogaNode CreateYogaSubtree(
+        Element element, YogaSession session, float parentW, float parentH, float rem, bool isRoot)
     {
         if (element is ILayoutPreparingElement preparing)
             preparing.PrepareLayout(new Size(parentW, parentH));
@@ -330,7 +332,6 @@ public sealed partial class LayoutEngine
         session.Map[element] = node;
 
         var em = GetFontSize(element);
-        var rem = GetRootFontSize(element);
         var display = element.Style.Get("display")?.Trim();
 
         if (string.Equals(display, "none", StringComparison.OrdinalIgnoreCase))
@@ -397,7 +398,7 @@ public sealed partial class LayoutEngine
                 {
                     var child = visibleChildren[j];
                     if (child is IPopupElement { IsLayoutOverlay: true }) continue;
-                    var childNode = CreateYogaSubtree(child, session, refW, refH, isRoot: false);
+                    var childNode = CreateYogaSubtree(child, session, refW, refH, rem, isRoot: false);
                     if (element.IsScrollContainer() && child.Style.Get("flex-shrink") == null)
                         YGNodeStyleSetFlexShrink(childNode, 0);
                     YGNodeInsertChild(node, childNode, i++);
@@ -1643,7 +1644,7 @@ public sealed partial class LayoutEngine
             var parsed = ParseLength(value, float.NaN, float.NaN, 16f, 16f);
             if (!float.IsNaN(parsed)) return parsed;
         }
-        return element.Parent != null ? GetFontSize(element.Parent) : 16f;
+        return 16f;
     }
 
     private static float GetRootFontSize(Element element)

@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using Square.Controls;
 using Square.CSS.Engine;
 using Square.CSS.Tokenizer;
@@ -30,6 +31,29 @@ public class DocumentTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         Assert.NotNull(field);
         field!.SetValue(application, false);
+    }
+
+    private static void InvokeHandleMouse(DesktopApplication application, Square.Graphics.Point point, MouseAction action)
+    {
+        var method = typeof(DesktopApplication).GetMethod(
+            "HandleMouse",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        method!.Invoke(application, [point, action]);
+    }
+
+    private static void SetPrivateField<T>(DesktopApplication application, string name, T value)
+    {
+        var field = typeof(DesktopApplication).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field!.SetValue(application, value);
+    }
+
+    private static T? GetPrivateField<T>(DesktopApplication application, string name)
+    {
+        var field = typeof(DesktopApplication).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return (T?)field!.GetValue(application);
     }
 
     private static bool HasVisualInvalidation(Element element)
@@ -126,6 +150,51 @@ public class DocumentTests
         splitter.HandlePointerMove(new Square.Graphics.Point(200, 0));
 
         Assert.Equal(260, splitter.Value);
+    }
+
+    [Fact]
+    public void SplitterDoesNotRaiseInputWhenClampedValueDoesNotChange()
+    {
+        var splitter = new Splitter { Value = 240, Minimum = 240, Maximum = 420 };
+        var inputCount = 0;
+        splitter.AddEventListener("input", () => inputCount++);
+
+        splitter.HandlePointerDown(new Square.Graphics.Point(100, 0));
+        splitter.HandlePointerMove(new Square.Graphics.Point(20, 0));
+        splitter.HandlePointerMove(new Square.Graphics.Point(10, 0));
+
+        Assert.Equal(240, splitter.Value);
+        Assert.Equal(0, inputCount);
+    }
+
+    [Fact]
+    public void DesktopApplicationCoalescesSplitterMovesUntilRender()
+    {
+        var window = new AppWindow("Splitter");
+        var splitter = new Splitter { Value = 300, Minimum = 240, Maximum = 420 };
+        window.Load(splitter);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        SetPrivateField(application, "_draggingSplitter", splitter);
+        splitter.HandlePointerDown(new Square.Graphics.Point(100, 0));
+
+        InvokeHandleMouse(application, new Square.Graphics.Point(120, 0), MouseAction.Move);
+        InvokeHandleMouse(application, new Square.Graphics.Point(170, 0), MouseAction.Move);
+
+        Assert.Equal(300, splitter.Value);
+        Assert.Equal(new Square.Graphics.Point(170, 0),
+            GetPrivateField<Square.Graphics.Point?>(application, "_pendingSplitterPoint"));
+        Assert.True(IsRenderRequested(application));
+
+        var flush = typeof(DesktopApplication).GetMethod(
+            "FlushPendingSplitterMove",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(flush);
+        flush!.Invoke(application, null);
+
+        Assert.Equal(370, splitter.Value);
+        Assert.Null(GetPrivateField<Square.Graphics.Point?>(application, "_pendingSplitterPoint"));
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
     }
 
     [Fact]
@@ -942,5 +1011,29 @@ public class DocumentTests
         range.SetStart(linkText, 0);
         range.SetEnd(buttonText, 6);
         Assert.Equal("documentationsubmit", range.ToString());
+    }
+
+    private sealed class SplitterTestHost : IPlatformHost
+    {
+        public Square.Graphics.Size ClientSize => new(800, 600);
+        public float DpiScale => 1;
+        public bool IsRunning => true;
+        public string Title { get; set; } = "";
+        public CursorKind Cursor { get; set; }
+        public KeyModifiers Modifiers => KeyModifiers.None;
+        public event Action<Square.Graphics.Size>? SizeChanged { add { } remove { } }
+        public event Action<Square.Graphics.Point, MouseAction>? MouseEvent { add { } remove { } }
+        public event Action<Square.Graphics.Point, int>? WheelEvent { add { } remove { } }
+        public event Action<int, KeyAction>? KeyEvent { add { } remove { } }
+        public event Action<string>? TextInput { add { } remove { } }
+        public event Action? Tick { add { } remove { } }
+        public void Show() { }
+        public void Close() { }
+        public Square.Graphics.IRenderContext CreateRenderContext() => throw new NotSupportedException();
+        public void PumpEvents() { }
+        public void SetTextInputRect(Square.Graphics.Rect rect) { }
+        public string GetClipboardText() => "";
+        public void SetClipboardText(string text) { }
+        public void Dispose() { }
     }
 }

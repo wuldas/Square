@@ -17,6 +17,8 @@ public sealed class StyleAccessor
     private Dictionary<string, InlineStyleEntry>? _inlineStyles;
     private Dictionary<string, CascadedStyleEntry>? _cascadedStyles;
     private Dictionary<string, string>? _animatedStyles;
+    private Dictionary<string, string?>? _computedStyles;
+    private HashSet<string>? _parentDependentStyles;
 
     internal StyleAccessor(Element owner) { _owner = owner; }
 
@@ -83,11 +85,18 @@ public sealed class StyleAccessor
 
         value = value.Trim();
         if (!TryGetAssignments(property, value, out var assignments)) return;
+        var important = priority.Length > 0;
+        if (_inlineStyles != null && assignments.All(assignment =>
+                _inlineStyles.TryGetValue(assignment.Property, out var current) &&
+                current.Value == assignment.Value && current.Important == important)) return;
         var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => Get(assignment.Property),
             StringComparer.Ordinal);
         _inlineStyles ??= [];
         foreach (var assignment in assignments)
-            _inlineStyles[assignment.Property] = new InlineStyleEntry(assignment.Value, priority.Length > 0);
+        {
+            _inlineStyles[assignment.Property] = new InlineStyleEntry(assignment.Value, important);
+            RemoveComputedStyle(assignment.Property);
+        }
         foreach (var assignment in assignments)
             InvalidateIfEffectiveValueChanged(assignment.Property, previous[assignment.Property]);
     }
@@ -115,7 +124,11 @@ public sealed class StyleAccessor
         if (_inlineStyles == null || !_inlineStyles.TryGetValue(property, out var entry)) return "";
         var properties = GetDeclarationProperties(property).Where(_inlineStyles.ContainsKey).ToArray();
         var previous = properties.ToDictionary(name => name, Get, StringComparer.Ordinal);
-        foreach (var name in properties) _inlineStyles.Remove(name);
+        foreach (var name in properties)
+        {
+            _inlineStyles.Remove(name);
+            RemoveComputedStyle(name);
+        }
         foreach (var name in properties) InvalidateIfEffectiveValueChanged(name, previous[name]);
         return entry.Value ?? "";
     }
@@ -131,6 +144,7 @@ public sealed class StyleAccessor
         _animatedStyles ??= [];
         if (_animatedStyles.TryGetValue(property, out var current) && current == value) return false;
         _animatedStyles[property] = value;
+        RemoveComputedStyle(property);
         InvalidateIfEffectiveValueChanged(property, previous);
         return true;
     }
@@ -141,6 +155,7 @@ public sealed class StyleAccessor
         if (_animatedStyles == null || !_animatedStyles.ContainsKey(property)) return;
         var previous = Get(property);
         _animatedStyles.Remove(property);
+        RemoveComputedStyle(property);
         InvalidateIfEffectiveValueChanged(property, previous);
     }
 
@@ -169,6 +184,7 @@ public sealed class StyleAccessor
             _cascadedStyles[assignment.Property] = candidate;
             changed.Add(assignment.Property);
         }
+        foreach (var name in changed) RemoveComputedStyle(name);
         foreach (var name in changed) InvalidateIfEffectiveValueChanged(name, previous[name]);
         return changed.Count > 0;
     }
@@ -176,23 +192,54 @@ public sealed class StyleAccessor
     /// <summary>读取最终应用值；未设置或变量解析失败时返回 null。</summary>
     public string? Get(string property)
     {
+        property ??= "";
+        if (_computedStyles != null && _computedStyles.TryGetValue(property, out var cached)) return cached;
         property = NormalizePropertyName(property);
+        if (_computedStyles != null && _computedStyles.TryGetValue(property, out cached)) return cached;
         var raw = GetRaw(property);
         if (property.StartsWith("--", StringComparison.Ordinal)) return raw;
+        var inherited = CssPropertyRegistry.IsInherited(property);
+        var dependsOnParent = false;
+        string? result;
         if (raw == null)
-            return CssPropertyRegistry.IsInherited(property) ? _owner.Parent?.Style.Get(property) : null;
-        if (string.Equals(raw, "inherit", StringComparison.OrdinalIgnoreCase))
-            return _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property);
-        if (string.Equals(raw, "initial", StringComparison.OrdinalIgnoreCase))
-            return CssPropertyRegistry.GetInitialValue(property);
-        if (string.Equals(raw, "unset", StringComparison.OrdinalIgnoreCase))
-            return CssPropertyRegistry.IsInherited(property)
+        {
+            dependsOnParent = inherited;
+            result = inherited ? _owner.Parent?.Style.Get(property) : null;
+        }
+        else if (string.Equals(raw, "inherit", StringComparison.OrdinalIgnoreCase))
+        {
+            dependsOnParent = true;
+            result = _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property);
+        }
+        else if (string.Equals(raw, "initial", StringComparison.OrdinalIgnoreCase))
+            result = CssPropertyRegistry.GetInitialValue(property);
+        else if (string.Equals(raw, "unset", StringComparison.OrdinalIgnoreCase))
+        {
+            dependsOnParent = inherited;
+            result = inherited
                 ? _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property)
                 : CssPropertyRegistry.GetInitialValue(property);
-        var resolved = ResolveVariables(raw, []);
-        return resolved ?? (CssPropertyRegistry.IsInherited(property)
-            ? _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property)
-            : CssPropertyRegistry.GetInitialValue(property));
+        }
+        else
+        {
+            var resolved = ResolveVariables(raw, []);
+            dependsOnParent = resolved == null && inherited;
+            result = resolved ?? (inherited
+                ? _owner.Parent?.Style.Get(property) ?? CssPropertyRegistry.GetInitialValue(property)
+                : CssPropertyRegistry.GetInitialValue(property));
+        }
+        _computedStyles ??= [];
+        _computedStyles[property] = result;
+        if (dependsOnParent)
+        {
+            _parentDependentStyles ??= [];
+            _parentDependentStyles.Add(property);
+        }
+        else
+        {
+            _parentDependentStyles?.Remove(property);
+        }
+        return result;
     }
 
     /// <summary>移除内联属性。</summary>
@@ -205,6 +252,7 @@ public sealed class StyleAccessor
         var properties = _inlineStyles.Keys.ToArray();
         var previous = properties.ToDictionary(property => property, Get, StringComparer.Ordinal);
         _inlineStyles.Clear();
+        foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
             InvalidateIfEffectiveValueChanged(property, previous[property]);
     }
@@ -220,6 +268,7 @@ public sealed class StyleAccessor
         if (properties.Length == 0) return;
         var previous = properties.ToDictionary(property => property, Get, StringComparer.Ordinal);
         foreach (var property in properties) _cascadedStyles.Remove(property);
+        foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
             InvalidateIfEffectiveValueChanged(property, previous[property]);
     }
@@ -284,10 +333,38 @@ public sealed class StyleAccessor
     {
         var current = Get(property);
         if (string.Equals(previous, current, StringComparison.Ordinal)) return;
+        if (property.StartsWith("--", StringComparison.Ordinal))
+            ClearComputedStylesRecursive();
+        else
+            RemoveDependentDescendantComputedStyle(property);
         if (property == "z-index") SyncOwnerZIndex();
         var invalidation = StyleInvalidation.ForProperty(property);
         if (property.StartsWith("--", StringComparison.Ordinal)) invalidation |= ElementInvalidation.Style;
         _owner.Invalidate(invalidation);
+    }
+
+    internal void ClearComputedStylesRecursive()
+    {
+        _computedStyles?.Clear();
+        _parentDependentStyles?.Clear();
+        foreach (var child in _owner.Children)
+            child.Style.ClearComputedStylesRecursive();
+    }
+
+    private void RemoveComputedStyle(string property)
+    {
+        _computedStyles?.Remove(property);
+        _parentDependentStyles?.Remove(property);
+    }
+
+    private void RemoveDependentDescendantComputedStyle(string property)
+    {
+        foreach (var child in _owner.Children)
+        {
+            if (child.Style._parentDependentStyles?.Contains(property) != true) continue;
+            child.Style.RemoveComputedStyle(property);
+            child.Style.RemoveDependentDescendantComputedStyle(property);
+        }
     }
 
     private void SyncOwnerZIndex()
