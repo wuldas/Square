@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <Description>ANSI VT terminal model, parser, and TerminalView control for Square</Description>
+    <PackageTags>$(PackageTags);terminal;ansi;vt;ssh</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Square\Square.csproj" />
+  </ItemGroup>
+
+</Project>

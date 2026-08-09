@@ -975,12 +975,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             if (_focusedEditor.CanCopySelection && _focusedEditor.SelectionLength > 0)
                 _host.SetClipboardText(_focusedEditor.SelectedText);
+            else
+                _focusedEditor.HandleKey(keyCode, shift, control);
         }
         else if (control && keyCode == 88)
         {
             if (_focusedEditor.CanCutSelection && _focusedEditor.SelectionLength > 0)
             {
                 _host.SetClipboardText(_focusedEditor.SelectedText);
+                _focusedEditor.HandleKey(keyCode, shift, control);
+            }
+            else
+            {
                 _focusedEditor.HandleKey(keyCode, shift, control);
             }
         }
