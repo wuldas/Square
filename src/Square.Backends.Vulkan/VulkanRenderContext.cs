@@ -433,6 +433,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         }
 
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight);
+        var baselineOffset = TextMetrics.GetBaselineOffset(text.Font, lineHeight);
         var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width, (offset, rune) =>
             TextLayout.MeasureRuneAdvance(rune, text.Font), text.WrappingOptions);
 
@@ -441,7 +442,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
             var line = lines[lineIndex];
             var indent = text.GetLineIndent(lineIndex);
             var x = origin.X + indent + GetTextAlignmentOffset(text, line.Width + indent);
-            var y = origin.Y + lineIndex * lineHeight;
+            var y = origin.Y + lineIndex * lineHeight + baselineOffset;
             foreach (var visualRune in text.EnumerateVisualRunes(line))
             {
                 var rune = visualRune.Glyph;
@@ -621,6 +622,8 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
     {
         var physicalOrigin = TransformPoint(origin);
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight) * DpiScale;
+        var physicalFont = text.Font.WithSize(text.Font.Size * DpiScale);
+        var baselineOffset = TextMetrics.GetBaselineOffset(physicalFont, lineHeight);
         var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width * DpiScale, (offset, rune) =>
             TextLayout.MeasureRuneAdvance(rune, text.Font) * DpiScale, text.WrappingOptions);
 
@@ -629,7 +632,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
             var line = lines[lineIndex];
             var indent = text.GetLineIndent(lineIndex);
             var x = physicalOrigin.X + (indent + GetTextAlignmentOffset(text, line.Width / DpiScale + indent)) * DpiScale;
-            var y = physicalOrigin.Y + lineIndex * lineHeight;
+            var y = physicalOrigin.Y + lineIndex * lineHeight + baselineOffset;
             foreach (var visualRune in text.EnumerateVisualRunes(line))
             {
                 var rune = visualRune.Glyph;

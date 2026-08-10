@@ -1865,6 +1865,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         var lineHeight = TextMetrics.GetLineHeight(textLayout.Font, textLayout.LineHeight) * _dpiScale;
         var maxWidth = textLayout.MaxSize.Width * _dpiScale;
         var physicalFont = textLayout.Font.WithSize(textLayout.Font.Size * _dpiScale);
+        var baselineOffset = TextMetrics.GetBaselineOffset(physicalFont, lineHeight);
         var glyphs = new Dictionary<int, RasterizedGlyph?>();
         var lines = TextWrapping.Wrap(textLayout.Text, maxWidth, (offset, rune) =>
         {
@@ -1881,7 +1882,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             var line = lines[lineIndex];
             var indent = textLayout.GetLineIndent(lineIndex);
             var x = origin.X + (indent + GetTextAlignmentOffset(textLayout, line.Width / _dpiScale + indent)) * _dpiScale;
-            var y = origin.Y + lineIndex * lineHeight;
+            var y = origin.Y + lineIndex * lineHeight + baselineOffset;
             foreach (var visualRune in textLayout.EnumerateVisualRunes(line))
             {
                 var rune = visualRune.Glyph;

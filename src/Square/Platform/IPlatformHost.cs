@@ -24,7 +24,7 @@ public interface IPlatformHost : IDisposable
     /// <summary>尺寸变化事件。</summary>
     event Action<Size>? SizeChanged;
     /// <summary>鼠标事件。</summary>
-    event Action<Point, MouseAction>? MouseEvent;
+    event Action<Point, MouseAction, MouseButton>? MouseEvent;
     /// <summary>滚轮事件。</summary>
     event Action<Point, int>? WheelEvent;
     /// <summary>键盘事件。</summary>
@@ -107,6 +107,19 @@ public enum MouseAction
     Move,
     /// <summary>滚轮。</summary>
     Wheel
+}
+
+/// <summary>鼠标按键。</summary>
+public enum MouseButton
+{
+    /// <summary>无按键（移动事件）。</summary>
+    None,
+    /// <summary>主按键。</summary>
+    Left,
+    /// <summary>中键。</summary>
+    Middle,
+    /// <summary>次按键。</summary>
+    Right
 }
 
 /// <summary>键盘动作。</summary>

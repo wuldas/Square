@@ -270,7 +270,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     private uint _lastModifierState;
 
     public event Action<Size>? SizeChanged;
-    public event Action<Point, MouseAction>? MouseEvent;
+    public event Action<Point, MouseAction, MouseButton>? MouseEvent;
     public event Action<Point, int>? WheelEvent;
     public event Action<int, KeyAction>? KeyEvent;
     public event Action<string>? TextInput;
@@ -479,7 +479,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                         if (!string.IsNullOrEmpty(text)) TextInput?.Invoke(text);
                     }
                     else
-                        MouseEvent?.Invoke(pt, MouseAction.Down);
+                        MouseEvent?.Invoke(pt, MouseAction.Down, button == X11Api.Button3 ? MouseButton.Right : MouseButton.Left);
                 }
                 break;
             case X11Api.ButtonRelease:
@@ -490,8 +490,8 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                     uint state = *(uint*)(raw + 80);
                     uint button = *(uint*)(raw + 84);
                     _lastModifierState = state;
-                    if (button is not X11Api.Button4 and not X11Api.Button5)
-                        MouseEvent?.Invoke(ToLogicalPoint(x, y), MouseAction.Up);
+                    if (button is not X11Api.Button2 and not X11Api.Button4 and not X11Api.Button5)
+                        MouseEvent?.Invoke(ToLogicalPoint(x, y), MouseAction.Up, button == X11Api.Button3 ? MouseButton.Right : MouseButton.Left);
                 }
                 break;
             case X11Api.MotionNotify:
@@ -499,7 +499,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                     var raw = (byte*)(&e);
                     int x = *(int*)(raw + 64);
                     int y = *(int*)(raw + 68);
-                    MouseEvent?.Invoke(ToLogicalPoint(x, y), MouseAction.Move);
+                    MouseEvent?.Invoke(ToLogicalPoint(x, y), MouseAction.Move, MouseButton.None);
                 }
                 break;
             case X11Api.FocusIn:

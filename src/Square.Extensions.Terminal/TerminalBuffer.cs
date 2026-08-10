@@ -69,21 +69,41 @@ public sealed class TerminalBuffer
         TrimScrollback();
     }
 
-    /// <summary>Writes a printable character at the cursor and advances it.</summary>
-    public void Write(char character, TerminalStyle style)
+    /// <summary>Writes a printable grapheme at the cursor and advances by its terminal column width.</summary>
+    public void Write(string text, TerminalStyle style)
     {
+        ArgumentException.ThrowIfNullOrEmpty(text);
+        var width = TerminalUnicodeWidth.GetWidth(text);
+        if (width == 0)
+        {
+            AppendToPreviousCell(text);
+            return;
+        }
+        width = Math.Min(width, Columns);
         if (_wrapPending)
         {
             _wrapPending = false;
             CursorColumn = 0;
             LineFeed(style);
         }
-        _lines[CursorRow][CursorColumn] = new TerminalCell(character, style);
-        if (CursorColumn + 1 < Columns)
+        if (width == 2 && CursorColumn + 1 >= Columns)
         {
-            CursorColumn++;
+            CursorColumn = 0;
+            LineFeed(style);
+        }
+
+        var line = _lines[CursorRow];
+        ClearGlyphAt(line, CursorColumn, style);
+        if (width == 2) ClearGlyphAt(line, CursorColumn + 1, style);
+        line[CursorColumn] = TerminalCell.Lead(text, style, width);
+        if (width == 2) line[CursorColumn + 1] = TerminalCell.Continuation(style);
+
+        if (CursorColumn + width < Columns)
+        {
+            CursorColumn += width;
             return;
         }
+        CursorColumn = Columns - 1;
         _wrapPending = true;
     }
 
@@ -209,8 +229,10 @@ public sealed class TerminalBuffer
     {
         count = Math.Clamp(count, 1, Columns - CursorColumn);
         var line = _lines[CursorRow];
+        if (line[CursorColumn].IsContinuation) ClearGlyphAt(line, CursorColumn, style);
         Array.Copy(line, CursorColumn, line, CursorColumn + count, Columns - CursorColumn - count);
         Array.Fill(line, TerminalCell.Blank(style), CursorColumn, count);
+        RepairLine(line, style);
     }
 
     /// <summary>Deletes cells at the cursor and fills the right edge with blanks.</summary>
@@ -218,8 +240,12 @@ public sealed class TerminalBuffer
     {
         count = Math.Clamp(count, 1, Columns - CursorColumn);
         var line = _lines[CursorRow];
+        ClearIntersectingGlyphs(line, CursorColumn, count, style);
+        if (CursorColumn + count < Columns && line[CursorColumn + count].IsContinuation)
+            ClearGlyphAt(line, CursorColumn + count, style);
         Array.Copy(line, CursorColumn + count, line, CursorColumn, Columns - CursorColumn - count);
         Array.Fill(line, TerminalCell.Blank(style), Columns - count, count);
+        RepairLine(line, style);
     }
 
     /// <summary>Scrolls the active region upward.</summary>
@@ -259,7 +285,10 @@ public sealed class TerminalBuffer
         var copyRows = Math.Min(rows, Rows);
         var copyColumns = Math.Min(columns, Columns);
         for (var row = 0; row < copyRows; row++)
+        {
             Array.Copy(_lines[row], next[row], copyColumns);
+            RepairLine(next[row], fillStyle);
+        }
 
         if (columns != Columns)
         {
@@ -267,6 +296,7 @@ public sealed class TerminalBuffer
             {
                 var resized = CreateLine(columns, fillStyle);
                 Array.Copy(_scrollback[i], resized, Math.Min(columns, _scrollback[i].Length));
+                RepairLine(resized, fillStyle);
                 _scrollback[i] = resized;
             }
         }
@@ -328,7 +358,10 @@ public sealed class TerminalBuffer
 
     private void ClearLine(int row, int start, int count, TerminalStyle style)
     {
-        if (count > 0) Array.Fill(_lines[row], TerminalCell.Blank(style), start, count);
+        if (count <= 0) return;
+        var line = _lines[row];
+        ClearIntersectingGlyphs(line, start, count, style);
+        Array.Fill(line, TerminalCell.Blank(style), start, count);
     }
 
     private void ValidateCell(int row, int column)
@@ -357,8 +390,57 @@ public sealed class TerminalBuffer
     {
         var length = line.Length;
         if (trimTrailingWhitespace)
-            while (length > 0 && line[length - 1].Character == ' ') length--;
-        for (var i = 0; i < length; i++) builder.Append(line[i].Character);
+            while (length > 0 && line[length - 1].IsBlank) length--;
+        for (var i = 0; i < length; i++)
+            if (!line[i].IsContinuation) builder.Append(line[i].Text);
         builder.Append('\n');
+    }
+
+    private void AppendToPreviousCell(string text)
+    {
+        var column = _wrapPending ? CursorColumn : CursorColumn - 1;
+        if (column < 0) return;
+        var line = _lines[CursorRow];
+        if (line[column].IsContinuation) column--;
+        if (column < 0 || line[column].IsBlank || line[column].IsContinuation) return;
+        var cell = line[column];
+        line[column] = TerminalCell.Lead(cell.Text + text, cell.Style, cell.ColumnSpan);
+    }
+
+    private static void ClearIntersectingGlyphs(TerminalCell[] line, int start, int count, TerminalStyle style)
+    {
+        var end = Math.Min(line.Length, start + count);
+        if (start < line.Length && line[start].IsContinuation) ClearGlyphAt(line, start, style);
+        if (end < line.Length && line[end].IsContinuation) ClearGlyphAt(line, end, style);
+    }
+
+    private static void ClearGlyphAt(TerminalCell[] line, int column, TerminalStyle style)
+    {
+        if ((uint)column >= (uint)line.Length) return;
+        if (line[column].IsContinuation)
+        {
+            line[column] = TerminalCell.Blank(style);
+            if (column > 0 && line[column - 1].ColumnSpan == 2) line[column - 1] = TerminalCell.Blank(style);
+            return;
+        }
+        if (line[column].ColumnSpan == 2 && column + 1 < line.Length)
+            line[column + 1] = TerminalCell.Blank(style);
+        line[column] = TerminalCell.Blank(style);
+    }
+
+    private static void RepairLine(TerminalCell[] line, TerminalStyle style)
+    {
+        for (var column = 0; column < line.Length; column++)
+        {
+            var cell = line[column];
+            if (cell.IsContinuation)
+            {
+                if (column == 0 || line[column - 1].ColumnSpan != 2)
+                    line[column] = TerminalCell.Blank(style);
+                continue;
+            }
+            if (cell.ColumnSpan == 2 && (column + 1 >= line.Length || !line[column + 1].IsContinuation))
+                line[column] = TerminalCell.Blank(style);
+        }
     }
 }

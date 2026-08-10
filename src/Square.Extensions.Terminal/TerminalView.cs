@@ -22,6 +22,15 @@ public sealed class TerminalInputEventArgs : EventArgs
     public string Data { get; }
 }
 
+/// <summary>终端网格尺寸变化事件参数。</summary>
+public sealed class TerminalGridSizeChangedEventArgs(int columns, int rows) : EventArgs
+{
+    /// <summary>当前列数。</summary>
+    public int Columns { get; } = columns;
+    /// <summary>当前行数。</summary>
+    public int Rows { get; } = rows;
+}
+
 /// <summary>
 /// Square terminal control that paints an ANSI/VT screen and translates keyboard, text,
 /// pointer selection, and wheel input for an SSH or process transport.
@@ -37,6 +46,8 @@ public sealed class TerminalView : UIElement, ITextEditor
     private bool _dragging;
     private int _scrollbackOffset;
     private bool _caretVisible = true;
+    private readonly System.Diagnostics.Stopwatch _caretClock = System.Diagnostics.Stopwatch.StartNew();
+    private double _nextCaretTransitionSeconds = 0.65d;
 
     /// <summary>Creates an 80 by 24 terminal view with 1000 scrollback rows.</summary>
     public TerminalView() : this(80, 24, 1000) { }
@@ -56,6 +67,8 @@ public sealed class TerminalView : UIElement, ITextEditor
 
     /// <summary>Raised when local input should be written to the SSH or process stream.</summary>
     public event EventHandler<TerminalInputEventArgs>? Input;
+    /// <summary>网格列数或行数发生变化时触发。</summary>
+    public event EventHandler<TerminalGridSizeChangedEventArgs>? GridSizeChanged;
 
     /// <summary>The terminal screen model.</summary>
     public TerminalScreen Screen => _screen;
@@ -125,10 +138,12 @@ public sealed class TerminalView : UIElement, ITextEditor
     /// <summary>Resizes the primary and alternate terminal grids.</summary>
     public void Resize(int columns, int rows)
     {
+        var changed = columns != Columns || rows != Rows;
         _screen.Resize(columns, rows);
         ClampScrollbackOffset();
         ClampSelection();
         InvalidatePaint();
+        if (changed) GridSizeChanged?.Invoke(this, new TerminalGridSizeChangedEventArgs(columns, rows));
     }
 
     /// <summary>Returns an active-screen text snapshot.</summary>
@@ -166,7 +181,7 @@ public sealed class TerminalView : UIElement, ITextEditor
             Math.Max(0, Geometry.Height - DefaultPadding * 2));
         context.PushClip(viewport);
 
-        var visibleRows = Math.Max(1, (int)MathF.Ceiling(viewport.Height / lineHeight));
+        var visibleRows = GetVisibleRowCount(viewport.Height, lineHeight);
         var totalRows = GetTotalRows();
         var firstRow = Math.Max(0, totalRows - visibleRows - _scrollbackOffset);
         var lastRow = Math.Min(totalRows, firstRow + visibleRows);
@@ -271,10 +286,18 @@ public sealed class TerminalView : UIElement, ITextEditor
         index = Math.Clamp(index, 0, total - 1);
         var row = index / Columns;
         var column = index % Columns;
+        if (GetDisplayCell(row, column).IsContinuation) column--;
         var start = column;
-        var end = column;
-        while (start > 0 && IsWord(GetDisplayCell(row, start - 1).Character)) start--;
-        while (end < Columns && IsWord(GetDisplayCell(row, end).Character)) end++;
+        var end = column + Math.Max(1, (int)GetDisplayCell(row, column).ColumnSpan);
+        while (start > 0)
+        {
+            var previous = start - 1;
+            if (GetDisplayCell(row, previous).IsContinuation) previous--;
+            if (previous < 0 || !IsWord(GetDisplayCell(row, previous))) break;
+            start = previous;
+        }
+        while (end < Columns && IsWord(GetDisplayCell(row, end)))
+            end += Math.Max(1, (int)GetDisplayCell(row, end).ColumnSpan);
         _selectionAnchor = row * Columns + start;
         _selectionCaret = row * Columns + end;
         InvalidatePaint();
@@ -295,7 +318,10 @@ public sealed class TerminalView : UIElement, ITextEditor
     public bool ToggleCaretBlink()
     {
         if (!IsFocused || SelectionLength > 0 || !_screen.CursorVisible) return false;
+        var now = _caretClock.Elapsed.TotalSeconds;
+        if (now < _nextCaretTransitionSeconds) return false;
         _caretVisible = !_caretVisible;
+        _nextCaretTransitionSeconds = now + 0.65d;
         InvalidatePaint();
         return true;
     }
@@ -303,6 +329,7 @@ public sealed class TerminalView : UIElement, ITextEditor
     /// <inheritdoc/>
     public void ResetCaretBlink()
     {
+        _nextCaretTransitionSeconds = _caretClock.Elapsed.TotalSeconds + 0.65d;
         if (_caretVisible) return;
         _caretVisible = true;
         InvalidatePaint();
@@ -331,7 +358,7 @@ public sealed class TerminalView : UIElement, ITextEditor
                 context.FillRect(rect, new SolidColorBrush(background));
             if (IsSelected(absoluteRow * Columns + column))
                 context.FillRect(rect, new SolidColorBrush(SelectionBackground));
-            if (cell.Character == ' ') continue;
+            if (cell.IsContinuation || cell.IsBlank) continue;
 
             var font = baseFont;
             if (cell.Style.Bold) font = font.WithWeight(FontWeight.Bold);
@@ -339,14 +366,15 @@ public sealed class TerminalView : UIElement, ITextEditor
                 font = new Font(font.Family, font.Size, font.Weight, Square.Graphics.FontStyle.Italic);
             if (cell.Style.Dim)
                 foreground = Color.FromRgba(foreground.R, foreground.G, foreground.B, (byte)(foreground.A / 2));
+            var textRect = new Rect(rect.X, rect.Y, rect.Width * cell.ColumnSpan, rect.Height);
             context.DrawText(
-                new TextLayout(cell.Character.ToString(), font),
+                new TextLayout(cell.Text, font),
                 new Point(rect.X, rect.Y),
                 new SolidColorBrush(foreground));
             if (cell.Style.Underline)
-                context.FillRect(new Rect(rect.X, rect.Bottom - 2, rect.Width, 1), new SolidColorBrush(foreground));
+                context.FillRect(new Rect(textRect.X, textRect.Bottom - 2, textRect.Width, 1), new SolidColorBrush(foreground));
             if (cell.Style.Strike)
-                context.FillRect(new Rect(rect.X, rect.Y + rect.Height * 0.55f, rect.Width, 1), new SolidColorBrush(foreground));
+                context.FillRect(new Rect(textRect.X, textRect.Y + textRect.Height * 0.55f, textRect.Width, 1), new SolidColorBrush(foreground));
         }
     }
 
@@ -357,7 +385,7 @@ public sealed class TerminalView : UIElement, ITextEditor
         var totalRows = GetTotalRows();
         var row = Math.Clamp(_selectionCaret / Columns, 0, Math.Max(0, totalRows - 1));
         var column = Math.Clamp(_selectionCaret % Columns, 0, Columns - 1);
-        var visibleRows = Math.Max(1, (int)MathF.Ceiling(Math.Max(0, Geometry.Height - DefaultPadding * 2) / lineHeight));
+        var visibleRows = GetVisibleRowCount(Math.Max(0, Geometry.Height - DefaultPadding * 2), lineHeight);
         var firstRow = Math.Max(0, totalRows - visibleRows - _scrollbackOffset);
         return new Rect(
             Geometry.X + DefaultPadding + column * cellWidth,
@@ -368,7 +396,7 @@ public sealed class TerminalView : UIElement, ITextEditor
 
     private Rect ComputeTerminalCursorRect(float cellWidth, float lineHeight)
     {
-        var visibleRows = Math.Max(1, (int)MathF.Ceiling(Math.Max(0, Geometry.Height - DefaultPadding * 2) / lineHeight));
+        var visibleRows = GetVisibleRowCount(Math.Max(0, Geometry.Height - DefaultPadding * 2), lineHeight);
         var totalRows = GetTotalRows();
         var firstRow = Math.Max(0, totalRows - visibleRows - _scrollbackOffset);
         var scrollback = _screen.IsAlternateBuffer ? 0 : _screen.PrimaryBuffer.ScrollbackCount;
@@ -383,7 +411,7 @@ public sealed class TerminalView : UIElement, ITextEditor
     private int HitTestIndex(Point point)
     {
         var (_, cellWidth, lineHeight) = GetMetrics();
-        var visibleRows = Math.Max(1, (int)MathF.Ceiling(Math.Max(0, Geometry.Height - DefaultPadding * 2) / lineHeight));
+        var visibleRows = GetVisibleRowCount(Math.Max(0, Geometry.Height - DefaultPadding * 2), lineHeight);
         var totalRows = GetTotalRows();
         var firstRow = Math.Max(0, totalRows - visibleRows - _scrollbackOffset);
         var row = firstRow + (int)MathF.Floor((point.Y - Geometry.Y - DefaultPadding) / lineHeight);
@@ -408,7 +436,8 @@ public sealed class TerminalView : UIElement, ITextEditor
             }
             var row = index / Columns;
             var column = index % Columns;
-            builder.Append(GetDisplayCell(row, column).Character);
+            var cell = GetDisplayCell(row, column);
+            if (!cell.IsContinuation) builder.Append(cell.Text);
         }
         while (builder.Length > 0 && builder[^1] == ' ') builder.Length--;
         return builder.ToString();
@@ -483,7 +512,15 @@ public sealed class TerminalView : UIElement, ITextEditor
 
     private void RaiseInput(string data) => Input?.Invoke(this, new TerminalInputEventArgs(data));
 
-    private static bool IsWord(char character) => char.IsLetterOrDigit(character) || character == '_';
+    private static bool IsWord(TerminalCell cell)
+    {
+        if (cell.IsContinuation || cell.Text.Length == 0) return false;
+        var rune = cell.Text.EnumerateRunes().First();
+        return Rune.IsLetterOrDigit(rune) || rune.Value == '_';
+    }
+
+    private static int GetVisibleRowCount(float viewportHeight, float lineHeight) =>
+        Math.Max(1, (int)MathF.Floor(viewportHeight / lineHeight));
 
     private static string ModifierSequence(char final, bool shift, bool control)
     {

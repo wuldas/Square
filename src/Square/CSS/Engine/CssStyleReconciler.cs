@@ -235,8 +235,8 @@ public static class CssStyleReconciler
     private static void ClearCascadedSubtree(Element element)
     {
         element.Style.ClearCascaded();
-        foreach (var child in element.Children)
-            ClearCascadedSubtree(child);
+        foreach (var child in element.Children.ToArray())
+            if (ReferenceEquals(child.Parent, element)) ClearCascadedSubtree(child);
     }
 
     private static Element FindTreeRoot(Element element)

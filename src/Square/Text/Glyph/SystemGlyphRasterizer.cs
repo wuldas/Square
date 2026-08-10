@@ -16,7 +16,7 @@ public sealed class RasterizedGlyph
     public required int Stride { get; init; }
     /// <summary>字形相对于原点的水平偏移（像素）。</summary>
     public required int OffsetX { get; init; }
-    /// <summary>字形顶部相对于基线的垂直偏移（像素）。</summary>
+    /// <summary>字形位图顶部相对于基线的垂直偏移（像素，基线上方为负）。</summary>
     public required int OffsetY { get; init; }
     /// <summary>该字形的水平步进宽度（像素）。</summary>
     public required float AdvanceX { get; init; }
@@ -112,8 +112,6 @@ public sealed partial class SystemGlyphRasterizer
         var oldFont = NativeMethods.SelectObject(dc, fontHandle);
         try
         {
-            if (!NativeMethods.GetTextMetrics(dc, out var textMetrics)) return null;
-
             var transform = NativeMethods.Mat2.Identity;
             var size = NativeMethods.GetGlyphOutline(
                 dc, character, NativeMethods.Gray8Bitmap,
@@ -148,7 +146,7 @@ public sealed partial class SystemGlyphRasterizer
                 Height = (int)metrics.BlackBoxY,
                 Stride = (width + 3) & ~3,
                 OffsetX = metrics.GlyphOrigin.X,
-                OffsetY = textMetrics.Ascent - metrics.GlyphOrigin.Y,
+                OffsetY = -metrics.GlyphOrigin.Y,
                 AdvanceX = metrics.CellIncrementX > 0
                     ? metrics.CellIncrementX
                     : Math.Max(1, (int)MathF.Round(font.Size * 0.5f)),
@@ -165,6 +163,66 @@ public sealed partial class SystemGlyphRasterizer
         return null;
 #endif
     }
+
+    internal static bool TryGetWin32FontMetrics(Font font, out FontMetrics metrics)
+    {
+#if PLATFORM_WIN32
+        var family = ResolveGenericFontFamily(font.Family);
+        var dc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
+        if (dc == IntPtr.Zero)
+        {
+            metrics = default;
+            return false;
+        }
+
+        var fontHandle = NativeMethods.CreateFont(
+            -(int)MathF.Round(font.Size), 0, 0, 0, (int)font.Weight,
+            font.Style == FontStyle.Italic ? 1u : 0u,
+            0, 0, NativeMethods.DefaultCharset, 0, 0,
+            NativeMethods.AntialiasedQuality, 0, family);
+        if (fontHandle == IntPtr.Zero)
+        {
+            NativeMethods.DeleteDC(dc);
+            metrics = default;
+            return false;
+        }
+
+        var oldFont = NativeMethods.SelectObject(dc, fontHandle);
+        try
+        {
+            if (!NativeMethods.GetTextMetrics(dc, out var textMetrics))
+            {
+                metrics = default;
+                return false;
+            }
+
+            metrics = new FontMetrics(
+                -textMetrics.Ascent,
+                -textMetrics.Ascent,
+                textMetrics.Descent,
+                textMetrics.Descent,
+                textMetrics.ExternalLeading);
+            return true;
+        }
+        finally
+        {
+            if (oldFont != IntPtr.Zero) NativeMethods.SelectObject(dc, oldFont);
+            NativeMethods.DeleteObject(fontHandle);
+            NativeMethods.DeleteDC(dc);
+        }
+#else
+        metrics = default;
+        return false;
+#endif
+    }
+
+    internal static string ResolveGenericFontFamily(string family) => family.ToLowerInvariant() switch
+    {
+        "sans-serif" or "system-ui" or "ui-sans-serif" => OperatingSystem.IsWindows() ? "Segoe UI" : "DejaVu Sans",
+        "serif" or "ui-serif" => OperatingSystem.IsWindows() ? "Times New Roman" : "DejaVu Serif",
+        "monospace" or "ui-monospace" => OperatingSystem.IsWindows() ? "Consolas" : "DejaVu Sans Mono",
+        _ => family
+    };
 
     private readonly record struct GlyphKey(
         string Family,
@@ -294,13 +352,7 @@ internal static class SystemTextMeasurementRegistration
     private static float? MeasureAdvance(Rune rune, Font font)
     {
         if (!rune.IsBmp || !Rasterizer.IsAvailable) return null;
-        var family = font.Family.ToLowerInvariant() switch
-        {
-            "sans-serif" or "system-ui" or "ui-sans-serif" => OperatingSystem.IsWindows() ? "Segoe UI" : "DejaVu Sans",
-            "serif" or "ui-serif" => OperatingSystem.IsWindows() ? "Times New Roman" : "DejaVu Serif",
-            "monospace" or "ui-monospace" => OperatingSystem.IsWindows() ? "Consolas" : "DejaVu Sans Mono",
-            _ => font.Family
-        };
+        var family = SystemGlyphRasterizer.ResolveGenericFontFamily(font.Family);
         var effectiveFont = family == font.Family
             ? font
             : new Font(family, font.Size, font.Weight, font.Style);
@@ -313,6 +365,7 @@ internal static class SystemTextMeasurementRegistration
 internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer) : ITextMetricsProvider
 {
     private readonly object _sync = new();
+    private readonly Dictionary<FontMetricsKey, FontMetrics> _fontMetrics = [];
 
     /// <summary>获取指定字体的整体度量。</summary>
     /// <param name="font">目标字体。</param>
@@ -324,10 +377,33 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
         if (customFace?.TryGetFontMetrics(font.Size, out metrics) == true)
             return true;
 
+        var key = new FontMetricsKey(font.Family, font.Size, font.Weight, font.Style);
+        lock (_sync)
+            if (_fontMetrics.TryGetValue(key, out metrics))
+                return true;
+
+        if (OperatingSystem.IsWindows() &&
+            TryGetWin32FontMetrics(font, out metrics))
+        {
+            lock (_sync) _fontMetrics[key] = metrics;
+            return true;
+        }
+
         var height = Math.Max(1, font.Size * TextLayout.DefaultLineHeight);
         var ascent = font.Size * 0.8f;
         metrics = new FontMetrics(-ascent, -ascent, height - ascent, height - ascent, 0);
+        lock (_sync) _fontMetrics[key] = metrics;
         return true;
+    }
+
+    private static bool TryGetWin32FontMetrics(Font font, out FontMetrics metrics)
+    {
+#if PLATFORM_WIN32
+        return SystemGlyphRasterizer.TryGetWin32FontMetrics(font, out metrics);
+#else
+        metrics = default;
+        return false;
+#endif
     }
 
     /// <summary>获取指定字体的单个字形度量。</summary>
@@ -352,21 +428,20 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
             return false;
         }
 
-        var fontMetrics = GetFontMetrics(font);
         metrics = new GlyphMetrics(
             glyph.AdvanceX,
             new Rect(
                 glyph.OffsetX,
-                glyph.OffsetY + fontMetrics.Top,
+                glyph.OffsetY,
                 glyph.Width,
                 glyph.Height));
         return true;
     }
 
-    private static FontMetrics GetFontMetrics(Font font)
-    {
-        var height = Math.Max(1, font.Size * TextLayout.DefaultLineHeight);
-        var ascent = font.Size * 0.8f;
-        return new FontMetrics(-ascent, -ascent, height - ascent, height - ascent, 0);
-    }
+    private readonly record struct FontMetricsKey(
+        string Family,
+        float Size,
+        FontWeight Weight,
+        FontStyle Style);
+
 }

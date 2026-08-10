@@ -613,13 +613,14 @@ public class M1IntegrationTests
         Assert.Equal(2, textArea.CaretIndex);
         Assert.Equal(input.CaretRect.X, textArea.CaretRect.X);
         Assert.Equal(input.CaretRect.Height, textArea.CaretRect.Height);
-        Assert.Equal(10, input.CaretRect.Y - input.Geometry.Y);
-        Assert.Equal(8, textArea.CaretRect.Y - textArea.Geometry.Y);
-        Assert.Equal(17, input.CaretRect.Height);
+        Assert.Equal(
+            MathF.Round((input.Geometry.Height - input.CaretRect.Height) / 2f),
+            input.CaretRect.Y - input.Geometry.Y);
+        var firstLineCaretY = textArea.CaretRect.Y;
 
         textArea.HandleKey(40);
         Assert.Equal(5, textArea.CaretIndex);
-        Assert.Equal(25, textArea.CaretRect.Y - textArea.Geometry.Y);
+        Assert.Equal(17, textArea.CaretRect.Y - firstLineCaretY);
     }
 
     [Fact]

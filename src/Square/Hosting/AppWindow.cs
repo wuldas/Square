@@ -250,6 +250,16 @@ public sealed class AppWindow : IRenderBackendApplication
     /// <summary>异步开始窗口拖动。</summary>
     public Task BeginMoveAsync() => InvokeAsync(static host => host.BeginMove());
 
+    /// <summary>异步读取系统剪贴板文本。</summary>
+    public Task<string> GetClipboardTextAsync() => InvokeAsync(static host => host.GetClipboardText());
+
+    /// <summary>异步写入系统剪贴板文本。</summary>
+    public Task SetClipboardTextAsync(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return InvokeAsync(host => host.SetClipboardText(text));
+    }
+
     /// <summary>打开非模态子窗口显示指定内容。</summary>
     public void Open(Element content, Size? size = null, UIElement? customTitleBar = null)
     {

@@ -74,15 +74,13 @@ internal sealed class StbGlyphRasterizer
                 Marshal.Copy((IntPtr)(bitmap + y * width), coverage, y * stride, width);
             }
 
-            int ascent, descent, lineGap;
-            StbTrueType.stbtt_GetFontVMetrics(info, &ascent, &descent, &lineGap);
             return new RasterizedGlyph
             {
                 Width = width,
                 Height = height,
                 Stride = stride,
                 OffsetX = xoff,
-                OffsetY = (int)MathF.Round(ascent * scale) + yoff,
+                OffsetY = yoff,
                 AdvanceX = advanceWidth * scale,
                 Coverage = coverage
             };

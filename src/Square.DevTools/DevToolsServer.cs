@@ -110,7 +110,10 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
                 var input = new DevToolsPointerInput(
                     new Point(ReadFloat(payload, "x"), ReadFloat(payload, "y")),
                     ReadEnum<MouseAction>(payload, "action"),
-                    ReadModifiers(payload));
+                    ReadModifiers(payload),
+                    payload.TryGetProperty("button", out _)
+                        ? ReadEnum<MouseButton>(payload, "button")
+                        : MouseButton.Left);
                 await window.InjectPointerAsync(input);
                 await WriteNoContentAsync(context.Response);
                 return;

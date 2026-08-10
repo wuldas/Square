@@ -82,7 +82,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
     }
 
     public event Action<Size>? SizeChanged;
-    public event Action<Point, MouseAction>? MouseEvent;
+    public event Action<Point, MouseAction, MouseButton>? MouseEvent;
     public event Action<Point, int>? WheelEvent;
     public event Action<int, KeyAction>? KeyEvent;
     public event Action<string>? TextInput;
@@ -614,7 +614,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
             {
                 var x = (short)(lParam.ToInt64() & 0xFFFF);
                 var y = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
-                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Down);
+                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Down, MouseButton.Left);
                 if (host._skipPointerCapture)
                     host._skipPointerCapture = false;
                 else
@@ -625,15 +625,29 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
             {
                 var x = (short)(lParam.ToInt64() & 0xFFFF);
                 var y = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
-                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Up);
+                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Up, MouseButton.Left);
                 Win32Api.ReleaseCapture();
             }
                 break;
+            case Win32Api.WM_RBUTTONDOWN:
+            {
+                var x = (short)(lParam.ToInt64() & 0xFFFF);
+                var y = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Down, MouseButton.Right);
+            }
+                return IntPtr.Zero;
+            case Win32Api.WM_RBUTTONUP:
+            {
+                var x = (short)(lParam.ToInt64() & 0xFFFF);
+                var y = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Up, MouseButton.Right);
+            }
+                return IntPtr.Zero;
             case Win32Api.WM_MOUSEMOVE:
             {
                 var x = (short)(lParam.ToInt64() & 0xFFFF);
                 var y = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
-                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Move);
+                host.MouseEvent?.Invoke(host.ToLogicalPoint(x, y), MouseAction.Move, MouseButton.None);
             }
                 break;
             case Win32Api.WM_MOUSEWHEEL:

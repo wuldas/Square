@@ -123,4 +123,39 @@ public class TreeTests
         Assert.Equal(parent.Geometry.Y + 28, child.Geometry.Y);
         Assert.Equal(parent.Geometry.X + 18, child.Geometry.X);
     }
+
+    [Fact]
+    public void CollapsedBranchDoesNotReserveAHiddenChildRow()
+    {
+        var tree = new Tree();
+        var parent = new TreeItem("Parent");
+        parent.Children.Add(new TreeItem("Child"));
+        tree.Children.Add(parent);
+        var layout = new LayoutEngine();
+
+        layout.Measure(tree, new Size(300, 200));
+        layout.Arrange(tree, new Rect(0, 0, 300, 200));
+        Assert.InRange(parent.Geometry.Height, 27, 29);
+
+        parent.Expand();
+        layout.Measure(tree, new Size(300, 200));
+        layout.Arrange(tree, new Rect(0, 0, 300, 200));
+        Assert.InRange(parent.Geometry.Height, 55, 57);
+
+        parent.Collapse();
+        layout.Measure(tree, new Size(300, 200));
+        layout.Arrange(tree, new Rect(0, 0, 300, 200));
+        Assert.InRange(parent.Geometry.Height, 27, 29);
+    }
+
+    [Fact]
+    public void LeadingIconReservesSpaceWithoutChangingSelectableText()
+    {
+        var item = new TreeItem("report.txt") { LeadingIcon = "\uE8A5" };
+        item.Geometry = new Rect(10, 20, 200, 28);
+
+        Assert.Equal("report.txt", item.SelectableText);
+        Assert.Equal(50, item.SelectableTextBounds.X);
+        Assert.True(item.Measure(new Size(300, 30)).Width > 40);
+    }
 }

@@ -138,6 +138,51 @@ public sealed class TerminalParserTests
         Assert.Equal(TerminalColor.FromIndex(1), screen.Buffer.GetCell(0, 0).Style.Foreground);
     }
 
+    [Fact]
+    public void WideCharactersOccupyTwoColumnsAndAdvanceTheCursor()
+    {
+        var screen = new TerminalScreen(8, 2);
+        var parser = new AnsiVtParser(screen);
+
+        parser.Feed("A中B");
+
+        Assert.Equal("A中B\n", screen.GetTextSnapshot());
+        Assert.Equal("中", screen.Buffer.GetCell(0, 1).Text);
+        Assert.Equal(2, screen.Buffer.GetCell(0, 1).ColumnSpan);
+        Assert.True(screen.Buffer.GetCell(0, 2).IsContinuation);
+        Assert.Equal("B", screen.Buffer.GetCell(0, 3).Text);
+        Assert.Equal(4, screen.Buffer.CursorColumn);
+    }
+
+    [Fact]
+    public void CombiningMarksAndSplitSurrogatesDoNotConsumeExtraCells()
+    {
+        var screen = new TerminalScreen(8, 2);
+        var parser = new AnsiVtParser(screen);
+
+        parser.Feed("e\u0301");
+        parser.Feed("\ud83d");
+        parser.Feed("\ude00X");
+
+        Assert.Equal("e\u0301😀X\n", screen.GetTextSnapshot());
+        Assert.Equal("e\u0301", screen.Buffer.GetCell(0, 0).Text);
+        Assert.Equal("😀", screen.Buffer.GetCell(0, 1).Text);
+        Assert.True(screen.Buffer.GetCell(0, 2).IsContinuation);
+        Assert.Equal(4, screen.Buffer.CursorColumn);
+    }
+
+    [Fact]
+    public void ErasingPartOfAWideCharacterClearsBothColumns()
+    {
+        var screen = new TerminalScreen(6, 2);
+        var parser = new AnsiVtParser(screen);
+        parser.Feed("A中B\x1b[1;3H\x1b[K");
+
+        Assert.Equal("A\n", screen.GetTextSnapshot());
+        Assert.True(screen.Buffer.GetCell(0, 1).IsBlank);
+        Assert.True(screen.Buffer.GetCell(0, 2).IsBlank);
+    }
+
     private static string Row(TerminalScreen screen, int row) =>
         new(Enumerable.Range(0, screen.Buffer.Columns).Select(column => screen.Buffer.GetCell(row, column).Character).ToArray());
 }

@@ -7,6 +7,7 @@ using Square.Events;
 using Square.Hosting;
 using Square.Platform;
 using Square.Runtime.State;
+using Square.Rendering;
 using Square.UI;
 using Square.UI.Svg;
 using Xunit;
@@ -33,13 +34,17 @@ public class DocumentTests
         field!.SetValue(application, false);
     }
 
-    private static void InvokeHandleMouse(DesktopApplication application, Square.Graphics.Point point, MouseAction action)
+    private static void InvokeHandleMouse(
+        DesktopApplication application,
+        Square.Graphics.Point point,
+        MouseAction action,
+        MouseButton button = MouseButton.Left)
     {
         var method = typeof(DesktopApplication).GetMethod(
             "HandleMouse",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        method!.Invoke(application, [point, action]);
+        method!.Invoke(application, [point, action, button]);
     }
 
     private static void SetPrivateField<T>(DesktopApplication application, string name, T value)
@@ -270,6 +275,27 @@ public class DocumentTests
 
         Assert.True(view.NeedsPaint);
         Assert.True(IsRenderRequested(application));
+    }
+
+    [Fact]
+    public void RightMouseUpDispatchesContextMenuWithClientCoordinates()
+    {
+        var window = new AppWindow("Context menu", 200, 100);
+        var target = new View { Geometry = new Square.Graphics.Rect(0, 0, 200, 100) };
+        window.Load(target);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        Assert.IsType<DisplayTree>(GetPrivateField<DisplayTree>(application, "_displayTree")).BuildFrom(target);
+        PointerEvent? received = null;
+        target.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, e => received = e);
+
+        InvokeHandleMouse(application, new Square.Graphics.Point(32, 18), MouseAction.Up, MouseButton.Right);
+
+        Assert.NotNull(received);
+        Assert.Equal(32, received.ClientX);
+        Assert.Equal(18, received.ClientY);
+        Assert.Equal(2, received.Button);
+        Assert.True(received.IsTrusted);
     }
 
     [Fact]
@@ -1022,7 +1048,7 @@ public class DocumentTests
         public CursorKind Cursor { get; set; }
         public KeyModifiers Modifiers => KeyModifiers.None;
         public event Action<Square.Graphics.Size>? SizeChanged { add { } remove { } }
-        public event Action<Square.Graphics.Point, MouseAction>? MouseEvent { add { } remove { } }
+        public event Action<Square.Graphics.Point, MouseAction, MouseButton>? MouseEvent { add { } remove { } }
         public event Action<Square.Graphics.Point, int>? WheelEvent { add { } remove { } }
         public event Action<int, KeyAction>? KeyEvent { add { } remove { } }
         public event Action<string>? TextInput { add { } remove { } }

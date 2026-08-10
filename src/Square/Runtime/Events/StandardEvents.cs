@@ -31,6 +31,8 @@ public static class StandardEvents
     public const string Blur = "blur";
     /// <summary>单击。</summary>
     public const string Click = "click";
+    /// <summary>请求上下文菜单。</summary>
+    public const string ContextMenu = "contextmenu";
     /// <summary>值变更。</summary>
     public const string Change = "change";
     /// <summary>选择集合变更。</summary>
@@ -55,6 +57,7 @@ public static class StandardEvents
         [Focus] = None(),
         [Blur] = None(),
         [Click] = BubblingCancelable(),
+        [ContextMenu] = BubblingCancelable(),
         [Change] = Bubbling(),
         [SelectionChange] = Bubbling(),
         [Input] = Bubbling(),
@@ -79,6 +82,8 @@ public static class StandardEvents
     public static Event CreatePointerUp() => Create(PointerUp);
     /// <summary>创建 pointermove 事件。</summary>
     public static Event CreatePointerMove() => Create(PointerMove);
+    /// <summary>创建 contextmenu 事件。</summary>
+    public static PointerEvent CreateContextMenu(float x, float y) => new(ContextMenu, x, y, 2);
     /// <summary>创建 wheel 事件。</summary>
     public static WheelEvent CreateWheel(float deltaX = 0, float deltaY = 0) => new(deltaX, deltaY);
     /// <summary>创建 scroll 事件（不冒泡）。</summary>

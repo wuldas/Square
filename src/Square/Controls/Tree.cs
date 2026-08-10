@@ -8,6 +8,8 @@ namespace Square.Controls;
 public class TreeItem : UIElement, ITextSelectable
 {
     private const float RowHeight = 28f;
+    private const float TextOffset = 20f;
+    private const float IconTextOffset = 40f;
 
     /// <summary>初始化 <see cref="TreeItem"/> 的新实例。</summary>
     public TreeItem()
@@ -40,6 +42,27 @@ public class TreeItem : UIElement, ITextSelectable
         set => SetProperty(nameof(FontSize), value);
     }
 
+    /// <summary>显示在文本前的可选字体图标字形。</summary>
+    public string LeadingIcon
+    {
+        get => GetProperty<string>(nameof(LeadingIcon)) ?? "";
+        set => SetProperty(nameof(LeadingIcon), value ?? "");
+    }
+
+    /// <summary>前导图标使用的字体族。</summary>
+    public string LeadingIconFontFamily
+    {
+        get => GetProperty<string>(nameof(LeadingIconFontFamily)) ?? "Segoe Fluent Icons";
+        set => SetProperty(nameof(LeadingIconFontFamily), value ?? "");
+    }
+
+    /// <summary>前导图标颜色；透明时跟随文本颜色。</summary>
+    public Color LeadingIconColor
+    {
+        get => Properties.HasValue(nameof(LeadingIconColor)) ? GetProperty<Color>(nameof(LeadingIconColor)) : Color.Transparent;
+        set => SetProperty(nameof(LeadingIconColor), value);
+    }
+
     /// <summary>是否展开子项。</summary>
     public bool IsExpanded
     {
@@ -64,13 +87,13 @@ public class TreeItem : UIElement, ITextSelectable
 
     /// <inheritdoc/>
     public Rect SelectableTextBounds => ControlDrawing.GetTextBounds(
-        this, TextContent, FontSize, new Point(Geometry.X + 20, Geometry.Y + 5));
+        this, TextContent, FontSize, new Point(Geometry.X + GetTextOffset(), Geometry.Y + 5));
 
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
     {
         var text = ControlDrawing.MeasureText(this, TextContent, FontSize, availableSize);
-        return new Size(text.Width + 24, RowHeight);
+        return new Size(text.Width + GetTextOffset() + 4, RowHeight);
     }
 
     /// <inheritdoc/>
@@ -99,8 +122,18 @@ public class TreeItem : UIElement, ITextSelectable
             ctx.DrawPath(marker, Pen.FromColor(foreground, 1.5f));
         }
 
+        if (!string.IsNullOrEmpty(LeadingIcon))
+        {
+            var iconColor = LeadingIconColor.A == 0 ? foreground : LeadingIconColor;
+            var iconFont = new Font(LeadingIconFontFamily, FontSize + 1);
+            ctx.DrawText(
+                new TextLayout(LeadingIcon, iconFont),
+                new Point(row.X + TextOffset, row.Y + 4),
+                new SolidColorBrush(iconColor));
+        }
+
         if (!string.IsNullOrEmpty(TextContent))
-            ControlDrawing.DrawText(ctx, this, TextContent, new Point(row.X + 20, row.Y + 5), foreground, FontSize);
+            ControlDrawing.DrawText(ctx, this, TextContent, new Point(row.X + GetTextOffset(), row.Y + 5), foreground, FontSize);
     }
 
     /// <summary>展开当前节点，返回是否实际发生展开。</summary>
@@ -129,16 +162,16 @@ public class TreeItem : UIElement, ITextSelectable
     {
         base.OnPropertyChanged(name);
         if (name == nameof(IsSelected)) SetState(ElementState.Checked, IsSelected);
-        if (name == nameof(IsExpanded)) UpdateChildVisibility();
+        if (name == nameof(IsExpanded)) UpdateChildLayout();
     }
 
     internal override void OnChildAdded(Element child)
     {
         base.OnChildAdded(child);
         if (child is not TreeItem item) return;
-        Style.SetCascaded("padding-top", $"{RowHeight}px", int.MinValue);
         item.Style.SetCascaded("margin-left", "18px", int.MinValue);
         item.IsVisible = IsExpanded;
+        UpdateHeaderPadding();
     }
 
     internal override void OnChildRemoved(Element child)
@@ -146,16 +179,22 @@ public class TreeItem : UIElement, ITextSelectable
         base.OnChildRemoved(child);
         if (child is TreeItem && !HasItems)
         {
-            Style.SetCascaded("padding-top", "0px", int.MinValue);
             if (IsExpanded) IsExpanded = false;
+            UpdateHeaderPadding();
         }
     }
 
-    private void UpdateChildVisibility()
+    private void UpdateChildLayout()
     {
         foreach (var child in Items) child.IsVisible = IsExpanded;
+        UpdateHeaderPadding();
         InvalidateLayout();
     }
+
+    private void UpdateHeaderPadding() =>
+        Style.SetCascaded("padding-top", IsExpanded && Items.Count > 0 ? $"{RowHeight}px" : "0px", int.MinValue);
+
+    private float GetTextOffset() => string.IsNullOrEmpty(LeadingIcon) ? TextOffset : IconTextOffset;
 }
 
 /// <summary>Scrollable single-selection hierarchical tree.</summary>

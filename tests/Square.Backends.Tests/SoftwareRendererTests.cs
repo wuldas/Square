@@ -657,6 +657,48 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void RasterizedGlyphVerticalOffsetsAreBaselineRelative()
+    {
+        var rasterizer = new SystemGlyphRasterizer();
+        if (!rasterizer.IsAvailable) return;
+        var font = new Font("Segoe UI", 24);
+
+        var latin = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, 'A'));
+        var chinese = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, '中'));
+
+        Assert.True(latin.OffsetY < 0, $"Expected Latin top bearing above baseline, got {latin.OffsetY}.");
+        Assert.True(chinese.OffsetY < 0, $"Expected CJK top bearing above baseline, got {chinese.OffsetY}.");
+    }
+
+    [Fact]
+    public void MixedFallbackGlyphsRenderFromOneLineBaseline()
+    {
+        var rasterizer = new SystemGlyphRasterizer();
+        if (!rasterizer.IsAvailable) return;
+        var font = new Font("Segoe UI", 24);
+        var latin = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, 'A'));
+        var chinese = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, '中'));
+        var origin = new Point(6, 5);
+        var layout = new TextLayout("A中", font);
+        var context = CreateContext(100, 50);
+        context.Clear(Color.White);
+
+        context.DrawText(layout, origin, Brush.FromColor(Color.Black));
+
+        var baseline = (int)MathF.Round(origin.Y + TextMetrics.GetBaselineOffset(
+            font, TextMetrics.GetLineHeight(font, layout.LineHeight)));
+        var latinX = (int)MathF.Round(origin.X) + latin.OffsetX;
+        var chineseOriginX = origin.X + TextMetrics.GetGlyphMetrics(font, new System.Text.Rune('A')).AdvanceX;
+        var chineseX = (int)MathF.Round(chineseOriginX) + chinese.OffsetX;
+        Assert.Equal(
+            baseline + latin.OffsetY + FirstCoverageRow(latin),
+            FirstInkY(context.GetBitmap(), latinX, latin.Width));
+        Assert.Equal(
+            baseline + chinese.OffsetY + FirstCoverageRow(chinese),
+            FirstInkY(context.GetBitmap(), chineseX, chinese.Width));
+    }
+
+    [Fact]
     public void EveryM1ControlProducesVisibleOutput()
     {
         var preview = new Bitmap(2, 2);
@@ -1258,7 +1300,9 @@ public class SoftwareRendererTests
         var font = new Font("Segoe UI", 20);
         var p = rasterizer.Rasterize(font, 'p');
         var g = rasterizer.Rasterize(font, 'g');
-        var expectedBottom = Math.Max(p?.OffsetY + p?.Height ?? 0, g?.OffsetY + g?.Height ?? 0);
+        var lineHeight = TextMetrics.GetLineHeight(font, TextLayout.DefaultLineHeight);
+        var baseline = TextMetrics.GetBaselineOffset(font, lineHeight);
+        var expectedBottom = baseline + Math.Max(p?.OffsetY + p?.Height ?? 0, g?.OffsetY + g?.Height ?? 0);
 
         Assert.All(fragment.Characters, character =>
             Assert.True(character.Bounds.Height >= expectedBottom));
@@ -2382,6 +2426,29 @@ public class SoftwareRendererTests
     }
 
     private static byte AlphaAt(Bitmap bitmap, int x, int y) => bitmap.Pixels[y * bitmap.Stride + x * 4 + 3];
+
+    private static int FirstCoverageRow(RasterizedGlyph glyph)
+    {
+        for (var y = 0; y < glyph.Height; y++)
+            for (var x = 0; x < glyph.Width; x++)
+                if (glyph.Coverage[y * glyph.Stride + x] > 0)
+                    return y;
+
+        return 0;
+    }
+
+    private static int FirstInkY(Bitmap bitmap, int left, int width)
+    {
+        for (var y = 0; y < bitmap.Height; y++)
+            for (var x = Math.Max(0, left); x < Math.Min(bitmap.Width, left + width); x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel[0] < 255 || pixel[1] < 255 || pixel[2] < 255)
+                    return y;
+            }
+
+        return -1;
+    }
 
     private sealed class PaintFillElement(Color color) : UIElement
     {

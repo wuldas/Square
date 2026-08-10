@@ -12,6 +12,7 @@ public sealed class AnsiVtParser
     private readonly TerminalScreen _screen;
     private readonly StringBuilder _csi = new();
     private ParserState _state;
+    private char? _pendingHighSurrogate;
 
     /// <summary>Creates a parser that writes to <paramref name="screen"/>.</summary>
     public AnsiVtParser(TerminalScreen screen)
@@ -29,7 +30,23 @@ public sealed class AnsiVtParser
     /// <summary>Feeds a span into the parser while preserving incomplete escape sequences.</summary>
     public void Feed(ReadOnlySpan<char> text)
     {
-        foreach (var character in text) Process(character);
+        foreach (var character in text)
+        {
+            if (_pendingHighSurrogate is { } high)
+            {
+                _pendingHighSurrogate = null;
+                if (char.IsLowSurrogate(character))
+                {
+                    ProcessRune(new Rune(high, character));
+                    continue;
+                }
+                ProcessRune(Rune.ReplacementChar);
+            }
+            if (char.IsHighSurrogate(character))
+                _pendingHighSurrogate = character;
+            else
+                ProcessRune(char.IsLowSurrogate(character) ? Rune.ReplacementChar : new Rune(character));
+        }
     }
 
     /// <summary>Resets parser state and active rendition without clearing screen contents.</summary>
@@ -37,9 +54,21 @@ public sealed class AnsiVtParser
     {
         _state = ParserState.Ground;
         _csi.Clear();
+        _pendingHighSurrogate = null;
         _screen.CurrentStyle = TerminalStyle.Default;
         _screen.CursorVisible = true;
         _screen.Buffer.SetScrollRegion(0, _screen.Buffer.Rows - 1);
+    }
+
+    private void ProcessRune(Rune rune)
+    {
+        if (rune.IsAscii)
+        {
+            Process((char)rune.Value);
+            return;
+        }
+        if (_state == ParserState.Ground)
+            _screen.Buffer.Write(rune.ToString(), _screen.CurrentStyle);
     }
 
     private void Process(char character)
@@ -73,7 +102,7 @@ public sealed class AnsiVtParser
                 break;
             default:
                 if (character >= ' ' && character != '\x7f')
-                    _screen.Buffer.Write(character, _screen.CurrentStyle);
+                    _screen.Buffer.Write(character.ToString(), _screen.CurrentStyle);
                 break;
         }
     }

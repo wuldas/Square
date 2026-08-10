@@ -243,7 +243,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     /// <inheritdoc/>
     public Task InjectPointerAsync(DevToolsPointerInput input) => Dispatcher.InvokeAsync(() =>
     {
-        WithDevToolsModifiers(input.Modifiers, () => HandleMouse(input.Position, input.Action));
+        WithDevToolsModifiers(input.Modifiers, () => HandleMouse(input.Position, input.Action, input.Button));
     });
 
     /// <inheritdoc/>
@@ -603,9 +603,20 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         RenderFrame();
     }
 
-    private void HandleMouse(Point point, MouseAction action)
+    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left)
     {
         if (_host == null) return;
+
+        if (button == MouseButton.Right)
+        {
+            if (action == MouseAction.Down && _displayTree.DismissPopupsOutside(point)) RequestRender();
+            var contextTarget = HitTest(point);
+            UpdateHoverPath(contextTarget);
+            if (action == MouseAction.Up)
+                contextTarget?.DispatchTrusted(StandardEvents.CreateContextMenu(point.X, point.Y));
+            RenderFrame();
+            return;
+        }
 
         if (_draggingSplitter != null && action == MouseAction.Move)
         {
@@ -1014,6 +1025,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleTextInput(string text)
     {
+        SyncFocusedInputFromTree();
         _focusedEditor?.HandleTextInput(text);
         RenderFrame();
     }

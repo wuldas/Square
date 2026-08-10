@@ -178,6 +178,32 @@ public class PseudoClassTests
     }
 
     [Fact]
+    public void FlushToleratesChildRemovalWhileClearingCascadedStyles()
+    {
+        var sheet = new CssParser(new CssTokenizer(
+            "RemovingElement:hover { z-index: 1; } RemovingElement:hover + View { color: blue; }").Tokenize()).Parse();
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(sheet);
+        var root = new Square.Controls.View();
+        var sibling = new Square.Controls.View();
+        var removing = new RemovingElement(sibling);
+        root.Children.Add(removing);
+        root.Children.Add(sibling);
+        engine.ApplyStylesToTree(root);
+
+        removing.SetState(ElementState.Hover, true);
+        CssStyleReconciler.Flush(root);
+        Assert.Equal(1, removing.ZIndex);
+
+        removing.SetState(ElementState.Hover, false);
+
+        CssStyleReconciler.Flush(root);
+
+        Assert.DoesNotContain(sibling, root.Children);
+        Assert.Equal(0, removing.ZIndex);
+    }
+
+    [Fact]
     public void TreeScopedFlushLeavesOtherWindowStyleWorkPending()
     {
         var sheet = new CssParser(new CssTokenizer("Button:hover { background: blue; }").Tokenize()).Parse();
@@ -262,6 +288,19 @@ public class PseudoClassTests
 
     private sealed class CustomHoverElement : UIElement
     {
+    }
+
+    private sealed class RemovingElement(Element sibling) : UIElement
+    {
+        public override int ZIndex
+        {
+            get => base.ZIndex;
+            set
+            {
+                base.ZIndex = value;
+                if (value == 0 && sibling.Parent is { } parent) parent.Children.Remove(sibling);
+            }
+        }
     }
 
     [Fact]

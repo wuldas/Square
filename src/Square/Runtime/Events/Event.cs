@@ -132,6 +132,26 @@ public sealed class WheelEvent : Event
     public float DeltaY { get; }
 }
 
+/// <summary>指针事件（Square 对齐 DOM PointerEvent 的最小实现）。</summary>
+public sealed class PointerEvent : Event
+{
+    /// <summary>创建带客户区坐标和按键编号的指针事件。</summary>
+    public PointerEvent(string type, float clientX, float clientY, int button = 0, EventInit? init = null)
+        : base(type, init ?? StandardEvents.GetDefaultInit(type))
+    {
+        ClientX = clientX;
+        ClientY = clientY;
+        Button = button;
+    }
+
+    /// <summary>客户区横坐标。</summary>
+    public float ClientX { get; }
+    /// <summary>客户区纵坐标。</summary>
+    public float ClientY { get; }
+    /// <summary>触发按键编号：0 主键，1 中键，2 次键。</summary>
+    public int Button { get; }
+}
+
 /// <summary>键盘事件（Square 对齐 DOM KeyboardEvent 的最小实现）。</summary>
 public sealed class KeyboardEvent : Event
 {

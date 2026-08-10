@@ -29,6 +29,8 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     private const nuint EventLeftMouseUp = 2;
     private const nuint EventMouseMoved = 5;
     private const nuint EventLeftMouseDragged = 6;
+    private const nuint EventRightMouseDown = 3;
+    private const nuint EventRightMouseUp = 4;
     private const nuint EventKeyDown = 10;
     private const nuint EventKeyUp = 11;
     private const nuint EventFlagsChanged = 12;
@@ -78,7 +80,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
 
     public event Action? Tick;
     public event Action? Closed;
-    public event Action<Point, MouseAction>? MouseEvent;
+    public event Action<Point, MouseAction, MouseButton>? MouseEvent;
     public event Action<Point, int>? WheelEvent;
     public event Action<int, KeyAction>? KeyEvent;
     public event Action<string>? TextInput;
@@ -227,14 +229,20 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
         switch (type)
         {
             case EventLeftMouseDown:
-                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Down);
+                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Down, MouseButton.Left);
                 return true;
             case EventLeftMouseUp:
-                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Up);
+                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Up, MouseButton.Left);
+                return true;
+            case EventRightMouseDown:
+                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Down, MouseButton.Right);
+                return true;
+            case EventRightMouseUp:
+                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Up, MouseButton.Right);
                 return true;
             case EventMouseMoved:
             case EventLeftMouseDragged:
-                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Move);
+                MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Move, MouseButton.None);
                 return true;
             case EventScrollWheel:
             {
