@@ -61,6 +61,9 @@ internal sealed class FontComparisonCase
     [JsonPropertyName("width")]
     public float? Width { get; init; }
 
+    [JsonPropertyName("height")]
+    public float? Height { get; init; }
+
     [JsonPropertyName("text")]
     public required string Text { get; init; }
 
@@ -87,6 +90,24 @@ internal sealed class FontComparisonCase
 
     [JsonPropertyName("containerHeight")]
     public float? ContainerHeight { get; init; }
+
+    [JsonPropertyName("containerDisplay")]
+    public string ContainerDisplay { get; init; } = "flex";
+
+    [JsonPropertyName("justifyContent")]
+    public string JustifyContent { get; init; } = "center";
+
+    [JsonPropertyName("alignItems")]
+    public string AlignItems { get; init; } = "center";
+
+    [JsonPropertyName("marginLeft")]
+    public string MarginLeft { get; init; } = "0px";
+
+    [JsonPropertyName("marginRight")]
+    public string MarginRight { get; init; } = "0px";
+
+    [JsonIgnore]
+    public bool IsLayoutCase => Category.Equals("layout", StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class CaptureReport

@@ -2,8 +2,10 @@ using System.Text.Json;
 using Square.Backends;
 using Square.Backends.Skia;
 using Square.Backends.Vulkan;
+using Square.Controls;
 using Square.Graphics;
 using Square.Graphics.Codecs;
+using Square.Rendering;
 #if PLATFORM_WIN32
 using Square.Platform;
 using Square.Platform.Win32;
@@ -36,6 +38,12 @@ internal static class SquareCapture
 
         foreach (var item in manifest.Cases)
         {
+            if (item.IsLayoutCase)
+            {
+                captures.Add(CaptureLayoutCase(factory, item, screenshotDirectory));
+                continue;
+            }
+
             var font = new Font(
                 item.FontFamily,
                 item.FontSize,
@@ -138,6 +146,29 @@ internal static class SquareCapture
         _ => throw new ArgumentException($"Unsupported headless backend '{backend}'.")
     };
 
+    private static CaseCapture CaptureLayoutCase(
+        IRenderBackendFactory factory,
+        FontComparisonCase item,
+        string screenshotDirectory)
+    {
+        var canvasSize = GetLayoutCanvasSize(item);
+        var (root, target) = CreateLayoutTree(item);
+        Layout(root, canvasSize);
+        using var context = factory.CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = canvasSize,
+            DpiScale = 1
+        });
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(context);
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var screenshotName = item.Id + ".png";
+        BitmapPngEncoder.Save(bitmap, Path.Combine(screenshotDirectory, screenshotName));
+        return CreateLayoutMetrics(item, root, target, screenshotName);
+    }
+
     private static async Task<CaptureReport> CaptureVulkanAsync(
         FontComparisonManifest manifest,
         string outputDirectory,
@@ -150,6 +181,12 @@ internal static class SquareCapture
         var captures = new List<CaseCapture>();
         foreach (var item in manifest.Cases)
         {
+            if (item.IsLayoutCase)
+            {
+                captures.Add(CaptureVulkanLayoutCase(item, screenshotDirectory));
+                continue;
+            }
+
             var font = new Font(item.FontFamily, item.FontSize, (FontWeight)item.FontWeight, ParseStyle(item.FontStyle));
             var lineHeight = ParseLineHeight(item.LineHeight, item.FontSize);
             var maxWidth = item.Width ?? float.MaxValue;
@@ -209,6 +246,40 @@ internal static class SquareCapture
 #endif
     }
 
+#if PLATFORM_WIN32
+    private static CaseCapture CaptureVulkanLayoutCase(
+        FontComparisonCase item,
+        string screenshotDirectory)
+    {
+        var canvasSize = GetLayoutCanvasSize(item);
+        var canvasWidth = Math.Max(1, (int)MathF.Ceiling(canvasSize.Width));
+        var canvasHeight = Math.Max(1, (int)MathF.Ceiling(canvasSize.Height));
+        using var host = new Win32PlatformFactory().CreateHost(new PlatformHostCreateInfo
+        {
+            Title = "Square layout Vulkan conformance",
+            Width = canvasWidth,
+            Height = canvasHeight,
+            RenderBackend = "Vulkan"
+        });
+        host.Show();
+        using var context = host.CreateRenderContext();
+        var (root, target) = CreateLayoutTree(item);
+        Layout(root, canvasSize);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(context);
+        context.Present();
+        host.ShowAfterFirstFrame();
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var screenshotName = item.Id + ".png";
+        BitmapPngEncoder.Save(bitmap, Path.Combine(screenshotDirectory, screenshotName));
+        var result = CreateLayoutMetrics(item, root, target, screenshotName);
+        host.Close();
+        return result;
+    }
+#endif
+
     private static CaseCapture CreateMetrics(
         FontComparisonCase item,
         TextLayout layout,
@@ -263,6 +334,60 @@ internal static class SquareCapture
             Screenshot = Path.Combine("cases", screenshotName).Replace('\\', '/')
         };
     }
+
+    private static Size GetLayoutCanvasSize(FontComparisonCase item) => new(
+        item.ContainerWidth ?? throw new InvalidOperationException($"Layout case '{item.Id}' requires containerWidth."),
+        item.ContainerHeight ?? throw new InvalidOperationException($"Layout case '{item.Id}' requires containerHeight."));
+
+    private static (View Root, View Target) CreateLayoutTree(FontComparisonCase item)
+    {
+        var root = new View();
+        root.Style.Set("display", item.ContainerDisplay);
+        root.Style.Set("flex-direction", "row");
+        root.Style.Set("justify-content", item.JustifyContent);
+        root.Style.Set("align-items", item.AlignItems);
+        var target = new View();
+        if (item.Width.HasValue) target.Style.Set("width", $"{item.Width.Value}px");
+        if (item.Height.HasValue) target.Style.Set("height", $"{item.Height.Value}px");
+        target.Style.Set("margin-left", item.MarginLeft);
+        target.Style.Set("margin-right", item.MarginRight);
+        target.Style.Set("background", "#000000");
+        root.Children.Add(target);
+        return (root, target);
+    }
+
+    private static void Layout(View root, Size size)
+    {
+        var layout = new LayoutEngine();
+        layout.Measure(root, size);
+        layout.Arrange(root, new Rect(0, 0, size.Width, size.Height));
+    }
+
+    private static CaseCapture CreateLayoutMetrics(
+        FontComparisonCase item,
+        View root,
+        View target,
+        string screenshotName) => new()
+        {
+            Id = item.Id,
+            Category = item.Category,
+            FontFamily = item.FontFamily,
+            FontSize = item.FontSize,
+            FontWeight = item.FontWeight,
+            FontStyle = item.FontStyle,
+            LineHeight = item.LineHeight,
+            TextAlign = item.TextAlign,
+            Width = target.Geometry.Width,
+            Height = target.Geometry.Height,
+            X = target.Geometry.X - root.Geometry.X,
+            Y = target.Geometry.Y - root.Geometry.Y,
+            ContainerLayout = true,
+            Baseline = 0,
+            Ascent = 0,
+            Descent = 0,
+            Characters = [],
+            Screenshot = Path.Combine("cases", screenshotName).Replace('\\', '/')
+        };
 
     private static FontStyle ParseStyle(string value) => value.ToLowerInvariant() switch
     {

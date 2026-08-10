@@ -107,6 +107,55 @@ public class FlexSizingTests
         Assert.Equal(unconstrained.Height, text.Geometry.Height, 3);
     }
 
+    [Theory]
+    [InlineData("margin-left", "-20px", 40)]
+    [InlineData("margin-right", "-20px", 60)]
+    public void NegativeHorizontalMarginMatchesCenteredFlexGeometry(
+        string property,
+        string value,
+        float expectedX)
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "row");
+        root.Style.Set("justify-content", "center");
+        root.Style.Set("align-items", "flex-start");
+        var child = new View();
+        child.Style.Set("width", "100px");
+        child.Style.Set("height", "20px");
+        child.Style.Set(property, value);
+        root.Children.Add(child);
+
+        Layout(root, new Size(200, 80));
+
+        Assert.Equal(new Rect(expectedX, 0, 100, 20), child.Geometry);
+    }
+
+    [Fact]
+    public void SplitterNegativeHorizontalMarginsRemoveGapBetweenAdjacentPanels()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "row");
+        var left = new View();
+        left.Style.Set("width", "100px");
+        var splitter = new Splitter();
+        splitter.Style.Set("margin-left", "-3px");
+        splitter.Style.Set("margin-right", "-3px");
+        var right = new View();
+        right.Style.Set("width", "100px");
+        root.Children.Add(left);
+        root.Children.Add(splitter);
+        root.Children.Add(right);
+
+        Layout(root, new Size(200, 40));
+
+        Assert.Equal(left.Geometry.Right, right.Geometry.X);
+        Assert.Equal(new Rect(97, 0, 6, 40), splitter.Geometry);
+        Assert.Equal(3, left.Geometry.Right - splitter.Geometry.X);
+        Assert.Equal(3, splitter.Geometry.Right - right.Geometry.X);
+    }
+
     private static void Layout(View root, Size size)
     {
         var layout = new LayoutEngine();

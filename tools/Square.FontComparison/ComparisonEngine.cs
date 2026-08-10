@@ -51,7 +51,8 @@ internal static class ComparisonEngine
             var compareContainerPosition = actual.ContainerLayout && expected.ContainerLayout;
             var xDelta = compareContainerPosition ? Math.Abs(actual.X - expected.X) : 0;
             var yDelta = compareContainerPosition ? Math.Abs(actual.Y - expected.Y) : 0;
-            var baselineDelta = Math.Abs(actual.Baseline - expected.Baseline);
+            var isLayout = actual.Category.Equals("layout", StringComparison.OrdinalIgnoreCase);
+            var baselineDelta = isLayout ? 0 : Math.Abs(actual.Baseline - expected.Baseline);
             var expectedCharacters = expected.Characters.Where(character => character.Width > 0.001f).ToArray();
             var characterCount = Math.Min(actual.Characters.Count, expectedCharacters.Length);
             var maxCharacterXDelta = 0f;
@@ -65,10 +66,10 @@ internal static class ComparisonEngine
             if (heightDelta > 0.5f) failures.Add($"height {heightDelta:0.###}px");
             if (xDelta > 0.5f) failures.Add($"container x {xDelta:0.###}px");
             if (yDelta > 0.5f) failures.Add($"container y {yDelta:0.###}px");
-            if (baselineDelta > 0.5f) failures.Add($"baseline {baselineDelta:0.###}px");
-            if (actual.Characters.Count != expectedCharacters.Length)
+            if (!isLayout && baselineDelta > 0.5f) failures.Add($"baseline {baselineDelta:0.###}px");
+            if (!isLayout && actual.Characters.Count != expectedCharacters.Length)
                 failures.Add($"character count {actual.Characters.Count}/{expectedCharacters.Length}");
-            if (maxCharacterXDelta > 0.5f) failures.Add($"character x {maxCharacterXDelta:0.###}px");
+            if (!isLayout && maxCharacterXDelta > 0.5f) failures.Add($"character x {maxCharacterXDelta:0.###}px");
 
             var diffDirectory = Path.Combine(outputDirectory, "diff", renderer.ToLowerInvariant());
             Directory.CreateDirectory(diffDirectory);

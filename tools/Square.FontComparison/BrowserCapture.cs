@@ -80,10 +80,14 @@ internal static class BrowserCapture
                   node.style.fontSize = config.fontSize;
                   node.style.fontWeight = config.fontWeight;
                   node.style.fontStyle = config.fontStyle;
-                  node.style.lineHeight = config.lineHeight;
-                  node.style.textAlign = config.textAlign;
-                   node.style.width = config.width;
-                   node.style.whiteSpace = config.whiteSpace;
+                   node.style.lineHeight = config.lineHeight;
+                   node.style.textAlign = config.textAlign;
+                    node.style.width = config.width;
+                    node.style.height = config.height;
+                    node.style.marginLeft = config.marginLeft;
+                    node.style.marginRight = config.marginRight;
+                    node.style.background = config.isLayout ? 'black' : 'white';
+                    node.style.whiteSpace = config.whiteSpace;
                    node.style.letterSpacing = config.letterSpacing;
                    node.style.wordSpacing = config.wordSpacing;
                    node.style.textIndent = config.textIndent;
@@ -94,12 +98,18 @@ internal static class BrowserCapture
                    container.style.overflow = 'hidden';
                    const containerWidth = config.containerWidthCss;
                    const containerHeight = config.containerHeightCss;
-                   container.style.display = containerWidth == null && containerHeight == null ? 'block' : 'flex';
-                   container.style.width = containerWidth || '';
-                   container.style.height = containerHeight || '';
-                   container.style.justifyContent = containerWidth == null ? '' : 'center';
-                   container.style.alignItems = containerHeight == null ? '' : 'center';
-                 }
+                    container.style.display = config.isLayout
+                      ? config.containerDisplay
+                      : containerWidth == null && containerHeight == null ? 'block' : 'flex';
+                    container.style.width = containerWidth || '';
+                    container.style.height = containerHeight || '';
+                    container.style.justifyContent = config.isLayout
+                      ? config.justifyContent
+                      : containerWidth == null ? '' : 'center';
+                    container.style.alignItems = config.isLayout
+                      ? config.alignItems
+                      : containerHeight == null ? '' : 'center';
+                  }
                 """, new
             {
                 text = item.Text,
@@ -109,22 +119,33 @@ internal static class BrowserCapture
                 fontStyle = item.FontStyle,
                 lineHeight = item.LineHeight,
                 textAlign = item.TextAlign,
-                 width = item.Width.HasValue
-                     ? item.Width.Value.ToString(CultureInfo.InvariantCulture) + "px"
-                     : "max-content",
-                 whiteSpace = item.WhiteSpace,
-                 letterSpacing = item.LetterSpacing,
-                 wordSpacing = item.WordSpacing,
-                 textIndent = item.TextIndent,
-                 textTransform = item.TextTransform,
-                 textDecoration = item.TextDecoration
-                   ,containerWidthCss = item.ContainerWidth.HasValue
+                width = item.Width.HasValue
+                      ? item.Width.Value.ToString(CultureInfo.InvariantCulture) + "px"
+                      : item.IsLayoutCase ? "auto" : "max-content",
+                height = item.Height.HasValue
+                      ? item.Height.Value.ToString(CultureInfo.InvariantCulture) + "px"
+                      : "",
+                marginLeft = item.MarginLeft,
+                marginRight = item.MarginRight,
+                isLayout = item.IsLayoutCase,
+                containerDisplay = item.ContainerDisplay,
+                justifyContent = item.JustifyContent,
+                alignItems = item.AlignItems,
+                whiteSpace = item.WhiteSpace,
+                letterSpacing = item.LetterSpacing,
+                wordSpacing = item.WordSpacing,
+                textIndent = item.TextIndent,
+                textTransform = item.TextTransform,
+                textDecoration = item.TextDecoration
+                   ,
+                containerWidthCss = item.ContainerWidth.HasValue
                        ? item.ContainerWidth.Value.ToString(CultureInfo.InvariantCulture) + "px"
                        : null
-                   ,containerHeightCss = item.ContainerHeight.HasValue
+                   ,
+                containerHeightCss = item.ContainerHeight.HasValue
                        ? item.ContainerHeight.Value.ToString(CultureInfo.InvariantCulture) + "px"
                        : null
-              });
+            });
 
             var screenshotName = item.Id + ".png";
             var screenshotTarget = item.ContainerWidth.HasValue || item.ContainerHeight.HasValue
@@ -183,9 +204,9 @@ internal static class BrowserCapture
                      containerDisplay: containerStyle.display,
                      containerInlineWidth: container.style.width,
                      containerInlineHeight: container.style.height,
-                    baseline: (lineHeight - fontAscent - fontDescent) / 2 + fontAscent,
-                    ascent: fontAscent,
-                    descent: fontDescent,
+                     baseline: text.length === 0 ? 0 : (lineHeight - fontAscent - fontDescent) / 2 + fontAscent,
+                     ascent: text.length === 0 ? 0 : fontAscent,
+                     descent: text.length === 0 ? 0 : fontDescent,
                     characters
                   });
                 }
@@ -201,8 +222,8 @@ internal static class BrowserCapture
                 throw new InvalidOperationException($"Chromium computed font does not match case '{item.Id}'.");
             if (item.ContainerWidth.HasValue &&
                 (Math.Abs(value.ContainerWidth - item.ContainerWidth.Value) > 0.01f ||
-                 Math.Abs(value.ContainerHeight - item.ContainerHeight.GetValueOrDefault()) > 0.01f ||
-                 value.ContainerDisplay != "flex"))
+                  Math.Abs(value.ContainerHeight - item.ContainerHeight.GetValueOrDefault()) > 0.01f ||
+                  value.ContainerDisplay != item.ContainerDisplay))
                 throw new InvalidOperationException(
                     $"Chromium container did not apply for '{item.Id}': " +
                     $"display={value.ContainerDisplay}, width={value.ContainerWidth}, height={value.ContainerHeight}, " +
