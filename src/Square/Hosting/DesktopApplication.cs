@@ -43,6 +43,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private double _lastClickSeconds = double.NegativeInfinity;
     private readonly List<UIElement> _hoverPath = [];
     private readonly List<UIElement> _activePath = [];
+    private readonly TooltipPopup _tooltipPopup;
+    private UIElement? _tooltipTarget;
     private bool _renderRequested;
     private KeyModifiers? _devToolsModifiers;
 
@@ -58,6 +60,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _root = _document.DocumentElement;
         _hostCreateInfo = window.CreateHostInfo();
         window.BindApplication(Dispatcher, this);
+        _tooltipPopup = new TooltipPopup();
+        _document.Body.Children.Add(_tooltipPopup);
     }
 
     /// <summary>兼容构造函数：直接由内容根构造单窗口应用程序。</summary>
@@ -881,7 +885,46 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return false;
     }
 
-    private bool UpdateHoverPath(Element? hit) => UpdateStatePath(_hoverPath, hit, ElementState.Hover);
+    private bool UpdateHoverPath(Element? hit)
+    {
+        var changed = UpdateStatePath(_hoverPath, hit, ElementState.Hover);
+        UpdateTooltip(hit);
+        return changed;
+    }
+
+    private void UpdateTooltip(Element? hit)
+    {
+        var target = FindTooltipTarget(hit);
+        var text = target?.Tooltip;
+        if (ReferenceEquals(_tooltipTarget, target) && string.Equals(_tooltipPopup.Message, text, StringComparison.Ordinal))
+            return;
+
+        _tooltipTarget = target;
+        if (target == null || string.IsNullOrWhiteSpace(text))
+        {
+            _tooltipPopup.Anchor = null;
+            _tooltipPopup.Close();
+        }
+        else
+        {
+            _tooltipPopup.Anchor = target;
+            _tooltipPopup.Message = text;
+            _tooltipPopup.Open();
+        }
+
+        RequestRender();
+    }
+
+    private static UIElement? FindTooltipTarget(Element? hit)
+    {
+        for (var current = hit; current != null; current = current.Parent)
+        {
+            if (current is UIElement element && !string.IsNullOrWhiteSpace(element.Tooltip))
+                return element;
+        }
+
+        return null;
+    }
 
     private bool UpdateActivePath(Element? hit) => UpdateStatePath(_activePath, hit, ElementState.Active);
 
@@ -1555,6 +1598,54 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         Square.UI.Text? TextNode);
 
     private readonly record struct TextSelectionPoint(int Index, int Offset);
+
+    private sealed class TooltipPopup : Popup
+    {
+        private readonly Square.Controls.Text _text = new();
+
+        public TooltipPopup()
+        {
+            ClassList.Add("square-tooltip");
+            Style.Set("display", "flex");
+            Style.Set("align-items", "center");
+            Style.Set("padding", "5px 8px");
+            Style.Set("background", "#263448");
+            Style.Set("border", "1px solid #526783");
+            Style.Set("border-radius", "4px");
+            Style.Set("max-width", "320px");
+            Placement = PopupPlacement.Bottom;
+            Alignment = PopupAlignment.Center;
+            VerticalOffset = 6;
+            FlipOnOverflow = true;
+            ConstrainToViewport = true;
+            DismissOnPointerDownOutside = false;
+            _text.Style.Set("color", "#f3f6fb");
+            _text.Style.Set("font-size", "12px");
+            _text.Style.Set("white-space", "nowrap");
+            _text.Style.Set("user-select", "none");
+            Children.Add(_text);
+        }
+
+        public string? Message
+        {
+            get => _text.TextContent;
+            set
+            {
+                _text.TextContent = value ?? "";
+                _text.InvalidateLayout();
+            }
+        }
+
+        public override Size Measure(Size availableSize)
+        {
+            var textSize = ControlDrawing.MeasureText(_text, Message ?? "", 12f, new Size(320, float.MaxValue));
+            return new Size(textSize.Width + 16, textSize.Height + 10);
+        }
+
+        public override Element? HitTestPopup(Point point) => null;
+
+        public override bool ContainsPopupInteraction(Point point) => false;
+    }
 
     private void HandleTick()
     {

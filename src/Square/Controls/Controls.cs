@@ -1000,14 +1000,19 @@ public class Popup : View, IPopupElement
         var bounds = anchor.Geometry;
         for (var current = anchor.Parent; current != null; current = current.Parent)
         {
-            if (current is not IPopupElement popup) continue;
-            var popupBounds = popup.PopupBounds;
-            var geometry = current.Geometry;
-            return new Rect(
-                bounds.X + popupBounds.X - geometry.X,
-                bounds.Y + popupBounds.Y - geometry.Y,
-                bounds.Width,
-                bounds.Height);
+            if (current.MapsScrollOffsetForChildren())
+                bounds = bounds.Offset(-current.ScrollLeft, -current.ScrollTop);
+
+            if (current is IPopupElement popup)
+            {
+                var popupBounds = popup.PopupBounds;
+                var geometry = current.Geometry;
+                return new Rect(
+                    bounds.X + popupBounds.X - geometry.X,
+                    bounds.Y + popupBounds.Y - geometry.Y,
+                    bounds.Width,
+                    bounds.Height);
+            }
         }
         return bounds;
     }

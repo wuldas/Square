@@ -244,6 +244,64 @@ public class DocumentTests
     }
 
     [Fact]
+    public void DesktopApplicationShowsTooltipForHoveredElement()
+    {
+        var window = new AppWindow("Tooltip", 320, 200);
+        var root = new View { Geometry = new Square.Graphics.Rect(0, 0, 320, 200) };
+        var button = new Button("Icon")
+        {
+            Tooltip = "按钮提示",
+            Geometry = new Square.Graphics.Rect(10, 10, 80, 30)
+        };
+        root.Children.Add(button);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        window.WindowDocument.Build();
+        GetPrivateField<DisplayTree>(application, "_displayTree")!.BuildFrom(application.Document.DocumentElement);
+
+        InvokeHandleMouse(application, new Square.Graphics.Point(20, 20), MouseAction.Move);
+
+        var tooltip = GetPrivateField<Popup>(application, "_tooltipPopup");
+        Assert.NotNull(tooltip);
+        Assert.True(tooltip!.IsOpen);
+        Assert.Same(button, tooltip.Anchor);
+        Assert.Equal("按钮提示", Assert.IsType<Square.Controls.Text>(Assert.Single(tooltip.Children)).TextContent);
+
+        InvokeHandleMouse(application, new Square.Graphics.Point(200, 150), MouseAction.Move);
+
+        Assert.False(tooltip.IsOpen);
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
+    public void PopupAnchorBoundsFollowScrolledAncestor()
+    {
+        var scroll = new ScrollViewer
+        {
+            Geometry = new Square.Graphics.Rect(0, 0, 200, 100)
+        };
+        scroll.SetScrollContentSize(new Square.Graphics.Size(200, 300));
+        scroll.ScrollTop = 60;
+        var anchor = new Button("Icon")
+        {
+            Geometry = new Square.Graphics.Rect(20, 120, 30, 30)
+        };
+        scroll.Children.Add(anchor);
+        var popup = new Popup
+        {
+            Anchor = anchor,
+            Geometry = new Square.Graphics.Rect(0, 0, 80, 20),
+            VerticalOffset = 4
+        };
+
+        var bounds = popup.PopupBounds;
+
+        Assert.Equal(20, bounds.X);
+        Assert.Equal(94, bounds.Y);
+    }
+
+    [Fact]
     public void AttachedLayoutInvalidationRequestsApplicationFrame()
     {
         var window = new AppWindow("Layout");
