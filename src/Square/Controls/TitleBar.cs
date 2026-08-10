@@ -69,9 +69,9 @@ public class TitleBar : View
     private void BuildDefaultControls(View host)
     {
         _ = IconFontLoaded.Value;
-        var minimize = CreateWindowButton("title-bar-minimize", MinimizeIcon, out _);
-        var maximize = CreateWindowButton("title-bar-maximize", MaximizeIcon, out var maximizeIcon);
-        var close = CreateWindowButton("title-bar-close", CloseIcon, out _);
+        var minimize = CreateWindowButton("title-bar-minimize", MinimizeIcon, "最小化", out _);
+        var maximize = CreateWindowButton("title-bar-maximize", MaximizeIcon, "最大化", out var maximizeIcon);
+        var close = CreateWindowButton("title-bar-close", CloseIcon, "关闭", out _);
 
         minimize.AddEventListener("click", _ => AppWindow?.Minimize());
         maximize.AddEventListener("click", _ =>
@@ -84,8 +84,12 @@ public class TitleBar : View
         close.AddEventListener("click", _ => AppWindow?.Close());
         if (AppWindow is { } window)
         {
-            void UpdateMaximizeIcon(AppWindowState state) =>
-                maximizeIcon.TextContent = state == AppWindowState.Maximized ? RestoreIcon : MaximizeIcon;
+            void UpdateMaximizeIcon(AppWindowState state)
+            {
+                var maximized = state == AppWindowState.Maximized;
+                maximizeIcon.TextContent = maximized ? RestoreIcon : MaximizeIcon;
+                maximize.Tooltip = maximized ? "还原" : "最大化";
+            }
             UpdateMaximizeIcon(window.State);
             window.StateChanged += UpdateMaximizeIcon;
         }
@@ -104,11 +108,12 @@ public class TitleBar : View
         return host;
     }
 
-    private static Button CreateWindowButton(string className, string glyph, out Text icon)
+    private static Button CreateWindowButton(string className, string glyph, string tooltip, out Text icon)
     {
         var button = new TitleBarButton(className == "title-bar-close");
         button.ClassList.Add("title-bar-button");
         button.ClassList.Add(className);
+        button.Tooltip = tooltip;
         button.Style.Set("width", "46px");
         button.Style.Set("height", "36px");
         button.Style.Set("display", "flex");

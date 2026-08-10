@@ -608,6 +608,8 @@ public class DocumentTests
         Assert.Equal("Default title",
             Assert.IsType<Square.Controls.Text>(Assert.Single(titleHost.Children)).TextContent);
         Assert.Equal(3, controlHost.Children.Count);
+        Assert.Equal(new[] { "最小化", "最大化", "关闭" },
+            controlHost.Children.Cast<Button>().Select(button => button.Tooltip ?? "").ToArray());
         Assert.All(controlHost.Children, child =>
         {
             var button = Assert.IsAssignableFrom<Button>(child);
