@@ -4,6 +4,7 @@ using Square.Controls;
 using Square.CSS.Engine;
 using Square.CSS.Tokenizer;
 using Square.Events;
+using Square.Graphics;
 using Square.Hosting;
 using Square.Platform;
 using Square.Runtime.State;
@@ -138,6 +139,136 @@ public class DocumentTests
         Assert.Equal(400, splitter.Value);
         Assert.Equal(2, inputCount);
         Assert.Equal(1, changeCount);
+    }
+
+    [Fact]
+    public void SplitterReadsIntegerPropertiesAsFloatValues()
+    {
+        var splitter = new Splitter();
+        splitter.SetProperty("Value", 320);
+        splitter.SetProperty("Minimum", 250);
+        splitter.SetProperty("Maximum", 390);
+
+        Assert.Equal(320, splitter.Value);
+        Assert.Equal(250, splitter.Minimum);
+        Assert.Equal(390, splitter.Maximum);
+
+        splitter.HandlePointerDown(new Square.Graphics.Point(450, 550));
+        splitter.HandlePointerMove(new Square.Graphics.Point(500, 550));
+
+        Assert.Equal(370, splitter.Value);
+    }
+
+    [Fact]
+    public void SplitContainerResizesPanesOnSplitterDrag()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "row");
+        var container = new SplitContainer { Value = 300, Minimum = 200, Maximum = 500, SplitterThickness = 8 };
+        root.Children.Add(container);
+
+        Layout(root, new Size(800, 600));
+
+        Assert.Equal(300, container.First.Geometry.Width, precision: 1);
+        Assert.Equal(8, container.Splitter.Geometry.Width, precision: 1);
+        // 面板各向分隔条延伸一半厚度（4px），在接缝处无缝衔接；
+        // Second 延伸到分隔条区域，宽度 = 容器 - First。
+        Assert.Equal(800 - 300, container.Second.Geometry.Width, precision: 1);
+        Assert.Equal(container.First.Geometry.Right, container.Second.Geometry.X, precision: 1);
+        Assert.Equal(container.Splitter.Geometry.X, container.First.Geometry.Right - 4, precision: 1);
+        Assert.Equal(container.Splitter.Geometry.Right, container.Second.Geometry.X + 4, precision: 1);
+
+        container.Splitter.HandlePointerDown(new Square.Graphics.Point(400, 300));
+        container.Splitter.HandlePointerMove(new Square.Graphics.Point(450, 300));
+        container.Splitter.HandlePointerUp(new Square.Graphics.Point(450, 300));
+
+        Assert.Equal(350, container.Value);
+
+        Layout(root, new Size(800, 600));
+
+        Assert.Equal(350, container.First.Geometry.Width, precision: 1);
+        Assert.Equal(800 - 350, container.Second.Geometry.Width, precision: 1);
+        Assert.Equal(container.First.Geometry.Right, container.Second.Geometry.X, precision: 1);
+        Assert.Equal(container.Splitter.Geometry.X, container.First.Geometry.Right - 4, precision: 1);
+        Assert.Equal(container.Splitter.Geometry.Right, container.Second.Geometry.X + 4, precision: 1);
+    }
+
+    [Fact]
+    public void SplitContainerNonSeamlessLeavesVisibleGapBetweenPanes()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "row");
+        var container = new SplitContainer { Value = 300, Minimum = 200, Maximum = 500, SplitterThickness = 8, IsSeamless = false };
+        root.Children.Add(container);
+
+        Layout(root, new Size(800, 600));
+
+        // 有缝模式：分隔条独立显示在面板之间（First 右缘 = Splitter 左缘）。
+        Assert.Equal(300, container.First.Geometry.Width, precision: 1);
+        Assert.Equal(8, container.Splitter.Geometry.Width, precision: 1);
+        Assert.Equal(800 - 300 - 8, container.Second.Geometry.Width, precision: 1);
+        Assert.Equal(container.First.Geometry.Right, container.Splitter.Geometry.X, precision: 1);
+        Assert.Equal(container.Splitter.Geometry.Right, container.Second.Geometry.X, precision: 1);
+
+        // 切换为无缝：面板延伸覆盖分隔条，接缝闭合。
+        container.IsSeamless = true;
+        Layout(root, new Size(800, 600));
+
+        Assert.Equal(container.First.Geometry.Right, container.Second.Geometry.X, precision: 1);
+        Assert.Equal(container.Splitter.Geometry.X, container.First.Geometry.Right - 4, precision: 1);
+
+        // 切回有缝：恢复间隙。
+        container.IsSeamless = false;
+        Layout(root, new Size(800, 600));
+
+        Assert.Equal(container.First.Geometry.Right, container.Splitter.Geometry.X, precision: 1);
+    }
+
+    [Fact]
+    public void SplitContainerHorizontalModeAdjustsHeights()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "column");
+        var container = new SplitContainer { IsVertical = false, Value = 200, Minimum = 100, Maximum = 400, SplitterThickness = 6 };
+        root.Children.Add(container);
+
+        Layout(root, new Size(600, 500));
+
+        Assert.Equal(200, container.First.Geometry.Height, precision: 1);
+        Assert.Equal(500 - 200, container.Second.Geometry.Height, precision: 1);
+        Assert.Equal(container.First.Geometry.Bottom, container.Second.Geometry.Y, precision: 1);
+
+        container.Splitter.HandlePointerDown(new Square.Graphics.Point(300, 300));
+        container.Splitter.HandlePointerMove(new Square.Graphics.Point(300, 350));
+        container.Splitter.HandlePointerUp(new Square.Graphics.Point(300, 350));
+
+        Assert.Equal(250, container.Value);
+
+        Layout(root, new Size(600, 500));
+
+        Assert.Equal(250, container.First.Geometry.Height, precision: 1);
+        Assert.Equal(500 - 250, container.Second.Geometry.Height, precision: 1);
+        Assert.Equal(container.First.Geometry.Bottom, container.Second.Geometry.Y, precision: 1);
+    }
+
+    [Fact]
+    public void SplitContainerRegistersFromElementRegistry()
+    {
+        var container = Assert.IsType<SplitContainer>(ElementRegistry.Create("SplitContainer"));
+        Assert.NotNull(container.First);
+        Assert.NotNull(container.Second);
+        Assert.NotNull(container.Splitter);
+        Assert.Equal(3, container.Children.Count);
+    }
+
+    private static void Layout(View root, Size size)
+    {
+        var layout = new LayoutEngine();
+        layout.Measure(root, size);
+        layout.Arrange(root, new Rect(0, 0, size.Width, size.Height));
     }
 
     [Fact]

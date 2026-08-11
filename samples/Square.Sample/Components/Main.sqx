@@ -35,6 +35,7 @@
     <Tabs class="main-tabs">
       <Button slot="tabs" class="tab-button">Text</Button>
       <Button slot="tabs" class="tab-button">Controls</Button>
+      <Button slot="tabs" class="tab-button">SplitContainer</Button>
       <Button slot="tabs" class="tab-button">Media</Button>
       <Button slot="tabs" class="tab-button">Router</Button>
       <Button slot="tabs" class="tab-button">Signals</Button>
@@ -42,6 +43,7 @@
       <Button slot="tabs" class="tab-button">Overlays</Button>
       <TextSamplesPage />
       <ControlsSamplesPage />
+      <SplitterSamplesPage />
       <MediaSamplesPage />
       <RouterSamplesPage />
       <SignalsSamplesPage />

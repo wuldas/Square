@@ -874,6 +874,9 @@ public sealed class PropertyStore
 | `MenuItem` | `UIElement` | `TextContent`, `ShortcutText`, `Icon`, `IsCheckable`, `IsChecked`, `GroupName`, `StaysOpenOnClick`, `Command`, `Submenu` |
 | `MenuSeparator` | `UIElement` | — |
 | `Text` | `UIElement` | `TextContent`, `Color`, `FontSize` |
+| `FontIcon` | `Text` | `Glyph`, `FontFamily` |
+| `Splitter` | `UIElement` | `Value`, `Minimum`, `Maximum`, `IsVertical`, `IsReversed` |
+| `SplitContainer` | `View` | `First`, `Second`, `Splitter`, `Value`, `Minimum`, `Maximum`, `SplitterThickness`, `IsVertical`, `IsSeamless` |
 | `ListItem` | `UIElement` | `TextContent`, `Marker`, `Color`, `FontSize`（类似 HTML `li`） |
 | `Link` | `UIElement` | `TextContent`, `Href`, `Color`, `FontSize`, `Underline`（类似 HTML `a`；应用内路由导航见 `Square.Extensions.Routing.RouterLink`） |
 | `Button` | `UIElement` | `TextContent`, `Background`, `Foreground` |
@@ -950,6 +953,54 @@ public class Dialog : Popup
 ```
 
 Escape 关闭由宿主选择最上层允许关闭的 popup；关闭遮罩的 pointerdown 使用关闭前的 popup 命中结果，因此不会点击穿透到背景控件。当前阶段不包含 Tab 焦点陷阱、拖拽和打开/关闭动画。
+
+### Splitter
+
+`Splitter` 是可拖动调整数值的布局分隔条：按住拖动时更新 `Value` 并派发 `input`（拖动中）与 `change`（松开）事件，值被 `Minimum`/`Maximum` 钳制。自身只负责拖动与数值，不调整任何布局——相邻面板的尺寸联动由 `SplitContainer` 或调用方监听事件完成。
+
+```csharp
+public class Splitter : UIElement
+{
+    public float Value { get; set; }        // 当前分隔值，通常表示相邻面板尺寸
+    public float Minimum { get; set; }      // 默认 160
+    public float Maximum { get; set; }      // 默认 640
+    public bool IsVertical { get; set; }    // 默认 true（垂直条调宽度）
+    public bool IsReversed { get; set; }    // 反转拖动方向
+}
+```
+
+样式：`Splitter` 自身不绘制内容，仅通过 CSS `background`（含 `rgba` 半透明与 `:hover`/`:active` 伪类）和 `::before`/`::after` 伪元素（支持 `content: ""` 装饰盒子）定制外观；光标随 `IsVertical` 自动切换 `col-resize` / `row-resize`。
+
+### SplitContainer
+
+`SplitContainer` 是带内置分隔条的两栏容器：拖动分隔条自动调整两侧面板尺寸，无需手动同步布局。
+
+```xml
+<SplitContainer value="340" minimum="200" maximum="470" splitter-thickness="8">
+  <View slot="first" ...>…</View>
+  <View slot="second" ...>…</View>
+</SplitContainer>
+```
+
+```csharp
+public class SplitContainer : View
+{
+    public View First { get; }              // 左/上面板（slot="first"）
+    public View Second { get; }             // 右/下面板（slot="second"）
+    public Splitter Splitter { get; }       // 中间分隔条
+    public bool IsVertical { get; set; }    // 默认 true（左右分栏）
+    public float Value { get; set; }        // 第一面板尺寸
+    public float Minimum { get; set; }
+    public float Maximum { get; set; }
+    public float SplitterThickness { get; set; }  // 分隔条厚度，默认 8px
+    public bool IsSeamless { get; set; }    // 默认 true
+}
+```
+
+- **无缝模式（`IsSeamless="true"`，默认）**：两侧面板各向分隔条延伸一半厚度，覆盖接缝实现无缝相接；分隔条置顶（`z-index: 2`），透明时面板直接相连，`hover` 高亮等样式覆盖在接缝上。拖动时两面板同步伸缩并始终填满容器。
+- **有缝模式（`IsSeamless="false"`）**：分隔条独立显示在面板之间，可见间隙等于 `SplitterThickness`，可直接用 `splitter-thickness` 控制缝隙大小。
+- 水平分栏用 `vertical="false"`，面板高度由 `Value` 控制。
+- 面板内容通过 sqx 插槽 `slot="first"` / `slot="second"` 注入；内部 `Splitter` 带有 `splitter` class，可用类型选择器 `Splitter`、伪类 `Splitter:hover` 与伪元素 `Splitter::after` 设置样式。
 
 ### MenuBar / Menu / ContextMenu
 

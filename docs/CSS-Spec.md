@@ -51,7 +51,7 @@ CSS 是框架的重要组成部分，与 `.sqx` 的 `<style>` 段和 `style`/`cl
 | 属性 | `[IsDisabled]` `[variant=primary]` `[tags~=primary]` `[lang|=en]` `[code^=pre]` `[code$=suffix]` `[code*=middle]` | ✅ 已实现 |
 | 伪类 | `:hover` `:focus` `:active` | ✅ 基础已实现 |
 | 函数式伪类 | `:nth-child(2)` `:not(.active)` | ⚠️ 部分实现 |
-| 伪元素 | `::before` `::after`（兼容 `:before` `:after`） | ⚠️ 部分实现：支持字符串 `content` 与伪元素样式 |
+| 伪元素 | `::before` `::after`（兼容 `:before` `:after`） | ✅ 已实现：字符串 `content` 与 `content: ""` 装饰盒子（含背景/边框样式）；`::selection` 仅映射背景/颜色 |
 
 > 说明：组合选择器、`!important`、`:nth-child(n)` 与属性选择器已有单元测试覆盖。属性选择器匹配 `Element.Properties` 强类型属性袋，不是独立 DOM Attr 集合；属性名保持 PropertyStore 的大小写语义，值匹配当前统一使用大小写不敏感比较。暂不支持命名空间属性及 `i` / `s` 大小写修饰符。
 

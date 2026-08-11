@@ -822,6 +822,8 @@ namespace Square.Compiler.Emit
             "font-family" => "FontFamily",
             "minimum" => "Minimum",
             "maximum" => "Maximum",
+            "splitter-thickness" => "SplitterThickness",
+            "seamless" => "IsSeamless",
             "vertical" => "IsVertical",
             "reversed" => "IsReversed",
             "value" => "Value",

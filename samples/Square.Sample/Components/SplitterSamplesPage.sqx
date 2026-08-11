@@ -1,0 +1,89 @@
+<template>
+  <View class="splitter-page sample-page">
+    <Text class="page-title" text="SplitContainer" />
+    <Text class="description" text="SplitContainer with built-in drag layout." />
+    <View class="splitter-stage">
+      <Text class="splitter-title" text="SplitContainer" />
+
+      <SplitContainer ref={SplitContainer} value="340" minimum="200" maximum="470" splitter-thickness="4">
+        <View slot="first" class="splitter-panel panel-left">
+          <View class="texture-dash left-dash-01" />
+          <View class="texture-dash left-dash-02" />
+          <View class="texture-dash left-dash-03" />
+          <View class="texture-dash left-dash-04" />
+          <View class="texture-dash left-dash-05" />
+          <View class="texture-dash left-dash-06" />
+          <View class="texture-dash left-dash-07" />
+          <View class="texture-dash left-dash-08" />
+          <View class="texture-dash left-dash-09" />
+          <View class="texture-dash left-dash-10" />
+          <Text class="view-label view1-label" text="view1" />
+        </View>
+        <View slot="second" class="splitter-panel panel-right">
+          <View class="texture-dash right-dash-01" />
+          <View class="texture-dash right-dash-02" />
+          <View class="texture-dash right-dash-03" />
+          <View class="texture-dash right-dash-04" />
+          <View class="texture-dash right-dash-05" />
+          <View class="texture-dash right-dash-06" />
+          <View class="texture-dash right-dash-07" />
+          <View class="texture-dash right-dash-08" />
+          <View class="texture-dash right-dash-09" />
+          <View class="texture-dash right-dash-10" />
+          <Text class="view-label view2-label" text="view2" />
+        </View>
+      </SplitContainer>
+    </View>
+  </View>
+</template>
+<script lang="csharp">
+</script>
+<style>
+  .sample-page { display: flex; flex-direction: column; gap: 10px; padding: 0; }
+  .splitter-page { align-items: center; }
+  .page-title { color: #202124; font-size: 18px; }
+  .description { color: #555b61; font-size: 13px; }
+  .splitter-stage { position: relative; width: 680px; height: 500px; flex-shrink: 0; overflow: hidden; background: #f3f4f1; border: 1px solid #d6d8d5; }
+  .splitter-title { position: absolute; left: 283px; top: 48px; width: 120px; height: 20px; z-index: 4; color: #168447; font-size: 14px; }
+  .splitter-stage SplitContainer { width: 680px; height: 500px; }
+  .splitter-panel { position: relative; height: 100%; box-sizing: border-box; overflow: hidden; }
+  .panel-left { background: rgba(157,40,52,0.8); border: 3px solid #28a9df; }
+  .panel-right { background: rgba(88,105,189,0.8); border: 3px solid #ed3544; }
+  .splitter-stage Splitter:hover,
+  .splitter-stage Splitter:active { background: rgba(47,154,84,0.45); }
+  .splitter-stage Splitter::after {
+    content: "";
+    position: absolute;
+    left: 1px;
+    top: 50%;
+    width: 2px;
+    height: 28px;
+    margin-top: -14px;
+    background: rgba(255,255,255,0.55);
+    border-radius: 1px;
+  }
+  .view-label { position: absolute; top: 240px; z-index: 2; color: #111315; font-size: 14px; }
+  .view1-label { left: 16px; }
+  .view2-label { right: 16px; }
+  .texture-dash { position: absolute; width: 18px; height: 2px; opacity: 0.34; background: #f5fff4; }
+  .left-dash-01 { left: 24px; top: 40px; }
+  .left-dash-02 { left: 90px; top: 90px; }
+  .left-dash-03 { left: 40px; top: 140px; }
+  .left-dash-04 { left: 150px; top: 190px; }
+  .left-dash-05 { left: 70px; top: 240px; }
+  .left-dash-06 { left: 190px; top: 290px; }
+  .left-dash-07 { left: 36px; top: 340px; }
+  .left-dash-08 { left: 136px; top: 390px; }
+  .left-dash-09 { left: 250px; top: 440px; }
+  .left-dash-10 { left: 88px; top: 480px; }
+  .right-dash-01 { left: 36px; top: 40px; }
+  .right-dash-02 { left: 132px; top: 90px; }
+  .right-dash-03 { left: 68px; top: 140px; }
+  .right-dash-04 { left: 224px; top: 190px; }
+  .right-dash-05 { left: 116px; top: 240px; }
+  .right-dash-06 { left: 276px; top: 290px; }
+  .right-dash-07 { left: 44px; top: 340px; }
+  .right-dash-08 { left: 172px; top: 390px; }
+  .right-dash-09 { left: 316px; top: 440px; }
+  .right-dash-10 { left: 88px; top: 480px; }
+</style>

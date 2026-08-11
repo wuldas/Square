@@ -268,6 +268,62 @@ public class CssParserTests
     }
 
     [Fact]
+    public void PseudoElementWithEmptyContentIsKeptAsDecorationBox()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".target::after { content: \"\"; position: absolute; width: 4px; height: 20px; background: #ff0000; }").Tokenize()).Parse());
+        var host = new View();
+        host.ClassList.Add("target");
+        engine.ApplyStylesToTree(host);
+
+        var after = Assert.IsAssignableFrom<Square.Controls.Text>(Assert.Single(host.Children));
+        Assert.Equal("", after.TextContent);
+        Assert.Equal("#ff0000", after.Style.Get("background"));
+        Assert.Equal("4px", after.Style.Get("width"));
+        Assert.Equal("20px", after.Style.Get("height"));
+    }
+
+    [Fact]
+    public void PseudoElementWithoutContentIsRemoved()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".target::after { position: absolute; width: 4px; height: 20px; background: #ff0000; }").Tokenize()).Parse());
+        var host = new View();
+        host.ClassList.Add("target");
+        engine.ApplyStylesToTree(host);
+
+        Assert.Empty(host.Children);
+    }
+
+    [Fact]
+    public void SplitterTypeSelectorAppliesWidthAndNegativeMargins()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Splitter { width: 8px; margin-left: -2px; margin-right: -2px; }").Tokenize()).Parse());
+        var splitter = new Splitter();
+        engine.ApplyStyles(splitter);
+
+        Assert.Equal("8px", splitter.Style.Get("width"));
+        Assert.Equal("-2px", splitter.Style.Get("margin-left"));
+        Assert.Equal("-2px", splitter.Style.Get("margin-right"));
+    }
+
+    [Fact]
+    public void DoubleColonPseudoElementSplitterDoesNotMatch()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Splitter::Splitter { width: 8px; }").Tokenize()).Parse());
+        var splitter = new Splitter();
+        engine.ApplyStyles(splitter);
+
+        Assert.Null(splitter.Style.Get("width"));
+    }
+
+    [Fact]
     public void GeneratedPseudoElementsDoNotAffectStructuralPseudoClasses()
     {
         var engine = new CssEngine();

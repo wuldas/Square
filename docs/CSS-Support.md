@@ -263,11 +263,13 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 
 | 伪元素 | 状态 | 说明 |
 |---|---|---|
-| `::before`、`:before` | 🟡 | 字符串 `content`，创建内部 Text 子元素并应用声明。 |
-| `::after`、`:after` | 🟡 | 字符串 `content`，创建内部 Text 子元素并应用声明。 |
+| `::before`、`:before` | 🟢 | 字符串 `content` 或显式 `content: ""` 装饰盒子；创建内部 Text 子元素并应用声明，背景/边框由通用绘制管线渲染。 |
+| `::after`、`:after` | 🟢 | 字符串 `content` 或显式 `content: ""` 装饰盒子；创建内部 Text 子元素并应用声明，背景/边框由通用绘制管线渲染。 |
 | `::selection` | 🟡 | 仅映射 `background`/`background-color`/`color`。 |
 | `::first-line`、`::first-letter`、`::marker`、`::placeholder` | ⚪ | 未实现。 |
 | `::part()`、highlight 系列、View Transition 系列 | ⚪ | 未实现。 |
+
+> 说明：`::before`/`::after` 未设置 `content`（或为 `none`/`normal`）时伪元素被移除；显式 `content: ""` 保留为空装饰盒子，可用于纯样式伪元素（如分隔条握把、hover 高亮条）。类型选择器（如 `Splitter { … }`）按 `TagName` 匹配，可配合伪类/伪元素为内置控件定制样式。
 
 ### 2.4 DOM 查询 API 与样式表选择器差异
 
@@ -691,7 +693,7 @@ await face.LoadAsync();
 | CSSOM declaration surface | `src/Square/UI/ElementApi/StyleAccessor.cs` |
 | Flex/Grid/Box/Positioning | `src/Square/Rendering/Layout/LayoutEngine.cs` |
 | Overflow/scroll/hit testing | `src/Square/UI/Element/Element.cs` |
-| Control painting/text properties | `src/Square/Controls/Controls.cs` |
+| Control painting/text properties | `src/Square/Controls/View.cs`、`Text.cs`、`Button.cs`、`ListItem.cs`、`Select.cs`、`Image.cs`、`Splitter.cs`、`Dialog.cs`、`ControlDrawing.cs`（原 `Controls.cs` 已按控件拆分） |
 | Text editor selection/caret | `src/Square/Controls/TextEditors.cs` |
 | Box shadow | `src/Square/Graphics/Primitives/BoxShadow.cs` |
 | Font parsing/loading | `src/Square/Graphics/Primitives/Font.cs`、`src/Square/Text/Fonts` |

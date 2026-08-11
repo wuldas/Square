@@ -72,6 +72,7 @@ public class M1IntegrationTests
         var root = Assert.IsType<View>(Assert.Single(component.Children));
         var tabs = Assert.Single(root.QueryAll<Tabs>());
         var controlsPage = Assert.Single(root.QueryAll<ControlsSamplesPage>());
+        Assert.Single(root.QueryAll<SplitterSamplesPage>());
         var textPage = Assert.Single(root.QueryAll<TextSamplesPage>());
         var button = Assert.Single(controlsPage.QueryAll<Button>(), item => item.TextContent == "Button - add activity");
         var inputs = root.QueryAll<Input>();
@@ -82,7 +83,7 @@ public class M1IntegrationTests
         Assert.Equal(4, root.Children.Count);
         Assert.IsType<MenuBar>(root.Children[0]);
         Assert.IsType<Tabs>(root.Children[3]);
-        Assert.Equal(7, tabs.QueryAll<Button>().Count(control => control.ClassList.Contains("tab-button")));
+        Assert.Equal(8, tabs.QueryAll<Button>().Count(control => control.ClassList.Contains("tab-button")));
         Assert.Equal(4, inputs.Count);
         Assert.Equal(2, root.QueryAll<TextArea>().Count);
         Assert.Equal("14px", inputs[1].Style.Get("line-height"));

@@ -49,7 +49,7 @@ internal static class CssGeneratedContentEvaluator
         if (generated == null) return;
 
         var contentValue = generated.Style.Get("content");
-        if (name != "marker" && (string.IsNullOrWhiteSpace(contentValue) ||
+        if (name != "marker" && (contentValue is null ||
             contentValue.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ||
             contentValue.Trim().Equals("normal", StringComparison.OrdinalIgnoreCase)))
         {
@@ -151,10 +151,12 @@ internal static class CssGeneratedContentEvaluator
         out string content)
     {
         content = "";
-        if (string.IsNullOrWhiteSpace(value)) return false;
+        if (value is null) return false;
         value = value.Trim();
         if (value.Equals("none", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("normal", StringComparison.OrdinalIgnoreCase)) return false;
+        // 显式空字符串（content: ""）：保留为空装饰盒子，用于纯样式伪元素。
+        if (value.Length == 0) return true;
 
         var quotes = ParseQuotes(owner.Style.Get("quotes"));
         var result = new StringBuilder();
