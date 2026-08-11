@@ -86,10 +86,13 @@ public static class Program
                 Port = int.TryParse(GetOption(args, "--devtools-port"), out var port) ? port : 0,
                 AccessToken = GetOption(args, "--devtools-token"),
                 AllowInputInjection = true,
-                AllowInspector = true
+                AllowInspector = true,
+                AllowMemoryDiagnostics = HasOption(args, "--devtools-memory")
             });
             System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
             System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+            if (HasOption(args, "--devtools-memory"))
+                System.Console.WriteLine($"Memory diagnostics: {devTools.BaseAddress}/api/v1/memory");
 #else
             throw new NotSupportedException("This build does not include DevTools. Build with -p:SquareSampleUseDevTools=true to enable it.");
 #endif

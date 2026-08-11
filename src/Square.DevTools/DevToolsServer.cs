@@ -89,8 +89,17 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
             if (method == "GET" && path == "/api/v1/health")
             {
                 var json = $"{{\"status\":\"ok\",\"processId\":{Environment.ProcessId},\"port\":{Port}," +
-                           $"\"baseAddress\":\"{BaseAddress}\",\"inputInjection\":{Bool(options.AllowInputInjection)}}}";
+                           $"\"baseAddress\":\"{BaseAddress}\",\"inputInjection\":{Bool(options.AllowInputInjection)}," +
+                           $"\"memoryDiagnostics\":{Bool(options.AllowMemoryDiagnostics)}}}";
                 await WriteJsonAsync(context.Response, StatusCodes.Ok, json);
+                return;
+            }
+
+            if (method == "GET" && path == "/api/v1/memory")
+            {
+                if (!options.AllowMemoryDiagnostics) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var snapshot = MemorySnapshotCollector.Capture();
+                await WriteJsonAsync(context.Response, StatusCodes.Ok, MemorySnapshotJson.Serialize(snapshot));
                 return;
             }
 

@@ -1,9 +1,9 @@
 # DevTools
 
-> Document Revision: 0.5
+> Document Revision: 0.6
 > 配套：`Getting-Started.md`、`API-Reference.md`、`Rendering.md`
 
-`Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集和输入自动化。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
+`Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集、输入自动化、元素检查和低开销内存诊断。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
 
 ---
 
@@ -30,7 +30,8 @@ var devTools = app.UseDevToolsServer(new DevToolsOptions
 {
     Port = 0,
     AccessToken = "dev-token",
-    AllowInputInjection = true
+    AllowInputInjection = true,
+    AllowMemoryDiagnostics = true
 });
 
 Console.WriteLine($"{devTools.BaseAddress}/api/v1/health");
@@ -47,6 +48,7 @@ app.Run();
 | `AccessToken` | `null` | 访问令牌；为空时自动生成 24 字节随机 token 的十六进制字符串 |
 | `AllowInputInjection` | `false` | 是否允许 `/input/*` 输入注入接口；关闭后输入接口返回 `403` |
 | `AllowInspector` | `false` | 是否允许 `/inspect/*` 运行时检查接口；关闭后返回 `403` |
+| `AllowMemoryDiagnostics` | `false` | 是否允许 `/memory` 只读运行时内存快照；关闭后返回 `403` |
 | `IncludeSourcePaths` | `false` | Inspector 响应是否包含模板源码路径 |
 | `IncludeTextContent` | `false` | Inspector 响应是否包含元素文本内容 |
 
@@ -74,6 +76,7 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj -- --backend=Vul
 | `--devtools` | 启动 DevToolsServer（缺省不启动） |
 | `--devtools-port=<port>` | 指定端口；省略时使用自动端口（`Port = 0`） |
 | `--devtools-token=<token>` | 指定访问令牌；省略时自动生成随机 token |
+| `--devtools-memory` | 显式启用 `/memory` 只读内存诊断；必须与 `--devtools` 一起使用 |
 
 启动后控制台会输出实际 base address 和 token header，例如：
 
@@ -172,7 +175,8 @@ X-Square-DevTools-Token: <access-token>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/health` | 返回服务状态、进程 ID、实际端口、BaseAddress 和输入注入开关 |
+| `GET` | `/health` | 返回服务状态、进程 ID、实际端口、BaseAddress 和功能开关 |
+| `GET` | `/memory` | 返回当前进程和 CLR GC 的只读内存快照 |
 | `GET` | `/screenshot` | 返回当前 renderer bitmap 的 PNG |
 | `POST` | `/input/pointer` | 注入鼠标移动/按下/抬起 |
 | `POST` | `/input/key` | 注入键盘按下/抬起 |
@@ -194,7 +198,8 @@ Inspector endpoint 见 [7. 元素调试与 Inspector](#7-元素调试与-inspect
   "processId": 12345,
   "port": 54321,
   "baseAddress": "http://127.0.0.1:54321",
-  "inputInjection": true
+  "inputInjection": true,
+  "memoryDiagnostics": true
 }
 ```
 
@@ -204,6 +209,79 @@ Inspector endpoint 见 [7. 元素调试与 Inspector](#7-元素调试与-inspect
 curl -H "X-Square-DevTools-Token: $TOKEN" \
   http://127.0.0.1:<port>/api/v1/health
 ```
+
+### GET /api/v1/memory
+
+当 `AllowMemoryDiagnostics=true` 时返回当前进程和 CLR GC 的一次性只读快照。采集不调用 `GC.Collect()`，不生成 dump，不保存服务端历史，也不启动后台采样线程。响应字段按顺序采集，并不是同一原子时刻的进程快照；`sampledAtUnixMilliseconds` 表示这次采集的大致时间。
+
+```bash
+curl -H "X-Square-DevTools-Token: $TOKEN" \
+  http://127.0.0.1:<port>/api/v1/memory
+```
+
+响应示例：
+
+```json
+{
+  "processId": 12345,
+  "sampledAtUnixMilliseconds": 1786464000000,
+  "process": {
+    "workingSetBytes": 183500800,
+    "privateMemoryBytes": 146800640,
+    "virtualMemoryBytes": 2147483648
+  },
+  "managed": {
+    "currentBytes": 35651584,
+    "approximateTotalAllocatedBytes": 982347112,
+    "heapSizeAfterLastGcBytes": 33554432,
+    "fragmentedAfterLastGcBytes": 1048576,
+    "totalCommittedBytes": 50331648,
+    "totalAvailableMemoryBytes": 8589934592,
+    "memoryLoadBytes": 4294967296,
+    "highMemoryLoadThresholdBytes": 7730941132,
+    "pendingFinalizers": 0,
+    "pinnedObjects": 12,
+    "pauseTimePercentage": 1.25
+  },
+  "collections": {
+    "gen0": 245,
+    "gen1": 37,
+    "gen2": 5
+  }
+}
+```
+
+字段语义：
+
+| 字段 | 说明 |
+|---|---|
+| `process.workingSetBytes` | 操作系统当前分配给进程的物理内存工作集 |
+| `process.privateMemoryBytes` | 进程提交的私有内存；不等同于 Native/GPU 内存；部分平台可能返回 `0` 表示该值不可用 |
+| `process.virtualMemoryBytes` | 进程虚拟地址空间大小；不能当作实际 RAM 占用，具体统计口径遵循 .NET 和当前操作系统 |
+| `managed.currentBytes` | `GC.GetTotalMemory(false)` 的当前托管内存估算，不触发回收 |
+| `managed.approximateTotalAllocatedBytes` | 进程启动以来的快速近似累计托管分配量，可用于观察趋势，但可能滞后，不能替代 profiler 的精确 allocation rate |
+| `managed.heapSizeAfterLastGcBytes` | 最近一次 GC 完成后的托管堆大小，不是请求瞬间的精确堆大小 |
+| `managed.fragmentedAfterLastGcBytes` | 最近一次 GC 后的托管堆碎片 |
+| `managed.totalCommittedBytes` | GC 已提交的虚拟内存 |
+| `managed.totalAvailableMemoryBytes` | GC 认为当前进程可使用的内存上限 |
+| `managed.memoryLoadBytes` | 最近一次 GC 时观察到的机器内存负载 |
+| `managed.highMemoryLoadThresholdBytes` | GC 使用的高内存负载阈值 |
+| `managed.pendingFinalizers` | 最近一次 GC 信息中的待终结对象数 |
+| `managed.pinnedObjects` | 最近一次 GC 信息中的 pinned object 数 |
+| `managed.pauseTimePercentage` | GC 暂停占运行时间的百分比 |
+| `collections.gen0/gen1/gen2` | 当前进程各代累计 GC 次数 |
+
+客户端可以定时轮询，并通过两次响应的 `approximateTotalAllocatedBytes` 与 `sampledAtUnixMilliseconds` 差值观察近似分配速率趋势。该值可能滞后，且轮询和 JSON 响应本身也会产生少量分配，因此不能用于精确基准，也不应使用过高采样频率；需要精确 allocation rate 或 allocation stack 时应改用专用 profiler。服务端不维护时间序列，避免 DevTools 自身产生持续内存占用。
+
+不能使用下面的差值推断 Native 或 GPU 内存：
+
+```text
+process.privateMemoryBytes - managed.currentBytes
+```
+
+该差值还包含 CLR、线程栈、模块映像、JIT/AOT、内存池、映射文件以及其他进程私有内存。需要对象引用链、GC Root、分配调用栈或 Native 内存来源时，应继续使用 dotMemory、PerfView、`dotnet-gcdump`、`dotnet-dump` 或 VMMap。
+
+`process` 下的指标直接来自 `System.Diagnostics.Process`。不同操作系统的统计口径并不完全一致；特别是值为 `0` 时，调用方需要将其视为“可能不可用”，不能直接得出实际内存为零的结论。
 
 ### GET /api/v1/screenshot
 
@@ -329,7 +407,8 @@ curl -X POST -H "X-Square-DevTools-Token: $TOKEN" \
 | `401` | 缺少或错误 `X-Square-DevTools-Token` |
 | `403` | `AllowInputInjection=false` 时调用 `/input/*` |
 | `403` | `AllowInspector=false` 时调用 `/inspect/*` |
-| `500` | 截图或输入注入期间出现未处理异常 |
+| `403` | `AllowMemoryDiagnostics=false` 时调用 `/memory` |
+| `500` | 截图、输入注入、Inspector 或内存快照期间出现未处理异常 |
 
 DevTools 启动阶段的端口冲突不会转换为 HTTP 状态码，因为此时服务尚未启动；`DevToolsServer.Start` 会直接抛出异常。
 
@@ -341,7 +420,7 @@ DevTools 启动阶段的端口冲突不会转换为 HTTP 状态码，因为此�
 
 DevTools HTTP 请求由仅绑定 loopback 的 `HttpListener` 处理，不依赖 ASP.NET Core。输入注入不会直接跨线程操作 UI；`DevToolsServer` 会调用 `DesktopApplication.InjectPointerAsync`、`InjectKeyAsync`、`InjectTextAsync` 和 `InjectWheelAsync`，再通过 `Dispatcher.InvokeAsync` 投递到 UI 线程。
 
-`Square.DevTools` 支持 NativeAOT。服务使用显式路由和 JSON 读写，不依赖运行时 endpoint 发现、反射序列化元数据或动态代码生成。主示例 AOT 发布后仍可使用 `--devtools`：
+`Square.DevTools` 支持 NativeAOT。服务使用显式路由和 JSON 读写，包括内存快照响应在内都不依赖运行时 endpoint 发现、反射序列化元数据或动态代码生成。主示例 AOT 发布后仍可使用 `--devtools`：
 
 ```powershell
 dotnet publish samples/Square.Sample/Square.Sample.csproj `
