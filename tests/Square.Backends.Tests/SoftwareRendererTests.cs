@@ -1267,6 +1267,9 @@ public class SoftwareRendererTests
         plain.Focus();
         plain.SelectAll();
 
+        // 临时诊断：CI 字体与选区几何
+        DumpSelectionDiagnostics(colored, "Select");
+
         var coloredContext = CreateContext(240, 50);
         coloredContext.Clear(Color.White);
         var coloredTree = new DisplayTree();
@@ -1280,6 +1283,22 @@ public class SoftwareRendererTests
         plainTree.Render(plainContext);
 
         AssertBitmapEqual(plainContext.GetBitmap(), coloredContext.GetBitmap());
+    }
+
+    private static void DumpSelectionDiagnostics(Input input, string value)
+    {
+        var entry = FontCollection.Shared.Resolve("Segoe UI", 'S');
+        System.Console.WriteLine($"DIAG resolve-family={entry?.Family}");
+        var font = global::Square.Text.FontManager.Instance.FromCss("sans-serif", null, null, null, 14f);
+        System.Console.WriteLine($"DIAG font={font.Family} size={font.Size}");
+        System.Console.WriteLine($"DIAG metrics={TextMetrics.GetFontMetrics(font)}");
+        var rectsMethod = typeof(Input).BaseType!.GetMethod(
+            "GetSelectionRects", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var rects = rectsMethod!.Invoke(input, new object[] { value }) as System.Collections.Generic.List<Rect>;
+        System.Console.WriteLine($"DIAG rects={string.Join(" | ", rects!)}");
+        System.Console.WriteLine($"DIAG lineHeight={TextMetrics.GetLineHeight(font, TextLayout.DefaultLineHeight) * TextLayout.DefaultLineHeight}");
+        var glyphTop = TextMetrics.GetBaselineOffset(font, 17f) - Math.Max(0, -TextMetrics.GetFontMetrics(font).Ascent);
+        System.Console.WriteLine($"DIAG baseline={TextMetrics.GetBaselineOffset(font, 17f)} glyphTopOffset={glyphTop}");
     }
 
     [Fact]
