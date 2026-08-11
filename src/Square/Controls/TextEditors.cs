@@ -568,11 +568,22 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             }
             if (includesNewline) width += 6;
             var visualLineBox = GetVisualLineBox(fontSize, lineHeight, i);
+            var lineFont = ControlDrawing.ResolveFont(this, fontSize);
+            var metrics = TextMetrics.GetFontMetrics(lineFont);
+            var ascent = Math.Max(0, -metrics.Ascent);
+            var descent = Math.Max(0, metrics.Descent);
+            // 渲染基线 = 文本 origin（GetFirstLineTop(lineHeight) + 行偏移）+ 基线偏移；
+            // 选区矩形必须覆盖字形墨迹的完整边界：当字体 ascent+descent 大于 line-height
+            // （如大 ascender 的 CJK 字体）时，字形顶部/底部会越出按 line-height 定位的行盒，
+            // 否则选区外的字形像素会透出原始文字色。
+            var baseline = origin.Y + i * lineHeight + TextMetrics.GetBaselineOffset(lineFont, lineHeight);
+            var selectionTop = Math.Min(visualLineBox.Top, baseline - ascent);
+            var selectionBottom = Math.Max(visualLineBox.Top + visualLineBox.Height, baseline + descent);
             result.Add(new Rect(
                 origin.X + x,
-                visualLineBox.Top,
+                selectionTop,
                 Math.Max(2, width),
-                visualLineBox.Height));
+                Math.Max(1, selectionBottom - selectionTop)));
         }
         return result;
     }
