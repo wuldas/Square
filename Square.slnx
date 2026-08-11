@@ -8,6 +8,7 @@
   <Project Path="src/Square.Extensions.Markdown/Square.Extensions.Markdown.csproj" />
   <Project Path="src/Square.Extensions.CodeEditor/Square.Extensions.CodeEditor.csproj" />
   <Project Path="src/Square.Extensions.Terminal/Square.Extensions.Terminal.csproj" />
+  <Project Path="src/Square.Extensions.WebView/Square.Extensions.WebView.csproj" />
   <Project Path="src/Square.Images/Square.Images.csproj" />
   <Project Path="src/Square.DevTools/Square.DevTools.csproj" />
   <Project Path="src/Square.Native.Html/Square.Native.Html.csproj" />
@@ -31,6 +32,7 @@
     <Project Path="tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj" />
     <Project Path="tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj" />
     <Project Path="tests/Square.Extensions.Terminal.Tests/Square.Extensions.Terminal.Tests.csproj" />
+    <Project Path="tests/Square.Extensions.WebView.Tests/Square.Extensions.WebView.Tests.csproj" />
     <Project Path="tests/Square.Graphics.Tests/Square.Graphics.Tests.csproj" />
     <Project Path="tests/Square.Images.Tests/Square.Images.Tests.csproj" />
     <Project Path="tests/Square.Native.Html.Tests/Square.Native.Html.Tests.csproj" />

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <Description>Native operating-system WebView control for Square</Description>
+    <PackageTags>$(PackageTags);webview;webview2;native;win32</PackageTags>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <IsAotCompatible>true</IsAotCompatible>
+    <SupportedOSPlatformVersion>5.1.2600</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Square\Square.csproj" />
+    <PackageReference Include="WebView2Aot" />
+  </ItemGroup>
+</Project>
