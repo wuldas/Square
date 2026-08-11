@@ -1267,8 +1267,6 @@ public class SoftwareRendererTests
         plain.Focus();
         plain.SelectAll();
 
-        var diagnostics = BuildSelectionDiagnostics(colored, "Select");
-
         var coloredContext = CreateContext(240, 50);
         coloredContext.Clear(Color.White);
         var coloredTree = new DisplayTree();
@@ -1281,18 +1279,7 @@ public class SoftwareRendererTests
         plainTree.BuildFrom(plain);
         plainTree.Render(plainContext);
 
-        AssertBitmapEqual(plainContext.GetBitmap(), coloredContext.GetBitmap(), diagnostics);
-    }
-
-    private static string BuildSelectionDiagnostics(Input input, string value)
-    {
-        var entry = FontCollection.Shared.Resolve("Segoe UI", 'S');
-        var font = global::Square.Text.FontManager.Instance.FromCss("sans-serif", null, null, null, 14f);
-        var metrics = TextMetrics.GetFontMetrics(font);
-        var rectsMethod = typeof(Input).BaseType!.GetMethod(
-            "GetSelectionRects", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var rects = rectsMethod!.Invoke(input, new object[] { value }) as System.Collections.Generic.List<Rect>;
-        return $"resolve-family={entry?.Family} font={font.Family} size={font.Size} metrics(asc={Math.Max(0, -metrics.Ascent):F2},desc={Math.Max(0, metrics.Descent):F2}) baseline={TextMetrics.GetBaselineOffset(font, 17f):F2} rects=[{string.Join(" | ", rects!)}]";
+        AssertBitmapEqual(plainContext.GetBitmap(), coloredContext.GetBitmap());
     }
 
     [Fact]
@@ -1403,7 +1390,11 @@ public class SoftwareRendererTests
             if (hasSelectionPixel) highlightedRows++;
         }
 
-        Assert.True(highlightedRows >= 17);
+        // 紧凑行高（14px）时选区仍须覆盖字体的自然墨迹高度（ascent+descent）。
+        var font = global::Square.Text.FontManager.Instance.FromCss("sans-serif", null, null, null, 14f);
+        var naturalHeight = TextMetrics.GetFontMetrics(font).Height;
+        Assert.True(highlightedRows >= Math.Ceiling(naturalHeight),
+            $"selection covered {highlightedRows} rows, natural font height {naturalHeight:F1}");
     }
 
     [Fact]
