@@ -389,6 +389,15 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
             return true;
         }
 
+        // 非 Windows：从解析到的系统字体条目读取真实度量（与 stb 光栅化一致）。
+        // 估算 fallback（0.8em ascent）比实际字形边界矮，会导致选区/行盒无法覆盖字形墨迹。
+        var resolved = FontCollection.Shared.Resolve(font.Family, 'A', font.Weight, font.Style);
+        if (resolved?.TryGetFontMetrics(font.Size, out metrics) == true)
+        {
+            lock (_sync) _fontMetrics[key] = metrics;
+            return true;
+        }
+
         var height = Math.Max(1, font.Size * TextLayout.DefaultLineHeight);
         var ascent = font.Size * 0.8f;
         metrics = new FontMetrics(-ascent, -ascent, height - ascent, height - ascent, 0);
