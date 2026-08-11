@@ -182,6 +182,13 @@ public class Splitter : UIElement
     /// <inheritdoc/>
     public override string TagName => "Splitter";
 
+    public override void Paint(IRenderContext context)
+    {
+        var background = ControlDrawing.GetStyledColor(this, "background", Color.Transparent);
+        if (background.A > 0)
+            context.FillRect(Geometry, new SolidColorBrush(background));
+    }
+
     /// <inheritdoc/>
     public override Size Measure(Size availableSize) => IsVertical
         ? new Size(float.IsNaN(Width) ? 6 : Width, availableSize.Height)
