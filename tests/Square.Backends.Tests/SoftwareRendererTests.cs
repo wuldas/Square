@@ -1257,7 +1257,7 @@ public class SoftwareRendererTests
     }
 
     [Fact]
-    public void InputSelectionForegroundDoesNotBlendWithTextColor(ITestOutputHelper output)
+    public void InputSelectionForegroundDoesNotBlendWithTextColor()
     {
         var colored = new Input { Value = "Select", Geometry = new Rect(4, 4, 220, 36) };
         colored.Style.Set("color", "#b42318");
@@ -1267,8 +1267,7 @@ public class SoftwareRendererTests
         plain.Focus();
         plain.SelectAll();
 
-        // 临时诊断：CI 字体与选区几何
-        DumpSelectionDiagnostics(colored, "Select", output);
+        var diagnostics = BuildSelectionDiagnostics(colored, "Select");
 
         var coloredContext = CreateContext(240, 50);
         coloredContext.Clear(Color.White);
@@ -1282,21 +1281,18 @@ public class SoftwareRendererTests
         plainTree.BuildFrom(plain);
         plainTree.Render(plainContext);
 
-        AssertBitmapEqual(plainContext.GetBitmap(), coloredContext.GetBitmap());
+        AssertBitmapEqual(plainContext.GetBitmap(), coloredContext.GetBitmap(), diagnostics);
     }
 
-    private static void DumpSelectionDiagnostics(Input input, string value, ITestOutputHelper output)
+    private static string BuildSelectionDiagnostics(Input input, string value)
     {
         var entry = FontCollection.Shared.Resolve("Segoe UI", 'S');
-        output.WriteLine($"DIAG resolve-family={entry?.Family}");
         var font = global::Square.Text.FontManager.Instance.FromCss("sans-serif", null, null, null, 14f);
-        output.WriteLine($"DIAG font={font.Family} size={font.Size}");
-        output.WriteLine($"DIAG metrics={TextMetrics.GetFontMetrics(font)}");
+        var metrics = TextMetrics.GetFontMetrics(font);
         var rectsMethod = typeof(Input).BaseType!.GetMethod(
             "GetSelectionRects", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         var rects = rectsMethod!.Invoke(input, new object[] { value }) as System.Collections.Generic.List<Rect>;
-        output.WriteLine($"DIAG rects={string.Join(" | ", rects!)}");
-        output.WriteLine($"DIAG baseline={TextMetrics.GetBaselineOffset(font, 17f)} glyphTopOffset={TextMetrics.GetBaselineOffset(font, 17f) - Math.Max(0, -TextMetrics.GetFontMetrics(font).Ascent)}");
+        return $"resolve-family={entry?.Family} font={font.Family} size={font.Size} metrics(asc={Math.Max(0, -metrics.Ascent):F2},desc={Math.Max(0, metrics.Descent):F2}) baseline={TextMetrics.GetBaselineOffset(font, 17f):F2} rects=[{string.Join(" | ", rects!)}]";
     }
 
     [Fact]
@@ -1642,11 +1638,22 @@ public class SoftwareRendererTests
             }
     }
 
-    private static void AssertBitmapEqual(Bitmap expected, Bitmap actual)
+    private static void AssertBitmapEqual(Bitmap expected, Bitmap actual, string? diagnostics = null)
     {
         Assert.Equal(expected.Width, actual.Width);
         Assert.Equal(expected.Height, actual.Height);
-        Assert.Equal(expected.Pixels, actual.Pixels);
+        for (var i = 0; i < expected.Pixels.Length; i++)
+        {
+            if (expected.Pixels[i] == actual.Pixels[i]) continue;
+            var pixel = i / 4;
+            var x = pixel % expected.Width;
+            var y = pixel / expected.Width;
+            var exp = expected.Pixels.AsSpan(i - i % 4, 4).ToArray();
+            var act = actual.Pixels.AsSpan(i - i % 4, 4).ToArray();
+            throw new Xunit.Sdk.XunitException(
+                $"Bitmap mismatch at byte {i} (pixel ({x},{y})): expected BGRA [{string.Join(",", exp)}] actual BGRA [{string.Join(",", act)}]" +
+                (string.IsNullOrEmpty(diagnostics) ? "" : $" | {diagnostics}"));
+        }
     }
 
     private static void AssertBorderPixel(Bitmap bitmap, int x, int y)
