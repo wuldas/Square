@@ -12,7 +12,7 @@ public interface ICodeEditorTextModel
     /// <summary>整篇文本。</summary>
     string GetValue();
 
-    /// <summary>替换整篇文本。</summary>
+    /// <summary>加载或替换整篇文本，并清空 undo/redo 历史。</summary>
     void SetValue(string text);
 
     /// <summary>获取一行（不含换行符）。</summary>

@@ -80,7 +80,14 @@ public static class LanguageRegistry
                 return;
 
             foreach (var contribution in TextMateLanguageProvider.GetBuiltInContributions())
+            {
+                var languageId = contribution.Id;
+                contribution.SetLazyTokenizer(() =>
+                    TextMateLanguageProvider.TryCreateTokenizer(languageId, out var tokenizer)
+                        ? tokenizer
+                        : null);
                 Register(contribution);
+            }
 
             RegisterPlainText();
 
@@ -113,6 +120,9 @@ public static class LanguageRegistry
 /// <summary>语言贡献。</summary>
 public sealed class LanguageContribution
 {
+    private ITokenizer? _tokenizer;
+    private Lazy<ITokenizer?>? _lazyTokenizer;
+
     /// <summary>languageId。</summary>
     public required string Id { get; init; }
     /// <summary>别名。</summary>
@@ -122,7 +132,14 @@ public sealed class LanguageContribution
     /// <summary>编辑配置。</summary>
     public LanguageConfiguration? Configuration { get; init; }
     /// <summary>分词器。</summary>
-    public ITokenizer? Tokenizer { get; init; }
+    public ITokenizer? Tokenizer
+    {
+        get => _tokenizer ??= _lazyTokenizer?.Value;
+        init => _tokenizer = value;
+    }
+
+    internal void SetLazyTokenizer(Func<ITokenizer?> factory)
+        => _lazyTokenizer = new Lazy<ITokenizer?>(factory);
 }
 
 /// <summary>VS Code language-configuration 子集。</summary>

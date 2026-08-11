@@ -23,12 +23,15 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
 
     public void SetValue(string text)
     {
-        text ??= "";
-        var old = _table.GetValue();
-        if (old == Normalize(text)) return;
-        PushHistory(0, old, Normalize(text), preCaret: 0);
-        _table.SetValue(text);
-        Changed?.Invoke(this, new ContentChangedEventArgs(0, old.Length, _table.Length));
+        var normalized = Normalize(text ?? "");
+        var oldLength = _table.Length;
+        if (oldLength == normalized.Length && _table.GetValue() == normalized) return;
+
+        _table.SetValue(normalized);
+        // SetValue is document loading/replacement, not an edit transaction.
+        // Keeping the old and new full-document snapshots defeats the PieceTable.
+        _undo.Clear();
+        Changed?.Invoke(this, new ContentChangedEventArgs(0, oldLength, _table.Length));
     }
 
     public string GetLineContent(int lineNumber) => _table.GetLineContent(lineNumber);
@@ -262,6 +265,13 @@ internal sealed class EditStack
 
     public bool CanUndo => _undo.Count > 0 || _coalesce.HasValue;
     public bool CanRedo => _redo.Count > 0;
+
+    public void Clear()
+    {
+        _undo.Clear();
+        _redo.Clear();
+        _coalesce = null;
+    }
 
     public void Push(EditEntry entry)
     {

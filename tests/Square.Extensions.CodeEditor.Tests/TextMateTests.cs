@@ -39,6 +39,15 @@ public class TextMateTests
     }
 
     [Fact]
+    public void BuiltInLanguageCatalog_DoesNotInstantiateEveryGrammar()
+    {
+        var contributions = TextMateLanguageProvider.GetBuiltInContributions();
+
+        Assert.NotEmpty(contributions);
+        Assert.All(contributions, contribution => Assert.Null(contribution.Tokenizer));
+    }
+
+    [Fact]
     public void TextMateTokenizer_MapsCSharpScopesAndPreservesMultilineState()
     {
         var cache = new TokenizationCache(LanguageRegistry.ResolveTokenizer("csharp"));
@@ -51,6 +60,24 @@ public class TextMateTests
         Assert.Contains(second, token => token.Type == "comment");
         Assert.Contains(second, token => token.Type == "keyword");
         Assert.Contains(second, token => token.Type == "type");
+    }
+
+    [Fact]
+    public void TokenizationCache_JumpingLinesPreservesMultilineState()
+    {
+        var lines = new[] { "/* first" }
+            .Concat(Enumerable.Repeat("inside", 128))
+            .Append("inside */ public class Sample")
+            .ToArray();
+        var model = new CodeEditor { Value = string.Join('\n', lines) }.Model;
+        var cache = new TokenizationCache(LanguageRegistry.ResolveTokenizer("csharp"));
+
+        _ = cache.GetLineTokens(model, 0);
+        var last = cache.GetLineTokens(model, lines.Length - 1);
+
+        Assert.Contains(last, token => token.Type == "comment");
+        Assert.Contains(last, token => token.Type == "keyword");
+        Assert.Contains(last, token => token.Type == "type");
     }
 
     [Fact]

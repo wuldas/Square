@@ -36,15 +36,12 @@ public static class TextMateLanguageProvider
                 if (string.IsNullOrWhiteSpace(language.Id)) continue;
                 var scope = Options.GetScopeByLanguageId(language.Id);
                 if (string.IsNullOrEmpty(scope)) continue;
-                var grammar = Registry.LoadGrammar(scope);
-                if (grammar == null) continue;
                 contributions.Add(new LanguageContribution
                 {
                     Id = language.Id,
                     Aliases = language.Aliases,
                     Extensions = language.Extensions,
                     Configuration = ConvertConfiguration(language.Configuration),
-                    Tokenizer = new TextMateTokenizer(grammar),
                 });
             }
             return contributions;

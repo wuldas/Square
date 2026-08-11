@@ -84,6 +84,7 @@ Edit → Model.ContentChanged
 ### 3.3 TextMate（Phase 3）
 
 - 使用 TextMateSharp.Grammars 内置 grammar 数据库
+- 仅注册语言元数据；grammar/tokenizer 在首次使用对应 `languageId` 时懒加载
 - 支持加载 VS Code 扩展中的 `package.json` 与 `tmLanguage.json`
 - 按行增量 tokenize，保留 grammar rule stack
 - 输出 `TokenSpan { start, length, type }`
@@ -225,7 +226,7 @@ pad.Model.SetValue(source); // 大文件优先
 
 ### 大文件
 
-- 宿主应优先 `Model.SetValue` / 后续 `ApplyEdits`，避免每键整串 `Value` get/set。
+- 宿主应优先 `Model.SetValue` / 后续 `ApplyEdits`，避免每键整串 `Value` get/set；`SetValue` 视为加载文档并清空 undo/redo 历史。
 - Phase 0 模型为整串占位；Phase 1 换 PieceTable 后 API 不变。
 
 ---

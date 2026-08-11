@@ -5,6 +5,7 @@ Square 可选代码编辑控件：
 - **PieceTable** 文档模型 + 增量 undo/redo
 - **视口虚拟化**绘制（只绘可见行）
 - **TextMateSharp 2.0.4** + **TextMateSharp.Grammars 2.0.4** 语法高亮（内置 50+ 语言 grammar）
+- 内置 grammar 按实际使用的 `languageId` 懒加载，避免启动时一次性占用全部语言包内存
 - **VS Code 风格** language configuration（注释、自动闭合等）
 - 行号、当前行、查找下一处、Tab 缩进
 - 括号 / HTML·XML 标签层级折叠（gutter 可开关）
@@ -40,7 +41,7 @@ var pad = new CodeEditor
     ThemeId = "default-dark",
     ShowLineNumbers = true,
 };
-pad.Model.SetValue("public class App { }");
+pad.Model.SetValue("public class App { }"); // 加载文档，同时清空 undo/redo 历史
 pad.SetDecoration(new CodeEditorLineDecoration
 {
     Id = "bp-0",

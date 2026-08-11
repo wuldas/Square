@@ -11,7 +11,6 @@ internal sealed class PieceTable
 
     private string _original = "";
     private readonly StringBuilder _add = new();
-    private string _addCache = "";
     private readonly List<Piece> _pieces = [];
     private int _length;
     private int[] _lineStarts = [0];
@@ -34,10 +33,8 @@ internal sealed class PieceTable
 
     public void SetValue(string text)
     {
-        text = Normalize(text);
         _original = text;
         _add.Clear();
-        _addCache = "";
         _pieces.Clear();
         if (text.Length > 0)
             _pieces.Add(new Piece(Source.Original, 0, text.Length));
@@ -89,7 +86,6 @@ internal sealed class PieceTable
 
     public void Replace(int offset, int deleteLength, string insert)
     {
-        insert = Normalize(insert ?? "");
         if (offset < 0 || offset > _length) throw new ArgumentOutOfRangeException(nameof(offset));
         if (deleteLength < 0 || offset + deleteLength > _length) throw new ArgumentOutOfRangeException(nameof(deleteLength));
         if (deleteLength == 0 && insert.Length == 0) return;
@@ -104,7 +100,6 @@ internal sealed class PieceTable
     {
         var addStart = _add.Length;
         _add.Append(text);
-        _addCache = _add.ToString();
         var newPiece = new Piece(Source.Add, addStart, text.Length);
 
         if (_pieces.Count == 0)
@@ -248,14 +243,14 @@ internal sealed class PieceTable
             }
             var from = piece.Start + remainingSkip;
             var take = Math.Min(piece.Length - remainingSkip, remainingTake);
-            sb.Append(GetBuffer(piece), from, take);
+            if (piece.Source == Source.Original)
+                sb.Append(_original, from, take);
+            else
+                sb.Append(_add, from, take);
             remainingSkip = 0;
             remainingTake -= take;
         }
     }
-
-    private string GetBuffer(Piece piece) =>
-        piece.Source == Source.Original ? _original : _addCache;
 
     private void Coalesce()
     {
@@ -279,10 +274,12 @@ internal sealed class PieceTable
         var offset = 0;
         foreach (var piece in _pieces)
         {
-            var buf = GetBuffer(piece);
             for (var i = 0; i < piece.Length; i++)
             {
-                if (buf[piece.Start + i] == '\n')
+                var ch = piece.Source == Source.Original
+                    ? _original[piece.Start + i]
+                    : _add[piece.Start + i];
+                if (ch == '\n')
                     starts.Add(offset + i + 1);
             }
             offset += piece.Length;
@@ -290,6 +287,4 @@ internal sealed class PieceTable
         _lineStarts = starts.ToArray();
     }
 
-    private static string Normalize(string text) =>
-        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 }
