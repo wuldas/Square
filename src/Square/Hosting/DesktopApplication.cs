@@ -358,6 +358,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (layoutDirty)
             _displayTree.Synchronize(_root);
         _displayTree.UpdateDirty();
+        NativeViewSynchronizer.Synchronize(_root, _host.DpiScale);
 
         if (MainWindow.RenderingMode == RenderMode.FullFrame || layoutDirty || !_renderContext.SupportsPartialRendering)
         {

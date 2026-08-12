@@ -10,6 +10,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Square.Extensions.WebView.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="runtimes\win-arm64\native\WebView2Loader.dll" />
+    <EmbeddedResource Include="runtimes\win-x64\native\WebView2Loader.dll" />
+    <EmbeddedResource Include="runtimes\win-x86\native\WebView2Loader.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Square\Square.csproj" />
     <PackageReference Include="WebView2Aot" />
   </ItemGroup>

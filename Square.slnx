@@ -17,6 +17,7 @@
   <Project Path="src/Square.Backends.Skia/Square.Backends.Skia.csproj" />
   <Folder Name="/Samples/">
     <Project Path="samples/Square.Sample.CodeEditor/Square.Sample.CodeEditor.csproj" />
+    <Project Path="samples/Square.Sample.WebView/Square.Sample.WebView.csproj" />
     <Project Path="samples/Square.Sample.HelloWorld/Square.Sample.HelloWorld.csproj" />
     <Project Path="samples/Square.Sample.RichText/Square.Sample.RichText.csproj" />
     <Project Path="samples/Square.Sample.Vue/Square.Sample.Vue.csproj" />

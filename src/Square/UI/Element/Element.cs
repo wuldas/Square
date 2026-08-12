@@ -898,6 +898,12 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// <summary>挂载完成钩子。</summary>
     protected virtual void OnAttachedCore() { }
 
+    /// <summary>加载完成钩子。</summary>
+    protected virtual void OnLoadedCore() { }
+
+    /// <summary>卸载完成钩子。</summary>
+    protected virtual void OnUnloadedCore() { }
+
     /// <summary>卸载完成钩子。</summary>
     protected virtual void OnDetachedCore() { }
 
@@ -926,12 +932,14 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     void IComponentLifecycle.OnLoaded()
     {
         IsLoaded = true;
+        OnLoadedCore();
         foreach (var child in Children) ((IComponentLifecycle)child).OnLoaded();
     }
 
     void IComponentLifecycle.OnUnloaded()
     {
         IsLoaded = false;
+        OnUnloadedCore();
         foreach (var child in Children) ((IComponentLifecycle)child).OnUnloaded();
     }
 
