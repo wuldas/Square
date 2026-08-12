@@ -142,6 +142,11 @@ public sealed class TemplateCatalog
             .Select(name => new TemplateEventDescriptor(name, name))
             .ToArray());
 
+    public IReadOnlyCollection<TemplatePropertyDescriptor> Properties { get; } =
+        new ReadOnlyCollection<TemplatePropertyDescriptor>(PropertyAliases
+            .Select(pair => new TemplatePropertyDescriptor(pair.Key, pair.Value))
+            .ToArray());
+
     public IReadOnlyCollection<TemplateComponentDescriptor> Components =>
         new ReadOnlyCollection<TemplateComponentDescriptor>(_components.Values
             .GroupBy(descriptor => descriptor.TagName, StringComparer.OrdinalIgnoreCase)

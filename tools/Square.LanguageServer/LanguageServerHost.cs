@@ -198,6 +198,22 @@ public sealed class LanguageServerHost
             return new { isIncomplete = false, items };
         }
 
+        if (IsInsideAttributeList(document.Text, offset))
+        {
+            var properties = TemplateCatalog.BuiltIn.Properties
+                .Where(property => property.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(property => new
+                {
+                    label = property.Name,
+                    kind = 10,
+                    detail = property.CanonicalName,
+                    insertText = property.Name
+                })
+                .Cast<object>()
+                .ToArray();
+            return new { isIncomplete = false, items = properties };
+        }
+
         var components = TemplateCatalog.BuiltIn.Components
             .Where(component => component.TagName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             .Select(component => new
@@ -223,6 +239,26 @@ public sealed class LanguageServerHost
         if (eventContext) return text[start..offset];
         if (start > 0 && text[start - 1] == '<') return text[start..offset];
         return string.Empty;
+    }
+
+    private static bool IsInsideAttributeList(string text, int offset)
+    {
+        var tagStart = -1;
+        for (var index = Math.Min(offset - 1, text.Length - 1); index >= 0; index--)
+        {
+            if (text[index] == '<')
+            {
+                tagStart = index;
+                break;
+            }
+            if (text[index] is '>' or '\n' or '\r') return false;
+        }
+
+        if (tagStart < 0) return false;
+        var indexAfterName = tagStart + 1;
+        if (indexAfterName < text.Length && text[indexAfterName] == '/') indexAfterName++;
+        while (indexAfterName < offset && IsTokenCharacter(text[indexAfterName])) indexAfterName++;
+        return indexAfterName < offset && char.IsWhiteSpace(text[indexAfterName]);
     }
 
     private static int GetOffset(string text, int line, int character)

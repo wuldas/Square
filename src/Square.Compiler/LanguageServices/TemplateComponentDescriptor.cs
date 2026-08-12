@@ -47,3 +47,16 @@ public sealed class TemplateEventDescriptor
 
     public string CanonicalName { get; }
 }
+
+public sealed class TemplatePropertyDescriptor
+{
+    public TemplatePropertyDescriptor(string name, string canonicalName)
+    {
+        Name = name;
+        CanonicalName = canonicalName;
+    }
+
+    public string Name { get; }
+
+    public string CanonicalName { get; }
+}
