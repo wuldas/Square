@@ -40,7 +40,8 @@ public sealed class LanguageServerHost
                         {
                             textDocumentSync = 1,
                             completionProvider = new { triggerCharacters = new[] { "<", "@" } },
-                            hoverProvider = true
+                            hoverProvider = true,
+                            documentSymbolProvider = true
                         },
                         serverInfo = new { name = "Square Language Server", version = "0.1.0" }
                     }, cancellationToken);
@@ -66,6 +67,9 @@ public sealed class LanguageServerHost
                     break;
                 case "textDocument/hover" when hasId:
                     await WriteResponseAsync(id, BuildHover(root), cancellationToken);
+                    break;
+                case "textDocument/documentSymbol" when hasId:
+                    await WriteResponseAsync(id, BuildDocumentSymbols(root), cancellationToken);
                     break;
                 case "exit":
                     return _shutdownRequested ? 0 : 1;
@@ -311,6 +315,91 @@ public sealed class LanguageServerHost
         }
         return new { line, character = offset - lineStart };
     }
+
+    private object BuildDocumentSymbols(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        var uri = parameters.GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
+        if (!_documents.TryGet(uri, out var document) || document == null)
+            return Array.Empty<object>();
+
+        var children = new List<Dictionary<string, object?>>();
+        var stack = new Stack<(string Name, Dictionary<string, object?> Node)>();
+        var index = 0;
+        while (index < document.Text.Length)
+        {
+            var open = document.Text.IndexOf('<', index);
+            if (open < 0) break;
+            index = open + 1;
+            if (index >= document.Text.Length) break;
+
+            var closing = document.Text[index] == '/';
+            if (closing) index++;
+            while (index < document.Text.Length && char.IsWhiteSpace(document.Text[index])) index++;
+            var nameStart = index;
+            while (index < document.Text.Length && IsTokenCharacter(document.Text[index])) index++;
+            if (nameStart == index)
+            {
+                index++;
+                continue;
+            }
+
+            var name = document.Text[nameStart..index];
+            var tagEnd = document.Text.IndexOf('>', index);
+            if (tagEnd < 0) tagEnd = document.Text.Length - 1;
+            if (closing)
+            {
+                if (stack.Count > 0 && stack.Peek().Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    stack.Pop();
+                index = tagEnd + 1;
+                continue;
+            }
+
+            if (name is "template" or "script" or "style")
+            {
+                index = tagEnd + 1;
+                continue;
+            }
+
+            var nodeChildren = new List<Dictionary<string, object?>>();
+            var node = new Dictionary<string, object?>
+            {
+                ["name"] = name,
+                ["detail"] = TemplateCatalog.BuiltIn.GetComponent(name).TypeName,
+                ["kind"] = 19,
+                ["range"] = ToRange(document.Text, open, Math.Min(document.Text.Length, tagEnd + 1)),
+                ["selectionRange"] = ToRange(document.Text, nameStart, index),
+                ["children"] = nodeChildren
+            };
+            if (stack.Count > 0)
+                ((List<Dictionary<string, object?>>)stack.Peek().Node["children"]!).Add(node);
+            else
+                children.Add(node);
+
+            var selfClosing = tagEnd > open && document.Text[tagEnd - 1] == '/';
+            if (!selfClosing) stack.Push((name, node));
+            index = tagEnd + 1;
+        }
+
+        var componentName = GetSourcePath(uri);
+        componentName = Path.GetFileNameWithoutExtension(componentName);
+        var component = new Dictionary<string, object?>
+        {
+            ["name"] = string.IsNullOrWhiteSpace(componentName) ? "Document" : componentName,
+            ["detail"] = "Square component",
+            ["kind"] = 5,
+            ["range"] = ToRange(document.Text, 0, document.Text.Length),
+            ["selectionRange"] = ToRange(document.Text, 0, Math.Min(document.Text.Length, componentName.Length)),
+            ["children"] = children
+        };
+        return new[] { component };
+    }
+
+    private static object ToRange(string text, int start, int end) => new
+    {
+        start = ToPosition(text, start),
+        end = ToPosition(text, end)
+    };
 
     private async Task<string?> ReadMessageAsync(CancellationToken cancellationToken)
     {
