@@ -39,7 +39,8 @@ public sealed class LanguageServerHost
                         capabilities = new
                         {
                             textDocumentSync = 1,
-                            completionProvider = new { triggerCharacters = new[] { "<", "@" } }
+                            completionProvider = new { triggerCharacters = new[] { "<", "@" } },
+                            hoverProvider = true
                         },
                         serverInfo = new { name = "Square Language Server", version = "0.1.0" }
                     }, cancellationToken);
@@ -62,6 +63,9 @@ public sealed class LanguageServerHost
                     break;
                 case "textDocument/completion" when hasId:
                     await WriteResponseAsync(id, BuildCompletion(root), cancellationToken);
+                    break;
+                case "textDocument/hover" when hasId:
+                    await WriteResponseAsync(id, BuildHover(root), cancellationToken);
                     break;
                 case "exit":
                     return _shutdownRequested ? 0 : 1;
@@ -223,6 +227,89 @@ public sealed class LanguageServerHost
             if (text[offset++] == '\n') currentLine++;
         }
         return Math.Clamp(offset + character, 0, text.Length);
+    }
+
+    private object? BuildHover(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        var uri = parameters.GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
+        if (!_documents.TryGet(uri, out var document) || document == null)
+            return null;
+
+        var position = parameters.GetProperty("position");
+        var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
+        var token = GetTokenAt(document.Text, offset, out var tokenStart, out var tokenEnd);
+        if (token.Length == 0) return null;
+
+        var context = tokenStart > 0 ? document.Text[tokenStart - 1] : '\0';
+        string? markdown;
+        if (context == '@')
+        {
+            var eventDescriptor = TemplateCatalog.BuiltIn.Events.FirstOrDefault(eventItem =>
+                eventItem.Name.Equals(token, StringComparison.OrdinalIgnoreCase));
+            markdown = eventDescriptor == null
+                ? null
+                : $"**@{eventDescriptor.Name}**\\n\\nSquare event.";
+        }
+        else if (context == '<' || IsInsideTagName(document.Text, tokenStart))
+        {
+            var component = TemplateCatalog.BuiltIn.GetComponent(token);
+            markdown = $"**<{component.TagName}>**\\n\\n`{component.TypeName}`";
+        }
+        else
+        {
+            return null;
+        }
+
+        return new
+        {
+            contents = new { kind = "markdown", value = markdown },
+            range = new
+            {
+                start = ToPosition(document.Text, tokenStart),
+                end = ToPosition(document.Text, tokenEnd)
+            }
+        };
+    }
+
+    private static bool IsInsideTagName(string text, int tokenStart)
+    {
+        for (var index = tokenStart - 1; index >= 0; index--)
+        {
+            if (text[index] == '<') return true;
+            if (text[index] is '>' or '\n' or '\r') return false;
+            if (char.IsWhiteSpace(text[index])) return false;
+        }
+        return false;
+    }
+
+    private static string GetTokenAt(string text, int offset, out int start, out int end)
+    {
+        offset = Math.Clamp(offset, 0, text.Length);
+        start = offset;
+        if (start == text.Length || (start > 0 && !IsTokenCharacter(text[start]))) start--;
+        while (start >= 0 && IsTokenCharacter(text[start])) start--;
+        start++;
+        end = Math.Min(text.Length, Math.Max(offset, start));
+        while (end < text.Length && IsTokenCharacter(text[end])) end++;
+        return start < end ? text[start..end] : string.Empty;
+    }
+
+    private static bool IsTokenCharacter(char value) => char.IsLetterOrDigit(value) || value is '-' or '_';
+
+    private static object ToPosition(string text, int offset)
+    {
+        var line = 0;
+        var lineStart = 0;
+        for (var index = 0; index < offset && index < text.Length; index++)
+        {
+            if (text[index] == '\n')
+            {
+                line++;
+                lineStart = index + 1;
+            }
+        }
+        return new { line, character = offset - lineStart };
     }
 
     private async Task<string?> ReadMessageAsync(CancellationToken cancellationToken)
