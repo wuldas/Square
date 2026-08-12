@@ -1,0 +1,17 @@
+{
+  "name": "@square-ui/language-grammars",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:grammar && npm run test:vscode && npm run test:visualstudio && npm run test:rider",
+    "test:grammar": "node test/verify-grammar.mjs",
+    "test:vscode": "node test/verify-vscode-package.mjs",
+    "test:visualstudio": "node test/verify-visualstudio-package.mjs",
+    "test:rider": "node test/verify-rider-package.mjs"
+  },
+  "devDependencies": {
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.2.1"
+  }
+}

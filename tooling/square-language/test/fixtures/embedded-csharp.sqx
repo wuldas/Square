@@ -1,0 +1,6 @@
+<template>
+  <Text text={Items.Select(item => new { item.Name, Count = item.Values.Count }).First().Name} />
+</template>
+<script lang="csharp">
+  private readonly List<Item> Items = [];
+</script>

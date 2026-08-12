@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0"
+                 xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"
+                 xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+  <Metadata>
+    <Identity Id="Square.LanguageSupport.VisualStudio"
+              Version="0.1.0"
+              Language="en-US"
+              Publisher="Wuldas" />
+    <DisplayName>Square Language Support</DisplayName>
+    <Description xml:space="preserve">Syntax highlighting and basic editing support for Square SQX and SQV component files.</Description>
+    <MoreInfo>https://github.com/wuldas/Square</MoreInfo>
+    <License>LICENSE.txt</License>
+    <Tags>Square, SQX, SQV, CSharp, UI</Tags>
+  </Metadata>
+  <Installation InstalledByMsi="false">
+    <InstallationTarget Version="[17.0,18.0)" Id="Microsoft.VisualStudio.Community">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Version="[17.0,18.0)" Id="Microsoft.VisualStudio.Pro">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Version="[17.0,18.0)" Id="Microsoft.VisualStudio.Enterprise">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+  </Installation>
+  <Dependencies>
+    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" Version="[4.7.2,)" />
+  </Dependencies>
+  <Prerequisites>
+    <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor"
+                  Version="[17.0,18.0)"
+                  DisplayName="Visual Studio core editor" />
+  </Prerequisites>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="File" Path="Square.pkgdef" />
+    <Asset Type="Microsoft.VisualStudio.Content" d:Source="Project" d:ProjectName="%CurrentProject%" Path="Grammars" />
+    <Asset Type="Microsoft.VisualStudio.Content" d:Source="Project" d:ProjectName="%CurrentProject%" Path="language-configuration.json" />
+  </Assets>
+</PackageManifest>

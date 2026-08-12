@@ -1,0 +1,79 @@
+{
+  "name": "square-language-support",
+  "displayName": "Square Language Support",
+  "description": "Syntax highlighting and editing support for Square SQX and SQV components.",
+  "version": "0.1.0",
+  "publisher": "wuldas",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wuldas/Square.git"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["Programming Languages", "Snippets"],
+  "keywords": ["square", "sqx", "sqv", "csharp", "ui"],
+  "scripts": {
+    "sync-assets": "node scripts/sync-assets.mjs",
+    "test": "npm run sync-assets && node ../square-language/test/verify-vscode-package.mjs",
+    "package": "npm run test && vsce package --out ../../artifacts/square-language-support.vsix"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.2"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "sqx",
+        "aliases": ["Square SQX", "SQX"],
+        "extensions": [".sqx"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/square-file.svg",
+          "dark": "./icons/square-file.svg"
+        }
+      },
+      {
+        "id": "sqv",
+        "aliases": ["Square SQV", "SQV"],
+        "extensions": [".sqv"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/square-file.svg",
+          "dark": "./icons/square-file.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sqx",
+        "scopeName": "source.sqx",
+        "path": "./syntaxes/sqx.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.cs": "csharp",
+          "source.css": "css"
+        }
+      },
+      {
+        "language": "sqv",
+        "scopeName": "source.sqv",
+        "path": "./syntaxes/sqv.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.cs": "csharp",
+          "source.css": "css"
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "sqx",
+        "path": "./snippets/square.json"
+      },
+      {
+        "language": "sqv",
+        "path": "./snippets/square.json"
+      }
+    ]
+  }
+}

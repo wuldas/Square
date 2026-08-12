@@ -1,0 +1,19 @@
+<template>
+  <View class="page">
+    <Button ref={SaveButton} onClick={OnSave}>Save {Title}</Button>
+    <Show when={Visible}>
+      <Text text="Ready" />
+    </Show>
+  </View>
+</template>
+
+<script lang="csharp" namespace="Square.Sample.Components">
+  private string Title => "Square";
+  private bool Visible => true;
+  private void OnSave(Event e) { }
+</script>
+
+<style>
+  .page { display: flex; gap: 8px; }
+  Button:hover { color: #ffffff; }
+</style>

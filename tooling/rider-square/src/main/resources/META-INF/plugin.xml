@@ -1,0 +1,15 @@
+<idea-plugin>
+  <id>com.wuldas.square.language-support</id>
+  <name>Square Language Support</name>
+  <vendor url="https://github.com/wuldas/Square">Wuldas</vendor>
+  <description><![CDATA[
+    Syntax highlighting and basic editing support for Square SQX and SQV component files.
+  ]]></description>
+
+  <depends>com.intellij.modules.rider</depends>
+  <depends>org.jetbrains.plugins.textmate</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <textmate.bundleProvider implementation="com.wuldas.square.SquareTextMateBundleProvider" />
+  </extensions>
+</idea-plugin>

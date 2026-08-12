@@ -1,0 +1,7 @@
+<template>
+  <View>
+    <Text v-if="Ready>{{ Name }}</Text>
+    <Button @click="OnClick">Still editing</Button>
+  </View>
+</template>
+<style>.page { color: red; }</style>

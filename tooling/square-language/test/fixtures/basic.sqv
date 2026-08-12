@@ -1,0 +1,18 @@
+<template>
+  <View class="page">
+    <Button ref="SaveButton" @click.stop.prevent="OnSave">{{ Title }}</Button>
+    <Text v-if="Visible">Ready</Text>
+    <Text v-for="(item, index) in Items" :key="item.Id">
+      {{ index }} {{ item.Name }}
+    </Text>
+    <Card><template #header="{ title }">{{ title }}</template></Card>
+  </View>
+</template>
+
+<script lang="csharp">
+  private string Title => "Square";
+</script>
+
+<style>
+  .page { display: flex; gap: 8px; }
+</style>

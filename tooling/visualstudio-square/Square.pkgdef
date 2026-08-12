@@ -1,0 +1,8 @@
+// Register the shared Square TextMate grammar repository.
+[$RootKey$\TextMate\Repositories]
+"Square"="$PackageFolder$\Grammars"
+
+// Apply the shared language configuration to both grammar scopes.
+[$RootKey$\TextMate\LanguageConfiguration\GrammarMapping]
+"source.sqx"="$PackageFolder$\language-configuration.json"
+"source.sqv"="$PackageFolder$\language-configuration.json"

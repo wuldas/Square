@@ -1,0 +1,7 @@
+<template>
+  <View>
+    <Text text="unfinished
+    <Button onClick={OnClick}>Still editing</Button>
+  </View>
+</template>
+<style>.page { color: red; }</style>

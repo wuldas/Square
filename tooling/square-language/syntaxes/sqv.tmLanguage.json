@@ -1,0 +1,239 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Square SQV",
+  "scopeName": "source.sqv",
+  "fileTypes": ["sqv"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#template-section" },
+    { "include": "#script-section" },
+    { "include": "#style-section" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.sqv",
+          "begin": "<!--",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.sqv" } },
+          "end": "-->",
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.sqv" } }
+        }
+      ]
+    },
+    "template-section": {
+      "name": "meta.section.template.sqv",
+      "begin": "^([ \\t]*)(<)(template)(?=[\\s>])",
+      "beginCaptures": {
+        "2": { "name": "punctuation.definition.tag.begin.sqv" },
+        "3": { "name": "entity.name.tag.section.sqv" }
+      },
+      "end": "^\\1(</)(template)(\\s*>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.section.sqv" },
+        "3": { "name": "punctuation.definition.tag.end.sqv" }
+      },
+      "patterns": [
+        { "include": "#template" }
+      ]
+    },
+    "script-section": {
+      "name": "meta.section.script.sqv",
+      "begin": "^([ \\t]*)(<)(script)(?=[\\s>])",
+      "beginCaptures": {
+        "2": { "name": "punctuation.definition.tag.begin.sqv" },
+        "3": { "name": "entity.name.tag.section.sqv" }
+      },
+      "end": "^\\1(</)(script)(\\s*>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.section.sqv" },
+        "3": { "name": "punctuation.definition.tag.end.sqv" }
+      },
+      "patterns": [
+        { "include": "#section-open-tail" },
+        { "include": "source.cs" }
+      ]
+    },
+    "style-section": {
+      "name": "meta.section.style.sqv",
+      "begin": "^([ \\t]*)(<)(style)(?=[\\s>])",
+      "beginCaptures": {
+        "2": { "name": "punctuation.definition.tag.begin.sqv" },
+        "3": { "name": "entity.name.tag.section.sqv" }
+      },
+      "end": "^\\1(</)(style)(\\s*>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.section.sqv" },
+        "3": { "name": "punctuation.definition.tag.end.sqv" }
+      },
+      "patterns": [
+        { "include": "#section-open-tail" },
+        { "include": "source.css" }
+      ]
+    },
+    "section-open-tail": {
+      "patterns": [
+        {
+          "name": "entity.other.attribute-name.sqv",
+          "match": "\\b(?:lang|namespace|name|access)\\b"
+        },
+        { "include": "#quoted-string" },
+        {
+          "name": "punctuation.definition.tag.end.sqv",
+          "match": ">"
+        }
+      ]
+    },
+    "template": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#interpolation" },
+        { "include": "#closing-tag" },
+        { "include": "#opening-tag" }
+      ]
+    },
+    "closing-tag": {
+      "name": "meta.tag.sqv",
+      "match": "(</)([A-Za-z_][A-Za-z0-9_.:-]*)(\\s*>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.sqv" },
+        "3": { "name": "punctuation.definition.tag.end.sqv" }
+      }
+    },
+    "opening-tag": {
+      "name": "meta.tag.sqv",
+      "begin": "(<)([A-Za-z_][A-Za-z0-9_.:-]*)(?=[\\s/>])",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.sqv" }
+      },
+      "end": "(/?>)|$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.sqv" }
+      },
+      "patterns": [
+        { "include": "#event-binding" },
+        { "include": "#slot-binding" },
+        { "include": "#directive-binding" },
+        { "include": "#property-binding" },
+        {
+          "name": "entity.other.attribute-name.sqv",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_.:-]*\\b"
+        },
+        {
+          "name": "keyword.operator.assignment.sqv",
+          "match": "="
+        },
+        { "include": "#quoted-string" }
+      ]
+    },
+    "event-binding": {
+      "name": "meta.attribute.event.sqv",
+      "contentName": "source.cs",
+      "begin": "((?:@|v-on:)[A-Za-z_][A-Za-z0-9_-]*)((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)(\\s*=\\s*)(\")",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.event.sqv" },
+        "2": {
+          "name": "meta.modifiers.sqv",
+          "patterns": [
+            { "name": "punctuation.separator.modifier.sqv", "match": "\\." },
+            { "name": "storage.modifier.sqv", "match": "[A-Za-z_][A-Za-z0-9_-]*" }
+          ]
+        },
+        "3": { "name": "keyword.operator.assignment.sqv" },
+        "4": { "name": "punctuation.definition.string.begin.sqv" }
+      },
+      "end": "\"|$",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.sqv" } },
+      "patterns": [
+        { "include": "source.cs" }
+      ]
+    },
+    "slot-binding": {
+      "name": "meta.attribute.slot.sqv",
+      "contentName": "source.cs",
+      "begin": "((?:#|v-slot:)(?:[A-Za-z_][A-Za-z0-9_-]*|\\[[^\\]]+\\]))(\\s*=\\s*)(\")",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.slot.sqv" },
+        "2": { "name": "keyword.operator.assignment.sqv" },
+        "3": { "name": "punctuation.definition.string.begin.sqv" }
+      },
+      "end": "\"|$",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.sqv" } },
+      "patterns": [
+        { "include": "source.cs" }
+      ]
+    },
+    "directive-binding": {
+      "name": "meta.attribute.directive.sqv",
+      "contentName": "source.cs",
+      "begin": "(v-[A-Za-z_][A-Za-z0-9_-]*(?::(?:[A-Za-z_][A-Za-z0-9_-]*|\\[[^\\]]+\\]))?)((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)(?:\\s*=\\s*(\"))?",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.directive.sqv" },
+        "2": {
+          "name": "meta.modifiers.sqv",
+          "patterns": [
+            { "name": "punctuation.separator.modifier.sqv", "match": "\\." },
+            { "name": "storage.modifier.sqv", "match": "[A-Za-z_][A-Za-z0-9_-]*" }
+          ]
+        },
+        "3": { "name": "punctuation.definition.string.begin.sqv" }
+      },
+      "end": "(?<=\")|(?=\\s|/?>)|$",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.sqv" } },
+      "patterns": [
+        { "include": "source.cs" }
+      ]
+    },
+    "property-binding": {
+      "name": "meta.attribute.binding.sqv",
+      "contentName": "source.cs",
+      "begin": "((?::|v-bind:)(?:[A-Za-z_][A-Za-z0-9_-]*|\\[[^\\]]+\\]))((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)(\\s*=\\s*)(\")",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.binding.sqv" },
+        "2": {
+          "name": "meta.modifiers.sqv",
+          "patterns": [
+            { "name": "punctuation.separator.modifier.sqv", "match": "\\." },
+            { "name": "storage.modifier.sqv", "match": "[A-Za-z_][A-Za-z0-9_-]*" }
+          ]
+        },
+        "3": { "name": "keyword.operator.assignment.sqv" },
+        "4": { "name": "punctuation.definition.string.begin.sqv" }
+      },
+      "end": "\"|$",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.sqv" } },
+      "patterns": [
+        { "include": "source.cs" }
+      ]
+    },
+    "quoted-string": {
+      "name": "string.quoted.double.sqv",
+      "begin": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sqv" } },
+      "end": "\"|$",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.sqv" } },
+      "patterns": [
+        {
+          "name": "constant.character.entity.sqv",
+          "match": "&(?:[A-Za-z][A-Za-z0-9]+|#[0-9]+|#x[0-9A-Fa-f]+);"
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.embedded.expression.cs.sqv",
+      "contentName": "source.cs",
+      "begin": "\\{\\{",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.sqv" } },
+      "end": "\\}\\}|$",
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.sqv" } },
+      "patterns": [
+        { "include": "source.cs" }
+      ]
+    }
+  }
+}

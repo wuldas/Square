@@ -20,6 +20,14 @@ artifacts/
 publish/
 [Bb]uild/
 nupkgs/
+node_modules/
+.gradle/
+.intellijPlatform/
+*.vsix
+*.zip
+tooling/vscode-square/syntaxes/
+tooling/vscode-square/language-configuration.json
+tooling/visualstudio-square/extension.vsixmanifest
 .tmp_*
 *_screenshot.png
 *.dll

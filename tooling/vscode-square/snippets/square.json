@@ -1,0 +1,47 @@
+{
+  "Square component": {
+    "scope": "sqx",
+    "prefix": "sqx-component",
+    "description": "Create an SQX component with template, C# script, and style sections",
+    "body": [
+      "<template>",
+      "  <View class=\"${1:component}\">",
+      "    $0",
+      "  </View>",
+      "</template>",
+      "",
+      "<script lang=\"csharp\">",
+      "</script>",
+      "",
+      "<style>",
+      "  .${1:component} {",
+      "  }",
+      "</style>"
+    ]
+  },
+  "Square Vue component": {
+    "scope": "sqv",
+    "prefix": "sqv-component",
+    "description": "Create an SQV component with template, C# script, and style sections",
+    "body": [
+      "<template>",
+      "  <View class=\"${1:component}\">",
+      "    $0",
+      "  </View>",
+      "</template>",
+      "",
+      "<script lang=\"csharp\">",
+      "</script>",
+      "",
+      "<style>",
+      "  .${1:component} {",
+      "  }",
+      "</style>"
+    ]
+  },
+  "Square button": {
+    "scope": "sqx,sqv",
+    "prefix": "square-button",
+    "body": ["<Button ${1:onClick={OnClick}}>${2:Button}</Button>"]
+  }
+}

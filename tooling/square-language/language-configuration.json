@@ -1,0 +1,38 @@
+{
+  "comments": {
+    "blockComment": ["<!--", "-->"]
+  },
+  "brackets": [
+    ["<", ">"],
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "autoClosingPairs": [
+    { "open": "<", "close": ">" },
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
+  ],
+  "surroundingPairs": [
+    ["<", ">"],
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""],
+    ["'", "'"]
+  ],
+  "folding": {
+    "markers": {
+      "start": "^\\s*<(template|script|style)(?:\\s|>)",
+      "end": "^\\s*</(template|script|style)>"
+    }
+  },
+  "indentationRules": {
+    "increaseIndentPattern": "<(?!/|!)(?:[A-Za-z_][A-Za-z0-9_.:-]*)(?:(?!/>).)*>|\\{(?![^}]*\\})",
+    "decreaseIndentPattern": "^\\s*</|^\\s*\\}"
+  },
+  "wordPattern": "(-?\\d*\\.\\d\\w*)|([^`~!@#$%^&*()\\-=+\\[\\]{}\\\\|;:'\",.<>/?\\s]+)"
+}
