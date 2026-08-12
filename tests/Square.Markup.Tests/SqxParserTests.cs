@@ -206,6 +206,17 @@ public class SqxParserTests
     }
 
     [Fact]
+    public void RejectsInvalidDirectiveUsingCompilerDiagnosticContract()
+    {
+        var error = Assert.Throws<SqxParseException>(() =>
+            new SqxParser().Parse("<template><Show><Text /></Show></template>", "InvalidShow.sqx"));
+
+        Assert.Equal("SQXD002", error.DiagnosticId);
+        Assert.Contains("when", error.DiagnosticMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.True(error.Offset >= 0);
+    }
+
+    [Fact]
     public void ParsesTemplateCommentsWithoutAstNodes()
     {
         const string source = "<template><!-- before --><View><!-- child --><Text>ok</Text></View></template>";

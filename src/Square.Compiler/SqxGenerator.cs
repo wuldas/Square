@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 using Square.Compiler.Directives;
 using Square.Compiler.Emit;
+using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
 
 namespace Square.Compiler;
@@ -89,16 +90,25 @@ public sealed class SqxGenerator : IIncrementalGenerator
         catch (SqxParseException exception)
         {
             code = $"// Generator error: {exception.Message}\n// Path: {input.Path}";
-            var source = SourceText.From(input.Content, Encoding.UTF8);
-            var position = Math.Max(0, Math.Min(exception.Position, source.Length));
-            var span = new TextSpan(position, 0);
+            var parseResult = SquareDocumentService.Parse(input.Content, input.Path);
+            var diagnostic = parseResult.Diagnostics.Length > 0
+                ? parseResult.Diagnostics[0]
+                : new SquareDiagnostic(
+                    input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
+                        ? "SQV0001"
+                        : "SQX0001",
+                    SquareDiagnosticSeverity.Error,
+                    exception.Message,
+                    new SquareSourceRange(exception.Position < 0 ? 0 : exception.Position, 0),
+                    input.Path);
+            var span = diagnostic.Range.ToTextSpan(parseResult.SourceText);
             var descriptor = input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
-                ? Diagnostics.SqvDiagnostics.Get(exception.DiagnosticId)
+                ? Diagnostics.SqvDiagnostics.Get(diagnostic.Id)
                 : Diagnostics.SqxDiagnostics.SQX0001_SyntaxError;
             context.ReportDiagnostic(Diagnostic.Create(
                 descriptor,
-                Location.Create(input.Path, span, source.Lines.GetLinePositionSpan(span)),
-                exception.Message));
+                Location.Create(input.Path, span, diagnostic.GetLinePositionSpan(parseResult.SourceText)),
+                diagnostic.Message));
         }
         catch (Exception exception)
         {
@@ -251,10 +261,20 @@ public sealed class SqxGenerator : IIncrementalGenerator
         }
     }
 
-    private static SqxDocument ParseDocument(SqxInput input) =>
-        input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
-            ? SqvParser.Parse(input.Content, input.Path)
-            : SqxParser.Parse(input.Content, input.Path);
+    private static SqxDocument ParseDocument(SqxInput input)
+    {
+        var result = SquareDocumentService.ParseSyntax(input.Content, input.Path);
+        if (!result.IsSuccess)
+        {
+            var diagnostic = result.Diagnostics[0];
+            throw new SqxParseException(
+                diagnostic.Message,
+                diagnostic.Range.Offset,
+                diagnostic.Id);
+        }
+
+        return result.ParsedSqxDocument;
+    }
 
     private static bool IsTemplateFile(string path) =>
         (path.EndsWith(".sqx", StringComparison.OrdinalIgnoreCase) ||

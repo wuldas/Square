@@ -1,4 +1,5 @@
-using Square.Compiler.ParserCore;
+using Microsoft.CodeAnalysis.Text;
+using Square.Compiler.LanguageServices;
 using Square.Markup.Ast;
 
 namespace Square.Markup.Parser;
@@ -9,69 +10,74 @@ public sealed class SqxParser
     {
         ArgumentNullException.ThrowIfNull(source);
 
-        try
-        {
-            var core = SqxCoreParser.Parse(source, fileName, new SqxCoreParserOptions
-            {
-                StrictTemplate = true,
-                CaseSensitiveSectionNames = true
-            });
-            return ConvertDocument(core);
-        }
-        catch (CoreParseException exception)
-        {
-            throw new SqxParseException(exception.Message, exception.Line, exception.Column);
-        }
+        var sharedResult = SquareDocumentService.Parse(source, fileName);
+        if (!sharedResult.IsSuccess)
+            throw ToParseException(sharedResult.Diagnostics[0], sharedResult.SourceText);
+
+        return ConvertDocument(sharedResult.ParsedSqxDocument);
     }
 
-    private static SqxDocument ConvertDocument(CoreDocument core)
+    private static SqxParseException ToParseException(
+        SquareDiagnostic diagnostic,
+        SourceText sourceText)
+    {
+        var span = diagnostic.GetLinePositionSpan(sourceText);
+        return new SqxParseException(
+            diagnostic.Message,
+            diagnostic.Id,
+            diagnostic.Range.Offset,
+            span.Start.Line + 1,
+            span.Start.Character + 1);
+    }
+
+    private static SqxDocument ConvertDocument(Square.Compiler.Parser.SqxDocument core)
     {
         var template = new SqxTemplate(
-            ConvertNodes(core.Template.Roots, core.Template.Line - 1),
-            core.Template.Line,
-            core.Template.Column);
-        SqxScript? script = core.Script == null
+            ConvertNodes(core.Template.Roots),
+            core.Template.Roots.FirstOrDefault()?.Line ?? 1,
+            core.Template.Roots.FirstOrDefault()?.Column ?? 1);
+        SqxScript? script = core.ScriptCode == null
             ? null
             : new SqxScript(
-                core.Script.Language,
-                core.Script.Code,
-                core.Script.Namespace,
-                core.Script.ComponentName,
-                core.Script.Access,
-                core.Script.Line,
-                core.Script.Column);
-        SqxStyle? style = core.Style == null
+                core.ScriptLang ?? "csharp",
+                core.ScriptCode,
+                core.Namespace,
+                core.Name,
+                core.Access,
+                1,
+                1);
+        SqxStyle? style = core.StyleCode == null
             ? null
-            : new SqxStyle(core.Style.Css, core.Style.Line, core.Style.Column);
-        return new SqxDocument(core.FileName, template, script, style);
+            : new SqxStyle(core.StyleCode, 1, 1);
+        return new SqxDocument(core.Name, template, script, style);
     }
 
-    private static List<SqxNode> ConvertNodes(List<CoreNode> nodes, int lineOffset)
+    private static List<SqxNode> ConvertNodes(List<Square.Compiler.Parser.SqxNode> nodes)
     {
         var result = new List<SqxNode>(nodes.Count);
         foreach (var node in nodes)
         {
-            if (node is CoreText text)
+            if (node is Square.Compiler.Parser.SqxText text)
             {
-                result.Add(new SqxText(text.Text, text.Line + lineOffset, text.Column));
+                result.Add(new SqxText(text.Text, text.Line, text.Column));
                 continue;
             }
-            if (node is CoreExpression expression)
+            if (node is Square.Compiler.Parser.SqxExpression expression)
             {
                 result.Add(new SqxExpression(
                     expression.Expression,
-                    expression.Line + lineOffset,
+                    expression.Line,
                     expression.Column));
                 continue;
             }
 
-            var element = (CoreElement)node;
+            var element = (Square.Compiler.Parser.SqxElement)node;
             var converted = new SqxElement(
                 element.TagName,
-                ConvertAttributes(element.Attributes, lineOffset),
-                ConvertNodes(element.Children, lineOffset),
-                element.Line + lineOffset,
-                element.Column + 1)
+                ConvertAttributes(element.Attributes),
+                ConvertNodes(element.Children),
+                element.Line,
+                element.Column)
             {
                 Kind = GetElementKind(element.TagName)
             };
@@ -80,7 +86,7 @@ public sealed class SqxParser
         return result;
     }
 
-    private static List<SqxAttribute> ConvertAttributes(List<CoreAttribute> attributes, int lineOffset)
+    private static List<SqxAttribute> ConvertAttributes(List<Square.Compiler.Parser.SqxAttribute> attributes)
     {
         var result = new List<SqxAttribute>(attributes.Count);
         foreach (var attribute in attributes)
@@ -92,8 +98,8 @@ public sealed class SqxParser
                 attribute.Name,
                 attribute.RawValue,
                 value,
-                attribute.Line + lineOffset,
-                attribute.Column));
+                attribute.Line,
+                1));
         }
         return result;
     }
