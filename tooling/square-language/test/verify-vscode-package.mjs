@@ -7,6 +7,12 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const extensionRoot = path.join(root, 'vscode-square');
 const sharedRoot = path.join(root, 'square-language');
 const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));
+assert.ok(manifest.activationEvents.includes('onLanguage:sqx'));
+assert.ok(manifest.activationEvents.includes('onLanguage:sqv'));
+assert.ok(manifest.contributes.configuration);
+assert.ok(manifest.contributes.configuration.properties['square.languageServer.path']);
+assert.ok(manifest.contributes.configuration.properties['square.languageServer.args']);
+assert.match(manifest.main, /out[\\/]extension\.js$/);
 
 const languages = new Map(manifest.contributes.languages.map(language => [language.id, language]));
 assert.deepEqual(languages.get('sqx').extensions, ['.sqx']);
@@ -36,5 +42,9 @@ const snippets = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'snippets',
 assert.ok(snippets['Square component']);
 assert.ok(snippets['Square Vue component']);
 assert.match(fs.readFileSync(path.join(extensionRoot, 'LICENSE.txt'), 'utf8'), /MIT License/);
+assert.ok(fs.existsSync(path.join(extensionRoot, 'src', 'extension.ts')));
+assert.ok(fs.existsSync(path.join(extensionRoot, 'tsconfig.json')));
+assert.ok(fs.existsSync(path.join(extensionRoot, 'server', 'Square.LanguageServer.dll')));
+assert.ok(fs.existsSync(path.join(extensionRoot, 'server', 'Square.LanguageServer.runtimeconfig.json')));
 
 console.log('VS Code package verification passed');

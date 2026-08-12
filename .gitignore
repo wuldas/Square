@@ -27,6 +27,8 @@ node_modules/
 *.zip
 tooling/vscode-square/syntaxes/
 tooling/vscode-square/language-configuration.json
+tooling/vscode-square/out/
+tooling/vscode-square/server/
 tooling/visualstudio-square/extension.vsixmanifest
 .tmp_*
 *_screenshot.png

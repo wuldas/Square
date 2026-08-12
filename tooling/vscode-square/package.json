@@ -2,9 +2,10 @@
   "name": "square-language-support",
   "displayName": "Square Language Support",
   "description": "Syntax highlighting and editing support for Square SQX and SQV components.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "wuldas",
   "license": "MIT",
+  "main": "./out/extension.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/wuldas/Square.git"
@@ -16,13 +17,43 @@
   "keywords": ["square", "sqx", "sqv", "csharp", "ui"],
   "scripts": {
     "sync-assets": "node scripts/sync-assets.mjs",
-    "test": "npm run sync-assets && node ../square-language/test/verify-vscode-package.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run sync-assets && npm run build && npm run build-server && node ../square-language/test/verify-vscode-package.mjs",
+    "build-server": "node scripts/build-server.mjs",
     "package": "npm run test && vsce package --out ../../artifacts/square-language-support.vsix"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.2"
+    "@types/node": "^22.15.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "^5.8.3"
   },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "activationEvents": ["onLanguage:sqx", "onLanguage:sqv"],
   "contributes": {
+    "configuration": {
+      "title": "Square Language Support",
+      "properties": {
+        "square.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "description": "Executable used to start Square Language Server. Leave empty to use the bundled server or the workspace development fallback."
+        },
+        "square.languageServer.args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments passed to the configured Square Language Server executable."
+        },
+        "square.languageServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Square semantic diagnostics and language-server features."
+        }
+      }
+    },
     "languages": [
       {
         "id": "sqx",
