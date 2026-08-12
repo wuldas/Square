@@ -8,8 +8,10 @@
 
   <depends>com.intellij.modules.rider</depends>
   <depends>org.jetbrains.plugins.textmate</depends>
+  <depends>com.intellij.modules.lsp</depends>
 
   <extensions defaultExtensionNs="com.intellij">
     <textmate.bundleProvider implementation="com.wuldas.square.SquareTextMateBundleProvider" />
+    <platform.lsp.serverSupportProvider implementation="com.wuldas.square.SquareLspServerSupportProvider" />
   </extensions>
 </idea-plugin>

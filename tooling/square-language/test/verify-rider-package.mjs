@@ -15,7 +15,15 @@ assert.match(build, /square-language[\\/]syntaxes/);
 assert.match(build, /vscode-square[\\/]LICENSE\.txt/);
 assert.match(pluginXml, /org\.jetbrains\.plugins\.textmate/);
 assert.match(pluginXml, /textmate\.bundleProvider/);
+assert.match(pluginXml, /com\.intellij\.modules\.lsp/);
+assert.match(pluginXml, /platform\.lsp\.serverSupportProvider/);
 assert.match(provider, /TextMateBundleProvider/);
 assert.match(provider, /Square\.tmBundle/);
+const lspProvider = fs.readFileSync(path.join(extensionRoot, 'src', 'main', 'java', 'com', 'wuldas', 'square', 'SquareLspServerSupportProvider.java'), 'utf8');
+assert.match(lspProvider, /LspServerSupportProvider/);
+assert.match(lspProvider, /ProjectWideLspServerDescriptor/);
+assert.match(lspProvider, /sqx/);
+assert.match(lspProvider, /sqv/);
+assert.match(lspProvider, /Square\.LanguageServer\.dll/);
 
 console.log('Rider package verification passed');

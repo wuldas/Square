@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.wuldas.square"
-version = "0.1.0"
+version = "0.2.0"
 
 val localRiderPath = providers.gradleProperty("localRiderPath")
 
@@ -39,6 +39,24 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 val generatedResources = layout.buildDirectory.dir("generated-resources")
+val publishLanguageServer by tasks.registering(Exec::class) {
+    val repositoryRoot = rootDir.parentFile.parentFile
+    val output = generatedResources.get().dir("server").asFile
+    doFirst {
+        output.deleteRecursively()
+        output.mkdirs()
+    }
+    workingDir(repositoryRoot)
+    commandLine(
+        "dotnet", "publish",
+        repositoryRoot.resolve("tools/Square.LanguageServer/Square.LanguageServer.csproj").absolutePath,
+        "-c", "Release",
+        "--no-restore",
+        "-p:DebugType=None",
+        "-p:DebugSymbols=false",
+        "-o", output.absolutePath)
+}
+
 val syncTextMateBundle by tasks.registering(Copy::class) {
     from("../square-language/syntaxes") {
         include("sqx.tmLanguage.json", "sqv.tmLanguage.json")
@@ -56,7 +74,7 @@ sourceSets.main {
 }
 
 tasks.processResources {
-    dependsOn(syncTextMateBundle)
+    dependsOn(syncTextMateBundle, publishLanguageServer)
 }
 
 intellijPlatform {
