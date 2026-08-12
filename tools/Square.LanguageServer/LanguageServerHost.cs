@@ -36,7 +36,11 @@ public sealed class LanguageServerHost
                 case "initialize" when hasId:
                     await WriteResponseAsync(id, new
                     {
-                        capabilities = new { textDocumentSync = 1 },
+                        capabilities = new
+                        {
+                            textDocumentSync = 1,
+                            completionProvider = new { triggerCharacters = new[] { "<", "@" } }
+                        },
                         serverInfo = new { name = "Square Language Server", version = "0.1.0" }
                     }, cancellationToken);
                     break;
@@ -55,6 +59,9 @@ public sealed class LanguageServerHost
                 case "textDocument/didClose":
                     HandleDidClose(root);
                     await PublishEmptyDiagnosticsAsync(root, cancellationToken);
+                    break;
+                case "textDocument/completion" when hasId:
+                    await WriteResponseAsync(id, BuildCompletion(root), cancellationToken);
                     break;
                 case "exit":
                     return _shutdownRequested ? 0 : 1;
@@ -152,6 +159,71 @@ public sealed class LanguageServerHost
         SquareDiagnosticSeverity.Hint => 4,
         _ => 1
     };
+
+    private object BuildCompletion(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        var uri = parameters.GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
+        if (!_documents.TryGet(uri, out var document) || document == null)
+            return new { isIncomplete = false, items = Array.Empty<object>() };
+
+        var position = parameters.GetProperty("position");
+        var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
+        var prefix = GetCompletionPrefix(document.Text, offset, out var eventContext);
+        if (eventContext)
+        {
+            var items = TemplateCatalog.BuiltIn.Events
+                .Where(eventDescriptor => eventDescriptor.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(eventDescriptor => new
+                {
+                    label = eventDescriptor.Name,
+                    kind = 23,
+                    detail = "Square event",
+                    insertText = eventDescriptor.Name
+                })
+                .Cast<object>()
+                .ToArray();
+            return new { isIncomplete = false, items };
+        }
+
+        var components = TemplateCatalog.BuiltIn.Components
+            .Where(component => component.TagName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(component => new
+            {
+                label = component.TagName,
+                kind = 7,
+                detail = component.TypeName,
+                insertText = component.TagName
+            })
+            .Cast<object>()
+            .ToArray();
+        return new { isIncomplete = false, items = components };
+    }
+
+    private static string GetCompletionPrefix(string text, int offset, out bool eventContext)
+    {
+        offset = Math.Clamp(offset, 0, text.Length);
+        var start = offset;
+        while (start > 0 && (char.IsLetterOrDigit(text[start - 1]) || text[start - 1] is '-' or '_'))
+            start--;
+
+        eventContext = start > 0 && text[start - 1] == '@';
+        if (eventContext) return text[start..offset];
+        if (start > 0 && text[start - 1] == '<') return text[start..offset];
+        return string.Empty;
+    }
+
+    private static int GetOffset(string text, int line, int character)
+    {
+        if (line <= 0) return Math.Clamp(character, 0, text.Length);
+        var currentLine = 0;
+        var offset = 0;
+        while (offset < text.Length && currentLine < line)
+        {
+            if (text[offset++] == '\n') currentLine++;
+        }
+        return Math.Clamp(offset + character, 0, text.Length);
+    }
 
     private async Task<string?> ReadMessageAsync(CancellationToken cancellationToken)
     {
