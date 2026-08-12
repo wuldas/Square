@@ -41,7 +41,8 @@ public sealed class LanguageServerHost
                             textDocumentSync = 1,
                             completionProvider = new { triggerCharacters = new[] { "<", "@" } },
                             hoverProvider = true,
-                            documentSymbolProvider = true
+                            documentSymbolProvider = true,
+                            definitionProvider = true
                         },
                         serverInfo = new { name = "Square Language Server", version = "0.1.0" }
                     }, cancellationToken);
@@ -70,6 +71,9 @@ public sealed class LanguageServerHost
                     break;
                 case "textDocument/documentSymbol" when hasId:
                     await WriteResponseAsync(id, BuildDocumentSymbols(root), cancellationToken);
+                    break;
+                case "textDocument/definition" when hasId:
+                    await WriteResponseAsync(id, BuildDefinition(root), cancellationToken);
                     break;
                 case "exit":
                     return _shutdownRequested ? 0 : 1;
@@ -400,6 +404,38 @@ public sealed class LanguageServerHost
         start = ToPosition(text, start),
         end = ToPosition(text, end)
     };
+
+    private object BuildDefinition(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        var uri = parameters.GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
+        if (!_documents.TryGet(uri, out var document) || document == null)
+            return Array.Empty<object>();
+
+        var position = parameters.GetProperty("position");
+        var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
+        var token = GetTokenAt(document.Text, offset, out _, out _);
+        if (string.IsNullOrWhiteSpace(token)) return Array.Empty<object>();
+
+        foreach (var candidate in _documents.All)
+        {
+            if (candidate.Uri.Equals(uri, StringComparison.OrdinalIgnoreCase)) continue;
+            var name = Path.GetFileNameWithoutExtension(GetSourcePath(candidate.Uri));
+            if (!name.Equals(token, StringComparison.OrdinalIgnoreCase)) continue;
+
+            return new[]
+            {
+                new
+                {
+                    uri = candidate.Uri,
+                    range = ToRange(candidate.Text, 0, candidate.Text.Length),
+                    targetSelectionRange = ToRange(candidate.Text, 0, 0)
+                }
+            };
+        }
+
+        return Array.Empty<object>();
+    }
 
     private async Task<string?> ReadMessageAsync(CancellationToken cancellationToken)
     {

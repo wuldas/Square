@@ -24,6 +24,8 @@ internal sealed class DocumentStore
     public bool TryGet(string uri, out DocumentState? document) =>
         _documents.TryGetValue(uri, out document);
 
+    public IEnumerable<DocumentState> All => _documents.Values;
+
     internal sealed class DocumentState
     {
         public DocumentState(string uri, int version, string text)
