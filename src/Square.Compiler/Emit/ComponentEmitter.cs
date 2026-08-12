@@ -1,5 +1,6 @@
 using System.Text;
 using Square.Compiler.Directives;
+using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
 using Square.Compiler.Template;
 
@@ -12,6 +13,7 @@ namespace Square.Compiler.Emit
         private readonly StringBuilder _sb = new StringBuilder();
         private readonly List<RefInfo> _refs = new List<RefInfo>();
         private readonly DirectiveCatalog _catalog;
+        private readonly TemplateCatalog _templateCatalog;
         private DirectiveEmitPipeline _pipeline;
         private readonly Dictionary<string, int> _structCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         private int _vforIndex;
@@ -29,6 +31,7 @@ namespace Square.Compiler.Emit
         {
             _doc = doc;
             _catalog = catalog ?? DirectiveCatalog.BuiltIn;
+            _templateCatalog = TemplateCatalog.BuiltIn;
             _namespace = !string.IsNullOrWhiteSpace(doc.Namespace)
                 ? doc.Namespace
                 : string.IsNullOrWhiteSpace(namespaceName) ? "Square.Sample" : namespaceName;
@@ -757,126 +760,19 @@ namespace Square.Compiler.Emit
                 _sb.AppendLine("#line default");
         }
 
-        private static string MapTagName(string tag) => tag.ToLowerInvariant() switch
-        {
-            "view" => "Square.Controls.View",
-            "scrollviewer" => "Square.Controls.ScrollViewer",
-            "popup" => "Square.Controls.Popup",
-            "dialog" => "Square.Controls.Dialog",
-            "menubar" => "Square.Controls.MenuBar",
-            "menu" => "Square.Controls.Menu",
-            "contextmenu" => "Square.Controls.ContextMenu",
-            "menuitem" => "Square.Controls.MenuItem",
-            "menuseparator" => "Square.Controls.MenuSeparator",
-            "text" => "Square.Controls.Text",
-            "fonticon" => "Square.Controls.FontIcon",
-            "splitter" => "Square.Controls.Splitter",
-            "list" => "Square.Controls.List",
-            "virtuallist" => "Square.Controls.VirtualList",
-            "listitem" => "Square.Controls.ListItem",
-            "tree" => "Square.Controls.Tree",
-            "virtualtree" => "Square.Controls.VirtualTree",
-            "treeitem" => "Square.Controls.TreeItem",
-            "swiper" => "Square.Controls.Swiper",
-            "button" => "Square.Controls.Button",
-            "input" => "Square.Controls.Input",
-            "textarea" => "Square.Controls.TextArea",
-            "checkbox" => "Square.Controls.CheckBox",
-            "radio" => "Square.Controls.Radio",
-            "select" => "Square.Controls.Select",
-            "image" => "Square.Controls.Image",
-            "canvas" => "Square.Controls.Canvas",
-            "svg" => "Square.UI.Svg.SVGSVGElement",
-            "g" => "Square.UI.Svg.SVGGElement",
-            "path" => "Square.UI.Svg.SVGPathElement",
-            "rect" => "Square.UI.Svg.SVGRectElement",
-            "circle" => "Square.UI.Svg.SVGCircleElement",
-            "ellipse" => "Square.UI.Svg.SVGEllipseElement",
-            "line" => "Square.UI.Svg.SVGLineElement",
-            "polyline" => "Square.UI.Svg.SVGPolylineElement",
-            "polygon" => "Square.UI.Svg.SVGPolygonElement",
-            "titlebar" => "Square.Controls.TitleBar",
-            "link" => "Square.Controls.Link",
-            _ => tag
-        };
+        private string MapTagName(string tag) => _templateCatalog.GetComponent(tag).TypeName;
 
-        private static bool IsBuiltInTag(string tag) => tag.ToLowerInvariant() is "view" or "scrollviewer" or "popup" or "dialog" or
-            "menubar" or "menu" or "contextmenu" or "menuitem" or "menuseparator" or "text" or "fonticon" or "splitter" or "list" or "virtuallist" or "listitem" or "tree" or "virtualtree" or "treeitem" or "swiper" or
-            "button" or "input" or "textarea" or "checkbox" or "radio" or "select" or "image" or "canvas" or "titlebar" or "link" or
-            "svg" or "g" or "path" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon";
+        private bool IsBuiltInTag(string tag) => _templateCatalog.GetComponent(tag).IsBuiltIn;
 
         private static bool IsTitleBar(string tag) =>
             string.Equals(tag, "titlebar", StringComparison.OrdinalIgnoreCase);
 
-        private static bool RequiresBuildAfterAttach(string tag) =>
+        private bool RequiresBuildAfterAttach(string tag) =>
             !IsBuiltInTag(tag) || IsTitleBar(tag);
 
-        private static bool IsTextContentElement(string tag) => tag.ToLowerInvariant() is "text" or "button" or "link" or "listitem" or "treeitem";
+        private bool IsTextContentElement(string tag) => _templateCatalog.GetComponent(tag).IsTextContentElement;
 
-        private static string MapPropName(string name) => name.ToLowerInvariant() switch
-        {
-            "id" => "Id",
-            "text" => "TextContent",
-            "glyph" => "Glyph",
-            "icon" => "Icon",
-            "font-family" => "FontFamily",
-            "minimum" => "Minimum",
-            "maximum" => "Maximum",
-            "splitter-thickness" => "SplitterThickness",
-            "seamless" => "IsSeamless",
-            "vertical" => "IsVertical",
-            "reversed" => "IsReversed",
-            "value" => "Value",
-            "checked" => "IsChecked",
-            "disabled" => "IsDisabled",
-            "placeholder" => "Placeholder",
-            "source" => "Source",
-            "image" => "ImageContent",
-            "group" => "GroupName",
-            "shortcut" => "ShortcutText",
-            "checkable" => "IsCheckable",
-            "stays-open-on-click" => "StaysOpenOnClick",
-            "options" => "Options",
-            "items" => "Items",
-            "selected-index" => "SelectedIndex",
-            "item-height" => "ItemHeight",
-            "overscan-count" => "OverscanCount",
-            "indent-size" => "IndentSize",
-            "expanded" => "IsExpanded",
-            "loop" => "Loop",
-            "to" => "To",
-            "href" => "Href",
-            "marker" => "Marker",
-            "replace" => "Replace",
-            "color" => "Color",
-            "background" => "Background",
-            "underline" => "Underline",
-            "type" => "Type",
-            "viewbox" => "ViewBox",
-            "x" => "X",
-            "y" => "Y",
-            "width" => "Width",
-            "height" => "Height",
-            "rx" => "RadiusX",
-            "ry" => "RadiusY",
-            "cx" => "CenterX",
-            "cy" => "CenterY",
-            "r" => "Radius",
-            "x1" => "X1",
-            "y1" => "Y1",
-            "x2" => "X2",
-            "y2" => "Y2",
-            "points" => "Points",
-            "d" => "Data",
-            "transform" => "Transform",
-            "fill" => "Fill",
-            "stroke" => "Stroke",
-            "stroke-width" => "StrokeWidth",
-            "opacity" => "Opacity",
-            "fill-opacity" => "FillOpacity",
-            "stroke-opacity" => "StrokeOpacity",
-            _ => name
-        };
+        private string MapPropName(string name) => _templateCatalog.MapPropertyName(name);
 
         private sealed class RefInfo
         {

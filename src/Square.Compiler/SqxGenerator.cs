@@ -57,9 +57,11 @@ public sealed class SqxGenerator : IIncrementalGenerator
                 catalog = DirectiveCatalog.BuiltIn;
             }
 
-            var contracts = BuildPropContracts(compilation, files);
-            var generatedTypes = BuildGeneratedTypeNames(files);
-            var slotContracts = BuildSlotContracts(compilation);
+            var semanticAnalyzer = new TemplateSemanticAnalyzer();
+            var semanticInputs = files.Select(file => (file.Path, file.Content, file.Namespace)).ToArray();
+            var contracts = semanticAnalyzer.BuildPropContracts(compilation, semanticInputs);
+            var generatedTypes = semanticAnalyzer.BuildGeneratedTypeNames(semanticInputs);
+            var slotContracts = semanticAnalyzer.BuildSlotContracts(compilation);
             foreach (var file in files)
                 Generate(productionContext, compilation, file, contracts, generatedTypes, slotContracts, catalog);
         });
@@ -69,9 +71,9 @@ public sealed class SqxGenerator : IIncrementalGenerator
         SourceProductionContext context,
         Compilation compilation,
         SqxInput input,
-        IReadOnlyDictionary<string, PropContract[]> contracts,
+        IReadOnlyDictionary<string, TemplatePropDescriptor[]> contracts,
         IReadOnlyCollection<string> generatedTypes,
-        IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> slotContracts,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, TemplateSlotDescriptor>> slotContracts,
         DirectiveCatalog catalog)
     {
         string code;
@@ -126,140 +128,6 @@ public sealed class SqxGenerator : IIncrementalGenerator
         context.AddSource(hintName, SourceText.From(code, Encoding.UTF8));
     }
 
-    private static IReadOnlyCollection<string> BuildGeneratedTypeNames(ImmutableArray<SqxInput> inputs)
-    {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var input in inputs)
-        {
-            SqxDocument document;
-            try
-            {
-                document = ParseDocument(input);
-            }
-            catch (SqxParseException)
-            {
-                continue;
-            }
-
-            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
-                ? input.Namespace
-                : document.Namespace;
-            names.Add(document.Name);
-            if (!string.IsNullOrWhiteSpace(namespaceName))
-                names.Add(namespaceName + "." + document.Name);
-        }
-        return names;
-    }
-
-    private static IReadOnlyDictionary<string, PropContract[]> BuildPropContracts(
-        Compilation compilation,
-        ImmutableArray<SqxInput> inputs)
-    {
-        var contracts = new Dictionary<string, PropContract[]>(StringComparer.Ordinal);
-        foreach (var input in inputs)
-        {
-            SqxDocument document;
-            try
-            {
-                document = ParseDocument(input);
-            }
-            catch (SqxParseException)
-            {
-                continue;
-            }
-
-            var props = new Dictionary<string, PropContract>(StringComparer.OrdinalIgnoreCase);
-            var script = ExtractScript(input.Content);
-            if (script != null)
-            {
-                var matches = Regex.Matches(
-                    script,
-                    @"\[Prop(?:Attribute)?\s*(?:\((?<options>[^)]*)\))?\]\s*(?:public|internal|protected|private)?\s*(?<type>[A-Za-z_][A-Za-z0-9_<>?., ]*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{");
-                foreach (Match match in matches)
-                {
-                    var options = match.Groups["options"].Value;
-                    var prop = new PropContract(
-                        match.Groups["name"].Value,
-                        match.Groups["type"].Value.Trim(),
-                        options.Contains("Required", StringComparison.OrdinalIgnoreCase) &&
-                        options.Contains("true", StringComparison.OrdinalIgnoreCase));
-                    props[prop.Name] = prop;
-                }
-            }
-
-            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
-                ? input.Namespace
-                : document.Namespace;
-            var metadataName = string.IsNullOrWhiteSpace(namespaceName)
-                ? document.Name
-                : namespaceName + "." + document.Name;
-            var codeBehindType = compilation.GetTypeByMetadataName(metadataName);
-            if (codeBehindType != null)
-            {
-                foreach (var property in codeBehindType.GetMembers().OfType<IPropertySymbol>())
-                {
-                    var attribute = property.GetAttributes().FirstOrDefault(IsPropAttribute);
-                    if (attribute == null) continue;
-                    var required = attribute.NamedArguments.Any(argument =>
-                        argument.Key == "Required" && argument.Value.Value is true);
-                    var prop = new PropContract(
-                        property.Name,
-                        property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                        required);
-                    props[prop.Name] = prop;
-                }
-            }
-
-            contracts[metadataName] = props.Values.ToArray();
-        }
-        return contracts;
-    }
-
-    private static bool IsPropAttribute(AttributeData attribute)
-    {
-        var type = attribute.AttributeClass;
-        if (type == null) return false;
-        var metadataName = type.ToDisplayString();
-        return metadataName == "Square.Runtime.Binding.PropAttribute" ||
-            type.Name is "PropAttribute" or "Prop";
-    }
-
-    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> BuildSlotContracts(Compilation compilation)
-    {
-        var result = new Dictionary<string, IReadOnlyDictionary<string, SlotContract>>(StringComparer.Ordinal);
-        VisitNamespace(compilation.GlobalNamespace);
-        return result;
-
-        void VisitNamespace(INamespaceSymbol namespaceSymbol)
-        {
-            foreach (var nested in namespaceSymbol.GetNamespaceMembers()) VisitNamespace(nested);
-            foreach (var type in namespaceSymbol.GetTypeMembers()) VisitType(type);
-        }
-
-        void VisitType(INamedTypeSymbol type)
-        {
-            var slots = new Dictionary<string, SlotContract>(StringComparer.Ordinal);
-            foreach (var attribute in type.GetAttributes())
-            {
-                if (attribute.AttributeClass?.ToDisplayString() != "Square.UI.SlotContractAttribute" ||
-                    attribute.ConstructorArguments.Length != 2 ||
-                    attribute.ConstructorArguments[0].Value is not string name ||
-                    attribute.ConstructorArguments[1].Value is not INamedTypeSymbol propsType)
-                    continue;
-
-                var properties = propsType.GetMembers().OfType<IPropertySymbol>()
-                    .Where(property => !property.IsStatic && property.GetMethod != null)
-                    .ToDictionary(
-                        property => char.ToLowerInvariant(property.Name[0]) + property.Name.Substring(1),
-                        property => property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                        StringComparer.Ordinal);
-                slots[name] = new SlotContract(name, properties);
-            }
-            if (slots.Count > 0)
-                result[type.ToDisplayString()] = slots;
-            foreach (var nested in type.GetTypeMembers()) VisitType(nested);
-        }
-    }
 
     private static SqxDocument ParseDocument(SqxInput input)
     {
@@ -359,7 +227,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
         SourceProductionContext context,
         SqxInput input,
         SqxDocument document,
-        IReadOnlyDictionary<string, PropContract[]> contracts)
+        IReadOnlyDictionary<string, TemplatePropDescriptor[]> contracts)
     {
         var currentNamespace = string.IsNullOrWhiteSpace(document.Namespace)
             ? input.Namespace
@@ -511,7 +379,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
         SourceProductionContext context,
         SqxInput input,
         SqxDocument document,
-        IReadOnlyDictionary<string, IReadOnlyDictionary<string, SlotContract>> contracts)
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, TemplateSlotDescriptor>> contracts)
     {
         var currentNamespace = string.IsNullOrWhiteSpace(document.Namespace) ? input.Namespace : document.Namespace;
         var scriptUsings = ExtractNamespaceUsings(document.ScriptCode);
@@ -667,29 +535,4 @@ public sealed class SqxGenerator : IIncrementalGenerator
         }
     }
 
-    private sealed class PropContract
-    {
-        public string Name { get; }
-        public string TypeName { get; }
-        public bool Required { get; }
-
-        public PropContract(string name, string typeName, bool required)
-        {
-            Name = name;
-            TypeName = typeName;
-            Required = required;
-        }
-    }
-
-    private sealed class SlotContract
-    {
-        public string Name { get; }
-        public IReadOnlyDictionary<string, string> Properties { get; }
-
-        public SlotContract(string name, IReadOnlyDictionary<string, string> properties)
-        {
-            Name = name;
-            Properties = properties;
-        }
-    }
 }
