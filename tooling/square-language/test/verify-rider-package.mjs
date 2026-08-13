@@ -25,5 +25,8 @@ assert.match(lspProvider, /ProjectWideLspServerDescriptor/);
 assert.match(lspProvider, /sqx/);
 assert.match(lspProvider, /sqv/);
 assert.match(lspProvider, /Square\.LanguageServer\.dll/);
+assert.match(lspProvider, /getResource\("\/server\/Square\.LanguageServer\.dll"\)/);
+assert.match(lspProvider, /JarURLConnection/);
+assert.doesNotMatch(lspProvider, /getProtectionDomain\(\)/);
 
 console.log('Rider package verification passed');
