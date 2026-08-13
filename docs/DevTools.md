@@ -1,6 +1,6 @@
 # DevTools
 
-> Document Revision: 0.6
+> Document Revision: 0.7
 > 配套：`Getting-Started.md`、`API-Reference.md`、`Rendering.md`
 
 `Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集、输入自动化、元素检查和低开销内存诊断。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
@@ -49,6 +49,7 @@ app.Run();
 | `AllowInputInjection` | `false` | 是否允许 `/input/*` 输入注入接口；关闭后输入接口返回 `403` |
 | `AllowInspector` | `false` | 是否允许 `/inspect/*` 运行时检查接口；关闭后返回 `403` |
 | `AllowMemoryDiagnostics` | `false` | 是否允许 `/memory` 只读运行时内存快照；关闭后返回 `403` |
+| `AllowChromeInspect` | `false` | 是否启用 Chrome DevTools Protocol discovery/WebSocket；关闭后 `/json/*` 返回 `404` |
 | `IncludeSourcePaths` | `false` | Inspector 响应是否包含模板源码路径 |
 | `IncludeTextContent` | `false` | Inspector 响应是否包含元素文本内容 |
 
@@ -77,6 +78,7 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj -- --backend=Vul
 | `--devtools-port=<port>` | 指定端口；省略时使用自动端口（`Port = 0`） |
 | `--devtools-token=<token>` | 指定访问令牌；省略时自动生成随机 token |
 | `--devtools-memory` | 显式启用 `/memory` 只读内存诊断；必须与 `--devtools` 一起使用 |
+| `--devtools-chrome-inspect` | 显式启用 Chrome Inspector discovery 和 CDP WebSocket；必须与 `--devtools` 一起使用 |
 
 启动后控制台会输出实际 base address 和 token header，例如：
 
@@ -188,6 +190,45 @@ X-Square-DevTools-Token: <access-token>
 
 Inspector endpoint 见 [7. 元素调试与 Inspector](#7-元素调试与-inspector)。
 
+### Chrome Inspector（CDP 子集）
+
+主示例可以显式启用 Chrome Inspector：
+
+```bash
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -- \
+  --devtools \
+  --devtools-chrome-inspect
+```
+
+启动后控制台会输出 `/json/list` 地址。打开 Chrome：
+
+1. 访问 `chrome://inspect/#devices`。
+2. 在 **Configure...** 中添加 `127.0.0.1:<DevToolsServer.Port>`。
+3. 在 Remote Target 中点击 **Inspect**。
+
+端口可以使用 `Port = 0` 自动分配；多个 Square 进程应分别使用各自输出的端口配置。`--devtools` 不会自动开启 CDP，必须额外指定 `--devtools-chrome-inspect`。
+
+本轮在 Chrome Stable `151.0.7922.76` 上验证了 CDP 1.3 discovery、WebSocket 和 DevTools frontend 连接；Chrome frontend 会探测额外的 Debugger/Network/Accessibility 能力，这些能力仍返回 unsupported 或兼容空操作，不代表 Square 已实现对应面板。NativeAOT 使用显式 JSON 和无反射命令分发设计，最终支持状态以实际 AOT publish + CDP smoke 为准。
+
+如果 target 不出现，确认已配置 `127.0.0.1:<port>` 而不是 `/api/v1/health` URL，并检查 `AllowChromeInspect` 和 `--devtools-chrome-inspect`。如果 WebSocket 被拒绝，检查浏览器 Origin 是否为 Chrome DevTools origin；普通网页 Origin 会被拒绝。面板显示 unsupported 方法属于当前 CDP 子集限制。
+
+当前已实现的 CDP 子集：
+
+| Domain | 当前支持 |
+|---|---|
+| Discovery | `/json/version`、`/json`、`/json/list`、`/json/protocol` |
+| `Runtime` | `enable`、`disable`、`getProperties`、`callFunctionOn`、`releaseObject`，以及默认 execution context 事件 |
+| `DOM` | `enable`、`disable`、`getDocument`、`getFlattenedDocument`、`requestChildNodes`、`describeNode`、`getAttributes`、`getNodeForLocation`、`getBoxModel`、`getOuterHTML`、`resolveNode` |
+| `CSS` | `getComputedStyleForNode`、`getMatchedStylesForNode`、`getAnimatedStylesForNode`、`getInlineStylesForNode`、`getPlatformFontsForNode`、`getEnvironmentVariables` |
+| `Page` | `enable`、`disable`、`getFrameTree`、`getResourceTree`、`getNavigationHistory`、`getLayoutMetrics`、`captureScreenshot` |
+| `Target` | `getTargetInfo`、`setDiscoverTargets`、`setAutoAttach` |
+| `Overlay` | `enable`、`disable`、`hideHighlight`、`setInspectMode`、`highlightNode`、`highlightRect`；支持基础 Square 高亮和 `inspectNodeRequested` 事件 |
+| 兼容空操作 | `Inspector`、`Console`、`Log`、`Network` 的部分 enable/disable 和前端探测命令 |
+
+Square Element Tree 会映射为一个合成 Document 节点和 Element/Text 节点，并保留 Square 元素的 `id` 与 `class` 属性。节点 ID 在单次 CDP session 内稳定，Element ID 使用当前运行时的 `DebugId` 映射；当前只读，computed/inline styles、基础 Matched CSS Rules 和真实 content/padding/border/margin 四层 Box Model 均来自当前 Square 布局与 CSS 解析结果。Overlay 已支持基础节点高亮和点选模式；暂不支持 CSS 样式编辑、Console、Debugger、Network 或 Memory 面板。
+
+Chrome Inspector 是显式 opt-in 的本地调试能力。由于 Chrome discovery/WebSocket 连接不能附加 Square 的 `X-Square-DevTools-Token` header，CDP discovery 在开启后不要求该 header；服务仍只监听 `127.0.0.1`，并限制 WebSocket Origin。不要在不受信任的机器或生产构建中开启 `AllowChromeInspect`。
+
 ### GET /api/v1/health
 
 返回 JSON：
@@ -199,7 +240,8 @@ Inspector endpoint 见 [7. 元素调试与 Inspector](#7-元素调试与-inspect
   "port": 54321,
   "baseAddress": "http://127.0.0.1:54321",
   "inputInjection": true,
-  "memoryDiagnostics": true
+  "memoryDiagnostics": true,
+  "chromeInspect": true
 }
 ```
 

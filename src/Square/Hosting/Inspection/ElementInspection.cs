@@ -17,7 +17,16 @@ public sealed record ElementInspectionNode(
     ElementInspectionSource? Source,
     string? Text,
     int ChildCount,
-    IReadOnlyList<ElementInspectionNode> Children);
+    IReadOnlyList<ElementInspectionNode> Children,
+    IReadOnlyList<string>? ClassNames = null,
+    ElementInspectionBoxModel? BoxModel = null);
+
+/// <summary>元素检查中的真实 CSS 盒模型四层几何。</summary>
+public sealed record ElementInspectionBoxModel(
+    Rect Content,
+    Rect Padding,
+    Rect Border,
+    Rect Margin);
 
 /// <summary>元素检查来源：承载生成该元素的源码位置信息。</summary>
 public sealed record ElementInspectionSource(
@@ -35,3 +44,20 @@ public sealed record ElementInspectionState(
     bool Focus,
     bool Active,
     bool Disabled);
+
+/// <summary>元素样式检查快照：承载最终应用值和内联声明。</summary>
+public sealed record ElementInspectionStyleSnapshot(
+    IReadOnlyDictionary<string, string> Computed,
+    string InlineCssText,
+    IReadOnlyList<ElementInspectionStyleRule>? MatchedRules = null);
+
+/// <summary>元素检查中的匹配 CSS 规则。</summary>
+public sealed record ElementInspectionStyleRule(
+    string Selector,
+    IReadOnlyList<ElementInspectionStyleDeclaration> Declarations);
+
+/// <summary>元素检查中的 CSS 声明。</summary>
+public sealed record ElementInspectionStyleDeclaration(
+    string Property,
+    string Value,
+    bool Important);

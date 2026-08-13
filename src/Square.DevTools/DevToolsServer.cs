@@ -20,17 +20,20 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
     private Task _acceptLoop;
     private int _disposed;
 
-    private DevToolsServer(HttpListener listener, Task acceptLoop, string accessToken, int port)
+    private DevToolsServer(HttpListener listener, Task acceptLoop, string accessToken, int port, string targetId)
     {
         _listener = listener;
         _acceptLoop = acceptLoop;
         AccessToken = accessToken;
         Port = port;
+        TargetId = targetId;
     }
 
     public string AccessToken { get; }
     public int Port { get; }
+    public string TargetId { get; }
     public string BaseAddress => $"http://127.0.0.1:{Port}";
+    internal string CdpWebSocketAddress => $"ws://127.0.0.1:{Port}/devtools/page/{TargetId}";
 
     public static DevToolsServer Start(AppWindow window, DevToolsOptions? options = null)
     {
@@ -43,7 +46,7 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
             : options.AccessToken;
         var listener = StartListener(options.Port, out var port);
 
-        var server = new DevToolsServer(listener, Task.CompletedTask, token, port);
+        var server = new DevToolsServer(listener, Task.CompletedTask, token, port, Guid.NewGuid().ToString("N"));
         server._acceptLoop = Task.Run(() => server.AcceptLoopAsync(window, options));
         return server;
     }
@@ -78,19 +81,32 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
     {
         try
         {
+            var method = context.Request.HttpMethod;
+            var path = context.Request.Url?.AbsolutePath ?? "/";
+            if (IsCdpPath(path))
+            {
+                if (!options.AllowChromeInspect)
+                {
+                    await WriteJsonAsync(context.Response, StatusCodes.NotFound, "{\"error\":\"not_found\"}");
+                    return;
+                }
+
+                await HandleCdpRequestAsync(context, window, method, path);
+                return;
+            }
+
             if (!IsAuthorized(context.Request, AccessToken))
             {
                 await WriteJsonAsync(context.Response, StatusCodes.Unauthorized, "{\"error\":\"unauthorized\"}");
                 return;
             }
 
-            var method = context.Request.HttpMethod;
-            var path = context.Request.Url?.AbsolutePath ?? "/";
             if (method == "GET" && path == "/api/v1/health")
             {
                 var json = $"{{\"status\":\"ok\",\"processId\":{Environment.ProcessId},\"port\":{Port}," +
                            $"\"baseAddress\":\"{BaseAddress}\",\"inputInjection\":{Bool(options.AllowInputInjection)}," +
-                           $"\"memoryDiagnostics\":{Bool(options.AllowMemoryDiagnostics)}}}";
+                           $"\"memoryDiagnostics\":{Bool(options.AllowMemoryDiagnostics)}," +
+                           $"\"chromeInspect\":{Bool(options.AllowChromeInspect)}}}";
                 await WriteJsonAsync(context.Response, StatusCodes.Ok, json);
                 return;
             }
@@ -203,6 +219,69 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         }
     }
 
+    private async Task HandleCdpRequestAsync(HttpListenerContext context, AppWindow window, string method, string path)
+    {
+        context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+        context.Response.Headers["Access-Control-Allow-Private-Network"] = "true";
+
+        if (method == "GET" && path is "/json" or "/json/list")
+        {
+            await WriteJsonAsync(context.Response, StatusCodes.Ok, CdpTargetDiscovery.SerializeList(this));
+            return;
+        }
+
+        if (method == "GET" && path == "/json/version")
+        {
+            await WriteJsonAsync(context.Response, StatusCodes.Ok, CdpTargetDiscovery.SerializeVersion(this));
+            return;
+        }
+
+        if (method == "GET" && path == "/json/protocol")
+        {
+            await WriteJsonAsync(context.Response, StatusCodes.Ok, CdpTargetDiscovery.SerializeProtocol());
+            return;
+        }
+
+        if (method == "GET" && path == "/devtools/inspector.html")
+        {
+            context.Response.StatusCode = (int)HttpStatusCode.Redirect;
+            context.Response.RedirectLocation = $"devtools://devtools/bundled/inspector.html?ws=127.0.0.1:{Port}/devtools/page/{TargetId}";
+            context.Response.Close();
+            return;
+        }
+
+        if (path == $"/devtools/page/{TargetId}")
+        {
+            if (!context.Request.IsWebSocketRequest)
+            {
+                await WriteJsonAsync(context.Response, StatusCodes.BadRequest, "{\"error\":\"websocket_required\"}");
+                return;
+            }
+
+            var origin = context.Request.Headers["Origin"];
+            if (!string.IsNullOrEmpty(origin) && !IsAllowedCdpOrigin(origin))
+            {
+                await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{\"error\":\"origin_forbidden\"}");
+                return;
+            }
+
+            var websocket = await context.AcceptWebSocketAsync(null);
+            await CdpSession.RunAsync(websocket.WebSocket, window, this, _shutdown.Token);
+            return;
+        }
+
+        await WriteJsonAsync(context.Response, StatusCodes.NotFound, "{\"error\":\"not_found\"}");
+    }
+
+    private static bool IsCdpPath(string path) =>
+        path is "/json" or "/json/list" or "/json/version" or "/json/protocol" or "/devtools/inspector.html" ||
+        path.StartsWith("/devtools/page/", StringComparison.Ordinal);
+
+    private static bool IsAllowedCdpOrigin(string origin) =>
+        origin.Equals("devtools://devtools", StringComparison.OrdinalIgnoreCase) ||
+        origin.Equals("chrome://inspect", StringComparison.OrdinalIgnoreCase) ||
+        origin.Equals("chrome-devtools://devtools", StringComparison.OrdinalIgnoreCase);
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -311,6 +390,7 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         AppendNullableString(builder, "elementId", node.ElementId); builder.Append(',');
         AppendNullableString(builder, "componentName", node.ComponentName); builder.Append(',');
         builder.Append("\"bounds\":"); AppendRect(builder, node.Bounds); builder.Append(',');
+        builder.Append("\"boxModel\":"); AppendBoxModel(builder, node.BoxModel); builder.Append(',');
         builder.Append("\"state\":"); AppendState(builder, node.State); builder.Append(',');
         builder.Append("\"source\":"); AppendSource(builder, node.Source); builder.Append(',');
         AppendNullableString(builder, "text", node.Text); builder.Append(',');
@@ -333,6 +413,17 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         AppendNumber(builder, "y", rect.Y); builder.Append(',');
         AppendNumber(builder, "width", rect.Width); builder.Append(',');
         AppendNumber(builder, "height", rect.Height);
+        builder.Append('}');
+    }
+
+    private static void AppendBoxModel(StringBuilder builder, ElementInspectionBoxModel? boxModel)
+    {
+        if (boxModel == null) { builder.Append("null"); return; }
+        builder.Append('{');
+        builder.Append("\"content\":"); AppendRect(builder, boxModel.Content); builder.Append(',');
+        builder.Append("\"padding\":"); AppendRect(builder, boxModel.Padding); builder.Append(',');
+        builder.Append("\"border\":"); AppendRect(builder, boxModel.Border); builder.Append(',');
+        builder.Append("\"margin\":"); AppendRect(builder, boxModel.Margin);
         builder.Append('}');
     }
 

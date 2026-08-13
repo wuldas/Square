@@ -197,6 +197,18 @@ public static class CssStyleReconciler
             root.Invalidate(ElementInvalidation.Style);
     }
 
+    internal static IReadOnlyList<CssInspectionRule> GetMatchedRules(Element element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        StyleScope[] scopes;
+        lock (Gate)
+            scopes = Scopes.Where(scope => IsAncestorOrSelf(scope.Root, element)).ToArray();
+
+        return scopes
+            .SelectMany(scope => scope.Engine.GetMatchedRules(element))
+            .ToArray();
+    }
+
     /// <summary>释放与指定元素树关联的 CSS scope 和待处理样式失效。</summary>
     public static void UnregisterScopesForTree(Element root)
     {

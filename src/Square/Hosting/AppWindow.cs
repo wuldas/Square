@@ -170,6 +170,8 @@ public sealed class AppWindow : IRenderBackendApplication
     public event Action? Closed;
     /// <summary>全局按键事件。</summary>
     public event Action<int, KeyAction>? GlobalKeyEvent;
+    /// <summary>Inspector 点选元素时触发。</summary>
+    public event Action<int>? InspectorNodeSelected;
 
     /// <summary>加载内容根元素到窗口正文。</summary>
     public void Load(Element content)
@@ -344,6 +346,22 @@ public sealed class AppWindow : IRenderBackendApplication
         bool includeTextContent = true) =>
         RequireRuntime().InspectElementAsync(debugId, includeSourcePaths, includeTextContent);
 
+    /// <summary>按调试 ID 检查元素样式。</summary>
+    public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId) =>
+        RequireRuntime().InspectElementStylesAsync(debugId);
+
+    /// <summary>设置 Inspector 临时高亮元素。</summary>
+    public Task<bool> SetInspectorHighlightAsync(int debugId) =>
+        RequireRuntime().SetInspectorHighlightAsync(debugId);
+
+    /// <summary>清除 Inspector 临时高亮。</summary>
+    public Task ClearInspectorHighlightAsync() =>
+        RequireRuntime().ClearInspectorHighlightAsync();
+
+    /// <summary>开启或关闭 Inspector 点选模式。</summary>
+    public Task SetInspectorModeAsync(bool enabled) =>
+        RequireRuntime().SetInspectorModeAsync(enabled);
+
     /// <summary>按命中测试检查元素。</summary>
     public Task<ElementInspectionNode?> HitTestInspectionAsync(
         Point point,
@@ -445,6 +463,8 @@ public sealed class AppWindow : IRenderBackendApplication
         _runtime = runtime;
         _document.Context.Dispatcher = dispatcher;
     }
+
+    internal void RaiseInspectorNodeSelected(int debugId) => InspectorNodeSelected?.Invoke(debugId);
 
     internal void Attach(IPlatformHost host)
     {

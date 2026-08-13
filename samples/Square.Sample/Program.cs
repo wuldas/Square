@@ -87,12 +87,19 @@ public static class Program
                 AccessToken = GetOption(args, "--devtools-token"),
                 AllowInputInjection = true,
                 AllowInspector = true,
-                AllowMemoryDiagnostics = HasOption(args, "--devtools-memory")
+                AllowMemoryDiagnostics = HasOption(args, "--devtools-memory"),
+                AllowChromeInspect = HasOption(args, "--devtools-chrome-inspect"),
+                IncludeTextContent = HasOption(args, "--devtools-chrome-inspect")
             });
             System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
             System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
             if (HasOption(args, "--devtools-memory"))
                 System.Console.WriteLine($"Memory diagnostics: {devTools.BaseAddress}/api/v1/memory");
+            if (HasOption(args, "--devtools-chrome-inspect"))
+            {
+                System.Console.WriteLine($"Chrome Inspector: {devTools.BaseAddress}/json/list");
+                System.Console.WriteLine("Warning: Chrome Inspector allows local unauthenticated CDP connections while enabled.");
+            }
 #else
             throw new NotSupportedException("This build does not include DevTools. Build with -p:SquareSampleUseDevTools=true to enable it.");
 #endif

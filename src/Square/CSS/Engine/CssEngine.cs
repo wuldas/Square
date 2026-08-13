@@ -4,6 +4,7 @@ using Square.Text.Fonts;
 using Square.UI;
 using Square.UI.ElementApi;
 using System.Globalization;
+using System.Text;
 
 namespace Square.CSS.Engine;
 
@@ -343,6 +344,86 @@ public sealed class CssEngine
     /// <returns>激活主题变量集合；未激活主题返回 null。</returns>
     public IReadOnlyDictionary<string, string>? GetActiveThemeVariables() =>
         _activeTheme != null && _themes.TryGetValue(_activeTheme, out var v) ? v : null;
+
+    /// <summary>返回当前元素匹配到的普通 CSS 规则，按级联顺序排列。</summary>
+    public IReadOnlyList<CssInspectionRule> GetMatchedRules(Element element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        var matched = new List<(CssRule Rule, CssSpecificity Specificity, int Order)>();
+        for (var index = 0; index < _rules.Count; index++)
+        {
+            var rule = _rules[index];
+            if (GetPseudoElement(rule.Selector) != null ||
+                !TryMatchSelector(rule.Selector, element, out var specificity))
+                continue;
+            matched.Add((rule, specificity, index));
+        }
+
+        matched.Sort((left, right) =>
+        {
+            var specificity = left.Specificity.CompareTo(right.Specificity);
+            return specificity != 0 ? specificity : left.Order.CompareTo(right.Order);
+        });
+
+        return matched.Select(match => new CssInspectionRule(
+            FormatSelector(match.Rule.Selector),
+            match.Rule.Declarations.ToArray())).ToArray();
+    }
+
+    private static string FormatSelector(ComplexSelector selector)
+    {
+        var builder = new StringBuilder();
+        for (var index = 0; index < selector.Steps.Count; index++)
+        {
+            if (index > 0)
+            {
+                builder.Append(selector.Steps[index - 1].Combinator switch
+                {
+                    Combinator.Child => " > ",
+                    Combinator.Adjacent => " + ",
+                    Combinator.GeneralSibling => " ~ ",
+                    _ => " "
+                });
+            }
+
+            foreach (var part in selector.Steps[index].Selector.Parts)
+            {
+                builder.Append(part.Kind switch
+                {
+                    SimpleSelectorKind.Type => part.Name,
+                    SimpleSelectorKind.Class => "." + part.Name,
+                    SimpleSelectorKind.Id => "#" + part.Name,
+                    SimpleSelectorKind.Universal => "*",
+                    SimpleSelectorKind.PseudoClass => ":" + part.Name,
+                    SimpleSelectorKind.PseudoElement => "::" + part.Name,
+                    SimpleSelectorKind.Attribute => FormatAttributeSelector(part),
+                    _ => part.Name
+                });
+            }
+        }
+        return builder.ToString();
+    }
+
+    private static string FormatAttributeSelector(SimpleSelector selector)
+    {
+        if (selector.AttributeOperator == AttributeSelectorOperator.Presence)
+            return $"[{selector.Name}]";
+
+        var operation = selector.AttributeOperator switch
+        {
+            AttributeSelectorOperator.Equals => "=",
+            AttributeSelectorOperator.Includes => "~=",
+            AttributeSelectorOperator.DashMatch => "|=",
+            AttributeSelectorOperator.PrefixMatch => "^=",
+            AttributeSelectorOperator.SuffixMatch => "$=",
+            AttributeSelectorOperator.SubstringMatch => "*=",
+            _ => "?="
+        };
+        var value = selector.AttributeValue ?? "";
+        var flag = selector.AttributeCaseSensitivity == AttributeCaseSensitivity.Insensitive ? " i" :
+            selector.AttributeCaseSensitivity == AttributeCaseSensitivity.Sensitive ? " s" : "";
+        return $"[{selector.Name}{operation}\"{value}\"{flag}]";
+    }
 
     /// <summary>将匹配规则的声明应用到指定元素。</summary>
     /// <param name="Element">目标元素。</param>

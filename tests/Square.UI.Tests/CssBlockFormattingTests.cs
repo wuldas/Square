@@ -27,6 +27,29 @@ public class CssBlockFormattingTests
     }
 
     [Fact]
+    public void InspectionBoxModelUsesAsymmetricCssEdges()
+    {
+        var root = new View();
+        root.Style.Set("display", "block");
+        var child = new View();
+        child.Style.Set("display", "block");
+        child.Style.Set("width", "80px");
+        child.Style.Set("height", "40px");
+        child.Style.Set("padding", "2px 4px 6px 8px");
+        child.Style.Set("border-width", "1px 2px 3px 4px");
+        child.Style.Set("margin", "5px 7px 9px 11px");
+        root.Children.Add(child);
+
+        var layout = LayoutAndReturn(root, 200, 100);
+        var box = layout.GetInspectionBoxModel(child);
+
+        Assert.Equal(new Rect(23, 8, 80, 40), box.Content);
+        Assert.Equal(new Rect(15, 6, 92, 48), box.Padding);
+        Assert.Equal(new Rect(11, 5, 98, 52), box.Border);
+        Assert.Equal(new Rect(0, 0, 116, 66), box.Margin);
+    }
+
+    [Fact]
     public void AutoWidthFillsContainingBlockMarginBox()
     {
         var root = new View();
@@ -126,6 +149,13 @@ public class CssBlockFormattingTests
         var engine = new LayoutEngine();
         engine.Measure(root, new Size(width, height));
         engine.Arrange(root, new Rect(0, 0, width, height));
+    }
+
+    private static LayoutEngine LayoutAndReturn(View root, float width, float height)
+    {
+        var engine = new LayoutEngine();
+        engine.MeasureAndArrange(root, new Size(width, height));
+        return engine;
     }
 }
 

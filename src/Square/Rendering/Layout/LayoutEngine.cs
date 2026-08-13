@@ -127,6 +127,23 @@ public sealed partial class LayoutEngine
         YGConfigSetUseWebDefaults(_yogaConfig, true);
     }
 
+    /// <summary>返回已布局元素的真实 content/padding/border/margin 四层几何。</summary>
+    internal LayoutBoxModel GetInspectionBoxModel(Element element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        var parentSize = element.Parent?.Geometry.Size ?? element.Geometry.Size;
+        var box = ResolveCssBox(element, parentSize.Width, parentSize.Height);
+        var border = element.Geometry;
+        var padding = Inset(border, box.BorderLeft, box.BorderTop, box.BorderRight, box.BorderBottom);
+        var content = Inset(padding, box.PaddingLeft, box.PaddingTop, box.PaddingRight, box.PaddingBottom);
+        var margin = new Rect(
+            border.X - box.MarginLeft,
+            border.Y - box.MarginTop,
+            border.Width + box.MarginLeft + box.MarginRight,
+            border.Height + box.MarginTop + box.MarginBottom);
+        return new LayoutBoxModel(content, padding, border, margin);
+    }
+
     /// <summary>测量元素在给定可用尺寸下的期望尺寸。</summary>
     public void Measure(Element element, Size availableSize)
     {
@@ -1726,3 +1743,9 @@ public sealed partial class LayoutEngine
 
     private readonly record struct InsetValues(string Top, string Right, string Bottom, string Left);
 }
+
+internal readonly record struct LayoutBoxModel(
+    Rect Content,
+    Rect Padding,
+    Rect Border,
+    Rect Margin);
