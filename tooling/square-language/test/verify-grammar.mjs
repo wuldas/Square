@@ -81,6 +81,15 @@ assert.ok(scopesFor(sqx, 'Button').includes('entity.name.tag.sqx'));
 assert.ok(scopesFor(sqx, 'onClick').includes('entity.other.attribute-name.event.sqx'));
 assert.ok(scopesFor(sqx, 'private').includes('keyword.control.cs'));
 assert.ok(scopesFor(sqx, 'display').includes('support.type.property-name.css'));
+const sqxEmbedded = await tokenize('source.sqx', fixture('embedded-csharp.sqx'));
+assert.ok(scopesFor(sqxEmbedded, 'private').includes('keyword.control.cs'));
+assert.ok(scopesFor(sqxEmbedded, 'script').includes('entity.name.tag.section.sqx'));
+
+const sqxCss = await tokenize('source.sqx', fixture('embedded-css.sqx'));
+const cssTokens = sqxCss.filter(token => token.text.includes('8px'));
+assert.ok(cssTokens.length > 0, 'Expected CSS dimension token');
+assert.ok(cssTokens.every(token => token.scopes.includes('source.css')));
+assert.ok(cssTokens.every(token => !token.scopes.includes('source.cs')));
 
 const sqv = await tokenize('source.sqv', fixture('basic.sqv'));
 assert.ok(scopesFor(sqv, '@click').includes('entity.other.attribute-name.event.sqv'));

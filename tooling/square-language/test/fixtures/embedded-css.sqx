@@ -1,5 +1,6 @@
 <template><View class="root" /></template>
 <style>
+  .root { gap: 8px; }
   :root { --accent: #175cd3; }
   .root::before { content: ""; background: var(--accent); }
   @media screen { .root:hover { opacity: 0.8; } }

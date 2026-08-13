@@ -28,7 +28,7 @@
         "2": { "name": "punctuation.definition.tag.begin.sqx" },
         "3": { "name": "entity.name.tag.section.sqx" }
       },
-      "end": "^\\1(</)(template)(\\s*>)",
+      "end": "(</)(template)(\\s*>)",
       "endCaptures": {
         "1": { "name": "punctuation.definition.tag.begin.sqx" },
         "2": { "name": "entity.name.tag.section.sqx" },
@@ -45,7 +45,8 @@
         "2": { "name": "punctuation.definition.tag.begin.sqx" },
         "3": { "name": "entity.name.tag.section.sqx" }
       },
-      "end": "^\\1(</)(script)(\\s*>)",
+      "contentName": "source.cs",
+      "end": "(</)(script)(\\s*>)",
       "endCaptures": {
         "1": { "name": "punctuation.definition.tag.begin.sqx" },
         "2": { "name": "entity.name.tag.section.sqx" },
@@ -63,7 +64,8 @@
         "2": { "name": "punctuation.definition.tag.begin.sqx" },
         "3": { "name": "entity.name.tag.section.sqx" }
       },
-      "end": "^\\1(</)(style)(\\s*>)",
+      "contentName": "source.css",
+      "end": "(</)(style)(\\s*>)",
       "endCaptures": {
         "1": { "name": "punctuation.definition.tag.begin.sqx" },
         "2": { "name": "entity.name.tag.section.sqx" },
@@ -101,7 +103,7 @@
     },
     "closing-tag": {
       "name": "meta.tag.sqx",
-      "match": "(</)([A-Za-z_][A-Za-z0-9_.:-]*)(\\s*>)",
+      "match": "(</)(?!(?:template|script|style)\\b)([A-Za-z_][A-Za-z0-9_.:-]*)(\\s*>)",
       "captures": {
         "1": { "name": "punctuation.definition.tag.begin.sqx" },
         "2": { "name": "entity.name.tag.sqx" },
