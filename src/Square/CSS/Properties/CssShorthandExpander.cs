@@ -9,7 +9,7 @@ internal static class CssShorthandExpander
     private static readonly string[] Sides = ["top", "right", "bottom", "left"];
 
     public static bool IsShorthand(string property) => property is
-        "margin" or "padding" or "border-width" or "border-color" or "border-style" or "border" or
+        "margin" or "padding" or "border-width" or "border-color" or "border-style" or "border-radius" or "border" or
         "border-top" or "border-right" or "border-bottom" or "border-left" or "background" or "font" or
         "outline" or "list-style";
 
@@ -27,6 +27,7 @@ internal static class CssShorthandExpander
             "border-width" => TryExpandBox("border", value, "width", out assignments),
             "border-color" => TryExpandBox("border", value, "color", out assignments),
             "border-style" => TryExpandBox("border", value, "style", out assignments),
+            "border-radius" => TryExpandBorderRadius(value, out assignments),
             "border" => TryExpandBorder(value, null, out assignments),
             "border-top" => TryExpandBorder(value, "top", out assignments),
             "border-right" => TryExpandBorder(value, "right", out assignments),
@@ -49,6 +50,7 @@ internal static class CssShorthandExpander
             "border-width" => Sides.Select(side => $"border-{side}-width"),
             "border-color" => Sides.Select(side => $"border-{side}-color"),
             "border-style" => Sides.Select(side => $"border-{side}-style"),
+            "border-radius" => new[] { "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius" },
             "border" => Sides.SelectMany(BorderLonghands),
             "border-top" => BorderLonghands("top"),
             "border-right" => BorderLonghands("right"),
@@ -66,6 +68,21 @@ internal static class CssShorthandExpander
 
     private static IEnumerable<string> BorderLonghands(string side) =>
         [$"border-{side}-width", $"border-{side}-style", $"border-{side}-color"];
+
+    private static bool TryExpandBorderRadius(string value, out CssPropertyAssignment[] assignments)
+    {
+        if (!CssBorderRadiusParser.TryExpandCorners(value, out var corners))
+            return Fail(out assignments);
+        var names = new[]
+        {
+            "border-top-left-radius", "border-top-right-radius",
+            "border-bottom-right-radius", "border-bottom-left-radius"
+        };
+        assignments = names
+            .Select((name, index) => new CssPropertyAssignment(name, corners[index]))
+            .ToArray();
+        return assignments.All(assignment => CssPropertyRegistry.IsValid(assignment.Property, assignment.Value));
+    }
 
     private static bool TryExpandBox(string prefix, string value, out CssPropertyAssignment[] assignments) =>
         TryExpandBox(prefix, value, null, out assignments);

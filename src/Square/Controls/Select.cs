@@ -347,7 +347,11 @@ public class Popup : View, IPopupElement
         var translation = new Vector2(bounds.X - Geometry.X, bounds.Y - Geometry.Y);
         context.PushTransform(Matrix3x2.CreateTranslation(translation));
         if (BoxShadow.TryParseList(Style.Get("box-shadow"), out var shadows))
-            BoxShadowRendering.Draw(context, Geometry, ControlDrawing.GetStyledRadius(this, Geometry), shadows);
+            BoxShadowRendering.Draw(context, Geometry,
+                ControlDrawing.TryGetStyledRoundedGeometry(this, Geometry, out var roundedGeometry)
+                    ? roundedGeometry
+                    : null,
+                shadows);
         context.PushClip(Geometry);
         var background = ControlDrawing.GetStyledColor(this, "background", Color.White);
         ControlDrawing.DrawStyledBackground(context, this, background);

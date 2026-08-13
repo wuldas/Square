@@ -60,6 +60,7 @@ internal static class CssPropertyRegistry
         Add("border-spacing", "0", true, IsOneOrTwoLengths);
         Add("border-style", "none", false, Any);
         Add("border-width", "medium", false, Any);
+        Add("border-radius", "0", false, CssBorderRadiusParser.IsValid);
         foreach (var side in new[] { "top", "right", "bottom", "left" })
         {
             Add($"border-{side}", "medium none currentcolor", false, Any);
@@ -67,6 +68,8 @@ internal static class CssPropertyRegistry
             Add($"border-{side}-style", "none", false, IsBorderStyle);
             Add($"border-{side}-width", "medium", false, IsBorderWidth);
         }
+        foreach (var corner in new[] { "top-left", "top-right", "bottom-right", "bottom-left" })
+            Add($"border-{corner}-radius", "0", false, CssBorderRadiusParser.IsCornerValid);
         Add("bottom", "auto", false, IsInset);
         Add("caption-side", "top", true, value => IsKeyword(value, "top", "bottom"));
         Add("clear", "none", false, value => IsKeyword(value, "none", "left", "right", "both"));

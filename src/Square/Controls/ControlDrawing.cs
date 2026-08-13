@@ -1,4 +1,5 @@
 using System.Globalization;
+using Square.CSS.Properties;
 using System.Text;
 using Square.Graphics;
 using Square.UI;
@@ -218,21 +219,23 @@ internal static class ControlDrawing
     internal static void DrawStyledBackground(IRenderContext context, UIElement element, Color background)
     {
         if (background.A == 0) return;
-        var radius = GetStyledRadius(element, element.Geometry);
-        if (radius <= 0)
+        if (!TryGetStyledRoundedGeometry(element, element.Geometry, out var roundedGeometry))
         {
             context.FillRect(element.Geometry, new SolidColorBrush(background));
             return;
         }
 
-        context.FillGeometry(new RoundedRectGeometry(element.Geometry, radius, radius), new SolidColorBrush(background));
+        var brush = new SolidColorBrush(background);
+        if (roundedGeometry.IsUniform)
+            context.FillGeometry(roundedGeometry, brush);
+        else
+            context.FillPath(roundedGeometry.ToPath(), brush);
     }
 
     internal static void DrawStyledBorder(IRenderContext context, UIElement element, Color color, float width)
     {
         if (width <= 0 || color.A == 0) return;
-        var radius = GetStyledRadius(element, element.Geometry);
-        if (radius <= 0)
+        if (!TryGetStyledRoundedGeometry(element, element.Geometry, out var roundedGeometry))
         {
             var geometry = element.Geometry;
             var horizontalWidth = Math.Min(width, geometry.Width);
@@ -253,7 +256,10 @@ internal static class ControlDrawing
             return;
         }
 
-        context.DrawGeometry(new RoundedRectGeometry(element.Geometry, radius, radius), Pen.FromColor(color, width));
+        if (roundedGeometry.IsUniform)
+            context.DrawGeometry(roundedGeometry, Pen.FromColor(color, width));
+        else
+            context.DrawPath(roundedGeometry.ToPath(), Pen.FromColor(color, width));
     }
 
     internal static float GetStyledFloat(Element element, string name, float fallback)
@@ -269,32 +275,18 @@ internal static class ControlDrawing
 
     internal static float GetStyledRadius(Element element, Rect geometry)
     {
-        var raw = element.Style.Get("border-radius") ?? "";
-        if (string.IsNullOrWhiteSpace(raw)) return 0;
-
-        var token = raw.Trim().Split([' ', '/'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(token)) return 0;
-
-        var max = MathF.Max(0, MathF.Min(geometry.Width, geometry.Height) / 2f);
-        float value;
-        if (token.EndsWith("%", StringComparison.Ordinal))
-        {
-            var percent = token[..^1].Trim();
-            if (!float.TryParse(percent, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out value))
-                return 0;
-            value = MathF.Min(geometry.Width, geometry.Height) * value / 100f;
-        }
-        else
-        {
-            token = token.Replace("px", "", StringComparison.OrdinalIgnoreCase).Trim();
-            if (!float.TryParse(token, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out value))
-                return 0;
-        }
-
-        return Math.Clamp(value, 0, max);
+        return TryGetStyledRoundedGeometry(element, geometry, out var roundedGeometry) && roundedGeometry.IsUniform
+            ? roundedGeometry.RadiusX
+            : 0;
     }
+
+    internal static bool TryGetStyledRoundedGeometry(
+        Element element, Rect geometry, out RoundedRectGeometry roundedGeometry) =>
+        CssBorderRadiusParser.TryResolve(element.Style.GetAll(), element.Style.Get, geometry, out roundedGeometry) &&
+        (roundedGeometry.TopLeft.X > 0 || roundedGeometry.TopLeft.Y > 0 ||
+         roundedGeometry.TopRight.X > 0 || roundedGeometry.TopRight.Y > 0 ||
+         roundedGeometry.BottomRight.X > 0 || roundedGeometry.BottomRight.Y > 0 ||
+         roundedGeometry.BottomLeft.X > 0 || roundedGeometry.BottomLeft.Y > 0);
 
     internal static float GetStyledLineHeight(Element element, float fontSize)
     {

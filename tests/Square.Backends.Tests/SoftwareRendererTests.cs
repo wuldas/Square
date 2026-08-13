@@ -2331,6 +2331,30 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void DisplayTreePaintsIndependentCssBorderRadiusCorners()
+    {
+        var element = new EmptyPaintElement { Geometry = new Rect(4, 4, 24, 24) };
+        element.Style.Set("background", "#ffffff");
+        element.Style.Set("border-radius", "12px 4px 8px 6px / 6px 8px 4px 10px");
+        var context = CreateContext(32, 32);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+
+        tree.Render(context);
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(0, AlphaAt(bitmap, 4, 4));
+        Assert.Equal(0, AlphaAt(bitmap, 27, 4));
+        Assert.Equal(0, AlphaAt(bitmap, 27, 27));
+        Assert.Equal(0, AlphaAt(bitmap, 4, 27));
+        AssertPixel(bitmap, 16, 4, 255, 255, 255, 255);
+        AssertPixel(bitmap, 16, 27, 255, 255, 255, 255);
+        AssertPixel(bitmap, 4, 16, 255, 255, 255, 255);
+        AssertPixel(bitmap, 27, 16, 255, 255, 255, 255);
+    }
+
+    [Fact]
     public void DisplayTreeGenericallyPaintsOnlyDeclaredBorderEdge()
     {
         var element = new EmptyPaintElement { Geometry = new Rect(4, 4, 20, 16) };

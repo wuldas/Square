@@ -240,4 +240,10 @@ public static class BoxShadowRendering
         for (var i = shadows.Count - 1; i >= 0; i--)
             Draw(context, box, cornerRadius, shadows[i]);
     }
+
+    public static void Draw(IRenderContext context, Rect box, RoundedRectGeometry? roundedGeometry, IReadOnlyList<BoxShadow> shadows)
+    {
+        var cornerRadius = roundedGeometry is { IsUniform: true } ? roundedGeometry.RadiusX : 0;
+        Draw(context, box, cornerRadius, shadows);
+    }
 }

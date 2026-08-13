@@ -16,7 +16,9 @@ internal static class StyleInvalidation
             "background" or "background-color" or "box-shadow" or "color" or "border-color" or "border-top-color" or
                 "border-right-color" or "border-bottom-color" or "border-left-color" or "border-style" or
                 "border-top-style" or "border-right-style" or "border-bottom-style" or "border-left-style" or
-                "border-radius" or "caret-color" or "outline" or "outline-color" or "outline-style" or "outline-width" or
+                "border-radius" or "border-top-left-radius" or "border-top-right-radius" or
+                "border-bottom-right-radius" or "border-bottom-left-radius" or "caret-color" or "outline" or
+                "outline-color" or "outline-style" or "outline-width" or
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
                 "opacity" or "selection-background" or "selection-color" => ElementInvalidation.Paint,
 

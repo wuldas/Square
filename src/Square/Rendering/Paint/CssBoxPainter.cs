@@ -1,4 +1,5 @@
 using System.Globalization;
+using Square.CSS.Properties;
 using Square.Controls;
 using Square.Graphics;
 using Square.UI;
@@ -25,19 +26,24 @@ internal static class CssBoxPainter
         }
 
         var geometry = element.Geometry;
-        var radius = GetCornerRadius(element);
+        var roundedGeometry = TryGetRoundedGeometry(element, geometry, out var rounded) ? rounded : null;
         var declarations = element.Style.GetAll();
         if (declarations.ContainsKey("box-shadow") &&
             BoxShadow.TryParseList(element.Style.Get("box-shadow"), out var shadows))
-            BoxShadowRendering.Draw(context, geometry, radius, shadows);
+            BoxShadowRendering.Draw(context, geometry, roundedGeometry, shadows);
 
         // View already paints colors understood by its styled-background helper.
         if (!ViewPaintsBackground(element) &&
             TryGetBackgroundColor(element, declarations, out var background) && background.A > 0)
         {
             var brush = new SolidColorBrush(background);
-            if (radius > 0)
-                context.FillGeometry(new RoundedRectGeometry(geometry, radius, radius), brush);
+            if (roundedGeometry != null)
+            {
+                if (roundedGeometry.IsUniform)
+                    context.FillGeometry(roundedGeometry, brush);
+                else
+                    context.FillPath(roundedGeometry.ToPath(), brush);
+            }
             else
                 context.FillRect(geometry, brush);
         }
@@ -86,8 +92,8 @@ internal static class CssBoxPainter
         var bottom = GetPaintWidth(edges[2], box.Height);
         var left = GetPaintWidth(edges[3], box.Width);
 
-        var radius = GetCornerRadius(element);
-        if (radius > 0 && PaintUniformRoundedBorder(context, box, radius, edges, top, right, bottom, left))
+        var roundedGeometry = TryGetRoundedGeometry(element, box, out var rounded) ? rounded : null;
+        if (roundedGeometry != null && PaintRoundedBorder(context, roundedGeometry, edges, top, right, bottom, left))
             return;
 
         if (top > 0)
@@ -103,8 +109,8 @@ internal static class CssBoxPainter
             context.FillRect(new Rect(box.Right - right, middleTop, right, middleHeight), new SolidColorBrush(edges[1].Color));
     }
 
-    private static bool PaintUniformRoundedBorder(
-        IRenderContext context, Rect box, float radius,
+    private static bool PaintRoundedBorder(
+        IRenderContext context, RoundedRectGeometry geometry,
         BorderEdge[] edges, float top, float right, float bottom, float left)
     {
         if (top != right || top != bottom || top != left) return false;
@@ -113,12 +119,20 @@ internal static class CssBoxPainter
         for (var i = 1; i < edges.Length; i++)
             if (edges[i].Color != color) return false;
 
-        var half = top / 2f;
-        var strokeBox = new Rect(box.X + half, box.Y + half, box.Width - top, box.Height - top);
-        var strokeRadius = Math.Max(0, radius - half);
-        context.DrawGeometry(
-            new RoundedRectGeometry(strokeBox, strokeRadius, strokeRadius),
-            Pen.FromColor(color, top));
+        if (geometry.IsUniform)
+        {
+            var half = top / 2f;
+            var strokeBox = new Rect(geometry.Rect.X + half, geometry.Rect.Y + half,
+                geometry.Rect.Width - top, geometry.Rect.Height - top);
+            var strokeRadius = Math.Max(0, geometry.RadiusX - half);
+            context.DrawGeometry(
+                new RoundedRectGeometry(strokeBox, strokeRadius, strokeRadius),
+                Pen.FromColor(color, top));
+        }
+        else
+        {
+            context.DrawPath(geometry.ToPath(), Pen.FromColor(color, top));
+        }
         return true;
     }
 
@@ -415,17 +429,13 @@ internal static class CssBoxPainter
             ? Math.Clamp(edge.Width, 0, Math.Max(0, maximum))
             : 0;
 
-    private static float GetCornerRadius(Element element)
+    private static bool TryGetRoundedGeometry(Element element, Rect box, out RoundedRectGeometry geometry)
     {
-        var raw = element.Style.Get("border-radius") ?? "";
-        var token = raw.Trim().Split([' ', '/'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(token)) return 0;
-        var maximum = MathF.Max(0, MathF.Min(element.Geometry.Width, element.Geometry.Height) / 2f);
-        if (token.EndsWith('%') && float.TryParse(token[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var percent))
-            return Math.Clamp(MathF.Min(element.Geometry.Width, element.Geometry.Height) * percent / 100f, 0, maximum);
-        if (token.EndsWith("px", StringComparison.OrdinalIgnoreCase)) token = token[..^2];
-        return float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var pixels)
-            ? Math.Clamp(pixels, 0, maximum)
-            : 0;
+        if (!CssBorderRadiusParser.TryResolve(element.Style.GetAll(), element.Style.Get, box, out geometry))
+            return false;
+        return geometry.TopLeft.X > 0 || geometry.TopLeft.Y > 0 ||
+            geometry.TopRight.X > 0 || geometry.TopRight.Y > 0 ||
+            geometry.BottomRight.X > 0 || geometry.BottomRight.Y > 0 ||
+            geometry.BottomLeft.X > 0 || geometry.BottomLeft.Y > 0;
     }
 }

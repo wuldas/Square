@@ -1,4 +1,5 @@
 using System;
+using Square.CSS.Properties;
 using Square.Controls;
 using Square.Graphics;
 using Square.UI;
@@ -302,6 +303,53 @@ public class StyleAndFontTests
         Assert.Equal("inside", view.Style.GetPropertyValue("list-style-position"));
         Assert.Equal("none", view.Style.GetPropertyValue("list-style-image"));
     }
+
+    [Theory]
+    [InlineData("10px", "10px", "10px", "10px", "10px")]
+    [InlineData("10px 20px", "10px", "20px", "10px", "20px")]
+    [InlineData("10px 20px 30px", "10px", "20px", "30px", "20px")]
+    [InlineData("10px 20px 30px 40px", "10px", "20px", "30px", "40px")]
+    public void BorderRadiusAcceptsCssHorizontalCornerExpansion(
+        string value, string topLeft, string topRight, string bottomRight, string bottomLeft)
+    {
+        var view = new View();
+        view.Style.SetProperty("border-radius", value);
+        Assert.True(CssBorderRadiusParser.TryResolve(value, new Rect(0, 0, 100, 80), out var geometry));
+
+        Assert.Equal(value, view.Style.GetPropertyValue("border-radius"));
+        Assert.Equal(value, view.Style.Get("border-radius"));
+        Assert.True(CssPropertyRegistry.IsValid("border-radius", value));
+        Assert.NotEmpty(view.Style.GetPropertyValue("border-top-left-radius"));
+        Assert.NotEmpty(view.Style.GetPropertyValue("border-bottom-left-radius"));
+        Assert.Equal(ParseRadius(topLeft, 100), geometry.TopLeft.X);
+        Assert.Equal(ParseRadius(topRight, 100), geometry.TopRight.X);
+        Assert.Equal(ParseRadius(bottomRight, 100), geometry.BottomRight.X);
+        Assert.Equal(ParseRadius(bottomLeft, 100), geometry.BottomLeft.X);
+    }
+
+    [Fact]
+    public void BorderRadiusAcceptsIndependentVerticalRadiiAndPercentages()
+    {
+        var view = new View { Geometry = new Rect(0, 0, 200, 100) };
+        view.Style.SetProperty("border-radius", "10px 20px 30px 40px / 5% 10% 15% 20%");
+
+        Assert.Equal("10px 20px 30px 40px / 5% 10% 15% 20%", view.Style.Get("border-radius"));
+        Assert.True(CssPropertyRegistry.IsValid("border-radius", view.Style.Get("border-radius")!));
+        Assert.True(CssBorderRadiusParser.TryResolve(view.Style.Get("border-radius"), view.Geometry, out var geometry));
+        Assert.Equal(10, geometry.TopLeft.X);
+        Assert.Equal(5, geometry.TopLeft.Y);
+        Assert.Equal(20, geometry.TopRight.X);
+        Assert.Equal(10, geometry.TopRight.Y);
+        Assert.Equal(30, geometry.BottomRight.X);
+        Assert.Equal(15, geometry.BottomRight.Y);
+        Assert.Equal(40, geometry.BottomLeft.X);
+        Assert.Equal(20, geometry.BottomLeft.Y);
+    }
+
+    private static float ParseRadius(string value, float reference) =>
+        value.EndsWith('%')
+            ? float.Parse(value[..^1]) * reference / 100f
+            : float.Parse(value[..^2]);
 
     [Fact]
     public void CascadedShorthandLonghandsKeepDeclarationPriority()
