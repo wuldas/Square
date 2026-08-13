@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Square.Compiler.LanguageServices;
 
 namespace Square.LanguageServer;
@@ -198,6 +199,22 @@ public sealed class LanguageServerHost
             return new { isIncomplete = false, items };
         }
 
+        if (TryGetClassCompletionContext(document.Text, offset, out var classPrefix))
+        {
+            var classes = ExtractCssClassNames(document.Text)
+                .Where(name => name.StartsWith(classPrefix, StringComparison.OrdinalIgnoreCase))
+                .Select(name => new
+                {
+                    label = name,
+                    kind = 12,
+                    detail = "CSS class",
+                    insertText = name
+                })
+                .Cast<object>()
+                .ToArray();
+            return new { isIncomplete = false, items = classes };
+        }
+
         if (IsInsideAttributeList(document.Text, offset))
         {
             var properties = TemplateCatalog.BuiltIn.Properties
@@ -259,6 +276,57 @@ public sealed class LanguageServerHost
         if (indexAfterName < text.Length && text[indexAfterName] == '/') indexAfterName++;
         while (indexAfterName < offset && IsTokenCharacter(text[indexAfterName])) indexAfterName++;
         return indexAfterName < offset && char.IsWhiteSpace(text[indexAfterName]);
+    }
+
+    private static bool TryGetClassCompletionContext(string text, int offset, out string prefix)
+    {
+        offset = Math.Clamp(offset, 0, text.Length);
+        var start = offset;
+        while (start > 0 && IsTokenCharacter(text[start - 1])) start--;
+
+        var quote = start - 1;
+        while (quote >= 0 && text[quote] is not ('"' or '\'')) quote--;
+        if (quote < 0)
+        {
+            prefix = string.Empty;
+            return false;
+        }
+
+        var tagStart = text.LastIndexOf('<', quote);
+        var tagEnd = text.LastIndexOf('>', quote);
+        if (tagStart <= tagEnd)
+        {
+            prefix = string.Empty;
+            return false;
+        }
+
+        var beforeQuote = text.Substring(tagStart + 1, quote - tagStart - 1);
+        if (!Regex.IsMatch(beforeQuote, @"\bclass\s*=\s*$", RegexOptions.IgnoreCase))
+        {
+            prefix = string.Empty;
+            return false;
+        }
+
+        prefix = text[start..offset];
+        return true;
+    }
+
+    private static IReadOnlyCollection<string> ExtractCssClassNames(string text)
+    {
+        var style = Regex.Match(
+            text,
+            @"<style\b[^>]*>(?<body>[\s\S]*?)</style\s*>",
+            RegexOptions.IgnoreCase);
+        if (!style.Success) return Array.Empty<string>();
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(
+            style.Groups["body"].Value,
+            @"(?<![A-Za-z0-9_-])\.([A-Za-z_][A-Za-z0-9_-]*)"))
+        {
+            names.Add(match.Groups[1].Value);
+        }
+        return names;
     }
 
     private static int GetOffset(string text, int line, int character)
