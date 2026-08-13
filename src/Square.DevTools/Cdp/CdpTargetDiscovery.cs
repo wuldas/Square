@@ -37,7 +37,7 @@ internal static class CdpTargetDiscovery
                "{\"domain\":\"Page\",\"commands\":[{\"name\":\"enable\"},{\"name\":\"disable\"},{\"name\":\"getFrameTree\"},{\"name\":\"getResourceTree\"},{\"name\":\"getNavigationHistory\"},{\"name\":\"getLayoutMetrics\"},{\"name\":\"captureScreenshot\"},{\"name\":\"startScreencast\"},{\"name\":\"stopScreencast\"},{\"name\":\"addScriptToEvaluateOnNewDocument\"}]}," +
                "{\"domain\":\"Target\",\"commands\":[{\"name\":\"getTargetInfo\"},{\"name\":\"setDiscoverTargets\"},{\"name\":\"setAutoAttach\"}]}," +
                "{\"domain\":\"CSS\",\"commands\":[{\"name\":\"enable\"},{\"name\":\"disable\"},{\"name\":\"getComputedStyleForNode\"},{\"name\":\"getMatchedStylesForNode\"},{\"name\":\"getAnimatedStylesForNode\"},{\"name\":\"getInlineStylesForNode\"},{\"name\":\"getPlatformFontsForNode\"},{\"name\":\"getEnvironmentVariables\"},{\"name\":\"trackComputedStyleUpdates\"},{\"name\":\"takeComputedStyleUpdates\"}]}," +
-               "{\"domain\":\"Overlay\",\"commands\":[{\"name\":\"enable\"},{\"name\":\"disable\"},{\"name\":\"hideHighlight\"},{\"name\":\"setInspectMode\"},{\"name\":\"highlightNode\"},{\"name\":\"highlightRect\"}]," +
+               "{\"domain\":\"Overlay\",\"commands\":[{\"name\":\"enable\"},{\"name\":\"disable\"},{\"name\":\"hideHighlight\"},{\"name\":\"setInspectMode\"},{\"name\":\"highlightNode\"}]," +
                "\"events\":[{\"name\":\"inspectNodeRequested\"}]}," +
                "{\"domain\":\"Inspector\",\"commands\":[{\"name\":\"enable\"},{\"name\":\"disable\"}]}," +
                "{\"domain\":\"Console\",\"commands\":[{\"name\":\"enable\"},{\"name\":\"disable\"}]}," +

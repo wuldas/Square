@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -13,10 +14,14 @@ internal sealed class CdpSession
     private readonly AppWindow _window;
     private readonly DevToolsServer _server;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private readonly Dictionary<int, int> _elementNodeIds = [];
-    private readonly Dictionary<int, int> _nodeElementIds = [];
-    private readonly Dictionary<int, int> _textNodeIds = [];
+    private readonly CancellationTokenSource _sessionShutdown = new();
+    private readonly ConcurrentBag<Task> _pendingEvents = [];
+    private readonly object _eventGate = new();
+    private readonly ConcurrentDictionary<int, int> _elementNodeIds = new();
+    private readonly ConcurrentDictionary<int, int> _nodeElementIds = new();
+    private readonly ConcurrentDictionary<int, int> _textNodeIds = new();
     private int _nextNodeId = 2;
+    private bool _closing;
 
     private CdpSession(WebSocket socket, AppWindow window, DevToolsServer server)
     {
@@ -56,8 +61,16 @@ internal sealed class CdpSession
         }
         finally
         {
+            lock (session._eventGate)
+            {
+                session._closing = true;
+                session._sessionShutdown.Cancel();
+            }
             window.InspectorNodeSelected -= session.HandleInspectorNodeSelected;
+            try { await Task.WhenAll(session._pendingEvents.ToArray()); }
+            catch { }
             session._writeGate.Dispose();
+            session._sessionShutdown.Dispose();
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None); }
@@ -79,18 +92,24 @@ internal sealed class CdpSession
 
     private void HandleInspectorNodeSelected(int debugId)
     {
-        var nodeId = GetElementNodeId(debugId);
-        _ = SendInspectorNodeRequestedAsync(nodeId);
+        lock (_eventGate)
+        {
+            if (_closing) return;
+            _pendingEvents.Add(SendInspectorNodeRequestedAsync(debugId));
+        }
     }
 
-    private async Task SendInspectorNodeRequestedAsync(int nodeId)
+    private async Task SendInspectorNodeRequestedAsync(int debugId)
     {
         try
         {
             await SendEventAsync("Overlay.inspectNodeRequested", writer =>
             {
-                writer.WriteNumber("backendNodeId", nodeId);
-            }, CancellationToken.None);
+                writer.WriteNumber("backendNodeId", debugId);
+            }, _sessionShutdown.Token);
+        }
+        catch (OperationCanceledException) when (_sessionShutdown.IsCancellationRequested)
+        {
         }
         catch (ObjectDisposedException)
         {
@@ -160,14 +179,17 @@ internal sealed class CdpSession
             case "CSS.enable":
             case "CSS.disable":
             case "Overlay.enable":
-            case "Overlay.disable":
             case "Overlay.setShowViewportSizeOnResize":
             case "Overlay.setShowGridOverlays":
             case "Overlay.setShowFlexOverlays":
             case "Overlay.setShowScrollSnapOverlays":
             case "Overlay.setShowContainerQueryOverlays":
             case "Overlay.setShowIsolatedElements":
-            case "Overlay.highlightRect":
+                await SendEmptyResultAsync(id, cancellationToken);
+                return;
+            case "Overlay.disable":
+                await _window.ClearInspectorHighlightAsync();
+                await _window.SetInspectorModeAsync(false);
                 await SendEmptyResultAsync(id, cancellationToken);
                 return;
             case "Overlay.highlightNode":
@@ -176,6 +198,9 @@ internal sealed class CdpSession
             case "Overlay.hideHighlight":
                 await _window.ClearInspectorHighlightAsync();
                 await SendEmptyResultAsync(id, cancellationToken);
+                return;
+            case "Overlay.highlightRect":
+                await SendErrorAsync(id, -32601, "Overlay.highlightRect is not supported.", cancellationToken);
                 return;
             case "Overlay.setInspectMode":
                 await SetInspectModeAsync(id, parameters, cancellationToken);
@@ -436,7 +461,7 @@ internal sealed class CdpSession
         var nodeId = GetElementNodeId(hit.Id);
         await SendResultAsync(id, writer =>
         {
-            writer.WriteNumber("backendNodeId", nodeId);
+            writer.WriteNumber("backendNodeId", hit.Id);
             writer.WriteNumber("nodeId", nodeId);
             writer.WriteString("frameId", _server.TargetId);
         }, cancellationToken);
@@ -458,10 +483,15 @@ internal sealed class CdpSession
             return;
         }
 
+        if (node.BoxModel == null)
+        {
+            await SendErrorAsync(id, -32000, "Box Model is not available for this node.", cancellationToken);
+            return;
+        }
+
         await SendResultAsync(id, writer =>
         {
-            var boxModel = node.BoxModel ?? new ElementInspectionBoxModel(
-                node.Bounds, node.Bounds, node.Bounds, node.Bounds);
+            var boxModel = node.BoxModel;
             writer.WritePropertyName("model");
             writer.WriteStartObject();
             writer.WritePropertyName("content");
@@ -906,7 +936,7 @@ internal sealed class CdpSession
         var nodeId = GetElementNodeId(node.Id);
         var element = new CdpNode(
             nodeId,
-            nodeId,
+            node.Id,
             1,
             node.TagName.ToUpperInvariant(),
             node.TagName,
@@ -924,7 +954,7 @@ internal sealed class CdpSession
         if (node.Text != null)
         {
             var textId = GetTextNodeId(node.Id);
-            element.Children.Add(new CdpNode(textId, textId, 3, "#text", "", node.Text, nodeId, ""));
+            element.Children.Add(new CdpNode(textId, node.Id, 3, "#text", "", node.Text, nodeId, ""));
         }
         return element;
     }
@@ -1072,12 +1102,16 @@ internal sealed class CdpSession
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
-    private static int ReadNodeId(JsonElement parameters)
+    private int ReadNodeId(JsonElement parameters)
     {
         if (parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("nodeId", out var nodeId) && nodeId.TryGetInt32(out var result))
             return result;
         if (parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("backendNodeId", out var backendNodeId) && backendNodeId.TryGetInt32(out result))
+        {
+            if (_elementNodeIds.TryGetValue(result, out var nodeIdFromDebugId))
+                return nodeIdFromDebugId;
             return result;
+        }
         throw new InvalidOperationException("'nodeId' or 'backendNodeId' is required.");
     }
 

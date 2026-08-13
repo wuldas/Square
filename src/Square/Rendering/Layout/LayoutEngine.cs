@@ -128,10 +128,13 @@ public sealed partial class LayoutEngine
     }
 
     /// <summary>返回已布局元素的真实 content/padding/border/margin 四层几何。</summary>
-    internal LayoutBoxModel GetInspectionBoxModel(Element element)
+    internal LayoutBoxModel? GetInspectionBoxModel(Element element)
     {
         ArgumentNullException.ThrowIfNull(element);
-        var parentSize = element.Parent?.Geometry.Size ?? element.Geometry.Size;
+        var parentSize = element.Parent is { } parent
+            ? GetInspectionBoxModel(parent)?.Content.Size ?? parent.Geometry.Size
+            : element.Geometry.Size;
+        if (!CanProveInspectionEdges(element)) return null;
         var box = ResolveCssBox(element, parentSize.Width, parentSize.Height);
         var border = element.Geometry;
         var padding = Inset(border, box.BorderLeft, box.BorderTop, box.BorderRight, box.BorderBottom);
@@ -142,6 +145,26 @@ public sealed partial class LayoutEngine
             border.Width + box.MarginLeft + box.MarginRight,
             border.Height + box.MarginTop + box.MarginBottom);
         return new LayoutBoxModel(content, padding, border, margin);
+    }
+
+    private static bool CanProveInspectionEdges(Element element)
+    {
+        foreach (var property in new[]
+                 {
+                     "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+                     "border-width", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+                     "margin", "margin-top", "margin-right", "margin-bottom", "margin-left"
+                 })
+        {
+            var value = element.Style.Get(property);
+            if (value == null) continue;
+            foreach (var token in value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (token.Equals("auto", StringComparison.OrdinalIgnoreCase) || token.EndsWith('%'))
+                    return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>测量元素在给定可用尺寸下的期望尺寸。</summary>

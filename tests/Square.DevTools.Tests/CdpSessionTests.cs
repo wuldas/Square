@@ -37,6 +37,7 @@ public sealed class CdpSessionTests
         Assert.Equal("VIEW", squareRoot.GetProperty("nodeName").GetString());
         Assert.Equal(2, squareRoot.GetProperty("childNodeCount").GetInt32());
         Assert.Equal("BUTTON", squareRoot.GetProperty("children")[0].GetProperty("nodeName").GetString());
+        Assert.Equal(11, squareRoot.GetProperty("children")[0].GetProperty("backendNodeId").GetInt32());
         Assert.Equal("OK", squareRoot.GetProperty("children")[0].GetProperty("children")[0].GetProperty("nodeValue").GetString());
         var buttonAttributes = new Dictionary<string, string>();
         var attributeValues = squareRoot.GetProperty("children")[0].GetProperty("attributes").EnumerateArray().ToArray();
@@ -82,6 +83,15 @@ public sealed class CdpSessionTests
         using var inspectResponse = await ReceiveResponseAsync(websocket, 7);
         Assert.True(inspectResponse.RootElement.GetProperty("result").ValueKind == JsonValueKind.Object);
         Assert.True(runtime.InspectorModeEnabled);
+
+        await SendAsync(websocket, "{\"id\":9,\"method\":\"Overlay.disable\"}");
+        using var disableResponse = await ReceiveResponseAsync(websocket, 9);
+        Assert.True(disableResponse.RootElement.GetProperty("result").ValueKind == JsonValueKind.Object);
+        Assert.False(runtime.InspectorModeEnabled);
+
+        await SendAsync(websocket, "{\"id\":10,\"method\":\"Overlay.highlightRect\",\"params\":{\"x\":0,\"y\":0,\"width\":10,\"height\":10}}");
+        using var highlightRectResponse = await ReceiveResponseAsync(websocket, 10);
+        Assert.Equal(-32601, highlightRectResponse.RootElement.GetProperty("error").GetProperty("code").GetInt32());
     }
 
     private static AppWindow CreateWindow(out StaticRuntime runtime)

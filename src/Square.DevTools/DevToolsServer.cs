@@ -221,8 +221,6 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
     private async Task HandleCdpRequestAsync(HttpListenerContext context, AppWindow window, string method, string path)
     {
-        context.Response.Headers["Access-Control-Allow-Origin"] = "*";
-        context.Response.Headers["Access-Control-Allow-Private-Network"] = "true";
 
         if (method == "GET" && path is "/json" or "/json/list")
         {

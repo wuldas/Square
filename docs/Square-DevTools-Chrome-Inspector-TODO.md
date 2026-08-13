@@ -27,7 +27,7 @@
 - [x] Chrome 能按节点查询属性、文本、父子关系、class 和真实只读 Box Model；四层几何来自当前 Square 布局与 CSS 盒模型解析结果。
 - [x] Chrome Elements 选中节点时，Square 窗口显示基础诊断高亮。
 - [x] Chrome 点选模式能在 Square 窗口 Hit Test，并发送 `Overlay.inspectNodeRequested` 反选事件。
-- [x] Styles 面板显示只读的 computed styles、inline styles 和基础匹配 CSS 规则。
+- [x] Styles 面板显示只读的 computed/inline styles、匹配 selector/declarations 快照。
 - [x] `Page.captureScreenshot` 映射现有 renderer screenshot。
 - [ ] 树变化时至少通过粗粒度 `DOM.documentUpdated` 通知 Chrome。
 - [x] 保持普通 DevTools HTTP API 的 token 认证和现有行为不变。
@@ -42,7 +42,7 @@
 - [ ] 不把 Component/Slot 映射为 Shadow DOM。
 - [ ] 不支持通过 Styles 面板修改样式。
 - [ ] 不声称完整兼容 Chrome DevTools 或所有 Chrome 版本。
-- [ ] 不伪造 matched CSS rules；没有规则来源信息时只返回 computed/inline 数据。
+- [x] 不伪造不存在的源码定位；当前只返回 selector/declarations 快照，完整 stylesheet provenance 后置。
 
 ### 1.3 第一版验收场景
 

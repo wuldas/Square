@@ -222,10 +222,10 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj -- \
 | `CSS` | `getComputedStyleForNode`、`getMatchedStylesForNode`、`getAnimatedStylesForNode`、`getInlineStylesForNode`、`getPlatformFontsForNode`、`getEnvironmentVariables` |
 | `Page` | `enable`、`disable`、`getFrameTree`、`getResourceTree`、`getNavigationHistory`、`getLayoutMetrics`、`captureScreenshot` |
 | `Target` | `getTargetInfo`、`setDiscoverTargets`、`setAutoAttach` |
-| `Overlay` | `enable`、`disable`、`hideHighlight`、`setInspectMode`、`highlightNode`、`highlightRect`；支持基础 Square 高亮和 `inspectNodeRequested` 事件 |
+| `Overlay` | `enable`、`disable`、`hideHighlight`、`setInspectMode`、`highlightNode`；支持基础 Square 高亮和 `inspectNodeRequested` 事件 |
 | 兼容空操作 | `Inspector`、`Console`、`Log`、`Network` 的部分 enable/disable 和前端探测命令 |
 
-Square Element Tree 会映射为一个合成 Document 节点和 Element/Text 节点，并保留 Square 元素的 `id` 与 `class` 属性。节点 ID 在单次 CDP session 内稳定，Element ID 使用当前运行时的 `DebugId` 映射；当前只读，computed/inline styles、基础 Matched CSS Rules 和真实 content/padding/border/margin 四层 Box Model 均来自当前 Square 布局与 CSS 解析结果。Overlay 已支持基础节点高亮和点选模式；暂不支持 CSS 样式编辑、Console、Debugger、Network 或 Memory 面板。
+Square Element Tree 会映射为一个合成 Document 节点和 Element/Text 节点，并保留 Square 元素的 `id` 与 `class` 属性。节点 ID 在单次 CDP session 内稳定，Element ID 使用当前运行时的 `DebugId` 映射；当前只读，computed/inline styles、匹配到的 selector/declarations 快照和真实 content/padding/border/margin 四层 Box Model 均来自当前 Square 布局与 CSS 解析结果。当前 CSS AST 尚未保留源码文件、source range 和完整 cascade provenance，因此 Styles 面板不声称提供完整 stylesheet source 定位。Overlay 已支持基础节点高亮和点选模式；暂不支持 CSS 样式编辑、Console、Debugger、Network 或 Memory 面板。
 
 Chrome Inspector 是显式 opt-in 的本地调试能力。由于 Chrome discovery/WebSocket 连接不能附加 Square 的 `X-Square-DevTools-Token` header，CDP discovery 在开启后不要求该 header；服务仍只监听 `127.0.0.1`，并限制 WebSocket Origin。不要在不受信任的机器或生产构建中开启 `AllowChromeInspect`。
 

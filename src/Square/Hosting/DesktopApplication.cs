@@ -49,6 +49,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private KeyModifiers? _devToolsModifiers;
     private int? _inspectorHighlightDebugId;
     private bool _inspectorModeEnabled;
+    private bool _inspectorOverlayDirty;
 
     /// <summary>主窗口。</summary>
     public AppWindow MainWindow { get; }
@@ -351,6 +352,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             if (FindElementByDebugId(_root, debugId) == null) return false;
             _inspectorHighlightDebugId = debugId;
+            _inspectorOverlayDirty = true;
             RequestRender();
             return true;
         });
@@ -362,6 +364,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             if (_inspectorHighlightDebugId.HasValue)
             {
                 _inspectorHighlightDebugId = null;
+                _inspectorOverlayDirty = true;
                 RequestRender();
             }
         });
@@ -372,6 +375,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             _inspectorModeEnabled = enabled;
             if (!enabled) _inspectorHighlightDebugId = null;
+            _inspectorOverlayDirty = true;
             RequestRender();
         });
 
@@ -413,7 +417,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _displayTree.UpdateDirty();
         NativeViewSynchronizer.Synchronize(_root, _host.DpiScale);
 
-        if (MainWindow.RenderingMode == RenderMode.FullFrame || layoutDirty || !_renderContext.SupportsPartialRendering)
+        if (MainWindow.RenderingMode == RenderMode.FullFrame || layoutDirty || _inspectorOverlayDirty ||
+            !_renderContext.SupportsPartialRendering)
         {
             MainWindow.LastRenderDiagnostics = new RenderDiagnostics(
                 MainWindow.RenderingMode,
@@ -512,10 +517,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             CreateInspectionBoxModel(element));
     }
 
-    private ElementInspectionBoxModel CreateInspectionBoxModel(Element element)
+    private ElementInspectionBoxModel? CreateInspectionBoxModel(Element element)
     {
         var box = _layout.GetInspectionBoxModel(element);
-        return new ElementInspectionBoxModel(box.Content, box.Padding, box.Border, box.Margin);
+        return box is { } value
+            ? new ElementInspectionBoxModel(value.Content, value.Padding, value.Border, value.Margin)
+            : null;
     }
 
     private Task InvokeOnDispatcherAsync(Action action)
@@ -648,6 +655,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         RenderDiagnosticsOverlay(_renderContext);
         _renderContext.Flush();
         _renderContext.Present(null);
+        _inspectorOverlayDirty = false;
     }
 
 
@@ -753,6 +761,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 if (_inspectorHighlightDebugId != nextHighlight)
                 {
                     _inspectorHighlightDebugId = nextHighlight;
+                    _inspectorOverlayDirty = true;
                     RequestRender();
                 }
                 return;
@@ -763,6 +772,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 if (hit != null)
                 {
                     _inspectorHighlightDebugId = hit.DebugId;
+                    _inspectorOverlayDirty = true;
                     InspectorNodeSelected?.Invoke(hit.DebugId);
                     RequestRender();
                 }

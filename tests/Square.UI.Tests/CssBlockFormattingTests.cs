@@ -42,11 +42,12 @@ public class CssBlockFormattingTests
 
         var layout = LayoutAndReturn(root, 200, 100);
         var box = layout.GetInspectionBoxModel(child);
+        Assert.NotNull(box);
 
-        Assert.Equal(new Rect(23, 8, 80, 40), box.Content);
-        Assert.Equal(new Rect(15, 6, 92, 48), box.Padding);
-        Assert.Equal(new Rect(11, 5, 98, 52), box.Border);
-        Assert.Equal(new Rect(0, 0, 116, 66), box.Margin);
+        Assert.Equal(new Rect(23, 8, 80, 40), box.Value.Content);
+        Assert.Equal(new Rect(15, 6, 92, 48), box.Value.Padding);
+        Assert.Equal(new Rect(11, 5, 98, 52), box.Value.Border);
+        Assert.Equal(new Rect(0, 0, 116, 66), box.Value.Margin);
     }
 
     [Fact]
