@@ -60,7 +60,7 @@ public static class TemplateCompletionService
     public static TemplateCompletionContext GetContext(string text, int offset, string sourcePath)
     {
         text ??= string.Empty;
-        offset = Math.Clamp(offset, 0, text.Length);
+        offset = Math.Min(Math.Max(offset, 0), text.Length);
         var isSqv = sourcePath != null && sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
         var document = result.ParsedSqxDocument;
@@ -217,7 +217,7 @@ public static class TemplateCompletionService
 
     private static int FindHeaderEnd(string text, SqxElement element, int offset)
     {
-        var start = Math.Clamp(element.Position, 0, text.Length);
+        var start = Math.Min(Math.Max(element.Position, 0), text.Length);
         var limit = Math.Min(text.Length, Math.Max(offset, start));
         var quote = '\0';
         for (var index = start; index < limit; index++)
@@ -297,8 +297,8 @@ public static class TemplateCompletionService
 
     private static string SafeSlice(string text, int start, int end)
     {
-        start = Math.Clamp(start, 0, text.Length);
-        end = Math.Clamp(end, start, text.Length);
-        return text[start..end];
+        start = Math.Min(Math.Max(start, 0), text.Length);
+        end = Math.Min(Math.Max(end, start), text.Length);
+        return text.Substring(start, end - start);
     }
 }

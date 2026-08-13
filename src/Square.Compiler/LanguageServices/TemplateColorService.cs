@@ -84,8 +84,8 @@ public static class TemplateColorService
         double alpha)
     {
         text ??= string.Empty;
-        start = Math.Clamp(start, 0, text.Length);
-        length = Math.Clamp(length, 0, text.Length - start);
+        start = Math.Min(Math.Max(start, 0), text.Length);
+        length = Math.Min(Math.Max(length, 0), text.Length - start);
         var hex = ToHex(red, green, blue, alpha);
         var rgb = alpha >= 0.999
             ? $"rgb({ToByte(red)}, {ToByte(green)}, {ToByte(blue)})"
@@ -105,7 +105,7 @@ public static class TemplateColorService
         if (hex.Length is 3 or 4)
             hex = string.Concat(hex.Select(character => new string(character, 2)));
         if (hex.Length is not (6 or 8)) return false;
-        if (!int.TryParse(hex[..2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var r) ||
+        if (!int.TryParse(hex.Substring(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var r) ||
             !int.TryParse(hex.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var g) ||
             !int.TryParse(hex.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b))
             return false;
@@ -125,15 +125,15 @@ public static class TemplateColorService
     }
 
     private static int ToByte(double value) =>
-        Math.Clamp((int)Math.Round(value * 255d), 0, 255);
+        Math.Min(Math.Max((int)Math.Round(value * 255d), 0), 255);
 
     private static int ClampChannel(string value) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
-            ? Math.Clamp(number, 0, 255)
+            ? Math.Min(Math.Max(number, 0), 255)
             : 0;
 
     private static double ParseAlpha(string value) =>
         double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
-            ? Math.Clamp(number, 0d, 1d)
+            ? Math.Min(Math.Max(number, 0d), 1d)
             : 1d;
 }

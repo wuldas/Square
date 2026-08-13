@@ -131,7 +131,7 @@ public static class TemplateSemanticTokens
     {
         var line = 0;
         var lineStart = 0;
-        offset = Math.Clamp(offset, 0, text.Length);
+        offset = Math.Min(Math.Max(offset, 0), text.Length);
         for (var index = 0; index < offset; index++)
         {
             if (text[index] == '\n')

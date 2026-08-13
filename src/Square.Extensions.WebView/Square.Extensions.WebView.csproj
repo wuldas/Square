@@ -14,13 +14,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="runtimes\win-arm64\native\WebView2Loader.dll" />
-    <EmbeddedResource Include="runtimes\win-x64\native\WebView2Loader.dll" />
-    <EmbeddedResource Include="runtimes\win-x86\native\WebView2Loader.dll" />
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-arm64\native\WebView2Loader.dll"
+                      LogicalName="$(RootNamespace).runtimes.win_arm64.native.WebView2Loader.dll" />
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-x64\native\WebView2Loader.dll"
+                      LogicalName="$(RootNamespace).runtimes.win_x64.native.WebView2Loader.dll" />
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-x86\native\WebView2Loader.dll"
+                      LogicalName="$(RootNamespace).runtimes.win_x86.native.WebView2Loader.dll" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Square\Square.csproj" />
+    <PackageReference Include="Microsoft.Web.WebView2" GeneratePathProperty="true" ExcludeAssets="all" />
     <PackageReference Include="WebView2Aot" />
   </ItemGroup>
 </Project>

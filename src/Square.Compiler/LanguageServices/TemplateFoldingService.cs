@@ -104,7 +104,7 @@ public static class TemplateFoldingService
     private static int LineOf(string text, int offset)
     {
         var line = 0;
-        offset = Math.Clamp(offset, 0, text.Length);
+        offset = Math.Min(Math.Max(offset, 0), text.Length);
         for (var index = 0; index < offset; index++)
             if (text[index] == '\n') line++;
         return line;

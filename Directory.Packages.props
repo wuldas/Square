@@ -13,6 +13,7 @@
     <PackageVersion Include="Square.Native.Html" Version="0.1.0" />
     <PackageVersion Include="Square.Hosting.Web" Version="0.1.0" />
     <PackageVersion Include="WebView2Aot" Version="1.5.0" />
+    <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageVersion Include="DirectNAot" Version="1.6.1" />
     <PackageVersion Include="DirectNAot.Extensions" Version="1.6.1" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" />
