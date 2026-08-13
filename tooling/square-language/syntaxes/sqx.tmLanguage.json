@@ -45,7 +45,6 @@
         "2": { "name": "punctuation.definition.tag.begin.sqx" },
         "3": { "name": "entity.name.tag.section.sqx" }
       },
-      "contentName": "source.cs",
       "end": "(</)(script)(\\s*>)",
       "endCaptures": {
         "1": { "name": "punctuation.definition.tag.begin.sqx" },
@@ -53,8 +52,16 @@
         "3": { "name": "punctuation.definition.tag.end.sqx" }
       },
       "patterns": [
-        { "include": "#section-open-tail" },
-        { "include": "source.cs" }
+        { "include": "#section-attributes" },
+        {
+          "begin": ">",
+          "beginCaptures": { "0": { "name": "punctuation.definition.tag.end.sqx" } },
+          "end": "(?=</script)",
+          "contentName": "source.cs",
+          "patterns": [
+            { "include": "source.cs" }
+          ]
+        }
       ]
     },
     "style-section": {
@@ -64,7 +71,6 @@
         "2": { "name": "punctuation.definition.tag.begin.sqx" },
         "3": { "name": "entity.name.tag.section.sqx" }
       },
-      "contentName": "source.css",
       "end": "(</)(style)(\\s*>)",
       "endCaptures": {
         "1": { "name": "punctuation.definition.tag.begin.sqx" },
@@ -72,33 +78,71 @@
         "3": { "name": "punctuation.definition.tag.end.sqx" }
       },
       "patterns": [
-        { "include": "#section-open-tail" },
-        { "include": "source.css" }
+        { "include": "#section-attributes" },
+        {
+          "begin": ">",
+          "beginCaptures": { "0": { "name": "punctuation.definition.tag.end.sqx" } },
+          "end": "(?=</style)",
+          "contentName": "source.css",
+          "patterns": [
+            { "include": "source.css" }
+          ]
+        }
       ]
     },
-    "section-open-tail": {
+    "section-attributes": {
       "patterns": [
         {
           "name": "entity.other.attribute-name.sqx",
           "match": "\\b(?:lang|namespace|name|access)\\b"
         },
-        { "include": "#quoted-string" },
-        {
-          "name": "punctuation.definition.tag.end.sqx",
-          "match": ">"
-        }
+        { "include": "#quoted-string" }
       ]
     },
     "template": {
       "patterns": [
         { "include": "#comments" },
         { "include": "#closing-tag" },
+        { "include": "#directive-tag" },
         { "include": "#opening-tag" },
         { "include": "#csharp-expression" },
         {
           "name": "punctuation.definition.fragment.sqx",
           "match": "</?>"
         }
+      ]
+    },
+    "directive-tag": {
+      "name": "meta.tag.directive.sqx",
+      "begin": "(<)(Show|For|Index|Switch|Match|Slot|Outlet)(?=[\\s/>])",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqx" },
+        "2": { "name": "entity.name.tag.directive.sqx" }
+      },
+      "end": "(/?>)|$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.sqx" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        {
+          "name": "entity.other.attribute-name.directive.sqx",
+          "match": "\\b(?:when|each|fallback|name|ref|slot)\\b"
+        },
+        {
+          "name": "entity.other.attribute-name.event.sqx",
+          "match": "\\bon[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "entity.other.attribute-name.sqx",
+          "match": "\\b[A-Za-z_:][A-Za-z0-9_.:-]*\\b"
+        },
+        {
+          "name": "keyword.operator.assignment.sqx",
+          "match": "="
+        },
+        { "include": "#csharp-expression" },
+        { "include": "#quoted-string" }
       ]
     },
     "closing-tag": {
@@ -126,6 +170,10 @@
         {
           "name": "entity.other.attribute-name.event.sqx",
           "match": "\\bon[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "entity.other.attribute-name.directive.sqx",
+          "match": "\\b(?:ref|slot|when|each|fallback)\\b"
         },
         {
           "name": "entity.other.attribute-name.sqx",

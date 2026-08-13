@@ -28,7 +28,20 @@ public sealed class LanguageServerCompletionTests
         Assert.Contains("\"label\":\"click\"", events, StringComparison.Ordinal);
         Assert.Contains("\"kind\":23", events, StringComparison.Ordinal);
 
-        await Write(process, """{"jsonrpc":"2.0","id":4,"method":"shutdown","params":null}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","version":3},"contentChanges":[{"text":"<template><Sh"}]}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx"},"position":{"line":0,"character":13}}}""");
+        var controlFlow = await Read(process.StandardOutput);
+        Assert.Contains("\"label\":\"Show\"", controlFlow, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqv","languageId":"sqv","version":1,"text":"<template><Text v-"}}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","id":5,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqv"},"position":{"line":0,"character":18}}}""");
+        var directives = await Read(process.StandardOutput);
+        Assert.Contains("\"label\":\"v-if\"", directives, StringComparison.Ordinal);
+        Assert.Contains("Vue directive", directives, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","id":6,"method":"shutdown","params":null}""");
         _ = await Read(process.StandardOutput);
         await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));

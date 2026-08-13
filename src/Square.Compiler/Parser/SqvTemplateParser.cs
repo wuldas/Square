@@ -12,18 +12,20 @@ internal sealed class SqvTemplateParser
 {
     private readonly List<SqvToken> _tokens;
     private readonly int _baseOffset;
+    private readonly bool _tolerant;
     private int _index;
 
-    private SqvTemplateParser(List<SqvToken> tokens, int baseOffset)
+    private SqvTemplateParser(List<SqvToken> tokens, int baseOffset, bool tolerant)
     {
         _tokens = tokens;
         _baseOffset = baseOffset;
+        _tolerant = tolerant;
     }
 
-    public static List<SqxNode> Parse(string templateSource, int baseOffset = 0)
+    public static List<SqxNode> Parse(string templateSource, int baseOffset = 0, bool tolerant = false)
     {
-        var tokens = new SqvLexer(templateSource, baseOffset).Tokenize();
-        return new SqvTemplateParser(tokens, baseOffset).ParseRoots();
+        var tokens = new SqvLexer(templateSource, baseOffset, tolerant).Tokenize();
+        return new SqvTemplateParser(tokens, baseOffset, tolerant).ParseRoots();
     }
 
     private List<SqxNode> ParseRoots()
@@ -34,7 +36,7 @@ internal sealed class SqvTemplateParser
             var node = ParseNode();
             if (node != null) raw.Add(node);
         }
-        return RewriteSiblings(raw);
+        return _tolerant ? raw : RewriteSiblings(raw);
     }
 
     private SqxNode ParseNode()
@@ -51,6 +53,11 @@ internal sealed class SqvTemplateParser
                 _index++;
                 return new SqxExpression { Expression = token.Text, Kind = SqxNodeKind.Expression, Line = token.Line, Column = token.Column, Position = Absolute(token.Offset) };
             case SqvTokenType.EndTag:
+                if (_tolerant)
+                {
+                    _index++;
+                    return null;
+                }
                 throw Error("Unexpected closing tag </" + token.Text + ">", token.Offset);
             default:
                 _index++;
@@ -80,7 +87,8 @@ internal sealed class SqvTemplateParser
             _pendingAttrs.Clear();
         }
 
-        SqvAttributeConverter.ApplyVModel(element);
+        if (!_tolerant)
+            SqvAttributeConverter.ApplyVModel(element);
         var slotScopeAttribute = element.Attributes.FirstOrDefault(attribute => attribute.Name == "__sqv_slot_scope");
         if (slotScopeAttribute != null)
         {
@@ -98,11 +106,18 @@ internal sealed class SqvTemplateParser
         while (true)
         {
             var t = Peek();
-            if (t.Type == SqvTokenType.Eof) break;
+            if (t.Type == SqvTokenType.Eof)
+            {
+                if (_tolerant) return element;
+                break;
+            }
             if (t.Type == SqvTokenType.EndTag)
             {
                 if (!string.Equals(t.Text, tagName, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (_tolerant) return element;
                     throw Error("Closing tag </" + t.Text + "> does not match <" + tagName + ">", t.Offset);
+                }
                 _index++;
                 return element;
             }
@@ -125,7 +140,7 @@ internal sealed class SqvTemplateParser
         if (Peek().Type != SqvTokenType.Equals)
         {
             // 无值属性（如 v-else、disabled）也要经过 Vue 属性转换。
-            var noValue = SqvAttributeConverter.Convert(nameToken.Text, null, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset), _pendingAttrs);
+            var noValue = ConvertAttribute(nameToken.Text, null, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset));
             return noValue ?? new SqxAttribute { Name = nameToken.Text, Line = nameToken.Line, Position = Absolute(nameToken.Offset) };
         }
 
@@ -144,8 +159,20 @@ internal sealed class SqvTemplateParser
         }
 
         // v-if / v-else-if 需要同时产出 kind 与 cond 两个标记属性，通过 _pendingAttrs 追加。
-        var primary = SqvAttributeConverter.Convert(nameToken.Text, rawValue, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset), _pendingAttrs);
-        return primary;
+        return ConvertAttribute(nameToken.Text, rawValue, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset));
+    }
+
+    private SqxAttribute ConvertAttribute(string name, string value, int line, int column, int position)
+    {
+        try
+        {
+            return SqvAttributeConverter.Convert(name, value, line, column, position, _pendingAttrs);
+        }
+        catch (SqxParseException) when (_tolerant)
+        {
+            _pendingAttrs.Clear();
+            return new SqxAttribute { Name = name, RawValue = value, Line = line, Position = position };
+        }
     }
 
     private readonly List<SqxAttribute> _pendingAttrs = new();
@@ -256,7 +283,14 @@ internal sealed class SqvTemplateParser
     {
         var token = Peek();
         if (token.Type != type)
+        {
+            if (_tolerant)
+            {
+                _index++;
+                return token;
+            }
             throw Error("Expected " + type + " but got " + token.Type, token.Offset);
+        }
         _index++;
         return token;
     }

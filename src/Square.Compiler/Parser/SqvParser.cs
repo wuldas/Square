@@ -8,4 +8,7 @@ internal static class SqvParser
 {
     public static SqxDocument Parse(string source, string fileName) =>
         SqvDocumentParser.Parse(source, fileName);
+
+    public static SqxDocument ParseTolerant(string source, string fileName) =>
+        SqvDocumentParser.Parse(source, fileName, tolerant: true);
 }

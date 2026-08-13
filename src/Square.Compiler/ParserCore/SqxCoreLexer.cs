@@ -26,15 +26,17 @@ namespace Square.Compiler.ParserCore
     internal sealed class SqxCoreLexer
     {
         private readonly string _source;
+        private readonly bool _tolerant;
         private int _position;
         private int _line = 1;
         private int _column = 1;
         private bool _inTag;
         private int _templateExpressionDepth;
 
-        public SqxCoreLexer(string source)
+        public SqxCoreLexer(string source, bool tolerant = false)
         {
             _source = source ?? throw new ArgumentNullException(nameof(source));
+            _tolerant = tolerant;
         }
 
         public List<CoreToken> Tokenize()
@@ -58,11 +60,23 @@ namespace Square.Compiler.ParserCore
                         AdvanceChar();
                         _inTag = true;
                         if (_position >= _source.Length || !IsIdentifierStart(_source[_position]))
-                            throw Error("Expected closing tag name", offset, line, column);
+                        {
+                            if (!_tolerant)
+                                throw Error("Expected closing tag name", offset, line, column);
+                            tokens.Add(New(CoreTokenType.EndTag, "", line, column, offset));
+                            _inTag = false;
+                            continue;
+                        }
                         var name = ReadIdentifier();
                         AdvanceWhitespace();
                         if (_position >= _source.Length || _source[_position] != '>')
-                            throw Error("Expected '>' after closing tag </" + name + ">", offset, line, column);
+                        {
+                            if (!_tolerant)
+                                throw Error("Expected '>' after closing tag </" + name + ">", offset, line, column);
+                            tokens.Add(New(CoreTokenType.EndTag, name, line, column, offset));
+                            _inTag = false;
+                            continue;
+                        }
                         AdvanceChar();
                         tokens.Add(New(CoreTokenType.EndTag, name, line, column, offset));
                         _inTag = false;
@@ -189,7 +203,11 @@ namespace Square.Compiler.ParserCore
             }
 
             if (_position >= _source.Length)
-                throw Error("Unclosed attribute string; expected '" + quote + "'", offset, line, column);
+            {
+                if (!_tolerant)
+                    throw Error("Unclosed attribute string; expected '" + quote + "'", offset, line, column);
+                return _source.Substring(start, _position - start);
+            }
             var result = _source.Substring(start, _position - start);
             AdvanceChar();
             return result;
@@ -218,6 +236,8 @@ namespace Square.Compiler.ParserCore
                 }
                 AdvanceChar();
             }
+            if (_tolerant)
+                return _source.Substring(start, _position - start).Trim();
             throw Error("Unclosed expression; expected '}'", offset, line, column);
         }
 
@@ -229,7 +249,11 @@ namespace Square.Compiler.ParserCore
             for (var i = 0; i < 4; i++) AdvanceChar();
             while (_position < _source.Length && !StartsWith("-->")) AdvanceChar();
             if (_position >= _source.Length)
-                throw Error("Unclosed template comment", offset, line, column);
+            {
+                if (!_tolerant)
+                    throw Error("Unclosed template comment", offset, line, column);
+                return;
+            }
             for (var i = 0; i < 3; i++) AdvanceChar();
         }
 

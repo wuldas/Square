@@ -9,12 +9,14 @@ internal static class SqxCoreParserFacade
     public static Square.Compiler.Parser.SqxDocument Parse(
         string source,
         string sourcePath,
-        bool strictTemplate)
+        bool strictTemplate,
+        bool tolerant = false)
     {
         var core = SqxCoreParser.Parse(source, sourcePath, new SqxCoreParserOptions
         {
             StrictTemplate = strictTemplate,
-            CaseSensitiveSectionNames = true
+            CaseSensitiveSectionNames = true,
+            Tolerant = tolerant
         });
 
         return ConvertDocument(core);

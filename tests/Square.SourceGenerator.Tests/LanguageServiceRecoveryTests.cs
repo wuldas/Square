@@ -37,7 +37,7 @@ public sealed class LanguageServiceRecoveryTests
     }
 
     [Fact]
-    public void TolerantSqvParseKeepsSyntaxDiagnosticWithoutFabricatingAst()
+    public void TolerantSqvParseKeepsCompletedRootWhenInterpolationIsUnclosed()
     {
         const string source = "<template><View>{{ Title</View></template>";
 
@@ -45,6 +45,9 @@ public sealed class LanguageServiceRecoveryTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal("SQV0001", Assert.Single(result.Diagnostics).Id);
-        Assert.Null(result.ParsedSqxDocument);
+
+        var document = Assert.IsType<SqxDocument>(result.ParsedSqxDocument);
+        var view = Assert.IsType<SqxElement>(Assert.Single(document.Template.Roots));
+        Assert.Equal("View", view.TagName);
     }
 }

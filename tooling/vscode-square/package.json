@@ -2,7 +2,7 @@
   "name": "square-language-support",
   "displayName": "Square Language Support",
   "description": "Syntax highlighting and editing support for Square SQX and SQV components.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "wuldas",
   "license": "MIT",
   "main": "./out/extension.js",

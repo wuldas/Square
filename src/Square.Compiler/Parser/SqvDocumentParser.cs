@@ -8,14 +8,26 @@ namespace Square.Compiler.Parser;
 /// </summary>
 internal static class SqvDocumentParser
 {
-    public static SqxDocument Parse(string source, string fileName)
+    public static SqxDocument Parse(string source, string fileName, bool tolerant = false)
     {
-        var sections = SplitSections(source);
+        var sections = SplitSections(source, tolerant);
         if (!sections.TryGetValue("template", out var templateSection))
+        {
+            if (tolerant)
+            {
+                return new SqxDocument
+                {
+                    Name = string.IsNullOrEmpty(fileName) ? "Component" : Path.GetFileNameWithoutExtension(fileName),
+                    SourcePath = fileName,
+                    Template = new SqxTemplate()
+                };
+            }
             throw new SqxParseException("Missing required <template> section", 0);
+        }
 
-        var roots = SqvTemplateParser.Parse(templateSection.Content, templateSection.ContentStart);
-        SqvValidator.Validate(roots);
+        var roots = SqvTemplateParser.Parse(templateSection.Content, templateSection.ContentStart, tolerant);
+        if (!tolerant)
+            SqvValidator.Validate(roots);
 
         var document = new SqxDocument
         {
@@ -45,13 +57,13 @@ internal static class SqvDocumentParser
         return document;
     }
 
-    private static Dictionary<string, Section> SplitSections(string source)
+    private static Dictionary<string, Section> SplitSections(string source, bool tolerant)
     {
         var sections = new Dictionary<string, Section>(StringComparer.OrdinalIgnoreCase);
         var position = 0;
         while (position < source.Length)
         {
-            SkipTrivia(source, ref position);
+            SkipTrivia(source, ref position, tolerant);
             if (position >= source.Length) break;
             if (source[position] != '<')
                 throw new SqxParseException("Unexpected content outside a top-level section", position);
@@ -74,13 +86,29 @@ internal static class SqvDocumentParser
                 throw new SqxParseException("Duplicate <" + name + "> section", position);
 
             var openingEnd = FindTagEnd(source, nameEnd);
-            if (openingEnd < 0) throw new SqxParseException("Unclosed <" + name + "> opening tag", position);
-            var closeStart = FindMatchingCloseTag(source, name, openingEnd + 1);
-            if (closeStart < 0) throw new SqxParseException("Unclosed <" + name + "> section", position);
-            var closeEnd = FindTagEnd(source, closeStart + name.Length + 2);
-            if (closeEnd < 0) throw new SqxParseException("Unclosed </" + name + "> tag", closeStart);
+            if (openingEnd < 0)
+            {
+                if (!tolerant) throw new SqxParseException("Unclosed <" + name + "> opening tag", position);
+                sections.Add(name, new Section(source.Substring(position), string.Empty, position, source.Length));
+                break;
+            }
 
+            var closeStart = FindMatchingCloseTag(source, name, openingEnd + 1);
+            var closeEnd = closeStart < 0 ? -1 : FindTagEnd(source, closeStart + name.Length + 2);
             var contentStart = openingEnd + 1;
+            if (closeStart < 0 || closeEnd < 0)
+            {
+                if (!tolerant)
+                    throw new SqxParseException(
+                        closeStart < 0 ? "Unclosed <" + name + "> section" : "Unclosed </" + name + "> tag",
+                        closeStart < 0 ? position : closeStart);
+                sections.Add(name, new Section(
+                    source.Substring(position, openingEnd - position + 1),
+                    source.Substring(contentStart),
+                    position,
+                    contentStart));
+                break;
+            }
             sections.Add(name, new Section(
                 source.Substring(position, openingEnd - position + 1),
                 source.Substring(contentStart, closeStart - contentStart),
@@ -111,7 +139,7 @@ internal static class SqvDocumentParser
         return new ScriptMetadata(language, ns, componentName, access);
     }
 
-    private static void SkipTrivia(string source, ref int position)
+    private static void SkipTrivia(string source, ref int position, bool tolerant)
     {
         while (position < source.Length)
         {
@@ -120,7 +148,14 @@ internal static class SqvDocumentParser
             {
                 var end = source.IndexOf("-->", position + 4, StringComparison.Ordinal);
                 if (end < 0)
+                {
+                    if (tolerant)
+                    {
+                        position = source.Length;
+                        break;
+                    }
                     throw new SqxParseException("Unclosed Vue comment", position, "SQV0001");
+                }
                 position = end + 3;
                 continue;
             }

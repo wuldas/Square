@@ -1,0 +1,139 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
+namespace Square.Compiler.LanguageServices;
+
+public sealed class TemplateColorPresentation
+{
+    public TemplateColorPresentation(string label, int start, int length)
+    {
+        Label = label;
+        Start = start;
+        Length = length;
+    }
+
+    public string Label { get; }
+    public int Start { get; }
+    public int Length { get; }
+}
+
+public sealed class TemplateDocumentColor
+{
+    public TemplateDocumentColor(int start, int length, double red, double green, double blue, double alpha)
+    {
+        Start = start;
+        Length = length;
+        Red = red;
+        Green = green;
+        Blue = blue;
+        Alpha = alpha;
+    }
+
+    public int Start { get; }
+    public int Length { get; }
+    public double Red { get; }
+    public double Green { get; }
+    public double Blue { get; }
+    public double Alpha { get; }
+}
+
+public static class TemplateColorService
+{
+    private static readonly Regex HexColor = new(
+        @"#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{3})\b",
+        RegexOptions.Compiled);
+
+    private static readonly Regex RgbColor = new(
+        @"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public static IReadOnlyList<TemplateDocumentColor> GetColors(string text)
+    {
+        text ??= string.Empty;
+        var colors = new List<TemplateDocumentColor>();
+        foreach (Match match in HexColor.Matches(text))
+        {
+            if (!TryParseHex(match.Value, out var red, out var green, out var blue, out var alpha))
+                continue;
+            colors.Add(new TemplateDocumentColor(match.Index, match.Length, red, green, blue, alpha));
+        }
+
+        foreach (Match match in RgbColor.Matches(text))
+        {
+            colors.Add(new TemplateDocumentColor(
+                match.Index,
+                match.Length,
+                ClampChannel(match.Groups[1].Value) / 255d,
+                ClampChannel(match.Groups[2].Value) / 255d,
+                ClampChannel(match.Groups[3].Value) / 255d,
+                match.Groups[4].Success ? ParseAlpha(match.Groups[4].Value) : 1d));
+        }
+
+        return colors
+            .OrderBy(color => color.Start)
+            .ToArray();
+    }
+
+    public static IReadOnlyList<TemplateColorPresentation> GetPresentations(
+        string text,
+        int start,
+        int length,
+        double red,
+        double green,
+        double blue,
+        double alpha)
+    {
+        text ??= string.Empty;
+        start = Math.Clamp(start, 0, text.Length);
+        length = Math.Clamp(length, 0, text.Length - start);
+        var hex = ToHex(red, green, blue, alpha);
+        var rgb = alpha >= 0.999
+            ? $"rgb({ToByte(red)}, {ToByte(green)}, {ToByte(blue)})"
+            : $"rgba({ToByte(red)}, {ToByte(green)}, {ToByte(blue)}, {alpha.ToString("0.###", CultureInfo.InvariantCulture)})";
+        return new[]
+        {
+            new TemplateColorPresentation(hex, start, length),
+            new TemplateColorPresentation(rgb, start, length)
+        };
+    }
+
+    private static bool TryParseHex(string value, out double red, out double green, out double blue, out double alpha)
+    {
+        red = green = blue = 0;
+        alpha = 1;
+        var hex = value.TrimStart('#');
+        if (hex.Length is 3 or 4)
+            hex = string.Concat(hex.Select(character => new string(character, 2)));
+        if (hex.Length is not (6 or 8)) return false;
+        if (!int.TryParse(hex[..2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var r) ||
+            !int.TryParse(hex.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var g) ||
+            !int.TryParse(hex.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b))
+            return false;
+        red = r / 255d;
+        green = g / 255d;
+        blue = b / 255d;
+        if (hex.Length == 8 &&
+            int.TryParse(hex.Substring(6, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var a))
+            alpha = a / 255d;
+        return true;
+    }
+
+    private static string ToHex(double red, double green, double blue, double alpha)
+    {
+        var value = $"#{ToByte(red):X2}{ToByte(green):X2}{ToByte(blue):X2}";
+        return alpha >= 0.999 ? value : value + $"{ToByte(alpha):X2}";
+    }
+
+    private static int ToByte(double value) =>
+        Math.Clamp((int)Math.Round(value * 255d), 0, 255);
+
+    private static int ClampChannel(string value) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
+            ? Math.Clamp(number, 0, 255)
+            : 0;
+
+    private static double ParseAlpha(string value) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            ? Math.Clamp(number, 0d, 1d)
+            : 1d;
+}

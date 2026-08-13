@@ -29,18 +29,35 @@ public static class SquareDocumentService
             syntaxResult.ParsedDocument);
     }
 
+    public static SquareParseResult ParseSyntaxTree(string source, string sourcePath)
+    {
+        source ??= string.Empty;
+        sourcePath ??= string.Empty;
+        var sourceText = SourceText.From(source, Encoding.UTF8);
+        try
+        {
+            object document = sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
+                ? SqvParser.ParseTolerant(source, sourcePath)
+                : SqxCoreParserFacade.Parse(source, sourcePath, strictTemplate: false, tolerant: true);
+            return new SquareParseResult(sourcePath, sourceText, Array.Empty<SquareDiagnostic>(), document);
+        }
+        catch
+        {
+            return ParseSyntax(source, sourcePath);
+        }
+    }
+
     public static SquareParseResult ParseTolerant(string source, string sourcePath)
     {
         var strictResult = ParseSyntax(source, sourcePath);
         if (strictResult.IsSuccess)
             return Parse(source, sourcePath);
 
-        if (sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase))
-            return strictResult;
-
         try
         {
-            var document = SqxCoreParserFacade.Parse(source, sourcePath, strictTemplate: false);
+            object document = sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
+                ? SqvParser.ParseTolerant(source, sourcePath)
+                : SqxCoreParserFacade.Parse(source, sourcePath, strictTemplate: false, tolerant: true);
             return new SquareParseResult(
                 strictResult.SourcePath,
                 strictResult.SourceText,

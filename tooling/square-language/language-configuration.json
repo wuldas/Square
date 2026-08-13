@@ -26,8 +26,8 @@
   ],
   "folding": {
     "markers": {
-      "start": "^\\s*<(template|script|style)(?:\\s|>)",
-      "end": "^\\s*</(template|script|style)>"
+      "start": "^\\s*<(?!/)([A-Za-z_][A-Za-z0-9_.:-]*)(?![^\\n>]*/>)[^\\n>]*>\\s*$",
+      "end": "^\\s*</([A-Za-z_][A-Za-z0-9_.:-]*)>\\s*$"
     }
   },
   "indentationRules": {

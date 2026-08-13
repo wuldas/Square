@@ -31,6 +31,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Square.SourceGenerator.Tests" />
+    <InternalsVisibleTo Include="Square.LanguageServer" />
+    <InternalsVisibleTo Include="Square.LanguageServer.Tests" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">

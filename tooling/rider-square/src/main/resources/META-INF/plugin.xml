@@ -3,7 +3,7 @@
   <name>Square Language Support</name>
   <vendor url="https://github.com/wuldas/Square">Wuldas</vendor>
   <description><![CDATA[
-    Syntax highlighting and basic editing support for Square SQX and SQV component files.
+    Syntax highlighting, syntax-tree completion, and Language Server support for Square SQX and SQV component files.
   ]]></description>
 
   <depends>com.intellij.modules.rider</depends>

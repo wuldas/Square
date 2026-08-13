@@ -48,13 +48,28 @@ public sealed class TemplateCatalog
             ["ellipse"] = "Square.UI.Svg.SVGEllipseElement",
             ["line"] = "Square.UI.Svg.SVGLineElement",
             ["polyline"] = "Square.UI.Svg.SVGPolylineElement",
-            ["polygon"] = "Square.UI.Svg.SVGPolygonElement"
+            ["polygon"] = "Square.UI.Svg.SVGPolygonElement",
+            ["Show"] = "Show",
+            ["For"] = "For",
+            ["Index"] = "Index",
+            ["Switch"] = "Switch",
+            ["Match"] = "Match",
+            ["Slot"] = "Slot",
+            ["Outlet"] = "Slot"
         };
 
     private static readonly IReadOnlyDictionary<string, string> PropertyAliases =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["id"] = "Id",
+            ["class"] = "class",
+            ["style"] = "style",
+            ["ref"] = "ref",
+            ["slot"] = "slot",
+            ["when"] = "when",
+            ["each"] = "each",
+            ["fallback"] = "fallback",
+            ["name"] = "name",
             ["text"] = "TextContent",
             ["glyph"] = "Glyph",
             ["icon"] = "Icon",
@@ -183,10 +198,11 @@ public sealed class TemplateCatalog
         foreach (var pair in BuiltInTypeNames)
         {
             var isTitleBar = pair.Key.Equals("TitleBar", StringComparison.OrdinalIgnoreCase);
+            var isDirective = pair.Key is "Show" or "For" or "Index" or "Switch" or "Match" or "Slot" or "Outlet";
             components[pair.Key] = new TemplateComponentDescriptor(
                 pair.Key,
                 pair.Value,
-                true,
+                !isDirective,
                 isTitleBar,
                 TextContentTags.Contains(pair.Key));
         }

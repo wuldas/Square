@@ -78,12 +78,18 @@ function scopesFor(tokens, exactText) {
 const sqx = await tokenize('source.sqx', fixture('basic.sqx'));
 assert.ok(scopesFor(sqx, 'template').includes('entity.name.tag.section.sqx'));
 assert.ok(scopesFor(sqx, 'Button').includes('entity.name.tag.sqx'));
+assert.ok(scopesFor(sqx, 'Show').includes('entity.name.tag.directive.sqx'));
+assert.ok(scopesFor(sqx, 'when').includes('entity.other.attribute-name.directive.sqx'));
 assert.ok(scopesFor(sqx, 'onClick').includes('entity.other.attribute-name.event.sqx'));
 assert.ok(scopesFor(sqx, 'private').includes('keyword.control.cs'));
 assert.ok(scopesFor(sqx, 'display').includes('support.type.property-name.css'));
 const sqxEmbedded = await tokenize('source.sqx', fixture('embedded-csharp.sqx'));
 assert.ok(scopesFor(sqxEmbedded, 'private').includes('keyword.control.cs'));
 assert.ok(scopesFor(sqxEmbedded, 'script').includes('entity.name.tag.section.sqx'));
+const closingScript = sqxEmbedded.filter(token => token.text === 'script');
+assert.ok(closingScript.length >= 2, 'Opening and closing script tags should both be scoped');
+assert.ok(closingScript.every(token => token.scopes.includes('entity.name.tag.section.sqx')));
+assert.ok(sqxEmbedded.some(token => token.text === '</' && token.scopes.includes('punctuation.definition.tag.begin.sqx')));
 
 const sqxCss = await tokenize('source.sqx', fixture('embedded-css.sqx'));
 const cssTokens = sqxCss.filter(token => token.text.includes('8px'));

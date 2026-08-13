@@ -21,6 +21,7 @@ namespace Square.Compiler.ParserCore
     {
         public bool StrictTemplate { get; set; }
         public bool CaseSensitiveSectionNames { get; set; }
+        public bool Tolerant { get; set; }
     }
 
     internal static class SqxCoreParser
@@ -30,7 +31,7 @@ namespace Square.Compiler.ParserCore
             if (source == null) throw new ArgumentNullException(nameof(source));
             if (options == null) throw new ArgumentNullException(nameof(options));
 
-            var sections = SplitSections(source, options.CaseSensitiveSectionNames);
+            var sections = SplitSections(source, options.CaseSensitiveSectionNames, options.Tolerant);
             Section templateSection;
             if (!sections.TryGetValue("template", out templateSection))
                 throw Error(source, 0, "Missing required <template> section");
@@ -72,7 +73,7 @@ namespace Square.Compiler.ParserCore
             return document;
         }
 
-        private static Dictionary<string, Section> SplitSections(string source, bool caseSensitive)
+        private static Dictionary<string, Section> SplitSections(string source, bool caseSensitive, bool tolerant)
         {
             var sections = new Dictionary<string, Section>(StringComparer.OrdinalIgnoreCase);
             var position = 0;
@@ -100,13 +101,33 @@ namespace Square.Compiler.ParserCore
                     throw Error(source, position, "Duplicate <" + name + "> section");
 
                 var openingEnd = FindTagEnd(source, nameEnd);
-                if (openingEnd < 0) throw Error(source, position, "Unclosed <" + name + "> opening tag");
-                var closeStart = source.IndexOf("</" + name, openingEnd + 1, StringComparison.OrdinalIgnoreCase);
-                if (closeStart < 0) throw Error(source, position, "Unclosed <" + name + "> section");
-                var closeEnd = FindTagEnd(source, closeStart + name.Length + 2);
-                if (closeEnd < 0) throw Error(source, closeStart, "Unclosed </" + name + "> tag");
+                if (openingEnd < 0)
+                {
+                    if (!tolerant) throw Error(source, position, "Unclosed <" + name + "> opening tag");
+                    sections.Add(name, new Section(
+                        position,
+                        source.Substring(position),
+                        string.Empty,
+                        source.Length,
+                        GetLine(source, source.Length)));
+                    break;
+                }
 
+                var closeStart = source.IndexOf("</" + name, openingEnd + 1, StringComparison.OrdinalIgnoreCase);
+                var closeEnd = closeStart < 0 ? -1 : FindTagEnd(source, closeStart + name.Length + 2);
                 var contentStart = openingEnd + 1;
+                if (closeStart < 0 || closeEnd < 0)
+                {
+                    if (!tolerant) throw Error(source, closeStart < 0 ? position : closeStart,
+                        closeStart < 0 ? "Unclosed <" + name + "> section" : "Unclosed </" + name + "> tag");
+                    sections.Add(name, new Section(
+                        position,
+                        source.Substring(position, openingEnd - position + 1),
+                        source.Substring(contentStart),
+                        contentStart,
+                        GetLine(source, contentStart)));
+                    break;
+                }
                 sections.Add(name, new Section(
                     position,
                     source.Substring(position, openingEnd - position + 1),
@@ -122,7 +143,7 @@ namespace Square.Compiler.ParserCore
         {
             try
             {
-                var tokens = new SqxCoreLexer(section.Content).Tokenize();
+                var tokens = new SqxCoreLexer(section.Content, !strict).Tokenize();
                 var roots = new SqxCoreTemplateParser(tokens, strict).ParseRoots();
                 OffsetPositions(roots, section.ContentStart);
                 return new CoreTemplate { Roots = roots, Line = section.ContentLine, Column = 1 };
