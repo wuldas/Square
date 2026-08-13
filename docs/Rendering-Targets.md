@@ -483,7 +483,9 @@ public enum TargetSupportLevel
 
 ### P5：HTML adapter 原型 🔄
 
-- `Square.Native.Html` 已生成 static semantic HTML + inline final CSS。
+- `Square.Native.Html` 已生成 static semantic HTML，并默认将最终样式去重为 head 中的 CSS class；可通过 `HtmlExportOptions.UseInlineStyles` 兼容旧的内联样式输出。
+- `HtmlExportOptions.StylesheetHref` 可让页面引用外部 CSS；`HtmlExportResult.Css` 提供写入静态资源的完整 stylesheet 内容。
+- `Square.Hosting.Web` 提供 `MapSquareStylesheet`，可与 `MapSquarePage` 配套暴露同一页面工厂生成的 CSS。
 - `Square.Hosting.Web` 已支持 ASP.NET Core 每请求组件工厂，并可与桌面平台宿主共存。
 - 可选支持 interactive DOM/WASM。
 - Canvas/复杂绘制控件当前输出带诊断的占位节点，bitmap/canvas fallback 待实现。

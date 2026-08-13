@@ -195,6 +195,33 @@ public class DocumentTests
     }
 
     [Fact]
+    public void SplitContainerKeepsSplitterValueWhenMaximumIsSetAfterValue()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+        var container = new SplitContainer
+        {
+            Value = 780,
+            Minimum = 480,
+            Maximum = 980,
+            SplitterThickness = 1
+        };
+        root.Children.Add(container);
+
+        Layout(root, new Size(1280, 760));
+
+        Assert.Equal(780, container.Value);
+        Assert.Equal(780, container.Splitter.Value);
+        Assert.Equal(780, container.First.Geometry.Width, precision: 1);
+
+        container.Splitter.HandlePointerDown(new Point(780, 100));
+        container.Splitter.HandlePointerMove(new Point(790, 100));
+
+        Assert.Equal(790, container.Value);
+        Assert.Equal(790, container.Splitter.Value);
+    }
+
+    [Fact]
     public void SplitContainerNonSeamlessLeavesVisibleGapBetweenPanes()
     {
         var root = new View();

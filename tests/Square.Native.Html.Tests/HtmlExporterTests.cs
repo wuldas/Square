@@ -31,8 +31,10 @@ public sealed class HtmlExporterTests
         Assert.Contains("<!doctype html>", result.Html);
         Assert.Contains("<title>Export &lt;test&gt;</title>", result.Html);
         Assert.Contains("id=\"root\"", result.Html);
-        Assert.Contains("class=\"page square-root\"", result.Html);
-        Assert.Contains("style=\"display:flex;gap:12px;\"", result.Html);
+        Assert.Contains("class=\"page square-root sq-style-", result.Html);
+        Assert.Contains("display:flex;gap:12px;", result.Css);
+        Assert.Contains("<style data-square-css=\"true\">", result.Html);
+        Assert.DoesNotContain("style=\"", result.Html);
         Assert.Contains("Hello &lt;Square&gt;", result.Html);
         Assert.Contains("<button disabled>Save</button>", result.Html);
         Assert.Contains("type=\"password\"", result.Html);
@@ -43,6 +45,81 @@ public sealed class HtmlExporterTests
         Assert.Contains("<option value=\"Pro\" selected>Pro</option>", result.Html);
         Assert.DoesNotContain("<script", result.Html, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ExportDeduplicatesComputedStylesIntoHeadStylesheet()
+    {
+        var root = new View();
+        var first = new View();
+        var second = new View();
+        first.Style.Set("padding", "8px");
+        second.Style.Set("padding", "8px");
+        root.Children.Add(first);
+        root.Children.Add(second);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions { IncludeDocument = false });
+
+        Assert.DoesNotContain("style=\"", result.Html);
+        var classes = result.Html.Split("class=\"", StringSplitOptions.None)
+            .Skip(1)
+            .Select(value => value.Split('"')[0])
+            .Where(value => value.Contains("sq-style-", StringComparison.Ordinal))
+            .ToArray();
+        Assert.True(classes.Length >= 2);
+        Assert.Equal(classes[0], classes[1]);
+        Assert.Equal(1, CountOccurrences(result.Css, "padding:8px;"));
+    }
+
+    [Fact]
+    public void ExportCanOptIntoLegacyInlineStyles()
+    {
+        var root = new View();
+        root.Style.Set("display", "grid");
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            UseInlineStyles = true,
+            IncludeBaselineCss = false
+        });
+
+        Assert.Contains("style=\"display:grid;\"", result.Html);
+        Assert.DoesNotContain("style data-square-css", result.Html);
+        Assert.DoesNotContain("display:grid;", result.Css);
+    }
+
+    [Fact]
+    public void ExportCanReferenceGeneratedExternalStylesheet()
+    {
+        var root = new View();
+        root.Style.Set("display", "flex");
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            StylesheetHref = "/assets/square.generated.css"
+        });
+
+        Assert.Contains("<link rel=\"stylesheet\" href=\"/assets/square.generated.css\">", result.Html);
+        Assert.DoesNotContain("<style data-square-css=\"true\">", result.Html);
+        Assert.Contains("display:flex;", result.Css);
+    }
+
+    [Fact]
+    public void ExportRejectsUnsafeExternalStylesheetAndKeepsInlineFallback()
+    {
+        var root = new View();
+        root.Style.Set("display", "grid");
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            StylesheetHref = "javascript:alert(1)"
+        });
+
+        Assert.Contains("<style data-square-css=\"true\">", result.Html);
+        Assert.DoesNotContain("javascript:", result.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("display:grid;", result.Css);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("stylesheet URL", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -96,6 +173,14 @@ public sealed class HtmlExporterTests
         Assert.Equal(1, component.BuildCount);
         Assert.Equal(first.Html, second.Html);
         Assert.Contains("data-square-component=", first.Html);
+    }
+
+    private static int CountOccurrences(string value, string needle)
+    {
+        var count = 0;
+        for (var index = 0; (index = value.IndexOf(needle, index, StringComparison.Ordinal)) >= 0; index += needle.Length)
+            count++;
+        return count;
     }
 
     private sealed class TestComponent : UIElement

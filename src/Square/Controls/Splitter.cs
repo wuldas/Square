@@ -212,9 +212,11 @@ public class SplitContainer : View
                 break;
             case nameof(Minimum):
                 _splitter.Minimum = Minimum;
+                _splitter.Value = Value;
                 break;
             case nameof(Maximum):
                 _splitter.Maximum = Maximum;
+                _splitter.Value = Value;
                 break;
             case nameof(SplitterThickness):
                 _thickness = Math.Max(1, SplitterThickness);
