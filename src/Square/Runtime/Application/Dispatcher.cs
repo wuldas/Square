@@ -65,6 +65,12 @@ public sealed class Dispatcher
     public void Run()
     {
         VerifyAccess();
+        RunPending();
+    }
+
+    /// <summary>排空队列；无窗口宿主须在自行串行化访问后调用。</summary>
+    internal void RunPending()
+    {
         while (true)
         {
             Action? action;

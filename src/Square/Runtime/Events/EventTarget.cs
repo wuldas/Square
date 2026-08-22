@@ -39,6 +39,12 @@ public class EventTarget
     private readonly List<ListenerEntry> _listeners = [];
     private readonly List<AdapterEntry> _adapters = [];
 
+    /// <summary>当前已注册的事件类型快照，按首次注册顺序去重。</summary>
+    public IReadOnlyList<string> RegisteredEventTypes => _listeners
+        .Select(static entry => entry.Type)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
     /// <summary>注册事件监听器（对齐 <c>addEventListener</c>）。</summary>
     public void AddEventListener(string type, Action<Event>? listener, AddEventListenerOptions? options = null)
     {

@@ -7,7 +7,7 @@ namespace Square.UI;
 /// Square 应用文档：固定 <c>UI</c> / <c>Head</c> / <c>Body</c> 壳。
 /// <see cref="Document.DocumentElement"/> 为只读的 <c>UI</c> 根；应用内容挂在 <see cref="Body"/> 下。
 /// </summary>
-internal sealed class UIDocument : Document
+public sealed class UIDocument : Document
 {
     /// <summary>文档根元素 <c>UI</c>（即 documentElement）。</summary>
     public UIRootElement Ui { get; }
@@ -66,6 +66,17 @@ internal sealed class UIDocument : Document
             child.BuildElementTree();
         foreach (var child in Body.Children)
             child.BuildElementTree();
+    }
+
+    /// <summary>
+    /// 执行当前文档待处理的调度、结构协调与样式更新。
+    /// 无窗口宿主调用时必须自行保证同一文档不会被并发访问。
+    /// </summary>
+    public void FlushPendingUpdates()
+    {
+        Context.Dispatcher.RunPending();
+        Context.Reconciler.Flush();
+        CssStyleReconciler.Flush(Ui);
     }
 
     internal void LoadGlobalCss(string path)

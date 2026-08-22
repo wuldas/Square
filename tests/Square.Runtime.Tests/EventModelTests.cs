@@ -190,6 +190,20 @@ public class EventModelTests
         Assert.True(seen!.IsTrusted);
     }
 
+    [Fact]
+    public void RegisteredEventTypesTracksCurrentListeners()
+    {
+        var target = new TestNode();
+        Action<Event> handler = _ => { };
+        target.AddEventListener("click", handler);
+        target.AddEventListener("CLICK", _ => { });
+
+        Assert.Equal(new[] { "click" }, target.RegisteredEventTypes);
+
+        target.RemoveEventListener("click", handler);
+        Assert.Equal(new[] { "CLICK" }, target.RegisteredEventTypes);
+    }
+
     private sealed class TestNode : EventTarget
     {
         public TestNode? Parent { get; set; }
