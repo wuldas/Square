@@ -105,7 +105,12 @@ public sealed class AppearanceCssTests
     public void AppearanceAutoPaintsSelectFieldChromeThroughCssBox()
     {
         var engine = new CssEngine();
-        var select = new Select { Geometry = new Rect(2, 2, 80, 28) };
+        var select = new Select
+        {
+            Geometry = new Rect(2, 2, 80, 28),
+            Placeholder = "",
+            Value = ""
+        };
         engine.ApplyStyles(select);
 
         using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
@@ -118,7 +123,7 @@ public sealed class AppearanceCssTests
         tree.Render(context);
 
         using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
-        var interior = bitmap.GetPixel(20, 16);
+        var interior = bitmap.GetPixel(12, 16);
         Assert.True(interior[2] > 200 && interior[1] > 200 && interior[0] > 200,
             "Select appearance:auto should paint Chrome Field chrome through CssBoxPainter");
     }
