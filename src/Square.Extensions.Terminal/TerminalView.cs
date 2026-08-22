@@ -113,6 +113,8 @@ public sealed class TerminalView : UIElement, ITextEditor
     /// <inheritdoc/>
     public bool CanCutSelection => false;
     /// <inheritdoc/>
+    public bool ClipboardShortcutsRequireShift => true;
+    /// <inheritdoc/>
     public Rect CaretRect => ComputeCaretRect();
 
     /// <summary>Feeds remote terminal output into the VT parser.</summary>
@@ -337,6 +339,34 @@ public sealed class TerminalView : UIElement, ITextEditor
 
     /// <inheritdoc/>
     public CursorKind? ResolveCursorAt(Point point) => Geometry.Contains(point) ? CursorKind.Text : null;
+
+    /// <inheritdoc/>
+    protected override void OnDefaultAction(Event e)
+    {
+        if (e.Type != StandardEvents.ContextMenu || !IsEnabled || AppWindow == null)
+        {
+            base.OnDefaultAction(e);
+            return;
+        }
+
+        if (SelectionLength > 0)
+        {
+            var text = SelectedText;
+            if (!string.IsNullOrEmpty(text))
+            {
+                AppWindow.SetClipboardTextAsync(text).GetAwaiter().GetResult();
+                SyncSelectionToCursor();
+                InvalidatePaint();
+            }
+        }
+        else
+        {
+            var text = AppWindow.GetClipboardTextAsync().GetAwaiter().GetResult();
+            if (!string.IsNullOrEmpty(text)) RaiseInput(text);
+        }
+
+        e.PreventDefault();
+    }
 
     private void PaintRow(
         IRenderContext context,
