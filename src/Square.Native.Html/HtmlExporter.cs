@@ -20,6 +20,7 @@ public static class HtmlExporter
         *,*::before,*::after{box-sizing:border-box;}
         .square-root{min-width:0;}
         .square-root img,.square-root svg{max-width:100%;}
+        button,input,select,textarea{appearance:auto;}
         [data-square-unsupported="true"]{padding:.75rem;border:1px dashed #b42318;color:#b42318;background:#fff5f5;font-family:system-ui,sans-serif;}
         """;
 
@@ -51,7 +52,7 @@ public static class HtmlExporter
         var css = BuildCss(options, context.Styles);
 
         if (!options.IncludeDocument)
-            return new HtmlExportResult { Html = body.ToString(), Css = css, Diagnostics = diagnostics };
+            return new HtmlExportResult { Html = body.ToString(), BodyHtml = body.ToString(), Css = css, Diagnostics = diagnostics };
 
         var html = new StringBuilder(body.Length + 512);
         html.Append("<!doctype html><html lang=\"").Append(Encode(options.Language)).Append("\"><head>");
@@ -75,7 +76,7 @@ public static class HtmlExporter
             html.Append("<style data-square-css=\"true\">").Append(css).Append("</style>");
         }
         html.Append("</head><body>").Append(body).Append("</body></html>");
-        return new HtmlExportResult { Html = html.ToString(), Css = css, Diagnostics = diagnostics };
+        return new HtmlExportResult { Html = html.ToString(), BodyHtml = body.ToString(), Css = css, Diagnostics = diagnostics };
     }
 
     private static void WriteNode(
@@ -193,8 +194,9 @@ public static class HtmlExporter
         bool isRoot)
     {
         output.Append("<label");
-        WriteCommonAttributes(output, node, context, isRoot);
+        WriteCommonAttributes(output, node, context, isRoot, hostChoiceInput: true);
         output.Append("><input type=\"").Append(type).Append('"');
+        WriteWidgetAppearance(output, node, context);
         if (!string.IsNullOrWhiteSpace(name)) output.Append(" name=\"").Append(Encode(name)).Append('"');
         if (isChecked) output.Append(" checked");
         if (isDisabled) output.Append(" disabled");
@@ -340,25 +342,37 @@ public static class HtmlExporter
         output.Append("</div>");
     }
 
-    private static void WriteCommonAttributes(StringBuilder output, NativeUiNode node, ExportContext context, bool isRoot)
+    private static void WriteCommonAttributes(StringBuilder output, NativeUiNode node, ExportContext context, bool isRoot, bool hostChoiceInput = false)
     {
         var element = node.SourceElement;
+        if (context.Options.EnableInteractions)
+        {
+            output.Append(" data-square-id=\"").Append(element.DebugId).Append('"');
+            var eventTypes = element.RegisteredEventTypes;
+            if (eventTypes.Count > 0)
+                output.Append(" data-square-events=\"")
+                    .Append(Encode(string.Join(' ', eventTypes.Select(static type => type.ToLowerInvariant()))))
+                    .Append('"');
+        }
         if (!string.IsNullOrWhiteSpace(element.Id))
             output.Append(" id=\"").Append(Encode(element.Id)).Append('"');
 
         var classes = node.Classes.ToList();
         if (isRoot) classes.Add("square-root");
 
-        var styles = MergeStyles(node);
+        var styles = CompactStyles(MergeStyles(node, hostChoiceInput));
         if (styles.Count > 0 && context.Options.UseInlineStyles)
         {
             output.Append(" style=\"");
-            foreach (var pair in styles.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+            foreach (var pair in styles)
                 output.Append(Encode(pair.Key)).Append(':').Append(Encode(pair.Value)).Append(';');
             output.Append('"');
         }
-        else if (styles.Count > 0)
-            classes.Add(context.Styles.GetClass(styles));
+        else if (styles.Count > 0 && !context.Options.UseInlineStyles)
+        {
+            var generatedClass = context.Styles.AddRule(classes, styles);
+            if (generatedClass != null) classes.Add(generatedClass);
+        }
 
         if (classes.Count > 0)
             output.Append(" class=\"").Append(Encode(string.Join(' ', classes.Distinct(StringComparer.Ordinal)))).Append('"');
@@ -367,9 +381,33 @@ public static class HtmlExporter
             output.Append(" title=\"").Append(Encode(ui.Tooltip)).Append('"');
     }
 
-    private static Dictionary<string, string> MergeStyles(NativeUiNode node)
+    private static void WriteWidgetAppearance(StringBuilder output, NativeUiNode node, ExportContext context)
+    {
+        if (!TryGetAppearance(node, out var appearance) || appearance == "auto") return;
+
+        var styles = CompactStyles(new Dictionary<string, string>(StringComparer.Ordinal) { ["appearance"] = appearance });
+        if (styles.Count == 0) return;
+        if (context.Options.UseInlineStyles)
+        {
+            output.Append(" style=\"");
+            foreach (var pair in styles)
+                output.Append(Encode(pair.Key)).Append(':').Append(Encode(pair.Value)).Append(';');
+            output.Append('"');
+            return;
+        }
+
+        output.Append(" class=\"").Append(Encode(context.Styles.GetClass(styles))).Append('"');
+    }
+
+    private static Dictionary<string, string> MergeStyles(NativeUiNode node, bool hostChoiceInput = false)
     {
         var styles = new Dictionary<string, string>(node.Style, StringComparer.Ordinal);
+        if (hostChoiceInput)
+            styles.Remove("appearance");
+        else if (IsNativeFormWidget(node.SourceElement) &&
+                 styles.TryGetValue("appearance", out var appearance) &&
+                 appearance.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
+            styles.Remove("appearance");
         if (node.SourceElement is UIElement ui)
         {
             AddPixels(styles, "width", ui.Width, float.NaN);
@@ -390,12 +428,73 @@ public static class HtmlExporter
         return styles;
     }
 
+    private static bool IsNativeFormWidget(Element element) =>
+        element is Button or Input or TextArea or Select;
+
+    private static bool TryGetAppearance(NativeUiNode node, out string appearance)
+    {
+        appearance = "";
+        if (!node.Style.TryGetValue("appearance", out var value) || string.IsNullOrWhiteSpace(value))
+            return false;
+        appearance = value.Trim().ToLowerInvariant();
+        return appearance is "auto" or "none";
+    }
+
     private static void AddPixels(Dictionary<string, string> styles, string property, float value, float defaultValue)
     {
         if (styles.ContainsKey(property) || float.IsNaN(value) || float.IsInfinity(value)) return;
         if (!float.IsNaN(defaultValue) && value.Equals(defaultValue)) return;
         styles[property] = value.ToString("0.###", CultureInfo.InvariantCulture) + "px";
     }
+
+    private static IReadOnlyList<KeyValuePair<string, string>> CompactStyles(IReadOnlyDictionary<string, string> styles)
+    {
+        var result = new Dictionary<string, string>(styles, StringComparer.Ordinal);
+        foreach (var shorthand in ShorthandLonghands)
+        {
+            if (!result.TryGetValue(shorthand.Key, out var shorthandValue)) continue;
+            foreach (var longhand in shorthand.Value)
+            {
+                if (!result.TryGetValue(longhand, out var longhandValue)) continue;
+                if (string.Equals(longhandValue, shorthandValue, StringComparison.Ordinal) ||
+                    IsCoveredByShorthand(shorthand.Key, shorthandValue, longhand, longhandValue))
+                    result.Remove(longhand);
+            }
+        }
+
+        return result.OrderBy(static pair => pair.Key, StringComparer.Ordinal).ToArray();
+    }
+
+    private static bool IsCoveredByShorthand(string shorthand, string shorthandValue, string longhand, string longhandValue)
+    {
+        if (shorthand is "padding" or "margin" && longhand.StartsWith(shorthand + "-", StringComparison.Ordinal))
+            return string.Equals(longhandValue, shorthandValue, StringComparison.Ordinal);
+        if (shorthand == "background" && longhand == "background-color")
+            return string.Equals(longhandValue, shorthandValue, StringComparison.Ordinal);
+        if (shorthand == "border" && longhand.StartsWith("border-", StringComparison.Ordinal))
+            return shorthandValue.Contains(longhandValue, StringComparison.Ordinal);
+        return false;
+    }
+
+    private static readonly Dictionary<string, string[]> ShorthandLonghands = new(StringComparer.Ordinal)
+    {
+        ["padding"] = ["padding-top", "padding-right", "padding-bottom", "padding-left"],
+        ["margin"] = ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+        ["background"] = ["background-color"],
+        ["border"] =
+        [
+            "border-width", "border-style", "border-color",
+            "border-top", "border-right", "border-bottom", "border-left",
+            "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+            "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+            "border-top-color", "border-right-color", "border-bottom-color", "border-left-color"
+        ],
+        ["border-radius"] =
+        [
+            "border-top-left-radius", "border-top-right-radius",
+            "border-bottom-right-radius", "border-bottom-left-radius"
+        ]
+    };
 
     private static string BuildCss(HtmlExportOptions options, GeneratedStyleSheet styles)
     {
@@ -446,20 +545,31 @@ public static class HtmlExporter
         private readonly Dictionary<string, string> _classesBySignature = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IReadOnlyList<KeyValuePair<string, string>>> _rules = new(StringComparer.Ordinal);
 
-        public string GetClass(IReadOnlyDictionary<string, string> styles)
+        public string? AddRule(IReadOnlyList<string> classes, IReadOnlyList<KeyValuePair<string, string>> styles)
         {
-            var declarations = styles
-                .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
-                .ToArray();
-            var signature = string.Join("\u001f", declarations.Select(static pair => pair.Key + "\u001e" + pair.Value));
+            var selector = classes.FirstOrDefault(static name =>
+                !string.Equals(name, "square-root", StringComparison.Ordinal) &&
+                !name.StartsWith("sq-style-", StringComparison.Ordinal));
+            if (selector != null)
+            {
+                MergeRule("." + selector, styles);
+                return null;
+            }
+
+            return GetClass(styles);
+        }
+
+        public string GetClass(IReadOnlyList<KeyValuePair<string, string>> styles)
+        {
+            var signature = string.Join("\u001f", styles.Select(static pair => pair.Key + "\u001e" + pair.Value));
             if (_classesBySignature.TryGetValue(signature, out var existing)) return existing;
 
             var baseName = "sq-style-" + StableHash(signature);
             var className = baseName;
             var suffix = 1;
-            while (_rules.ContainsKey(className)) className = baseName + "-" + suffix++;
+            while (_rules.ContainsKey("." + className)) className = baseName + "-" + suffix++;
             _classesBySignature[signature] = className;
-            _rules[className] = declarations;
+            MergeRule("." + className, styles);
             return className;
         }
 
@@ -469,7 +579,7 @@ public static class HtmlExporter
             var css = new StringBuilder();
             foreach (var rule in _rules.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
-                css.Append('.').Append(rule.Key).Append('{');
+                css.Append(rule.Key).Append('{');
                 foreach (var declaration in rule.Value)
                 {
                     css.Append(EncodeCssIdentifier(declaration.Key)).Append(':')
@@ -478,6 +588,19 @@ public static class HtmlExporter
                 css.Append('}');
             }
             return css.ToString();
+        }
+
+        private void MergeRule(string selector, IReadOnlyList<KeyValuePair<string, string>> styles)
+        {
+            if (_rules.TryGetValue(selector, out var existing))
+            {
+                var merged = existing.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+                foreach (var pair in styles) merged[pair.Key] = pair.Value;
+                _rules[selector] = merged.OrderBy(static pair => pair.Key, StringComparer.Ordinal).ToArray();
+                return;
+            }
+
+            _rules[selector] = styles;
         }
 
         private static string StableHash(string value)

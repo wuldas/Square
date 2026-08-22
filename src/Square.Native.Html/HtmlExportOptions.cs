@@ -23,4 +23,7 @@ public sealed class HtmlExportOptions
 
     /// <summary>附加到生成 stylesheet 的可信 CSS 文本。调用方负责内容来源安全。</summary>
     public string? AdditionalCss { get; set; }
+
+    /// <summary>是否输出供交互宿主使用的元素标识和事件元数据。</summary>
+    public bool EnableInteractions { get; set; }
 }

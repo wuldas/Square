@@ -31,12 +31,14 @@ public sealed class HtmlExporterTests
         Assert.Contains("<!doctype html>", result.Html);
         Assert.Contains("<title>Export &lt;test&gt;</title>", result.Html);
         Assert.Contains("id=\"root\"", result.Html);
-        Assert.Contains("class=\"page square-root sq-style-", result.Html);
-        Assert.Contains("display:flex;gap:12px;", result.Css);
+        Assert.Contains("class=\"page square-root\"", result.Html);
+        Assert.Contains(".page{display:flex;gap:12px;}", result.Css);
         Assert.Contains("<style data-square-css=\"true\">", result.Html);
         Assert.DoesNotContain("style=\"", result.Html);
+        Assert.DoesNotContain("sq-style-", result.Html);
         Assert.Contains("Hello &lt;Square&gt;", result.Html);
         Assert.Contains("<button disabled>Save</button>", result.Html);
+        Assert.Contains("appearance:auto", result.Css);
         Assert.Contains("type=\"password\"", result.Html);
         Assert.Contains("value=\"a&amp;b\"", result.Html);
         Assert.Contains("<textarea placeholder=\"Notes\">Line &lt;one&gt;</textarea>", result.Html);
@@ -45,6 +47,46 @@ public sealed class HtmlExporterTests
         Assert.Contains("<option value=\"Pro\" selected>Pro</option>", result.Html);
         Assert.DoesNotContain("<script", result.Html, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ExportKeepsOriginalClassSelectorsInsteadOfHashingEveryComputedStyle()
+    {
+        var root = new View();
+        root.ClassList.Add("card");
+        root.Style.Set("border", "1px solid #e2e8f0");
+        root.Style.Set("background", "#ffffff");
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false
+        });
+
+        Assert.Contains("class=\"card", result.Html);
+        Assert.DoesNotContain("sq-style-", result.Html);
+        Assert.Contains(".card{background:#ffffff;border:1px solid #e2e8f0;}", result.Css);
+        Assert.DoesNotContain("border-bottom-color", result.Css);
+        Assert.DoesNotContain("background-color", result.Css);
+    }
+
+    [Fact]
+    public void ExportUsesGeneratedClassOnlyForInlineStylesWithoutASharedClass()
+    {
+        var root = new View();
+        var unique = new View();
+        unique.Style.Set("padding", "8px");
+        root.Children.Add(unique);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false
+        });
+
+        Assert.Contains("class=\"sq-style-", result.Html);
+        Assert.Contains("padding:8px;", result.Css);
+        Assert.DoesNotContain("padding-left", result.Css);
     }
 
     [Fact]
@@ -173,6 +215,57 @@ public sealed class HtmlExporterTests
         Assert.Equal(1, component.BuildCount);
         Assert.Equal(first.Html, second.Html);
         Assert.Contains("data-square-component=", first.Html);
+    }
+
+    [Fact]
+    public void ExportAppliesAppearanceToNativeFormWidgets()
+    {
+        var root = new View();
+        var autoButton = new Button("Save");
+        var noneButton = new Button("Plain");
+        noneButton.Style.Set("appearance", "none");
+        noneButton.Style.Set("background", "#175cd3");
+        var checkBox = new CheckBox { TextContent = "Remember" };
+        var noneCheck = new CheckBox { TextContent = "Custom" };
+        noneCheck.Style.Set("appearance", "none");
+        root.Children.Add(autoButton);
+        root.Children.Add(noneButton);
+        root.Children.Add(checkBox);
+        root.Children.Add(noneCheck);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false
+        });
+
+        Assert.Contains("button,input,select,textarea{appearance:auto;}", result.Css);
+        Assert.DoesNotContain("label{appearance:auto;}", result.Css);
+        Assert.DoesNotContain(".sq-style-", result.Html.Split("<button", 2)[1].Split("</button>", 2)[0]);
+        Assert.Contains("appearance:none", result.Css);
+        Assert.Contains("background:#175cd3", result.Css);
+        Assert.Contains("<label", result.Html);
+        Assert.Contains("<input type=\"checkbox\"", result.Html);
+        Assert.Contains("type=\"checkbox\" class=\"sq-style-", result.Html);
+        Assert.DoesNotContain("label{appearance:none;}", result.Css);
+        Assert.DoesNotContain("input{appearance:none;}", result.Css);
+    }
+
+    [Fact]
+    public void ExportCanIncludeInteractionMetadataAndBodyFragment()
+    {
+        var button = new Button("Save") { Id = "save" };
+        button.AddEventListener("click", () => { });
+
+        var result = HtmlExporter.Export(button, new HtmlExportOptions
+        {
+            EnableInteractions = true
+        });
+
+        Assert.Contains($"data-square-id=\"{button.DebugId}\"", result.Html);
+        Assert.Contains("data-square-events=\"click\"", result.Html);
+        Assert.Contains("id=\"save\"", result.BodyHtml);
+        Assert.DoesNotContain("<!doctype html>", result.BodyHtml);
+        Assert.DoesNotContain("<script", result.Html, StringComparison.OrdinalIgnoreCase);
     }
 
     private static int CountOccurrences(string value, string needle)
