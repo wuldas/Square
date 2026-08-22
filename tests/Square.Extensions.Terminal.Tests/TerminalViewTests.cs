@@ -44,8 +44,8 @@ public sealed class TerminalViewTests
         view.Feed("hello world");
 
         view.HandlePointerDown(new Point(6, 8));
-        view.HandlePointerMove(new Point(50, 8));
-        view.HandlePointerUp(new Point(50, 8));
+        view.HandlePointerMove(new Point(120, 8));
+        view.HandlePointerUp(new Point(120, 8));
 
         Assert.True(view.SelectionLength > 0);
         Assert.StartsWith("hello", view.SelectedText);
