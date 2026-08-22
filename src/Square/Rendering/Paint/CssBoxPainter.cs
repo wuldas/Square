@@ -20,7 +20,7 @@ internal static class CssBoxPainter
 
     public static void PaintBeforeContent(IRenderContext context, Element element)
     {
-        if (element is IPopupElement) return;
+        if (element is IPopupElement { IsLayoutOverlay: true }) return;
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
         {
             context.PushClip(Rect.Empty);
@@ -54,7 +54,7 @@ internal static class CssBoxPainter
 
     public static void PaintAfterContent(IRenderContext context, Element element)
     {
-        if (element is IPopupElement) return;
+        if (element is IPopupElement { IsLayoutOverlay: true }) return;
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
         {
             context.PopClip();
@@ -69,7 +69,7 @@ internal static class CssBoxPainter
 
     public static void PaintAfterChildren(IRenderContext context, Element element)
     {
-        if (element is IPopupElement) return;
+        if (element is IPopupElement { IsLayoutOverlay: true }) return;
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
             return;
         PaintOutline(context, element, element.Style.GetAll());
@@ -388,41 +388,7 @@ internal static class CssBoxPainter
         var text = value.Trim();
         if (string.Equals(text, "currentcolor", StringComparison.OrdinalIgnoreCase))
             return TryParseColor(element.Style.Get("color"), element, out color);
-        if (Color.TryParse(text, out color)) return true;
-
-        var rgba = text.StartsWith("rgba(", StringComparison.OrdinalIgnoreCase) && text.EndsWith(')');
-        var rgb = text.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase) && text.EndsWith(')');
-        if (!rgba && !rgb) return false;
-        var parts = text[(rgba ? 5 : 4)..^1].Split(',', StringSplitOptions.TrimEntries);
-        if (parts.Length != (rgba ? 4 : 3) || !TryParseByte(parts[0], out var red) ||
-            !TryParseByte(parts[1], out var green) || !TryParseByte(parts[2], out var blue)) return false;
-        var alpha = (byte)255;
-        if (rgba && !TryParseAlpha(parts[3], out alpha)) return false;
-        color = Color.FromRgba(red, green, blue, alpha);
-        return true;
-    }
-
-    private static bool TryParseByte(string value, out byte result)
-    {
-        result = 0;
-        if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
-            !float.IsFinite(parsed) || parsed is < 0 or > 255) return false;
-        result = (byte)MathF.Round(parsed);
-        return true;
-    }
-
-    private static bool TryParseAlpha(string value, out byte result)
-    {
-        result = 0;
-        var text = value.Trim();
-        var percent = text.EndsWith('%');
-        if (percent) text = text[..^1];
-        if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) || !float.IsFinite(parsed))
-            return false;
-        parsed = percent ? parsed / 100f : parsed;
-        if (parsed is < 0 or > 1) return false;
-        result = (byte)MathF.Round(parsed * 255);
-        return true;
+        return Color.TryParse(text, out color);
     }
 
     private static List<string> Tokenize(string? value)

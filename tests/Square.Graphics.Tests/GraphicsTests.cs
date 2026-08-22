@@ -38,6 +38,16 @@ public class ColorTests
     }
 
     [Fact]
+    public void ParseRgba()
+    {
+        Assert.True(Color.TryParse("rgba(16, 16, 16, 0.3)", out var color));
+        Assert.Equal(16, color.R);
+        Assert.Equal(16, color.G);
+        Assert.Equal(16, color.B);
+        Assert.Equal(76, color.A);
+    }
+
+    [Fact]
     public void Equality()
     {
         Assert.Equal(Color.Red, Color.FromRgb(255, 0, 0));

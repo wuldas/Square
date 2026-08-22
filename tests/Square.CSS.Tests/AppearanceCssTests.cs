@@ -100,4 +100,38 @@ public sealed class AppearanceCssTests
         Assert.Equal(0x22, corner[1]);
         Assert.Equal(0x33, corner[0]);
     }
+
+    [Fact]
+    public void AppearanceAutoPaintsSelectFieldChromeThroughCssBox()
+    {
+        var engine = new CssEngine();
+        var select = new Select { Geometry = new Rect(2, 2, 80, 28) };
+        engine.ApplyStyles(select);
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(90, 36)
+        });
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(select);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var interior = bitmap.GetPixel(20, 16);
+        Assert.True(interior[2] > 200 && interior[1] > 200 && interior[0] > 200,
+            "Select appearance:auto should paint Chrome Field chrome through CssBoxPainter");
+    }
+
+    [Fact]
+    public void DisabledButtonUsesUserAgentTextColor()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save") { IsDisabled = true, Geometry = new Rect(2, 2, 80, 28) };
+        engine.ApplyStyles(button);
+
+        Assert.Equal("rgba(16, 16, 16, 0.3)", button.Style.Get("color"));
+        Assert.True(Color.TryParse("rgba(16, 16, 16, 0.3)", out var expected));
+        Assert.Equal(expected, ControlDrawing.GetStyledColor(button, "color", Color.White));
+    }
 }

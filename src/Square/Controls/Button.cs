@@ -50,9 +50,10 @@ public class Button : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        var foreground = IsEnabled
-            ? ControlDrawing.GetStyledColor(this, "color", Foreground)
-            : Color.FromRgb(235, 235, 235);
+        var foreground = ControlDrawing.GetStyledColor(
+            this,
+            "color",
+            IsEnabled ? Foreground : Color.FromRgb(235, 235, 235));
         var active = IsEnabled && HasState(ElementState.Active);
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
         var pressOffset = active && ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;

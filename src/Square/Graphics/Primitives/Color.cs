@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Square.Graphics;
 
 /// <summary>表示 BGRA 颜色（不透明度为 0–255）。</summary>
@@ -75,7 +77,7 @@ public readonly struct Color : IEquatable<Color>
                 color = new Color(red, green, blue, alpha);
                 return true;
             default:
-                return false;
+                return TryParseRgb(text, out color);
         }
     }
 
@@ -104,6 +106,51 @@ public readonly struct Color : IEquatable<Color>
             _ => default
         };
         return color != default || value.Equals("transparent", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseRgb(string text, out Color color)
+    {
+        color = default;
+        var rgba = text.StartsWith("rgba(", StringComparison.OrdinalIgnoreCase) && text.EndsWith(')');
+        var rgb = text.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase) && text.EndsWith(')');
+        if (!rgba && !rgb) return false;
+        var parts = text[(rgba ? 5 : 4)..^1].Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length != (rgba ? 4 : 3) ||
+            !TryParseChannel(parts[0], out var red) ||
+            !TryParseChannel(parts[1], out var green) ||
+            !TryParseChannel(parts[2], out var blue))
+            return false;
+        var alpha = (byte)255;
+        if (rgba && !TryParseAlpha(parts[3], out alpha)) return false;
+        color = FromRgba(red, green, blue, alpha);
+        return true;
+    }
+
+    private static bool TryParseChannel(string value, out byte result)
+    {
+        result = 0;
+        if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
+            !float.IsFinite(parsed) || parsed is < 0 or > 255) return false;
+        result = (byte)MathF.Round(parsed);
+        return true;
+    }
+
+    private static bool TryParseAlpha(string value, out byte result)
+    {
+        result = 0;
+        var text = value.Trim();
+        var percent = text.EndsWith('%');
+        if (percent) text = text[..^1];
+        if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
+            !float.IsFinite(parsed) || parsed < 0) return false;
+        if (percent)
+        {
+            if (parsed > 100) return false;
+            parsed /= 100f;
+        }
+        else if (parsed > 1) return false;
+        result = (byte)Math.Clamp(MathF.Round(parsed * 255), 0, 255);
+        return true;
     }
 
     private static bool TryHexByte(ReadOnlySpan<char> value, int index, out byte result)
