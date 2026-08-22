@@ -219,7 +219,7 @@ View {
 | `:nth-child(n)` | 位置 | ✅ 支持整数、`odd`、`even` |
 | `:not(...)` | 否定 | ⚠️ 仅支持简单参数（类型、类、ID、`*`） |
 
-`Button` 即使没有组件 CSS，也提供默认交互反馈：悬停时背景轻微提亮；按下时背景压暗、显示 1px 内描边，并将文字下移 1px。该反馈不改变布局尺寸。显式 `Button:hover` / `Button:active` 背景样式会先参与级联，控件再基于最终颜色生成轻微明暗反馈。
+`Button`、`Input`、`TextArea`、`Select`、`CheckBox` 和 `Radio` 由 UA 样式默认 `appearance: auto`，对齐 Chrome `html.css` 浅色表单控件子集（`ButtonFace`/`Field`、`2px outset`/`inset`、`:active` 切 inset、`:disabled` 半透明灰）。Software / Skia / Vulkan 盒绘制消费计算样式。Chrome UA 没有 `button:hover` 颜色规则。`appearance: none` 不自动清掉 UA 边框/背景，作者需覆盖。
 
 ```css
 Button:hover {

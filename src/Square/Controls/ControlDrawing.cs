@@ -202,8 +202,16 @@ internal static class ControlDrawing
         return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) ? result : 0;
     }
 
+    internal static bool UsesWidgetAppearance(Element element)
+    {
+        var value = (element.Style.Get("appearance") ?? "none").Trim();
+        return value.Equals("auto", StringComparison.OrdinalIgnoreCase) &&
+               element is Button or CheckBox or Radio or Select or TextEditorBase;
+    }
+
     internal static void DrawInputFrame(IRenderContext context, UIElement element)
     {
+        if (UsesWidgetAppearance(element)) return;
         var background = element.IsEnabled
             ? GetStyledColor(element, "background", Color.White)
             : Color.FromRgb(240, 240, 240);
@@ -312,7 +320,8 @@ internal static class ControlDrawing
             if (!string.IsNullOrWhiteSpace(backgroundColor)) value = backgroundColor;
         }
         if (string.IsNullOrWhiteSpace(value)) return fallback;
-        return Color.TryParse(value, out var color) ? color : fallback;
+        if (Color.TryParse(value, out var color)) return color;
+        return fallback;
     }
 
     internal static Color Blend(Color from, Color to, float amount)

@@ -382,11 +382,8 @@ public sealed class AppWindow : IRenderBackendApplication
         IsModal = IsModal
     };
 
-    internal void RegisterGlobalCssScope(Element root)
-    {
-        if (_document.StyleSheets.Count > 0)
-            CssStyleReconciler.RegisterScope(_document.GlobalCssEngine, root);
-    }
+    internal void RegisterGlobalCssScope(Element root) =>
+        CssStyleReconciler.RegisterScope(_document.GlobalCssEngine, root);
 
     private void EnsureGlobalCssCanBeLoaded()
     {

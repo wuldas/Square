@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Square.Backends;
+using Square.CSS.Engine;
 using Square.Controls;
 using Square.Extensions.RichText;
 using Square.Graphics;
@@ -23,6 +24,13 @@ public class SoftwareRendererTests
     {
         var bmp = new Bitmap(w, h);
         return new RenderContext(bmp, 1f);
+    }
+
+    private static void Render(Element element, IRenderContext context)
+    {
+        var tree = new DisplayTree();
+        tree.BuildFrom(element);
+        tree.Render(context);
     }
 
     [Fact]
@@ -738,26 +746,91 @@ public class SoftwareRendererTests
     [Fact]
     public void ButtonHoverAndActiveStatesProvideDefaultVisualFeedback()
     {
-        static int Brightness(ReadOnlySpan<byte> pixel) => pixel[0] + pixel[1] + pixel[2];
-
         var button = new Button("Press") { Geometry = new Rect(2, 2, 100, 40) };
+        var engine = new CssEngine();
+        engine.ApplyStyles(button);
 
         var normalContext = CreateContext(110, 50);
-        button.Paint(normalContext);
+        Render(button, normalContext);
         var normal = normalContext.GetBitmap().GetPixel(8, 8);
 
         button.SetState(ElementState.Hover, true);
+        engine.ApplyStyles(button);
         var hoverContext = CreateContext(110, 50);
-        button.Paint(hoverContext);
+        Render(button, hoverContext);
         var hover = hoverContext.GetBitmap().GetPixel(8, 8);
 
         button.SetState(ElementState.Active, true);
+        engine.ApplyStyles(button);
         var activeContext = CreateContext(110, 50);
-        button.Paint(activeContext);
+        Render(button, activeContext);
         var active = activeContext.GetBitmap().GetPixel(8, 8);
 
-        Assert.True(Brightness(hover) > Brightness(normal));
-        Assert.True(Brightness(active) < Brightness(normal));
+        Assert.Equal(normal[0], hover[0]);
+        Assert.Equal(normal[1], hover[1]);
+        Assert.Equal(normal[2], hover[2]);
+        Assert.Equal(normal[3], hover[3]);
+        Assert.True(interiorIsButtonFace(active),
+            "button:active keeps ButtonFace fill; Chrome UA only changes border-style to inset");
+
+        static bool interiorIsButtonFace(ReadOnlySpan<byte> pixel) =>
+            pixel[2] > 200 && pixel[1] > 200 && pixel[0] > 200 && pixel[3] == 255;
+    }
+
+    [Fact]
+    public void AppearanceNoneDisablesButtonNativeHoverChrome()
+    {
+        static int Brightness(ReadOnlySpan<byte> pixel) => pixel[0] + pixel[1] + pixel[2];
+
+        var button = new Button("Press") { Geometry = new Rect(2, 2, 100, 40) };
+        button.Style.Set("appearance", "none");
+        button.Style.Set("background", "#0078d4");
+        var engine = new CssEngine();
+        engine.ApplyStyles(button);
+
+        var normalContext = CreateContext(110, 50);
+        Render(button, normalContext);
+        var normal = normalContext.GetBitmap().GetPixel(8, 8);
+
+        button.SetState(ElementState.Hover, true);
+        engine.ApplyStyles(button);
+        var hoverContext = CreateContext(110, 50);
+        Render(button, hoverContext);
+        var hover = hoverContext.GetBitmap().GetPixel(8, 8);
+
+        Assert.Equal(normal[0], hover[0]);
+        Assert.Equal(normal[1], hover[1]);
+        Assert.Equal(normal[2], hover[2]);
+        Assert.Equal(normal[3], hover[3]);
+        Assert.Equal(Brightness(normal), Brightness(hover));
+    }
+
+    [Fact]
+    public void AppearanceNoneDisablesInputNativeFrame()
+    {
+        static (byte B, byte G, byte R, byte A) Sample(Input input)
+        {
+            var context = CreateContext(90, 32);
+            context.Clear(Color.FromRgb(255, 0, 0));
+            Render(input, context);
+            var pixel = context.GetBitmap().GetPixel(8, 8);
+            return (pixel[0], pixel[1], pixel[2], pixel[3]);
+        }
+
+        var autoInput = new Input { Geometry = new Rect(4, 4, 80, 24) };
+        new CssEngine().ApplyStyles(autoInput);
+        var native = Sample(autoInput);
+        Assert.True(native.R > 200 && native.G > 200 && native.B > 200, "appearance:auto should paint the native white input chrome");
+
+        var noneInput = new Input { Geometry = new Rect(4, 4, 80, 24) };
+        noneInput.Style.Set("appearance", "none");
+        noneInput.Style.Set("background", "transparent");
+        noneInput.Style.Set("border", "none");
+        new CssEngine().ApplyStyles(noneInput);
+        var unstyled = Sample(noneInput);
+        Assert.Equal(255, unstyled.R);
+        Assert.Equal(0, unstyled.G);
+        Assert.Equal(0, unstyled.B);
     }
 
     [Fact]

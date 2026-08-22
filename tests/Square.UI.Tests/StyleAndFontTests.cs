@@ -452,6 +452,30 @@ public class StyleAndFontTests
     }
 
     [Fact]
+    public void AppearanceAutoIsAcceptedAndDefaultsOnFormControls()
+    {
+        Assert.True(CssPropertyRegistry.IsValid("appearance", "auto"));
+        Assert.True(CssPropertyRegistry.IsValid("appearance", "none"));
+        Assert.False(CssPropertyRegistry.IsValid("appearance", "button"));
+        Assert.Equal("none", CssPropertyRegistry.GetInitialValue("appearance"));
+
+        var button = new Button("Press");
+        button.Style.Set("appearance", "auto");
+        Assert.Equal("auto", button.Style.Get("appearance"));
+
+        button.Style.Set("appearance", "none");
+        Assert.Equal("none", button.Style.Get("appearance"));
+
+        button.Style.Set("appearance", "auto");
+        Assert.Equal("auto", button.Style.Get("appearance"));
+
+        var input = new Input();
+        input.Style.Set("appearance", "auto");
+        Assert.Equal("auto", input.Style.Get("appearance"));
+        Assert.Null(new View().Style.Get("appearance"));
+    }
+
+    [Fact]
     public void QuerySelectorFindsByIdClassAndDescendant()
     {
         var root = new View { Id = "root" };

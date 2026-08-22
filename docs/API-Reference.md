@@ -1074,7 +1074,7 @@ public class Button : UIElement
 }
 ```
 
-默认交互绘制：`:hover` 时背景轻微提亮；`:active` 时背景压暗、增加 1px 内描边，并将文字下移 1px。禁用按钮不应用这些反馈。组件 CSS 中的 `background` / `background-color` 和 `Button:hover` / `Button:active` 仍可覆盖基础颜色。
+默认 UA `appearance: auto`，对齐 Chrome `html.css` 浅色表单控件：`ButtonFace` 背景、`2px outset ButtonBorder`；`:active` 把边框改成 `inset`；`:disabled` 用半透明灰。Chrome UA 没有 `button:hover` 颜色规则。`appearance: none` 不自动清掉 UA 边框/背景。组件 CSS 仍可覆盖这些规则。
 
 ### CheckBox
 

@@ -1,6 +1,8 @@
 using System.Numerics;
 using System.Text;
 using SkiaSharp;
+using Square.CSS.Engine;
+using Square.CSS.Tokenizer;
 using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
@@ -314,6 +316,51 @@ public sealed class SkiaBackendTests
         }
 
         Assert.True(secondLineHasInk);
+    }
+
+    [Fact]
+    public void AppearanceAutoPaintsRoundedChromeThroughCssBox()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+        engine.ApplyStyles(button);
+
+        using var context = CreateContext(90, 36);
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(button);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var corner = bitmap.GetPixel(2, 2);
+        var interior = bitmap.GetPixel(20, 16);
+
+        Assert.True(interior[2] > 200 && interior[1] > 200 && interior[0] > 200,
+            "appearance:auto should fill the button interior from Chrome ButtonFace on Skia");
+        Assert.True(corner[2] > 180 && corner[1] > 180 && corner[0] > 180,
+            "Chrome outset button chrome should cover the corner instead of leaving a rounded cutout");
+    }
+
+    [Fact]
+    public void AppearanceNoneKeepsAuthorBoxWithoutWidgetRadius()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Button { appearance: none; background: #112233; border-radius: 0; border: none; }").Tokenize()).Parse());
+        var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+        engine.ApplyStyles(button);
+
+        using var context = CreateContext(90, 36);
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(button);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var corner = bitmap.GetPixel(2, 2);
+        Assert.Equal(0x11, corner[2]);
+        Assert.Equal(0x22, corner[1]);
+        Assert.Equal(0x33, corner[0]);
     }
 
     private static IRenderContext CreateContext(int width, int height)

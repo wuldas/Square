@@ -71,6 +71,8 @@ internal static class CssPropertyRegistry
         foreach (var corner in new[] { "top-left", "top-right", "bottom-right", "bottom-left" })
             Add($"border-{corner}-radius", "0", false, CssBorderRadiusParser.IsCornerValid);
         Add("bottom", "auto", false, IsInset);
+        Add("box-sizing", "content-box", false, value => IsKeyword(value, "content-box", "border-box"));
+        Add("appearance", "none", false, value => IsKeyword(value, "none", "auto"));
         Add("caption-side", "top", true, value => IsKeyword(value, "top", "bottom"));
         Add("clear", "none", false, value => IsKeyword(value, "none", "left", "right", "both"));
         Add("clip", "auto", false, value => IsKeyword(value, "auto") || IsFunction(value, "rect"));
@@ -125,7 +127,7 @@ internal static class CssPropertyRegistry
         Add("quotes", "none", true, Any);
         Add("right", "auto", false, IsInset);
         Add("table-layout", "auto", false, value => IsKeyword(value, "auto", "fixed"));
-        Add("text-align", "left", true, value => IsKeyword(value, "left", "right", "center", "justify"));
+        Add("text-align", "left", true, value => IsKeyword(value, "left", "right", "center", "justify", "start", "end"));
         Add("text-decoration", "none", false, IsTextDecoration);
         Add("text-decoration-line", "none", false, IsTextDecoration);
         Add("text-indent", "0", true, value => IsLength(value, allowPercent: true));

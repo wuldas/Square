@@ -48,7 +48,10 @@ public readonly struct Color : IEquatable<Color>
         color = default;
         if (string.IsNullOrWhiteSpace(value)) return false;
 
-        var span = value.AsSpan().Trim();
+        var text = value.Trim();
+        if (TryParseNamed(text, out color)) return true;
+
+        var span = text.AsSpan();
         if (!span.IsEmpty && span[0] == '#') span = span[1..];
         switch (span.Length)
         {
@@ -74,6 +77,33 @@ public readonly struct Color : IEquatable<Color>
             default:
                 return false;
         }
+    }
+
+    private static bool TryParseNamed(string value, out Color color)
+    {
+        color = value.ToLowerInvariant() switch
+        {
+            "transparent" => Transparent,
+            "black" => Black,
+            "white" => White,
+            "red" => Red,
+            "green" => Green,
+            "blue" => Blue,
+            // Chrome CSS Color 4 system colors, light scheme (Win11 default).
+            "buttonface" => FromRgb(240, 240, 240),
+            "buttontext" => FromRgb(0, 0, 0),
+            "buttonborder" => FromRgb(118, 118, 118),
+            "field" => FromRgb(255, 255, 255),
+            "fieldtext" => FromRgb(0, 0, 0),
+            "canvas" => FromRgb(255, 255, 255),
+            "canvastext" => FromRgb(0, 0, 0),
+            "graytext" => FromRgb(109, 109, 109),
+            "highlight" => FromRgb(0, 120, 215),
+            "highlighttext" => White,
+            "threedface" => FromRgb(240, 240, 240),
+            _ => default
+        };
+        return color != default || value.Equals("transparent", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryHexByte(ReadOnlySpan<char> value, int index, out byte result)

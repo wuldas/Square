@@ -490,7 +490,7 @@ Button {
 | 属性 | `[IsDisabled]` `[variant=primary]` `[tags~=primary]` `[lang|=en]` `[code^=pre]` `[code$=suffix]` `[code*=middle]` | ✅ |
 | 伪类 | `:hover` `:focus` `:active` `:disabled` `:checked` | ✅ |
 
-`Button` 内置基础交互反馈：悬停提亮，按下压暗并让文字下移 1px。可以继续使用 `Button:hover` / `Button:active` 覆盖背景色；默认反馈会基于覆盖后的颜色绘制。
+`Button`、`Input`、`TextArea`、`Select`、`CheckBox` 和 `Radio` 由 UA 样式默认 `appearance: auto`，对齐 Chrome `html.css` 浅色表单控件。Software/Skia/Vulkan 盒绘制消费计算样式；控件 `Paint` 只画内容。`appearance: none` 不自动清掉 UA 边框/背景。可以继续使用作者 `Button:hover` / `Button:active` 覆盖。
 
 详见 [`CSS-Spec.md`](CSS-Spec.md)。
 

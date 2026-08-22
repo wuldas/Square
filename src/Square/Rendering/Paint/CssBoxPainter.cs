@@ -11,7 +11,9 @@ internal static class CssBoxPainter
     internal enum BorderStyle
     {
         None,
-        Solid
+        Solid,
+        Inset,
+        Outset
     }
 
     internal readonly record struct BorderEdge(float Width, Color Color, BorderStyle Style);
@@ -97,16 +99,31 @@ internal static class CssBoxPainter
             return;
 
         if (top > 0)
-            context.FillRect(new Rect(box.X, box.Y, box.Width, top), new SolidColorBrush(edges[0].Color));
+            PaintBorderSide(context, new Rect(box.X, box.Y, box.Width, top), edges[0], highlight: true);
         if (bottom > 0)
-            context.FillRect(new Rect(box.X, box.Bottom - bottom, box.Width, bottom), new SolidColorBrush(edges[2].Color));
+            PaintBorderSide(context, new Rect(box.X, box.Bottom - bottom, box.Width, bottom), edges[2], highlight: false);
 
         var middleTop = box.Y + top;
         var middleHeight = Math.Max(0, box.Height - top - bottom);
         if (left > 0 && middleHeight > 0)
-            context.FillRect(new Rect(box.X, middleTop, left, middleHeight), new SolidColorBrush(edges[3].Color));
+            PaintBorderSide(context, new Rect(box.X, middleTop, left, middleHeight), edges[3], highlight: true);
         if (right > 0 && middleHeight > 0)
-            context.FillRect(new Rect(box.Right - right, middleTop, right, middleHeight), new SolidColorBrush(edges[1].Color));
+            PaintBorderSide(context, new Rect(box.Right - right, middleTop, right, middleHeight), edges[1], highlight: false);
+    }
+
+    private static void PaintBorderSide(IRenderContext context, Rect rect, BorderEdge edge, bool highlight)
+    {
+        context.FillRect(rect, new SolidColorBrush(Resolve3dBorderColor(edge, highlight)));
+    }
+
+    private static Color Resolve3dBorderColor(BorderEdge edge, bool highlight)
+    {
+        if (edge.Style is not (BorderStyle.Inset or BorderStyle.Outset))
+            return edge.Color;
+        var light = ControlDrawing.Blend(edge.Color, Color.White, 0.55f);
+        var dark = ControlDrawing.Blend(edge.Color, Color.Black, 0.35f);
+        var raised = edge.Style == BorderStyle.Outset;
+        return (raised == highlight) ? light : dark;
     }
 
     private static bool PaintRoundedBorder(
@@ -345,6 +362,16 @@ internal static class CssBoxPainter
             style = BorderStyle.Solid;
             return true;
         }
+        if (string.Equals(value?.Trim(), "inset", StringComparison.OrdinalIgnoreCase))
+        {
+            style = BorderStyle.Inset;
+            return true;
+        }
+        if (string.Equals(value?.Trim(), "outset", StringComparison.OrdinalIgnoreCase))
+        {
+            style = BorderStyle.Outset;
+            return true;
+        }
         if (string.Equals(value?.Trim(), "none", StringComparison.OrdinalIgnoreCase))
         {
             style = BorderStyle.None;
@@ -362,12 +389,6 @@ internal static class CssBoxPainter
         if (string.Equals(text, "currentcolor", StringComparison.OrdinalIgnoreCase))
             return TryParseColor(element.Style.Get("color"), element, out color);
         if (Color.TryParse(text, out color)) return true;
-        if (string.Equals(text, "transparent", StringComparison.OrdinalIgnoreCase)) { color = Color.Transparent; return true; }
-        if (string.Equals(text, "black", StringComparison.OrdinalIgnoreCase)) { color = Color.Black; return true; }
-        if (string.Equals(text, "white", StringComparison.OrdinalIgnoreCase)) { color = Color.White; return true; }
-        if (string.Equals(text, "red", StringComparison.OrdinalIgnoreCase)) { color = Color.Red; return true; }
-        if (string.Equals(text, "green", StringComparison.OrdinalIgnoreCase)) { color = Color.Green; return true; }
-        if (string.Equals(text, "blue", StringComparison.OrdinalIgnoreCase)) { color = Color.Blue; return true; }
 
         var rgba = text.StartsWith("rgba(", StringComparison.OrdinalIgnoreCase) && text.EndsWith(')');
         var rgb = text.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase) && text.EndsWith(')');
@@ -425,7 +446,7 @@ internal static class CssBoxPainter
     }
 
     private static float GetPaintWidth(BorderEdge edge, float maximum) =>
-        edge.Style == BorderStyle.Solid && edge.Color.A > 0
+        edge.Style != BorderStyle.None && edge.Color.A > 0
             ? Math.Clamp(edge.Width, 0, Math.Max(0, maximum))
             : 0;
 

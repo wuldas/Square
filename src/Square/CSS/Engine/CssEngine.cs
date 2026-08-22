@@ -32,6 +32,7 @@ public sealed class CssEngine
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mediaType);
         MediaType = mediaType.Trim().ToLowerInvariant();
+        LoadStyleSheet(CssUserAgentStyles.Sheet);
     }
 
     /// <summary>加载样式表规则与关键帧。</summary>

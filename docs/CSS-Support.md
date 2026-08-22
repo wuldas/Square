@@ -207,7 +207,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 
 | # | MDN 模块 | MDN 核心功能 | Square 当前支持 |
 |---:|---|---|---|
-| 4 | [CSS Basic User Interface](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Basic_user_interface) | appearance、cursor、outline、resize、user-select、caret | 🟡 **部分支持**：🟢 cursor 子集、`user-select: text/none`、`caret-color`；⚪ 无 appearance、outline、resize。 |
+| 4 | [CSS Basic User Interface](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Basic_user_interface) | appearance、cursor、outline、resize、user-select、caret | 🟡 **部分支持**：🟢 `appearance: auto/none`（UA 对齐 Chrome `html.css` 浅色表单控件子集，Software/Skia/Vulkan 盒绘制消费计算样式）、cursor 子集、`user-select: text/none`、`caret-color`；⚪ 无 outline、resize。 |
 | 27 | [CSS 片段](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Fragmentation) | page/column/region 分段和 break 控制 | ⚪ **未支持**。 |
 | 31 | [Images](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Images) | CSS 渐变、replaced element、object-fit、sprite | 🟡 **框架 Image 控件部分支持**：内在尺寸和等比缩放；⚪ 无 CSS gradient、object-fit/object-position 和 CSS image values。 |
 | 55 | [CSS 影子部件](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Shadow_parts) | Shadow DOM `::part()`、exportparts 和受控主题 | ⚪ **未支持 Shadow DOM/parts**。 |
@@ -473,10 +473,11 @@ Button {
 | `#RGB` | 🟢 | 支持。 |
 | `#RRGGBB` | 🟢 | 支持。 |
 | `#AARRGGBB` | 🟡 Square 格式 | 与标准 CSS `#RRGGBBAA` 不兼容。 |
-| Named colors | ⚪ 普通控件 | `red`、`blue`、`transparent` 等不会按标准 CSS 绘制。 |
-| `rgb()` / `rgba()` | ⚪ 普通控件 | box-shadow 有独立 legacy parser。 |
+| Named colors | 🟡 子集 | `transparent`、`black`/`white`/`red`/`green`/`blue`。 |
+| `rgb()` / `rgba()` | 🟡 盒绘制 | `CssBoxPainter` 解析；box-shadow 另有 legacy parser。 |
 | hsl/hwb/lab/lch/oklab/color/color-mix | ⚪ | 未实现。 |
-| `currentColor`、system colors | ⚪ | 未实现。 |
+| `currentColor` | 🟡 盒绘制 | 边框/背景解析时回退到 `color`。 |
+| system colors | 🟡 浅色子集 | `ButtonFace`/`ButtonText`/`ButtonBorder`/`Field`/`FieldText`/`Canvas`/`CanvasText`/`GrayText`/`Highlight`/`HighlightText`/`ThreeDFace`，按 Chrome Win11 浅色默认。 |
 
 ### 4.8 字体和文本
 
@@ -507,7 +508,8 @@ Button {
 | `user-select` | 🟡 | text、none；向祖先查找。 |
 | `caret-color` | 🟡 | 文本编辑器，有限颜色值。 |
 | `selection-background(-color)`、`selection-color` | 🟡 | 文本编辑器内部属性。 |
-| `appearance`、`accent-color`、`resize` | ⚪ | 未实现。 |
+| `appearance` | 🟡 子集 | `none`（initial）、`auto`。UA 对齐 Chrome `html.css` 浅色表单控件：`Button` 为 `ButtonFace` + `2px outset ButtonBorder`，`:active` 切 `inset`，`:disabled` 用半透明灰；`Input` 为 `Field` + `2px inset #767676`；`TextArea`/`Select` 为 `Field` + `1px solid #767676`。Software/Skia/Vulkan 盒绘制消费计算样式。`none` 不自动清掉 UA 边框/背景，作者需覆盖。不支持 `button`/`checkbox` 等控件关键字、AppearanceBase、暗色 `light-dark()`。 |
+| `accent-color`、`resize` | ⚪ | 未实现。 |
 | `pointer-events`、`touch-action` | ⚪ | 未实现。 |
 
 ### 4.10 图片和 SVG

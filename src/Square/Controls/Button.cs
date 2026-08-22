@@ -17,7 +17,10 @@ public class Button : UIElement, ITextSelectable
     public Color Foreground { get => Properties.HasValue(nameof(Foreground)) ? GetProperty<Color>(nameof(Foreground)) : Color.White; set => SetProperty(nameof(Foreground), value); }
 
     /// <summary>初始化 <see cref="Button"/> 的新实例。</summary>
-    public Button() { _domText = new DomTextContent(this); }
+    public Button()
+    {
+        _domText = new DomTextContent(this);
+    }
     /// <summary>初始化 <see cref="Button"/> 的新实例并设置文本内容。</summary>
     public Button(string text) : this() { TextContent = text; }
 
@@ -47,25 +50,12 @@ public class Button : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        var background = IsEnabled
-            ? ControlDrawing.GetStyledColor(this, "background", Background)
-            : Color.FromRgb(170, 175, 180);
         var foreground = IsEnabled
             ? ControlDrawing.GetStyledColor(this, "color", Foreground)
             : Color.FromRgb(235, 235, 235);
         var active = IsEnabled && HasState(ElementState.Active);
-        var hovered = IsEnabled && HasState(ElementState.Hover);
-        if (active)
-            background = ControlDrawing.Blend(background, Color.Black, 0.18f);
-        else if (hovered)
-            background = ControlDrawing.Blend(background, Color.White, 0.10f);
-        ControlDrawing.DrawStyledBackground(ctx, this, background);
-        if (active)
-            ControlDrawing.DrawStyledBorder(ctx, this,
-                ControlDrawing.Blend(background, Color.Black, 0.28f), 1);
-
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        var pressOffset = active ? 1f : 0f;
+        var pressOffset = active && ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;
         var textPosition = new Point(
             Geometry.X + (Geometry.Width - textSize.Width) / 2f,
             Geometry.Y + (Geometry.Height - textSize.Height) / 2f + pressOffset);
@@ -118,17 +108,20 @@ public class CheckBox : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        var box = new Rect(Geometry.X, Geometry.Y + (Geometry.Height - 18) / 2f, 18, 18);
-        ctx.FillRect(box, new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-        ctx.DrawRect(box, Pen.FromColor(IsFocused ? Color.FromRgb(0, 95, 184) : Color.FromRgb(95, 100, 106)));
-        if (IsChecked)
+        if (ControlDrawing.UsesWidgetAppearance(this))
         {
-            ctx.FillRect(box.Inflate(-2, -2), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
-            ctx.DrawPath(PathGeometry.Create()
-                .MoveTo(new Point(box.X + 4, box.Y + 9))
-                .LineTo(new Point(box.X + 8, box.Y + 13))
-                .LineTo(new Point(box.X + 15, box.Y + 5)),
-                Pen.FromColor(Color.White, 2));
+            var box = new Rect(Geometry.X, Geometry.Y + (Geometry.Height - 18) / 2f, 18, 18);
+            ctx.FillRect(box, new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
+            ctx.DrawRect(box, Pen.FromColor(IsFocused ? Color.FromRgb(0, 95, 184) : Color.FromRgb(95, 100, 106)));
+            if (IsChecked)
+            {
+                ctx.FillRect(box.Inflate(-2, -2), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
+                ctx.DrawPath(PathGeometry.Create()
+                    .MoveTo(new Point(box.X + 4, box.Y + 9))
+                    .LineTo(new Point(box.X + 8, box.Y + 13))
+                    .LineTo(new Point(box.X + 15, box.Y + 5)),
+                    Pen.FromColor(Color.White, 2));
+            }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,
             new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
@@ -184,11 +177,14 @@ public class Radio : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        var center = new Point(Geometry.X + 9, Geometry.Y + Geometry.Height / 2f);
-        ctx.FillGeometry(new EllipseGeometry(center, 9, 9), new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-        ctx.DrawGeometry(new EllipseGeometry(center, 9, 9), Pen.FromColor(Color.FromRgb(95, 100, 106)));
-        if (IsChecked)
-            ctx.FillGeometry(new EllipseGeometry(center, 5, 5), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
+        if (ControlDrawing.UsesWidgetAppearance(this))
+        {
+            var center = new Point(Geometry.X + 9, Geometry.Y + Geometry.Height / 2f);
+            ctx.FillGeometry(new EllipseGeometry(center, 9, 9), new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
+            ctx.DrawGeometry(new EllipseGeometry(center, 9, 9), Pen.FromColor(Color.FromRgb(95, 100, 106)));
+            if (IsChecked)
+                ctx.FillGeometry(new EllipseGeometry(center, 5, 5), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
+        }
         ControlDrawing.DrawText(ctx, this, TextContent,
             new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
     }
