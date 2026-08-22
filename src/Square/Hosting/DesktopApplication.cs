@@ -1162,7 +1162,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             return;
         }
 
-        if (control && keyCode == 67)
+        var clipboardShortcut = !_focusedEditor.ClipboardShortcutsRequireShift || shift;
+        if (control && clipboardShortcut && keyCode == 67)
         {
             if (_focusedEditor.CanCopySelection && _focusedEditor.SelectionLength > 0)
                 _host.SetClipboardText(_focusedEditor.SelectedText);
@@ -1181,7 +1182,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 _focusedEditor.HandleKey(keyCode, shift, control);
             }
         }
-        else if (control && keyCode == 86)
+        else if (control && clipboardShortcut && keyCode == 86)
         {
             var text = _host.GetClipboardText();
             if (!string.IsNullOrEmpty(text))

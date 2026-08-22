@@ -2067,6 +2067,9 @@ public class M1IntegrationTests
         node.AddBranch(selected, () => selected, () => matched);
         node.AddDefault(() => fallback);
         node.AttachTo(root);
+
+        Assert.Same(fallback, Assert.Single(root.Children));
+
         ((IComponentLifecycle)root).OnAttached();
         Reconciler.Current.Flush();
 

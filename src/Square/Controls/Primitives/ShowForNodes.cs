@@ -943,7 +943,7 @@ public sealed class SwitchNode : IDisposable
     {
         _parent = parent;
         _index = parent.Children.Count;
-        Update();
+        UpdateCore();
     }
 
     /// <summary>重新评估分支并同步 DOM 子树。</summary>
