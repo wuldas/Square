@@ -560,11 +560,12 @@ file "$TEMP/hermes-verify-square-cdp-aot/Square.Sample.exe"
 
 ## 7. 最终 ad-hoc verification
 
-Square 当前没有 canonical test command。实施完成后应在系统 TEMP 下创建 `hermes-verify-` 前缀临时脚本，执行后删除，并将结果表述为 focused/ad-hoc verification。
+Square 的 canonical test command 是 `dotnet test Square.slnx`。下列 DevTools 构建、NativeAOT、协议 smoke test 和真实 Chrome 验证是该完整测试之外的 focused/ad-hoc verification；如使用系统 TEMP 下的 `hermes-verify-` 前缀临时脚本，执行后应删除。
 
 最低验证内容：
 
 ```bash
+dotnet test Square.slnx
 dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj
 dotnet build src/Square.DevTools/Square.DevTools.csproj -c Release
 dotnet build samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseDevTools=true

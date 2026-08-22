@@ -1,8 +1,8 @@
 # 渲染架构
 
-> Document Revision: 0.5
+> Document Revision: 0.6
 > 配套：`Architecture.md`、`Graphics.md`、`Layout.md`
-> `PushLayer` / `PopLayer` 当前实现嵌套绘制透明度乘法；`bounds` 尚不创建离屏表面，真正的 group opacity/compositing 仍为后续能力。
+> `PushLayer` / `PopLayer` 在 Software 与 Skia 后端使用 `bounds` 对应的离屏表面实现 group opacity/compositing；Software 后端会复用有界 layer buffer。其他后端可按自身能力实现同一接口语义。
 
 ---
 

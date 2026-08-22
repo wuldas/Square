@@ -212,11 +212,12 @@ public bool AllowMemoryActions { get; set; }
 
 ## 8. 验证
 
-Square 当前没有 canonical test command。完成后使用系统 TEMP 下 `hermes-verify-` 前缀临时脚本执行 focused/ad-hoc verification，脚本结束后删除。
+Square 的 canonical test command 是 `dotnet test Square.slnx`。下列内存诊断构建、NativeAOT 和真实 HTTP smoke test 是该完整测试之外的 focused/ad-hoc verification；如使用系统 TEMP 下的 `hermes-verify-` 前缀临时脚本，脚本结束后应删除。
 
 最低验证：
 
 ```bash
+dotnet test Square.slnx
 dotnet test tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj
 dotnet build src/Square.DevTools/Square.DevTools.csproj -c Release
 dotnet build samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseDevTools=true

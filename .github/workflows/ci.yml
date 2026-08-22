@@ -117,3 +117,73 @@ jobs:
           mkdir -p artifacts/screenshots
           ./artifacts/nativeaot/${{ matrix.executable }} --circle-regression --verify-circle-regression --screenshot artifacts/screenshots/macos.png
           test -s artifacts/screenshots/macos.png
+
+  tooling:
+    name: IDE tooling (Windows)
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            tooling/square-language/package-lock.json
+            tooling/vscode-square/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-tooling-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', 'Directory.Build.props', 'Directory.Build.targets', 'tools/Square.LanguageServer/*.csproj', 'tests/Square.LanguageServer.Tests/*.csproj', 'tooling/visualstudio-square/*.csproj') }}
+          restore-keys: nuget-tooling-${{ runner.os }}-
+
+      - name: Restore Language Server tests
+        run: dotnet restore tests/Square.LanguageServer.Tests/Square.LanguageServer.Tests.csproj -p:SquareTargetPlatform=Win32
+
+      - name: Test Language Server
+        run: dotnet test tests/Square.LanguageServer.Tests/Square.LanguageServer.Tests.csproj --configuration Release --no-restore -p:SquareTargetPlatform=Win32
+
+      - name: Install VS Code extension dependencies
+        working-directory: tooling/vscode-square
+        run: npm ci
+
+      - name: Prepare artifact directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force artifacts | Out-Null
+
+      - name: Package VS Code extension
+        working-directory: tooling/vscode-square
+        run: npm run package
+
+      - name: Install shared grammar test dependencies
+        working-directory: tooling/square-language
+        run: npm ci
+
+      - name: Verify shared grammar and host packages
+        working-directory: tooling/square-language
+        run: npm test
+
+      - name: Build Visual Studio extension
+        working-directory: tooling/visualstudio-square
+        run: dotnet build Square.VisualStudio.csproj --configuration Release -p:SquareTargetPlatform=Win32
+
+      - name: Build Rider plugin
+        working-directory: tooling/rider-square
+        run: .\gradlew.bat buildPlugin --no-daemon

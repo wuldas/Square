@@ -48,7 +48,7 @@ The default build resolves Rider 2025.2.3. To use an installed Rider instead:
 JAVA_HOME="C:/path/to/Rider/jbr" ./gradlew buildPlugin -PlocalRiderPath="C:/path/to/Rider"
 ```
 
-Output: `tooling/rider-square/build/distributions/square-language-support-rider-0.1.0.zip`.
+Output: `tooling/rider-square/build/distributions/square-language-support-rider-0.2.0.zip`.
 
 ## Current boundary
 
