@@ -22,6 +22,8 @@ public interface ITextEditor
     bool CanCopySelection { get; }
     /// <summary>是否允许剪切当前选区。</summary>
     bool CanCutSelection { get; }
+    /// <summary>复制和粘贴快捷键是否需要同时按下 Shift。</summary>
+    bool ClipboardShortcutsRequireShift => false;
     /// <summary>光标矩形（屏幕坐标）。</summary>
     Rect CaretRect { get; }
 
@@ -146,7 +148,8 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     /// <inheritdoc/>
     public override void Paint(IRenderContext context)
     {
-        if (PaintEditorChrome) ControlDrawing.DrawInputFrame(context, this);
+        if (PaintEditorChrome && string.IsNullOrWhiteSpace(Style.Get("appearance")))
+            ControlDrawing.DrawInputFrame(context, this);
         EnsureCaretVisible();
         context.PushClip(PaintEditorChrome
             ? new Rect(Geometry.X + 1, Geometry.Y + 1, Math.Max(0, Geometry.Width - 2), Math.Max(0, Geometry.Height - 2))
@@ -166,7 +169,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             if (!string.IsNullOrEmpty(Placeholder))
                 ControlDrawing.DrawText(
                     context, this, Placeholder, GetTextOrigin(fontSize, lineHeight),
-                    Color.FromRgb(125, 130, 136), fontSize, lineHeight);
+                    Color.FromRgb(117, 117, 117), fontSize, lineHeight, useStyledColor: false);
         }
         else
         {

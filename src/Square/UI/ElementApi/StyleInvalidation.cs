@@ -18,7 +18,7 @@ internal static class StyleInvalidation
                 "border-top-style" or "border-right-style" or "border-bottom-style" or "border-left-style" or
                 "border-radius" or "border-top-left-radius" or "border-top-right-radius" or
                 "border-bottom-right-radius" or "border-bottom-left-radius" or "appearance" or "caret-color" or "outline" or
-                "outline-color" or "outline-style" or "outline-width" or
+                "outline-color" or "outline-style" or "outline-width" or "outline-offset" or
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
                 "opacity" or "selection-background" or "selection-color" => ElementInvalidation.Paint,
 

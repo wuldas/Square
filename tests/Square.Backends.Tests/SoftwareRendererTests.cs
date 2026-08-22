@@ -1507,6 +1507,7 @@ public class SoftwareRendererTests
     public void RetainedRendererReplaysGeometryCommands()
     {
         var radio = new Radio { IsChecked = true, Geometry = new Rect(4, 4, 100, 24) };
+        new CssEngine().ApplyStyles(radio);
         var context = CreateContext(120, 40);
         context.Clear(Color.White);
         var tree = new DisplayTree();
@@ -1514,7 +1515,7 @@ public class SoftwareRendererTests
 
         tree.Render(context);
 
-        Assert.True(ContainsBgra(context.GetBitmap(), 212, 120, 0, 255));
+        Assert.True(ContainsBgra(context.GetBitmap(), 215, 120, 0, 255));
     }
 
     [Fact]

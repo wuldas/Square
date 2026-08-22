@@ -114,6 +114,7 @@ internal static class CssPropertyRegistry
         Add("outline-color", "invert", false, value => IsKeyword(value, "invert") || IsColor(value));
         Add("outline-style", "none", false, IsBorderStyle);
         Add("outline-width", "medium", false, IsBorderWidth);
+        Add("outline-offset", "0", false, value => IsLength(value) || IsKeyword(value, "0"));
         Add("overflow", "visible", false, value => IsKeyword(value, "visible", "hidden", "scroll", "auto", "clip"));
         AddMany(new[] { "overflow-x", "overflow-y" }, "visible", false,
             value => IsKeyword(value, "visible", "hidden", "scroll", "auto", "clip"));

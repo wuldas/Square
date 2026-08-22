@@ -33,6 +33,9 @@ internal static class CssUserAgentStyles
         Button:active {
             border-style: inset;
         }
+        Button:active:disabled {
+            border-style: outset;
+        }
         Button:disabled {
             background-color: rgba(239, 239, 239, 0.3);
             border-color: rgba(118, 118, 118, 0.3);
@@ -68,10 +71,29 @@ internal static class CssUserAgentStyles
             cursor: default;
             background-color: rgba(239, 239, 239, 0.3);
             color: #545454;
+            border-color: rgba(118, 118, 118, 0.3);
+        }
+        Select:disabled {
+            opacity: 0.7;
+            color: GrayText;
+            border-color: rgba(118, 118, 118, 0.3);
+        }
+        :focus-visible {
+            outline: 1px solid Highlight;
+        }
+        Input:focus-visible, TextArea:focus-visible, Select:focus-visible, Button:focus-visible {
+            outline-offset: 0;
+        }
+        CheckBox:focus-visible, Radio:focus-visible {
+            outline-offset: 2px;
         }
         CheckBox, Radio {
             appearance: auto;
             box-sizing: border-box;
+            cursor: default;
+        }
+        CheckBox:disabled, Radio:disabled {
+            color: GrayText;
             cursor: default;
         }
         """;

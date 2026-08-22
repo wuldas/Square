@@ -207,7 +207,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 
 | # | MDN 模块 | MDN 核心功能 | Square 当前支持 |
 |---:|---|---|---|
-| 4 | [CSS Basic User Interface](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Basic_user_interface) | appearance、cursor、outline、resize、user-select、caret | 🟡 **部分支持**：🟢 `appearance: auto/none`（UA 对齐 Chrome `html.css` 浅色表单控件子集，Software/Skia/Vulkan 盒绘制消费计算样式）、cursor 子集、`user-select: text/none`、`caret-color`；⚪ 无 outline、resize。 |
+| 4 | [CSS Basic User Interface](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Basic_user_interface) | appearance、cursor、outline、resize、user-select、caret | 🟡 **部分支持**：🟢 `appearance: auto/none`（UA 对齐 Chrome `html.css` 浅色表单控件子集，Software/Skia/Vulkan 盒绘制消费计算样式）、cursor 子集、`user-select: text/none`、`caret-color`、`outline` 纯色 solid 子集（UA `:focus-visible` 用 `1px solid Highlight`）、`outline-offset` 像素偏移；⚪ 无 `outline: auto`、resize。 |
 | 27 | [CSS 片段](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Fragmentation) | page/column/region 分段和 break 控制 | ⚪ **未支持**。 |
 | 31 | [Images](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Images) | CSS 渐变、replaced element、object-fit、sprite | 🟡 **框架 Image 控件部分支持**：内在尺寸和等比缩放；⚪ 无 CSS gradient、object-fit/object-position 和 CSS image values。 |
 | 55 | [CSS 影子部件](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Shadow_parts) | Shadow DOM `::part()`、exportparts 和受控主题 | ⚪ **未支持 Shadow DOM/parts**。 |
@@ -245,6 +245,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 |---|---|---|
 | `:hover` | 🟢 | 基于 `ElementState.Hover`。 |
 | `:focus` | 🟢 | 基于 `ElementState.Focus`。 |
+| `:focus-visible` | 🟡 | 当前等同 `:focus`（键盘/指针焦点未分流）。 |
 | `:active` | 🟢 | 基于 `ElementState.Active`。 |
 | `:disabled` | 🟢 | 基于 `ElementState.Disabled`。 |
 | `:checked` | 🟢 | 基于 `ElementState.Checked`。 |
@@ -255,7 +256,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 | `:nth-child(An+B)` | 🟢 | 支持整数、odd、even、一般 `An+B`；无 `of selector`。 |
 | `:not(...)` | 🟡 | 仅类型、class、ID、`*` 单一简单参数。 |
 | `:is()`、`:where()`、`:has()` | ⚪ | 未实现。 |
-| `:focus-visible`、`:focus-within` | ⚪ | 未实现。 |
+| `:focus-within` | ⚪ | 未实现。 |
 | `:nth-of-type()`、`:nth-last-child()` | ⚪ | 未实现。 |
 | `:target`、`:lang()`、`:dir()`、链接和表单校验伪类 | ⚪ | 未实现。 |
 
@@ -462,7 +463,7 @@ Button {
 | `box-shadow` | 🟡 | 多个外阴影、offset/blur/spread、hex/rgb/rgba；无 inset。 |
 | `background-image`、gradient、repeat/position/size | ⚪ | 未实现。 |
 | `border-image`、每边 style/color | ⚪ | 未实现。 |
-| `outline-*` | ⚪ | 未实现。 |
+| `outline-*` | 🟡 子集 | 解析 `outline` / `outline-width` / `outline-style` / `outline-color` / `outline-offset`；盒绘制仅 solid 纯色，并按 `outline-offset` 外扩。UA `:focus-visible` 为 `1px solid Highlight`；CheckBox/Radio 偏移 `2px`。无 `auto`/`invert`。 |
 
 ### 4.7 颜色值
 
@@ -508,7 +509,7 @@ Button {
 | `user-select` | 🟡 | text、none；向祖先查找。 |
 | `caret-color` | 🟡 | 文本编辑器，有限颜色值。 |
 | `selection-background(-color)`、`selection-color` | 🟡 | 文本编辑器内部属性。 |
-| `appearance` | 🟡 子集 | `none`（initial）、`auto`。UA 对齐 Chrome `html.css` 浅色表单控件：`Button` 为 `ButtonFace` + `2px outset ButtonBorder`，`:active` 切 `inset`，`:disabled` 用半透明灰；`Input` 为 `Field` + `2px inset #767676`；`TextArea`/`Select` 为 `Field` + `1px solid #767676`。Software/Skia/Vulkan 盒绘制消费计算样式。`none` 不自动清掉 UA 边框/背景，作者需覆盖。不支持 `button`/`checkbox` 等控件关键字、AppearanceBase、暗色 `light-dark()`。 |
+| `appearance` | 🟡 子集 | `none`（initial）、`auto`。UA 对齐 Chrome `html.css` 浅色表单控件：`Button` 为 `ButtonFace` + `2px outset ButtonBorder`，`:active` 切 `inset`，`:active:disabled` 保持 `outset`，`:disabled` 用半透明灰；`Input` 为 `Field` + `2px inset #767676`；`TextArea`/`Select` 为 `Field` + `1px solid #767676`。`:disabled` 再把 Input/TextArea 边框改成半透明灰，Select 用 `opacity: 0.7` + `GrayText`。`:focus-visible` 画 `1px solid Highlight` 轮廓（当前等同 `:focus`）；Input/Button/Select/TextArea 的 `outline-offset` 为 `0`，CheckBox/Radio 为 `2px`。占位文本用 Chrome `#757575`。Software/Skia/Vulkan 盒绘制消费计算样式。`none` 不自动清掉 UA 边框/背景，作者需覆盖。不支持 `button`/`checkbox` 等控件关键字、AppearanceBase、暗色 `light-dark()`。 |
 | `accent-color`、`resize` | ⚪ | 未实现。 |
 | `pointer-events`、`touch-action` | ⚪ | 未实现。 |
 

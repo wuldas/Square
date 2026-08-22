@@ -56,17 +56,18 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        if (!ControlDrawing.UsesWidgetAppearance(this))
-            ControlDrawing.DrawInputFrame(ctx, this);
         var value = string.IsNullOrEmpty(Value) ? Placeholder : Value;
-        var color = string.IsNullOrEmpty(Value) ? Color.FromRgb(125, 130, 136) : Color.Black;
-        ControlDrawing.DrawText(ctx, this, value, new Point(Geometry.X + 8, Geometry.Y + 8), color, 14f);
+        var color = string.IsNullOrEmpty(Value) ? Color.FromRgb(117, 117, 117) : Color.Black;
+        ControlDrawing.DrawText(ctx, this, value, new Point(Geometry.X + 8, Geometry.Y + 8), color, 14f,
+            useStyledColor: !string.IsNullOrEmpty(Value));
+        if (!ControlDrawing.UsesWidgetAppearance(this))
+            return;
+
         var arrowY = Geometry.Y + Geometry.Height / 2f;
         var arrow = IsOpen
             ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY + 3)).LineTo(new Point(Geometry.Right - 15, arrowY - 2)).LineTo(new Point(Geometry.Right - 10, arrowY + 3))
             : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY - 2)).LineTo(new Point(Geometry.Right - 15, arrowY + 3)).LineTo(new Point(Geometry.Right - 10, arrowY - 2));
         ctx.DrawPath(arrow, Pen.FromColor(Color.FromRgb(70, 75, 80), 1.5f));
-
     }
 
     /// <inheritdoc/>
@@ -75,15 +76,21 @@ public class Select : UIElement, IPopupElement, ITextSelectable
         if (!IsPopupOpen) return;
         var popup = GetDropDownRect();
         ctx.FillRect(popup, new SolidColorBrush(Color.White));
-        ctx.DrawRect(popup, Pen.FromColor(Color.FromRgb(145, 150, 156)));
+        ctx.DrawRect(popup, Pen.FromColor(Color.FromRgb(118, 118, 118)));
+        var selectedFill = Color.FromRgb(0xce, 0xce, 0xce);
+        var hoverFill = Color.TryParse("Highlight", out var highlight) ? highlight : Color.FromRgb(0, 120, 215);
+        var hoverText = Color.TryParse("HighlightText", out var highlightText) ? highlightText : Color.White;
         for (var i = 0; i < Options.Length; i++)
         {
             var row = new Rect(popup.X + 1, popup.Y + 1 + i * 32, popup.Width - 2, 32);
-            if (i == _hoveredOption)
-                ctx.FillRect(row, new SolidColorBrush(Color.FromRgb(230, 242, 252)));
-            else if (Options[i] == Value)
-                ctx.FillRect(row, new SolidColorBrush(Color.FromRgb(242, 247, 250)));
-            ControlDrawing.DrawText(ctx, this, Options[i], new Point(row.X + 8, row.Y + 7), Color.Black, 14f);
+            var hovered = i == _hoveredOption;
+            var selected = Options[i] == Value;
+            if (hovered && !selected)
+                ctx.FillRect(row, new SolidColorBrush(hoverFill));
+            else if (selected)
+                ctx.FillRect(row, new SolidColorBrush(selectedFill));
+            ControlDrawing.DrawText(ctx, this, Options[i], new Point(row.X + 8, row.Y + 7),
+                hovered && !selected ? hoverText : Color.Black, 14f, useStyledColor: false);
         }
     }
 

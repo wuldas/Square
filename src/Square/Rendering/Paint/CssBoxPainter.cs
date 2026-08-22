@@ -160,11 +160,16 @@ internal static class CssBoxPainter
 
         var box = element.Geometry;
         var width = outline.Width;
+        var offset = TryParseSignedLength(element.Style.Get("outline-offset"), out var parsedOffset)
+            ? parsedOffset
+            : 0f;
+        var outer = box.Inflate(offset + width, offset + width);
+        var inner = box.Inflate(offset, offset);
         var brush = new SolidColorBrush(outline.Color);
-        context.FillRect(new Rect(box.X - width, box.Y - width, box.Width + width * 2, width), brush);
-        context.FillRect(new Rect(box.X - width, box.Bottom, box.Width + width * 2, width), brush);
-        context.FillRect(new Rect(box.X - width, box.Y, width, box.Height), brush);
-        context.FillRect(new Rect(box.Right, box.Y, width, box.Height), brush);
+        context.FillRect(new Rect(outer.X, outer.Y, outer.Width, width), brush);
+        context.FillRect(new Rect(outer.X, outer.Bottom - width, outer.Width, width), brush);
+        context.FillRect(new Rect(outer.X, inner.Y, width, inner.Height), brush);
+        context.FillRect(new Rect(outer.Right - width, inner.Y, width, inner.Height), brush);
     }
 
     private static bool TryGetBackgroundColor(
@@ -353,6 +358,16 @@ internal static class CssBoxPainter
         if (text.EndsWith("px", StringComparison.OrdinalIgnoreCase)) text = text[..^2];
         return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out length) &&
             float.IsFinite(length) && length >= 0;
+    }
+
+    private static bool TryParseSignedLength(string? value, out float length)
+    {
+        length = 0;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var text = value.Trim();
+        if (text.EndsWith("px", StringComparison.OrdinalIgnoreCase)) text = text[..^2];
+        return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out length) &&
+            float.IsFinite(length);
     }
 
     private static bool TryParseStyle(string? value, out BorderStyle style)
