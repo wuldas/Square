@@ -3,6 +3,7 @@ using Square.Events;
 using Square.Graphics;
 using Square.Hosting;
 using Square.Platform;
+using Square.Text;
 using System.Numerics;
 using System.Reflection;
 using Xunit;
@@ -49,9 +50,7 @@ public sealed class TerminalViewTests
         var received = new List<string>();
         view.Input += (_, e) => received.Add(e.Data);
         view.Feed("hello world");
-        view.HandlePointerDown(new Point(6, 8));
-        view.HandlePointerMove(new Point(50, 8));
-        view.HandlePointerUp(new Point(50, 8));
+        SelectHello(view);
 
         host.Modifiers = KeyModifiers.Control | KeyModifiers.Shift;
         InvokeHandleKey(application, 67);
@@ -76,10 +75,7 @@ public sealed class TerminalViewTests
             Geometry = new Rect(0, 0, 200, 80),
         };
         view.Feed("hello world");
-
-        view.HandlePointerDown(new Point(6, 8));
-        view.HandlePointerMove(new Point(120, 8));
-        view.HandlePointerUp(new Point(120, 8));
+        SelectHello(view);
 
         Assert.True(view.SelectionLength > 0);
         Assert.StartsWith("hello", view.SelectedText);
@@ -97,9 +93,7 @@ public sealed class TerminalViewTests
         };
         var host = AttachToWindow(view);
         view.Feed("hello world");
-        view.HandlePointerDown(new Point(6, 8));
-        view.HandlePointerMove(new Point(50, 8));
-        view.HandlePointerUp(new Point(50, 8));
+        SelectHello(view);
 
         var dispatched = view.DispatchEvent(StandardEvents.CreateContextMenu(50, 8));
 
@@ -139,9 +133,7 @@ public sealed class TerminalViewTests
         view.AddEventListener(StandardEvents.ContextMenu, e => e.PreventDefault());
 
         view.Feed("hello world");
-        view.HandlePointerDown(new Point(6, 8));
-        view.HandlePointerMove(new Point(50, 8));
-        view.HandlePointerUp(new Point(50, 8));
+        SelectHello(view);
         host.ClipboardText = "unchanged";
         var copyDispatched = view.DispatchEvent(StandardEvents.CreateContextMenu(50, 8));
 
@@ -209,6 +201,21 @@ public sealed class TerminalViewTests
         view.Paint(context);
 
         Assert.Equal("third", string.Concat(context.DrawnText));
+    }
+
+    private static void SelectHello(TerminalView view)
+    {
+        var font = FontManager.Instance.FromCss(
+            view.Style.GetPropertyValue("font-family"),
+            view.Style.GetPropertyValue("font-size"),
+            view.Style.GetPropertyValue("font-weight"),
+            view.Style.GetPropertyValue("font-style"),
+            14f);
+        var cellWidth = Math.Max(1, TextMetrics.GetGlyphMetrics(font, new System.Text.Rune('M')).AdvanceX);
+        var endX = 8 + cellWidth * 5;
+        view.HandlePointerDown(new Point(6, 8));
+        view.HandlePointerMove(new Point(endX, 8));
+        view.HandlePointerUp(new Point(endX, 8));
     }
 
     private static ClipboardHost AttachToWindow(TerminalView view)
