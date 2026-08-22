@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Square.Sample.WebServer</RootNamespace>
     <IsPackable>false</IsPackable>
-    <Description>Square static semantic HTML Web Server sample</Description>
+    <Description>Square static and interactive semantic HTML Web Server sample</Description>
   </PropertyGroup>
 
   <ItemGroup>

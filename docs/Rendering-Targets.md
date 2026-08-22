@@ -219,7 +219,7 @@ NativeUiNode
 | 模式 | 说明 | 适用场景 |
 |---|---|---|
 | Static HTML | 生成静态 DOM/CSS，不含运行时状态 | 文档、预览、服务端导出 |
-| Interactive DOM | DOM 事件回写 Square runtime | WASM 或嵌入 WebView |
+| Interactive DOM | DOM 事件回写 Square runtime | ASP.NET Core 会话、WASM 或嵌入 WebView |
 | Canvas fallback | DisplayTree -> `<canvas>` | 高一致性渲染、复杂控件 fallback |
 
 重要设计点：
@@ -483,10 +483,12 @@ public enum TargetSupportLevel
 
 ### P5：HTML adapter 原型 🔄
 
-- `Square.Native.Html` 已生成 static semantic HTML，并默认将最终样式去重为 head 中的 CSS class；可通过 `HtmlExportOptions.UseInlineStyles` 兼容旧的内联样式输出。
+- `Square.Native.Html` 已生成 static semantic HTML。有 class 的元素会把样式写回 `.card` 这类原始选择器；没有 class 的内联样式才生成去重后的 `sq-style-*`。可通过 `HtmlExportOptions.UseInlineStyles` 兼容旧的内联样式输出。
+- 生成 CSS 会压缩简写展开后的冗余长属性，例如保留 `border` / `padding`，不再重复输出 `border-bottom-color`、`padding-left`。
 - `HtmlExportOptions.StylesheetHref` 可让页面引用外部 CSS；`HtmlExportResult.Css` 提供写入静态资源的完整 stylesheet 内容。
 - `Square.Hosting.Web` 提供 `MapSquareStylesheet`，可与 `MapSquarePage` 配套暴露同一页面工厂生成的 CSS。
 - `Square.Hosting.Web` 已支持 ASP.NET Core 每请求组件工厂，并可与桌面平台宿主共存。
+- `Square.Hosting.Web.MapSquareInteractivePage` 已提供首个服务端 Interactive DOM 闭环：独立页面会话、`click`/`input`/`change` 回传、原生表单值同步、Square 事件派发、Reconciler/CSS 刷新和根节点替换。
 - 可选支持 interactive DOM/WASM。
 - Canvas/复杂绘制控件当前输出带诊断的占位节点，bitmap/canvas fallback 待实现。
 
@@ -494,7 +496,7 @@ public enum TargetSupportLevel
 
 - 基础页面可导出静态 HTML。✅
 - ASP.NET Core Web Server 可按路由返回语义 HTML。✅
-- 事件桥接方案形成最小闭环。待实现
+- 事件桥接方案形成最小闭环。✅
 
 ### P6：Android / Godot 嵌入路线
 

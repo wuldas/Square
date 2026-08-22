@@ -4,8 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <IsAotCompatible>true</IsAotCompatible>
-    <Description>ASP.NET Core hosting for Square static semantic HTML pages</Description>
-    <PackageTags>$(PackageTags);aspnetcore;kestrel;ssr;html;web-server</PackageTags>
+    <Description>ASP.NET Core hosting for Square static and interactive semantic HTML pages</Description>
+    <PackageTags>$(PackageTags);aspnetcore;kestrel;ssr;html;web-server;interactive-dom</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

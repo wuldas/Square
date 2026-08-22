@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Square.Graphics.Codecs;
 using Square.Hosting;
 using Square.Hosting.Web;
@@ -13,7 +14,7 @@ if (HasOption(args, "--desktop"))
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-app.MapSquarePage<Main>("/", options =>
+app.MapSquareInteractivePage<Main>("/", options =>
 {
     options.Html.Title = "PiSquared";
     options.Html.Language = "zh-CN";
@@ -67,10 +68,9 @@ static void ScheduleCapture(AppWindow window, string? screenshotPath, string? in
             if (!string.IsNullOrWhiteSpace(inspectionPath))
             {
                 var snapshot = await window.CaptureInspectionSnapshotAsync();
-                await File.WriteAllTextAsync(inspectionPath, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                }));
+                await File.WriteAllTextAsync(
+                    inspectionPath,
+                    JsonSerializer.Serialize(snapshot, WebServerJsonContext.Default.ElementInspectionSnapshot));
                 Console.WriteLine($"Desktop inspection saved to {inspectionPath}.");
             }
 
@@ -81,20 +81,17 @@ static void ScheduleCapture(AppWindow window, string? screenshotPath, string? in
                     var element = window.Document.QuerySelector(selector)
                         ?? throw new InvalidOperationException($"Desktop selector '{selector}' did not match an element.");
                     var bounds = element.Geometry;
-                    return new
-                    {
+                    return new WebConformanceMetric(
                         selector,
-                        tagName = element.TagName,
-                        x = bounds.X,
-                        y = bounds.Y,
-                        width = bounds.Width,
-                        height = bounds.Height
-                    };
-                });
-                await File.WriteAllTextAsync(metricsPath, JsonSerializer.Serialize(metrics, new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                }));
+                        element.TagName,
+                        bounds.X,
+                        bounds.Y,
+                        bounds.Width,
+                        bounds.Height);
+                }).ToArray();
+                await File.WriteAllTextAsync(
+                    metricsPath,
+                    JsonSerializer.Serialize(metrics, WebServerJsonContext.Default.WebConformanceMetricArray));
                 Console.WriteLine($"Desktop metrics saved to {metricsPath}.");
             }
         }
@@ -158,3 +155,16 @@ static string[] GetConformanceSelectors() =>
     ".change-summary-card",
     ".status-bar"
 ];
+
+internal sealed record WebConformanceMetric(
+    [property: JsonPropertyName("selector")] string Selector,
+    [property: JsonPropertyName("tagName")] string TagName,
+    [property: JsonPropertyName("x")] float X,
+    [property: JsonPropertyName("y")] float Y,
+    [property: JsonPropertyName("width")] float Width,
+    [property: JsonPropertyName("height")] float Height);
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(ElementInspectionSnapshot))]
+[JsonSerializable(typeof(WebConformanceMetric[]))]
+internal sealed partial class WebServerJsonContext : JsonSerializerContext;

@@ -307,7 +307,7 @@ Card
 
 ## 实现状态
 
-以下能力已落地，通过 `VueGeneratorTests`（SourceGenerator 34 项、Markup 19 项、UI 216 项全部通过）。SQV 使用独立解析栈（`SqvLexer`/`SqvTemplateParser`/`SqvDocumentParser`/`SqvAttributeConverter`），不再调用 `SqxParser`/`SqxCoreParser`。
+以下能力已落地，并由 `Square.SourceGenerator.Tests`、`Square.Markup.Tests` 与 `Square.UI.Tests` 持续覆盖。SQV 使用独立解析栈（`SqvLexer`/`SqvTemplateParser`/`SqvDocumentParser`/`SqvAttributeConverter`），不再调用 `SqxParser`/`SqxCoreParser`。
 
 已支持的 Vue 语法：
 
@@ -421,7 +421,7 @@ Card
 
 ## 测试计划
 
-已覆盖（`VueGeneratorTests`，23 项）：
+`VueGeneratorTests` 及相关 Markup/UI 测试已覆盖：
 
 - `.sqv` 文件生成一个组件。
 - `{{ expr }}` 插值生成文本绑定。
@@ -460,7 +460,7 @@ Card
 ```powershell
 dotnet test tests/Square.Markup.Tests/Square.Markup.Tests.csproj
 dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.csproj
-dotnet test
+dotnet test Square.slnx
 ```
 
 ## 待决设计问题

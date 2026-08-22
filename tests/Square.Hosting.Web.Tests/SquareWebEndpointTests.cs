@@ -1,8 +1,13 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Square.Controls;
 using Square.Hosting.Web;
 using Square.Platform;
+using Square.Runtime.Binding;
 using Square.UI;
 using Xunit;
 #if PLATFORM_WIN32
@@ -86,6 +91,76 @@ public sealed class SquareWebEndpointTests
 #endif
     }
 
+    [Fact]
+    public async Task InteractiveEndpointDispatchesEventsAndUpdatesReactiveTree()
+    {
+        await using var app = await StartApp(builder => builder.MapSquareInteractivePage<InteractivePage>("/"));
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+
+        var html = await client.GetStringAsync("/");
+        Assert.Contains("data-square-token=", html);
+        Assert.Contains("document.addEventListener", html);
+        var token = Match(html, "data-square-token=\"([^\"]+)\"");
+        var inputId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"name\""));
+        var buttonId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"add\""));
+        var checkBoxId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"remember\""));
+
+        using var inputResponse = await PostEvent(client, token, 0, inputId, "input", "Ada");
+        var inputUpdate = await JsonDocument.ParseAsync(await inputResponse.Content.ReadAsStreamAsync());
+        Assert.Equal(1, inputUpdate.RootElement.GetProperty("revision").GetInt64());
+        Assert.Contains("value=\"Ada\"", inputUpdate.RootElement.GetProperty("bodyHtml").GetString());
+        Assert.Contains(">Ada</span>", inputUpdate.RootElement.GetProperty("bodyHtml").GetString());
+
+        using var clickResponse = await PostEvent(client, token, 1, buttonId, "click");
+        var clickUpdate = await JsonDocument.ParseAsync(await clickResponse.Content.ReadAsStreamAsync());
+        var body = clickUpdate.RootElement.GetProperty("bodyHtml").GetString();
+        Assert.Equal(2, clickUpdate.RootElement.GetProperty("revision").GetInt64());
+        Assert.Contains("Added Ada", body);
+        Assert.Contains("Item Ada", body);
+
+        using var checkResponse = await PostEvent(client, token, 2, checkBoxId, "click");
+        var checkUpdate = await JsonDocument.ParseAsync(await checkResponse.Content.ReadAsStreamAsync());
+        Assert.Contains("type=\"checkbox\" checked", checkUpdate.RootElement.GetProperty("bodyHtml").GetString());
+    }
+
+    [Fact]
+    public async Task InteractiveEndpointIsolatesSessionsAndRejectsUnknownToken()
+    {
+        await using var app = await StartApp(builder => builder.MapSquareInteractivePage<InteractivePage>("/"));
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+
+        var first = await client.GetStringAsync("/");
+        var second = await client.GetStringAsync("/");
+        var firstToken = Match(first, "data-square-token=\"([^\"]+)\"");
+        var secondToken = Match(second, "data-square-token=\"([^\"]+)\"");
+        Assert.NotEqual(firstToken, secondToken);
+
+        var inputId = int.Parse(Match(first, "data-square-id=\"(\\d+)\"[^>]* id=\"name\""));
+        using var response = await PostEvent(client, "missing", 0, inputId, "input", "Ada", ensureSuccess: false);
+        Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task InteractiveEndpointRejectsStaleRevisionAndExpiredSession()
+    {
+        await using var app = await StartApp(builder => builder.MapSquareInteractivePage<InteractivePage>(
+            "/",
+            options => options.SessionIdleTimeout = TimeSpan.FromMilliseconds(500)));
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+
+        var html = await client.GetStringAsync("/");
+        var token = Match(html, "data-square-token=\"([^\"]+)\"");
+        var inputId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"name\""));
+
+        using var first = await PostEvent(client, token, 0, inputId, "input", "Ada");
+        using var stale = await PostEvent(client, token, 0, inputId, "input", "Grace", ensureSuccess: false);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+
+        await Task.Delay(650);
+        using var expired = await PostEvent(client, token, 1, inputId, "input", "Grace", ensureSuccess: false);
+        Assert.Equal(HttpStatusCode.Gone, expired.StatusCode);
+    }
+
     private static async Task<WebApplication> StartApp(Action<WebApplication> map)
     {
         var builder = WebApplication.CreateSlimBuilder();
@@ -104,6 +179,28 @@ public sealed class SquareWebEndpointTests
         return page;
     }
 
+    private static async Task<HttpResponseMessage> PostEvent(
+        HttpClient client,
+        string token,
+        long revision,
+        int elementId,
+        string type,
+        string? value = null,
+        bool ensureSuccess = true)
+    {
+        var json = JsonSerializer.Serialize(new { token, revision, elementId, type, value });
+        var response = await client.PostAsync("/", new StringContent(json, Encoding.UTF8, "application/json"));
+        if (ensureSuccess) response.EnsureSuccessStatusCode();
+        return response;
+    }
+
+    private static string Match(string value, string pattern)
+    {
+        var match = Regex.Match(value, pattern, RegexOptions.CultureInvariant);
+        Assert.True(match.Success, $"Pattern '{pattern}' was not found.");
+        return match.Groups[1].Value;
+    }
+
     private sealed class StatefulPage : View
     {
         private readonly int _id = Interlocked.Increment(ref Created);
@@ -115,6 +212,55 @@ public sealed class SquareWebEndpointTests
         {
             if (Children.Count > 0) return;
             Children.Add(new SquareText("Request " + _id));
+        }
+    }
+
+    private sealed class InteractivePage : View
+    {
+        private readonly ObservableValue<string> _name = new("");
+        private readonly ObservableValue<bool> _showResult = new(false);
+        private readonly ObservableCollection<string> _items = [];
+        private bool _built;
+
+        public override void BuildElementTree()
+        {
+            if (_built) return;
+            _built = true;
+
+            var input = new Input { Id = "name" };
+            input.BindProperty("Value", _name);
+            input.AddEventListener("input", e => _name.Value = ((Input)e.Target!).Value);
+            Children.Add(input);
+
+            var value = new SquareText();
+            value.BindProperty("TextContent", _name);
+            Children.Add(value);
+
+            var add = new Button("Add") { Id = "add" };
+            add.AddEventListener("click", () =>
+            {
+                _showResult.Value = true;
+                _items.Add("Item " + _name.Value);
+            });
+            Children.Add(add);
+
+            var remembered = new ObservableValue<bool>(false);
+            var checkBox = new CheckBox { Id = "remember", TextContent = "Remember" };
+            checkBox.BindProperty("IsChecked", remembered);
+            checkBox.AddEventListener("change", e => remembered.Value = ((CheckBox)e.Target!).IsChecked);
+            Children.Add(checkBox);
+
+            var show = new Square.Controls.Primitives.ShowNode(
+                _showResult,
+                () => new SquareText("Added " + _name.Value));
+            RegisterGeneratedResource(show);
+            show.AttachTo(this);
+
+            var loop = Square.Controls.Primitives.ForNode.Create(
+                _items,
+                item => new SquareText(item));
+            RegisterGeneratedResource(loop);
+            loop.AttachTo(this);
         }
     }
 }

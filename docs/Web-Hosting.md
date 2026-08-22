@@ -1,11 +1,11 @@
-# Web Server 与静态 HTML 生成
+# Web Server、静态 HTML 与交互页面
 
-> Document Revision: 0.1
+> Document Revision: 0.2
 
 Square 的 Web Server 模式由两个可选包组成：
 
 - `Square.Native.Html`：将已经求值的 `Element Tree` 生成语义 HTML/CSS。
-- `Square.Hosting.Web`：把组件工厂映射为 ASP.NET Core GET endpoint。
+- `Square.Hosting.Web`：把组件工厂映射为 ASP.NET Core 静态或交互 endpoint。
 
 它不是 WASM，也不会引入 JavaScript 引擎。`.sqx` / `.sqv` 仍由现有 Source Generator 编译为 C# 组件。
 
@@ -32,6 +32,34 @@ app.Run();
 ```
 
 每个请求都会创建新的组件实例。Element Tree、绑定、响应式状态和 CSS scope 不会跨请求共享，请勿返回全局单例组件。
+
+### 1.1 交互页面
+
+需要让浏览器事件回到现有 C# handler 时，使用显式的交互页面 API：
+
+```csharp
+app.MapSquareInteractivePage<Main>("/app", options =>
+{
+    options.Html.Title = "Square Interactive";
+    options.SessionIdleTimeout = TimeSpan.FromMinutes(20);
+});
+```
+
+交互页面首次 GET 创建独立的服务端组件会话。浏览器通过同一路由的 JSON POST 回传 `click`、`input` 和 `change`；服务端同步原生表单值、派发 Square 事件、刷新 Dispatcher/Reconciler/CSS，再返回新的根节点 HTML 与 CSS。客户端替换 `.square-root`，并恢复焦点、文本 selection 和滚动位置。
+
+模板无需使用另一套事件 API：`@click`、`@input`、`@change` 和 `v-model` 继续编译为现有 C# 监听器与绑定。例如：
+
+```vue
+<template>
+  <View>
+    <Input v-model="Name" />
+    <Button @click="Save">Save</Button>
+    <Text v-if="Saved" text="Saved" />
+  </View>
+</template>
+```
+
+不同页面加载使用随机 capability token 隔离状态。空闲会话默认保留 20 分钟，可通过 `SessionIdleTimeout` 调整；`MaxSessions` 控制单个 endpoint 同时保留的会话上限。应用停止时会释放生命周期、响应式绑定、Store 与 CSS scope。
 
 ## 2. 与桌面平台共存
 
@@ -81,7 +109,9 @@ finally
 | `List` / `ListItem` | `ul` / `li` |
 | 内联 SVG DOM | 原生 SVG 标签 |
 
-最终已应用样式通过 inline `style` 输出，并附带最小 browser baseline CSS。组件样式表无需在浏览器中重新执行 Square selector/cascade。
+最终已应用样式默认去重为 head 中的 CSS class，也可通过 `UseInlineStyles` 输出 inline `style`。组件样式表无需在浏览器中重新执行 Square selector/cascade。交互页面在每次事件后同时返回当前页面 CSS，不使用共享 stylesheet endpoint 表达会话动态状态。
+
+表单控件默认 `appearance: auto`：基线 CSS 把它写在 `button,input,select,textarea` 上，让浏览器使用原生控件外观。`CheckBox` / `Radio` 的 `appearance` 写在内部 `input` 上，而不是外层 `label`。`appearance: none` 覆盖该基线，关闭原生 chrome。
 
 ## 4. 不支持控件
 
@@ -106,7 +136,7 @@ app.MapSquarePage<Main>("/", options =>
 
 - 文本、属性、class、id 和 style 均使用 HTML 编码。
 - 不支持原始 HTML 注入。
-- 不生成 `onclick` 等浏览器内联事件。
+- 不生成 `onclick` 等浏览器内联事件；交互页面使用单个委托式脚本监听已声明事件。
 - `Link` 仅允许相对 URL、fragment、HTTP、HTTPS 和 mailto。
 - `Image` 仅允许相对 URL、HTTP、HTTPS 和 `data:image/*`。
 - 不自动序列化任意 `PropertyStore` 值。
@@ -121,7 +151,9 @@ dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csp
 
 ## 7. 当前边界
 
-- 生成的是请求时静态 HTML，不会把 Square C# click handler 自动变成浏览器交互。
-- 浏览器原生表单控件可以输入，但数据不会自动回写服务器组件。
-- 后续可以增加普通 Form POST 或局部 HTML 请求；SignalR 会话和 WASM 属于独立阶段。
+- `MapSquarePage` 仍生成请求时静态 HTML，不会保留状态或输出交互 runtime。
+- `MapSquareInteractivePage` 当前桥接 `click`、`input` 和 `change`，并通过替换页面根节点更新 DOM；尚不提供细粒度 DOM diff。
+- 交互会话保存在当前服务进程内。多实例部署需要粘性路由，进程重启会丢失页面状态。
+- 页面 token 是同源事件能力凭据；如果组件 handler 执行业务写操作，应用仍须按 ASP.NET Core 常规方式实施认证、授权与输入验证。
+- SignalR 主动推送、离线恢复、WASM 和通用 pointer/keyboard 事件属于独立阶段。
 - 浏览器布局是权威来源，输出不保证与 Software Renderer 像素完全一致。

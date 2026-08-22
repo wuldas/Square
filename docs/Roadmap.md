@@ -107,7 +107,7 @@ M2 与架构重建完成后，以下能力作为增量落地，未归入既有 M
 - **Software Renderer 性能优化**：`RenderContext` 缓存位图像素指针与尺寸、裁剪区域缓存（避免栈查找）、批量 BGRA 填充；`LayoutEngine` 与 `StyleAccessor` 同步优化。
 - **`DesktopApplication.RenderingMode`**：新增 `RenderMode` 枚举（`FullFrame` / `Auto` / `DirtyRegion`），控制每帧重绘策略，可通过 `--render-mode` 参数或 `SQUARE_RENDER_MODE` 环境变量配置。
 - **多目标渲染与宿主路线**：将后续 WinUI XAML、HTML DOM、Android UI、SVG、PDF、Godot 等目标拆分为 `Platform Host`、`Drawing Backend`、`Native UI Adapter`、`Exporter` 四类能力。完整计划见 `docs/Rendering-Targets.md`。
-- **Static HTML 与 Web Server**：`Square.Native.Html` 从已求值 Element Tree 生成浏览器语义 HTML 和 inline final CSS；`Square.Hosting.Web` 将每请求独立组件工厂映射为 ASP.NET Core endpoint，不注册或替换桌面 `PlatformRegistry`，可与 Win32/X11/macOS 宿主在同一进程共存。复杂绘制控件输出带诊断的占位节点。
+- **Static HTML、Web Server 与交互 DOM**：`Square.Native.Html` 从已求值 Element Tree 生成浏览器语义 HTML，并将最终样式默认去重为 CSS class；`Square.Hosting.Web` 提供无状态 `MapSquarePage` 和保留独立页面会话的 `MapSquareInteractivePage`。交互模式已打通 `click`/`input`/`change`、原生表单值同步、C# 事件派发、Reconciler/CSS 刷新和根节点替换；不注册或替换桌面 `PlatformRegistry`，可与 Win32/X11/macOS 宿主共存。复杂绘制控件仍输出带诊断的占位节点，SignalR/WASM 和细粒度 DOM diff 属于后续阶段。
 
 ---
 

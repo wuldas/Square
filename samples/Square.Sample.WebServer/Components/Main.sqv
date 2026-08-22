@@ -66,42 +66,42 @@
 
           <View class="session-search-box">
             <Text class="session-search-icon" text="⌕" />
-            <Input id="session-search" class="session-search-input" placeholder="Search sessions" />
+            <Input id="session-search" class="session-search-input" placeholder="Search sessions" v-model="SessionSearch" @input="OnSessionSearch" />
           </View>
 
           <Button class="session-filter" text="All time  ▾" />
 
           <ScrollViewer class="session-list-scroll">
             <View class="session-list">
-              <Button class="session-item session-item-active">
+              <Button ref="SessionOne" class="session-item session-item-active">
                 <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
                 <View class="session-copy">
                   <Text class="session-title" text="Build the PiSquared workbench" />
                   <Text class="session-meta" text="8 messages · just now" />
                 </View>
               </Button>
-              <Button class="session-item">
+              <Button ref="SessionTwo" class="session-item">
                 <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
                 <View class="session-copy">
                   <Text class="session-title" text="Design the approval flow" />
                   <Text class="session-meta" text="14 messages · 2 hours ago" />
                 </View>
               </Button>
-              <Button class="session-item">
+              <Button ref="SessionThree" class="session-item">
                 <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
                 <View class="session-copy">
                   <Text class="session-title" text="SQLite session architecture" />
                   <Text class="session-meta" text="21 messages · yesterday" />
                 </View>
               </Button>
-              <Button class="session-item">
+              <Button ref="SessionFour" class="session-item">
                 <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
                 <View class="session-copy">
                   <Text class="session-title" text="Provider protocol research" />
                   <Text class="session-meta" text="11 messages · Jul 28" />
                 </View>
               </Button>
-              <Button class="session-item">
+              <Button ref="SessionFive" class="session-item">
                 <View class="session-icon-box"><Text class="session-icon-text" text="✦" /></View>
                 <View class="session-copy">
                   <Text class="session-title" text="Workspace safety rules" />
@@ -110,7 +110,7 @@
               </Button>
             </View>
           </ScrollViewer>
-          <Text class="session-count" text="5 sessions in this workspace" />
+          <Text class="session-count" :text="SessionCount" />
         </View>
 
         <View class="pane-divider" />
@@ -188,18 +188,22 @@
                   <Text class="notice-body" text="Buttons update mock state only. Runtime services come after layout validation." />
                 </View>
               </View>
+
+              <View v-for="message in SentMessages" class="message-block user-message">
+                <Text class="message-body" :text="message" />
+              </View>
             </View>
           </ScrollViewer>
 
           <View class="composer-shell">
             <View class="composer-box">
-              <TextArea id="composer-input" class="composer-input" placeholder="Ask PiSquared to inspect or change this workspace..." />
+              <TextArea id="composer-input" class="composer-input" placeholder="Ask PiSquared to inspect or change this workspace..." v-model="ComposerText" />
               <View class="composer-actions">
                 <View class="composer-left-actions">
                   <Button class="composer-icon-button" text="＋" />
                   <Text class="composer-hint" text="Enter to send · Shift+Enter for a new line" />
                 </View>
-                <Button class="send-button" text="➤" />
+                <Button class="send-button" text="➤" @click="SendMessage" />
               </View>
             </View>
             <View class="composer-footer">
@@ -216,10 +220,10 @@
 
         <View class="context-sidebar">
           <View class="context-tabs">
-            <Button class="context-tab context-tab-active" text="Changes" />
-            <Button class="context-tab" text="Files" />
+            <Button :class="ChangesTabClass" text="Changes" @click="ShowChangesPanel" />
+            <Button :class="FilesTabClass" text="Files" @click="ShowFilesPanel" />
           </View>
-          <View class="context-content">
+          <View v-if="ShowChanges" class="context-content">
             <View class="context-heading">
               <View class="context-heading-copy"><Text class="context-heading-icon" text="⑂" /><Text class="context-heading-title" text="main" /></View>
               <Button class="small-icon-button" text="↻" />
@@ -243,20 +247,93 @@
               <Text class="change-summary-body" text="Desktop shell and mock interactions are ready for review." />
               <View class="change-summary-actions">
                 <Button class="secondary-action" text="Review diff" />
-                <Button class="primary-action" text="Accept" />
+                <Button class="primary-action" :text="AcceptText" @click="AcceptChanges" />
               </View>
             </View>
+          </View>
+          <View v-if="ShowFiles" class="context-content">
+            <View class="context-heading">
+              <View class="context-heading-copy"><Text class="context-heading-icon" text="▤" /><Text class="context-heading-title" text="Workspace files" /></View>
+            </View>
+            <Text class="context-section-label" text="OPEN FILES" />
+            <View class="file-row"><Text class="change-path" text="Components/Main.sqv" /></View>
+            <View class="file-row"><Text class="change-path" text="Program.cs" /></View>
+            <View class="file-row"><Text class="change-path" text="Square.Sample.WebServer.csproj" /></View>
           </View>
         </View>
       </View>
 
       <View class="status-bar">
-        <View class="status-left"><Text class="status-brand" text="PiSquared" /><Text class="status-copy" text="UI preview ready" /></View>
+        <View class="status-left"><Text class="status-brand" text="PiSquared" /><Text class="status-copy" :text="StatusText" /></View>
         <View class="status-right"><Text class="status-copy" text="main" /><Text class="status-copy" text="3 changes" /><Text class="status-copy" text="Software renderer" /></View>
       </View>
     </View>
   </View>
 </template>
+
+<script lang="csharp">
+  public ObservableValue<string> SessionSearch = new("");
+  public ObservableValue<string> SessionCount = new("5 sessions in this workspace");
+  public ObservableValue<string> ComposerText = new("");
+  public ObservableCollection<string> SentMessages = new();
+  public ObservableValue<bool> ShowChanges = new(true);
+  public ObservableValue<bool> ShowFiles = new(false);
+  public ObservableValue<string> ChangesTabClass = new("context-tab context-tab-active");
+  public ObservableValue<string> FilesTabClass = new("context-tab");
+  public ObservableValue<string> AcceptText = new("Accept");
+  public ObservableValue<string> StatusText = new("Interactive preview ready");
+
+  private void OnSessionSearch(Event e)
+  {
+    var query = ((Input)e.Target!).Value.Trim();
+    var visible = 0;
+    visible += SetSessionVisibility(SessionOne, "Build the PiSquared workbench", query);
+    visible += SetSessionVisibility(SessionTwo, "Design the approval flow", query);
+    visible += SetSessionVisibility(SessionThree, "SQLite session architecture", query);
+    visible += SetSessionVisibility(SessionFour, "Provider protocol research", query);
+    visible += SetSessionVisibility(SessionFive, "Workspace safety rules", query);
+    SessionCount.Value = visible + (visible == 1 ? " session" : " sessions") + " in this workspace";
+  }
+
+  private static int SetSessionVisibility(Button session, string title, string query)
+  {
+    session.IsVisible = query.Length == 0 || title.Contains(query, StringComparison.OrdinalIgnoreCase);
+    return session.IsVisible ? 1 : 0;
+  }
+
+  private void ShowChangesPanel()
+  {
+    ShowChanges.Value = true;
+    ShowFiles.Value = false;
+    ChangesTabClass.Value = "context-tab context-tab-active";
+    FilesTabClass.Value = "context-tab";
+    StatusText.Value = "Reviewing working changes";
+  }
+
+  private void ShowFilesPanel()
+  {
+    ShowChanges.Value = false;
+    ShowFiles.Value = true;
+    ChangesTabClass.Value = "context-tab";
+    FilesTabClass.Value = "context-tab context-tab-active";
+    StatusText.Value = "Browsing workspace files";
+  }
+
+  private void SendMessage()
+  {
+    var message = ComposerText.Value.Trim();
+    if (message.Length == 0) return;
+    SentMessages.Add(message);
+    ComposerText.Value = "";
+    StatusText.Value = "Message added to the local session";
+  }
+
+  private void AcceptChanges()
+  {
+    AcceptText.Value = "Accepted";
+    StatusText.Value = "3 changes accepted for review";
+  }
+</script>
 
 <style>
   .window-shell { display: flex; flex-direction: column; width: 100%; height: 100vh; min-width: 1180px; min-height: 720px; overflow: hidden; background: #f4f6f8; font-family: "Segoe UI", Arial, sans-serif; }
@@ -390,6 +467,7 @@
   .context-section-label { margin-top: 12px; margin-left: 4px; }
   .change-row { display: flex; flex-direction: row; align-items: center; gap: 9px; width: 100%; min-height: 52px; padding: 7px 6px; background: #f8f9fa; border: 1px solid #f8f9fa; border-radius: 6px; text-align: left; }
   .change-row-active { background: #e7f1ff; border-color: #9ec5fe; }
+  .file-row { display: flex; align-items: center; min-height: 42px; padding: 8px 10px; background: #ffffff; border-bottom: 1px solid #e5e7eb; }
   .change-status { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; min-width: 24px; background: #fff3cd; border-radius: 5px; color: #997404; font-size: 11px; font-weight: 600; }
   .change-status.added { background: #d1e7dd; color: #0f5132; }
   .change-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex-grow: 1; }
