@@ -109,20 +109,17 @@ public class CheckBox : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        if (ControlDrawing.UsesWidgetAppearance(this))
+        var box = new Rect(Geometry.X, Geometry.Y + (Geometry.Height - 18) / 2f, 18, 18);
+        ctx.FillRect(box, new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
+        ctx.DrawRect(box, Pen.FromColor(IsFocused ? Color.FromRgb(0, 95, 184) : Color.FromRgb(95, 100, 106)));
+        if (IsChecked)
         {
-            var box = new Rect(Geometry.X, Geometry.Y + (Geometry.Height - 18) / 2f, 18, 18);
-            ctx.FillRect(box, new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-            ctx.DrawRect(box, Pen.FromColor(IsFocused ? Color.FromRgb(0, 95, 184) : Color.FromRgb(95, 100, 106)));
-            if (IsChecked)
-            {
-                ctx.FillRect(box.Inflate(-2, -2), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
-                ctx.DrawPath(PathGeometry.Create()
-                    .MoveTo(new Point(box.X + 4, box.Y + 9))
-                    .LineTo(new Point(box.X + 8, box.Y + 13))
-                    .LineTo(new Point(box.X + 15, box.Y + 5)),
-                    Pen.FromColor(Color.White, 2));
-            }
+            ctx.FillRect(box.Inflate(-2, -2), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
+            ctx.DrawPath(PathGeometry.Create()
+                .MoveTo(new Point(box.X + 4, box.Y + 9))
+                .LineTo(new Point(box.X + 8, box.Y + 13))
+                .LineTo(new Point(box.X + 15, box.Y + 5)),
+                Pen.FromColor(Color.White, 2));
         }
         ControlDrawing.DrawText(ctx, this, TextContent,
             new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
@@ -178,14 +175,11 @@ public class Radio : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        if (ControlDrawing.UsesWidgetAppearance(this))
-        {
-            var center = new Point(Geometry.X + 9, Geometry.Y + Geometry.Height / 2f);
-            ctx.FillGeometry(new EllipseGeometry(center, 9, 9), new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-            ctx.DrawGeometry(new EllipseGeometry(center, 9, 9), Pen.FromColor(Color.FromRgb(95, 100, 106)));
-            if (IsChecked)
-                ctx.FillGeometry(new EllipseGeometry(center, 5, 5), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
-        }
+        var center = new Point(Geometry.X + 9, Geometry.Y + Geometry.Height / 2f);
+        ctx.FillGeometry(new EllipseGeometry(center, 9, 9), new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
+        ctx.DrawGeometry(new EllipseGeometry(center, 9, 9), Pen.FromColor(Color.FromRgb(95, 100, 106)));
+        if (IsChecked)
+            ctx.FillGeometry(new EllipseGeometry(center, 5, 5), new SolidColorBrush(Color.FromRgb(0, 120, 212)));
         ControlDrawing.DrawText(ctx, this, TextContent,
             new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
     }

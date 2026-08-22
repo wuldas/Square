@@ -471,7 +471,7 @@ public class CssParserTests
 
         Assert.Equal("0.5", disabled.Style.Get("opacity"));
         Assert.Equal("blue", primary.Style.Get("color"));
-        Assert.Null(secondary.Style.Get("color"));
+        Assert.Equal("ButtonText", secondary.Style.Get("color"));
     }
 
     [Fact]

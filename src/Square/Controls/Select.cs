@@ -61,7 +61,6 @@ public class Select : UIElement, IPopupElement, ITextSelectable
         var value = string.IsNullOrEmpty(Value) ? Placeholder : Value;
         var color = string.IsNullOrEmpty(Value) ? Color.FromRgb(125, 130, 136) : Color.Black;
         ControlDrawing.DrawText(ctx, this, value, new Point(Geometry.X + 8, Geometry.Y + 8), color, 14f);
-        if (!ControlDrawing.UsesWidgetAppearance(this)) return;
         var arrowY = Geometry.Y + Geometry.Height / 2f;
         var arrow = IsOpen
             ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY + 3)).LineTo(new Point(Geometry.Right - 15, arrowY - 2)).LineTo(new Point(Geometry.Right - 10, arrowY + 3))

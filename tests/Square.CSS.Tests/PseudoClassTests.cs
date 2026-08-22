@@ -53,7 +53,7 @@ public class PseudoClassTests
 
         var btn = new Square.Controls.Button();
         engine.ApplyStyles(btn);
-        Assert.Null(btn.Style.Get("color"));
+        Assert.Equal("ButtonText", btn.Style.Get("color"));
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class PseudoClassTests
 
         btn.Unfocus();
         CssStyleReconciler.Flush();
-        Assert.Null(btn.Style.Get("color"));
+        Assert.Equal("ButtonText", btn.Style.Get("color"));
         Assert.Null(btn.Style.Get("width"));
     }
 
@@ -110,7 +110,7 @@ public class PseudoClassTests
         btn.SetState(ElementState.Hover, false);
         btn.SetState(ElementState.Active, false);
         CssStyleReconciler.Flush();
-        Assert.Null(btn.Style.Get("color"));
+        Assert.Equal("ButtonText", btn.Style.Get("color"));
         Assert.Null(btn.Style.Get("background"));
     }
 
