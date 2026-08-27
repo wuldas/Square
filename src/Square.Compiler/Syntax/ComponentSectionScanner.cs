@@ -77,7 +77,7 @@ internal static class ComponentSectionScanner
                     ComponentSectionDiagnosticKind.UnclosedOpeningTag,
                     "Unclosed <" + name + "> opening tag",
                     new SquareSourceRange(sectionStart, source.Length - sectionStart)));
-                Assign(kind, CreateUnclosed(kind, source, sectionStart, source.Length, source.Length), ref template, ref script, ref style, diagnostics);
+                Assign(kind, CreateUnclosed(kind, source, sectionStart, source.Length, source.Length, dialect, tolerant), ref template, ref script, ref style, diagnostics);
                 break;
             }
 
@@ -93,7 +93,7 @@ internal static class ComponentSectionScanner
                     ? FindFollowingSectionStart(source, contentStart, kind, dialect)
                     : -1;
                 var contentEnd = recoveryStart >= 0 ? recoveryStart : source.Length;
-                Assign(kind, CreateUnclosed(kind, source, sectionStart, contentStart, contentEnd), ref template, ref script, ref style, diagnostics);
+                Assign(kind, CreateUnclosed(kind, source, sectionStart, contentStart, contentEnd, dialect, tolerant), ref template, ref script, ref style, diagnostics);
                 if (recoveryStart < 0) break;
                 position = recoveryStart;
                 continue;
@@ -106,11 +106,20 @@ internal static class ComponentSectionScanner
                     ComponentSectionDiagnosticKind.UnclosedClosingTag,
                     "Unclosed </" + name + "> tag",
                     new SquareSourceRange(closeStart, source.Length - closeStart)));
-                Assign(kind, CreateUnclosed(kind, source, sectionStart, contentStart, closeStart), ref template, ref script, ref style, diagnostics);
+                Assign(kind, CreateUnclosed(kind, source, sectionStart, contentStart, closeStart, dialect, tolerant), ref template, ref script, ref style, diagnostics);
                 break;
             }
 
-            var section = CreateSection(kind, source, sectionStart, openingEnd, contentStart, closeStart, closeEnd);
+            var section = CreateSection(
+                kind,
+                source,
+                sectionStart,
+                openingEnd,
+                contentStart,
+                closeStart,
+                closeEnd,
+                dialect,
+                tolerant);
             Assign(kind, section, ref template, ref script, ref style, diagnostics);
             position = closeEnd + 1;
         }
@@ -135,7 +144,9 @@ internal static class ComponentSectionScanner
         int openingEnd,
         int contentStart,
         int closeStart,
-        int closeEnd)
+        int closeEnd,
+        ComponentDialect dialect,
+        bool tolerant)
     {
         var fullRange = new SquareSourceRange(sectionStart, closeEnd - sectionStart + 1);
         var openingRange = new SquareSourceRange(sectionStart, openingEnd - sectionStart + 1);
@@ -144,7 +155,15 @@ internal static class ComponentSectionScanner
         var content = source.Substring(contentStart, closeStart - contentStart);
         return kind switch
         {
-            ComponentSectionKind.Template => new TemplateSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, true),
+            ComponentSectionKind.Template => new TemplateSectionSyntax(
+                fullRange,
+                openingRange,
+                contentRange,
+                closingRange,
+                content,
+                true,
+                dialect,
+                tolerant),
             ComponentSectionKind.Script => new ScriptSectionSyntax(
                 fullRange,
                 openingRange,
@@ -162,7 +181,9 @@ internal static class ComponentSectionScanner
         string source,
         int sectionStart,
         int contentStart,
-        int contentEnd)
+        int contentEnd,
+        ComponentDialect dialect,
+        bool tolerant)
     {
         contentStart = Math.Min(contentStart, source.Length);
         contentEnd = Math.Max(contentStart, Math.Min(contentEnd, source.Length));
@@ -173,7 +194,15 @@ internal static class ComponentSectionScanner
         var content = source.Substring(contentStart, contentEnd - contentStart);
         return kind switch
         {
-            ComponentSectionKind.Template => new TemplateSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, false),
+            ComponentSectionKind.Template => new TemplateSectionSyntax(
+                fullRange,
+                openingRange,
+                contentRange,
+                closingRange,
+                content,
+                false,
+                dialect,
+                tolerant),
             ComponentSectionKind.Script => new ScriptSectionSyntax(
                 fullRange,
                 openingRange,

@@ -366,48 +366,48 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 - Create: `src/Square.Compiler/Template/Ir/TemplateIrNode.cs`
 - Create: `src/Square.Compiler/Template/Ir/TemplateIrDocument.cs`
-- Move/Replace: `src/Square.Compiler/Template/TemplateDocument.cs`
+- Modify: `src/Square.Compiler/Template/TemplateDocument.cs`
+- Create: `src/Square.Compiler/Template/Compatibility/TemplateIrCompatibilityAdapter.cs`
 - Test: `tests/Square.SourceGenerator.Tests/TemplateIrTests.cs`
 
 **Requirements:**
 
-- [ ] IR 不包含 `v-*`、`@`、`:`、`#` 等 source syntax。
-- [ ] IR 不使用 `Sqx*` 命名。
-- [ ] Element/Text/Expression/For/IfChain/Slot 均有明确节点。
-- [ ] IR 节点保留 origin syntax range/link，供诊断和 definition 使用。
+- [x] IR 不包含 `v-*`、`@`、`:`、`#` 等 source syntax。
+- [x] IR 不使用 `Sqx*` 命名。
+- [x] Element/Text/Expression/For/IfChain/Slot 均有明确节点。
+- [x] IR 节点保留 origin syntax range/link，供诊断和 definition 使用。
 
 ### Task A4.2：建立 SQX source syntax AST
 
 **Files:**
 
 - Create: `src/Square.Compiler/Syntax/Template/Sqx/*.cs`
-- Modify: `src/Square.Compiler/ParserCore/SqxCoreLexer.cs`
-- Modify: `src/Square.Compiler/ParserCore/SqxCoreParser.cs`
+- Reuse: `src/Square.Compiler/ParserCore/SqxCoreLexer.cs` token model。
+- Keep temporarily: `src/Square.Compiler/ParserCore/SqxCoreParser.cs` strict diagnostic compatibility；A5 删除重复 tree output。
 - Test: `tests/Square.SourceGenerator.Tests/SqxTemplateSyntaxTests.cs`
 
 **Steps:**
 
-- [ ] Core AST 迁移/重命名为 SQX source syntax。
-- [ ] attribute/expression/tag range 完整。
-- [ ] strict/tolerant parse 共享 token model。
-- [ ] 当前 `SqxNode` 作为 compatibility adapter，不再是 parser 输出事实源。
+- [x] 建立独立 SQX source syntax；Core AST 仅保留 strict diagnostic 兼容，A5 删除。
+- [x] attribute/expression/tag range 完整。
+- [x] strict/tolerant parse 共享 token model。
+- [x] 提供 `SqxNode` compatibility adapter；A5 消费者迁移后删除旧 parser 输出路径。
 
 ### Task A4.3：建立 SQV source syntax AST
 
 **Files:**
 
 - Create: `src/Square.Compiler/Syntax/Template/Sqv/*.cs`
-- Modify: `src/Square.Compiler/Parser/SqvLexer.cs`
-- Modify: `src/Square.Compiler/Parser/SqvTemplateParser.cs`
-- Replace: `src/Square.Compiler/Parser/SqvAttributeConverter.cs`（若当前仍内嵌则拆出）
-- Test: `tests/Square.SourceGenerator.Tests/SqvParserTests.cs`
+- Reuse: `src/Square.Compiler/Parser/SqvLexer.cs` token model。
+- Keep temporarily: `src/Square.Compiler/Parser/SqvTemplateParser.cs` strict diagnostic compatibility and lowering helpers；A5 拆除重复 tree parser。
+- Test: `tests/Square.SourceGenerator.Tests/SqvTemplateSyntaxTests.cs`
 
 **Requirements:**
 
-- [ ] 保留原始 directive name、argument、dynamic argument、modifier ranges。
-- [ ] `@click.stop` 不在 parser 阶段改写为 `onClick`。
-- [ ] `v-if/v-for/v-slot/v-model` source AST 与 lowering 分离。
-- [ ] unsupported Vue syntax 可解析时先形成 syntax，再由 semantic/lowering 报明确诊断。
+- [x] 保留原始 directive name、argument、dynamic argument、modifier ranges。
+- [x] `@click.stop` 不在 parser 阶段改写为 `onClick`。
+- [x] `v-if/v-for/v-slot/v-model` source AST 与 lowering 分离。
+- [x] unsupported Vue syntax 可解析时先形成 syntax，再由 semantic/lowering 报明确诊断。
 
 ### Task A4.4：实现两个 lowerer
 
@@ -419,10 +419,10 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **Parity scenarios:**
 
-- [ ] SQX `onClick={OnSave}` 与 SQV `@click="OnSave"` 降为同一 Event IR。
-- [ ] SQX `Show/For` 与 SQV `v-if/v-for` 降为同一控制流 IR。
-- [ ] SQX slot 与 SQV `v-slot/#` 降为同一 Slot IR。
-- [ ] 静态/动态 props、class、style 与 SVG 节点等价。
+- [x] SQX `onClick={OnSave}` 与 SQV `@click="OnSave"` 降为同一 Event IR。
+- [x] SQX `Show/For` 与 SQV `v-if/v-for` 降为同一控制流 IR。
+- [x] SQX slot 与 SQV `v-slot/#` 降为同一 Slot IR。
+- [x] 静态/动态 props、class、style 与 SVG 节点等价。
 
 **Commit:** `重构: 分离 SQX SQV 语法树并统一 IR`
 
