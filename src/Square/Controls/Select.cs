@@ -52,7 +52,8 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     }
 
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) => new(200, 36);
+    public override Size Measure(Size availableSize) =>
+        ControlDrawing.UsesWidgetAppearance(this) ? new Size(54, 17) : new Size(200, 36);
 
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)

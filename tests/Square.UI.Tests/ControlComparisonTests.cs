@@ -154,6 +154,49 @@ public sealed class ControlComparisonTests
         Assert.Equal(appearance == ControlAppearance.Auto ? "1px" : "2px", textArea.Style.Get("border-left-width"));
     }
 
+    [Theory]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal)]
+    [InlineData(ControlAppearance.Auto, ControlState.Hover)]
+    [InlineData(ControlAppearance.Auto, ControlState.Focus)]
+    [InlineData(ControlAppearance.Auto, ControlState.Disabled)]
+    [InlineData(ControlAppearance.None, ControlState.Normal)]
+    [InlineData(ControlAppearance.None, ControlState.Hover)]
+    [InlineData(ControlAppearance.None, ControlState.Focus)]
+    [InlineData(ControlAppearance.None, ControlState.Disabled)]
+    public void SelectGeometryMatchesChromiumAcrossAppearancesAndStates(
+        ControlAppearance appearance,
+        ControlState state)
+    {
+        var root = new View
+        {
+            Style =
+            {
+                CssText = "display: flex; align-items: center; justify-content: center; " +
+                    "box-sizing: border-box; width: 320px; height: 160px;"
+            }
+        };
+        var item = Assert.Single(ControlComparisonManifest.CreateDefault().ExpandCases(), candidate =>
+            candidate.Kind == ControlKind.Select && candidate.Appearance == appearance && candidate.State == state);
+        var select = new Select { Options = [item.Value], Value = item.Value };
+        select.Style.CssText = item.AuthorCss;
+        ApplyState(select, state);
+        root.Children.Add(select);
+
+        new CssEngine().ApplyStylesToTree(root);
+        new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
+
+        var expected = appearance == ControlAppearance.Auto
+            ? new Rect(132, 70.5f, 56, 19)
+            : new Rect(70, 62, 180, 36);
+        AssertClose(expected.X, select.Geometry.X - root.Geometry.X);
+        AssertClose(expected.Y, select.Geometry.Y - root.Geometry.Y);
+        AssertClose(expected.Width, select.Geometry.Width);
+        AssertClose(expected.Height, select.Geometry.Height);
+        Assert.Equal(appearance == ControlAppearance.Auto ? "0" : "6px", select.Style.Get("padding-top") ?? "0");
+        Assert.Equal(appearance == ControlAppearance.Auto ? "0" : "10px", select.Style.Get("padding-left") ?? "0");
+        Assert.Equal(appearance == ControlAppearance.Auto ? "1px" : "2px", select.Style.Get("border-left-width"));
+    }
+
     [Fact]
     public void ManifestExpandsSemanticControlsAppearancesAndRelevantStates()
     {
