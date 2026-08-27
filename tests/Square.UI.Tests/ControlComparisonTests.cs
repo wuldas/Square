@@ -427,6 +427,111 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    public void VisualPhaseRejectsMissingScreenshots()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-gate-" + Guid.NewGuid());
+        var report = Geometry("Software", 10, 20, 100, 36, "cases/button-auto-normal.png");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            ControlGeometryGate.EnsureVisualAllowed(
+                [report],
+                ["button-auto-normal"],
+                "manifest-a",
+                artifactRoot));
+
+        Assert.Contains("screenshot", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("button-auto-normal", exception.Message);
+    }
+
+    [Fact]
+    public void VisualPhaseRejectsDuplicateManifestCaseIds()
+    {
+        var report = Geometry("Software", 10, 20, 100, 36, "square.png");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            ControlGeometryGate.EnsureVisualAllowed(
+                [report],
+                ["button-auto-normal", "button-auto-normal"],
+                "manifest-a"));
+
+        Assert.Contains("duplicate", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("button-auto-normal", exception.Message);
+    }
+
+    [Fact]
+    public void FullVisualPhaseRejectsMissingBlockingRenderer()
+    {
+        var report = Geometry("Software", 10, 20, 100, 36, "square.png");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            ControlGeometryGate.EnsureVisualAllowed(
+                [report],
+                ["button-auto-normal"],
+                "manifest-a",
+                requiredRenderers: ["Chromium", "Software", "Skia"]));
+
+        Assert.Contains("Chromium", exception.Message);
+        Assert.Contains("Skia", exception.Message);
+    }
+
+    [Fact]
+    public void GeometryMatrixSummarizesAllControlAppearancesAndRenderers()
+    {
+        var cases = ControlComparisonManifest.CreateDefault().ExpandCases();
+        var reports = new[] { "Chromium", "Software", "Skia" }.Select(renderer =>
+            new ControlGeometryReport
+            {
+                Renderer = renderer,
+                Cases = cases.Select(item => new ControlGeometryCaseResult
+                {
+                    Id = item.Id,
+                    Kind = item.Kind,
+                    Appearance = item.Appearance,
+                    State = item.State,
+                    Passed = true
+                }).ToList()
+            });
+
+        var markdown = ControlGeometryMatrix.CreateMarkdown(cases, reports);
+
+        Assert.Contains("| Button | Auto | 5 | 5/5 | 5/5 | 5/5 |", markdown);
+        Assert.Contains("| Radio | None | 6 | 6/6 | 6/6 | 6/6 |", markdown);
+        Assert.Equal(12, markdown.Split('\n').Count(line => line.StartsWith("| ") && !line.Contains("Renderer")));
+    }
+
+    [Fact]
+    public void FullVisualPhaseAcceptsCanonicalArtifactDirectories()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-gate-" + Guid.NewGuid());
+        try
+        {
+            var reports = new[]
+            {
+                Geometry("Chromium", 10, 20, 100, 36, "cases/button-auto-normal.png"),
+                Geometry("Software", 10, 20, 100, 36, "cases/button-auto-normal.png"),
+                Geometry("Skia", 10, 20, 100, 36, "cases/button-auto-normal.png")
+            };
+            foreach (var directory in new[] { "chrome", "software", "skia" })
+            {
+                var screenshot = Path.Combine(artifactRoot, directory, "cases", "button-auto-normal.png");
+                Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+                File.WriteAllBytes(screenshot, [1]);
+            }
+
+            ControlGeometryGate.EnsureVisualAllowed(
+                reports,
+                ["button-auto-normal"],
+                "manifest-a",
+                artifactRoot,
+                ["Chromium", "Software", "Skia"]);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void BrowserPayloadUsesJavascriptPropertyNamesAndPreservesAuthorCss()
     {
         var item = Assert.Single(ControlComparisonManifest.CreateSmoke().ExpandCases(), item =>

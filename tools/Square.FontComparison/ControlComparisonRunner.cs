@@ -51,6 +51,7 @@ internal static class ControlComparisonRunner
         var cases = manifest.ExpandCases();
         if (cases.Count == 0) throw new InvalidOperationException("Control manifest contains no cases.");
         var chromium = await ControlBrowserCapture.CaptureAsync(manifest, Path.Combine(output, "chrome"));
+        var reports = new List<ControlGeometryReport> { chromium };
         var failed = 0;
         foreach (var backend in backends)
         {
@@ -59,8 +60,17 @@ internal static class ControlComparisonRunner
             var captured = await ControlReportIO.ReadAsync(path);
             var compared = ControlGeometryComparer.Compare(chromium, captured);
             await ControlReportIO.WriteAsync(path, compared);
+            reports.Add(compared);
             failed += compared.Cases.Count(item => !item.Passed);
         }
+        var matrixPath = Path.Combine(output, "geometry-matrix.md");
+        await File.WriteAllTextAsync(matrixPath, ControlGeometryMatrix.CreateMarkdown(cases, reports));
+        ControlGeometryGate.EnsureVisualAllowed(
+            reports,
+            cases.Select(item => item.Id),
+            manifest.ComputeFingerprint(),
+            output,
+            ["Chromium", .. backends]);
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             phase = "geometry",
@@ -71,6 +81,7 @@ internal static class ControlComparisonRunner
                 renderer = backend,
                 metrics = Path.Combine(output, backend.ToLowerInvariant(), "geometry.json")
             }),
+            matrix = matrixPath,
             failed
         }));
         return failed == 0 ? 0 : 1;
@@ -81,10 +92,18 @@ internal static class ControlComparisonRunner
         var manifest = await ControlReportIO.LoadManifestAsync(manifestPath);
         var requiredCaseIds = manifest.ExpandCases().Select(item => item.Id).ToArray();
         var manifestFingerprint = manifest.ComputeFingerprint();
-        var reports = new List<ControlGeometryReport>();
+        var reports = new List<ControlGeometryReport>
+        {
+            await ControlReportIO.ReadAsync(Path.Combine(output, "chrome", "geometry.json"))
+        };
         foreach (var backend in backends)
             reports.Add(await ControlReportIO.ReadAsync(Path.Combine(output, backend.ToLowerInvariant(), "geometry.json")));
-        ControlGeometryGate.EnsureVisualAllowed(reports, requiredCaseIds, manifestFingerprint);
+        ControlGeometryGate.EnsureVisualAllowed(
+            reports,
+            requiredCaseIds,
+            manifestFingerprint,
+            output,
+            ["Chromium", .. backends]);
 
         var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square control comparison</title>");
         html.Append("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #ccc}img{width:320px}</style>");

@@ -251,14 +251,27 @@ public static class ControlGeometryGate
     public static void EnsureVisualAllowed(
         IEnumerable<ControlGeometryReport> reports,
         IEnumerable<string> requiredCaseIds,
-        string manifestFingerprint)
+        string manifestFingerprint,
+        string? artifactRoot = null,
+        IEnumerable<string>? requiredRenderers = null)
     {
         var materialized = reports.ToArray();
         if (materialized.Length == 0)
             throw new InvalidOperationException("Visual comparison requires at least one geometry report.");
-        var required = requiredCaseIds.Distinct(StringComparer.Ordinal).ToArray();
+        var rendererNames = materialized.Select(report => report.Renderer).ToArray();
+        if (rendererNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != rendererNames.Length)
+            throw new InvalidOperationException("Geometry gate contains duplicate renderer reports.");
+        var missingRenderers = (requiredRenderers ?? []).Except(rendererNames, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (missingRenderers.Length != 0)
+            throw new InvalidOperationException(
+                $"Geometry gate is missing blocking renderers: {string.Join(", ", missingRenderers)}.");
+        var required = requiredCaseIds.ToArray();
         if (required.Length == 0)
             throw new InvalidOperationException("Visual comparison requires at least one manifest case.");
+        var duplicateRequired = required.GroupBy(id => id, StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateRequired != null)
+            throw new InvalidOperationException($"Control manifest contains duplicate case ID '{duplicateRequired.Key}'.");
         foreach (var report in materialized)
         {
             if (!string.Equals(report.ManifestFingerprint, manifestFingerprint, StringComparison.Ordinal))
@@ -273,6 +286,15 @@ public static class ControlGeometryGate
                 throw new InvalidOperationException(
                     $"{report.Renderer} geometry does not match the selected manifest. " +
                     $"Missing: {string.Join(", ", missing)}; Extra: {string.Join(", ", extra)}");
+            if (artifactRoot != null)
+            {
+                var missingScreenshot = report.Cases.FirstOrDefault(item =>
+                    string.IsNullOrWhiteSpace(item.Screenshot) ||
+                    !File.Exists(Path.Combine(artifactRoot, ArtifactDirectory(report.Renderer), item.Screenshot)));
+                if (missingScreenshot != null)
+                    throw new InvalidOperationException(
+                        $"{report.Renderer} geometry screenshot is missing for '{missingScreenshot.Id}'.");
+            }
         }
         var failed = materialized.SelectMany(report => report.Cases
             .Where(item => !item.Passed)
@@ -280,5 +302,45 @@ public static class ControlGeometryGate
             .ToArray();
         if (failed.Length != 0)
             throw new InvalidOperationException("Visual comparison requires a passing geometry gate. Failed: " + string.Join(", ", failed));
+    }
+
+    private static string ArtifactDirectory(string renderer) =>
+        renderer.Equals("Chromium", StringComparison.OrdinalIgnoreCase)
+            ? "chrome"
+            : renderer.ToLowerInvariant();
+}
+
+public static class ControlGeometryMatrix
+{
+    public static string CreateMarkdown(
+        IEnumerable<ControlComparisonCase> cases,
+        IEnumerable<ControlGeometryReport> reports)
+    {
+        var materializedCases = cases.ToArray();
+        var materializedReports = reports.ToArray();
+        var builder = new StringBuilder("| Control | Appearance | Cases |");
+        foreach (var report in materializedReports)
+            builder.Append(' ').Append(report.Renderer).Append(" Renderer |");
+        builder.AppendLine();
+        builder.Append("|---|---:|---:|");
+        foreach (var _ in materializedReports) builder.Append("---:|");
+        builder.AppendLine();
+
+        foreach (var group in materializedCases.GroupBy(item => (item.Kind, item.Appearance)))
+        {
+            var ids = group.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            builder.Append("| ").Append(group.Key.Kind)
+                .Append(" | ").Append(group.Key.Appearance)
+                .Append(" | ").Append(ids.Count).Append(" |");
+            foreach (var report in materializedReports)
+            {
+                var matching = report.Cases.Where(item => ids.Contains(item.Id)).ToArray();
+                builder.Append(' ').Append(matching.Count(item => item.Passed))
+                    .Append('/').Append(ids.Count).Append(" |");
+            }
+            builder.AppendLine();
+        }
+
+        return builder.ToString();
     }
 }
