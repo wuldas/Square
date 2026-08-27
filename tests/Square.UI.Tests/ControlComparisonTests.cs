@@ -787,6 +787,95 @@ public sealed class ControlComparisonTests
         Assert.True(ControlVisualThresholds.Select.MinimumMaskIoU > 0.5f);
     }
 
+    [Fact]
+    public void CheckBoxVisualComparisonReportsMissingCheckGlyphSeparatelyFromBox()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-checkbox-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteCheckBoxFixture(chromium, drawCheck: true);
+            WriteCheckBoxFixture(square, drawCheck: false);
+
+            var result = ControlVisualComparer.CompareCheckBox(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 20, 20),
+                new ControlRect(10, 10, 20, 20),
+                ControlVisualThresholds.CheckBox);
+
+            Assert.Equal(["corner", "border", "check", "background"],
+                result.Regions.Select(region => region.Name));
+            Assert.False(result.Passed);
+            Assert.False(Assert.Single(result.Regions, region => region.Name == "check").Passed);
+            Assert.All(result.Regions.Where(region => region.Name != "check"), region => Assert.True(region.Passed));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ControlState.Unchecked)]
+    [InlineData(ControlState.Checked)]
+    [InlineData(ControlState.Hover)]
+    [InlineData(ControlState.Active)]
+    [InlineData(ControlState.Focus)]
+    [InlineData(ControlState.Disabled)]
+    public async Task SoftwareCheckBoxAutoChromeStaysInsideChromiumBorderBox(ControlState state)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-checkbox-bounds-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.CheckBox,
+                        Element = "input",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [state]
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero);
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 1;
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var ink = new List<Point>();
+            for (var y = 0; y < bitmap.Height; y++)
+                for (var x = 0; x < bitmap.Width; x++)
+                    if (bitmap.GetPixel(x, y) != SKColors.White) ink.Add(new Point(x, y));
+
+            Assert.NotEmpty(ink);
+            Assert.InRange(ink.Min(point => point.X), left, right);
+            Assert.InRange(ink.Max(point => point.X), left, right);
+            Assert.InRange(ink.Min(point => point.Y), top, bottom);
+            Assert.InRange(ink.Max(point => point.Y), top, bottom);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CheckBoxVisualThresholdsCoverObservedSoftwareAndSkiaCheckAntialiasing()
+    {
+        Assert.Equal(0.65f, ControlVisualThresholds.CheckBox.MinimumMaskIoU);
+        Assert.Equal(27f, ControlVisualThresholds.CheckBox.MaximumMeanColorDelta);
+        Assert.Equal(0.19f, ControlVisualThresholds.CheckBox.MaximumHighDeltaRatio);
+        Assert.True(ControlVisualThresholds.CheckBox.MinimumMaskIoU > 0.5f);
+    }
+
 
     [Fact]
     public async Task SoftwareButtonCaptureIncludesCenteredTextInk()
@@ -1352,6 +1441,27 @@ public sealed class ControlComparisonTests
             canvas.DrawRect(new SKRect(42, 17, 44, 19), ink);
             canvas.DrawRect(new SKRect(44, 19, 46, 21), ink);
             canvas.DrawRect(new SKRect(46, 17, 48, 19), ink);
+        }
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
+
+    private static void WriteCheckBoxFixture(string path, bool drawCheck)
+    {
+        using var bitmap = new SKBitmap(40, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        bitmap.Erase(SKColors.White);
+        using var canvas = new SKCanvas(bitmap);
+        using var fill = new SKPaint { Color = new SKColor(0, 117, 255) };
+        using var border = new SKPaint { Color = new SKColor(0, 90, 210), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
+        using var check = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 2 };
+        canvas.DrawRoundRect(new SKRect(10, 10, 30, 30), 3, 3, fill);
+        canvas.DrawRoundRect(new SKRect(10.5f, 10.5f, 29.5f, 29.5f), 3, 3, border);
+        if (drawCheck)
+        {
+            canvas.DrawLine(14, 20, 18, 24, check);
+            canvas.DrawLine(18, 24, 26, 15, check);
         }
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);

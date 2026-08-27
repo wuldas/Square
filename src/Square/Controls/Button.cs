@@ -137,20 +137,30 @@ public class CheckBox : UIElement, ITextSelectable
     {
         if (ControlDrawing.UsesWidgetAppearance(this))
         {
-            var box = new Rect(Geometry.X, Geometry.Y + (Geometry.Height - 18) / 2f, 18, 18);
-            ctx.FillRect(box, new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-            ctx.DrawRect(box, Pen.FromColor(IsEnabled ? Color.FromRgb(118, 118, 118) : Color.FromRgba(118, 118, 118, 153)));
+            var box = new Rect(
+                MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
+                MathF.Round(Geometry.Y, MidpointRounding.AwayFromZero),
+                13,
+                13);
             if (IsChecked)
             {
-                var fill = Color.TryParse("Highlight", out var highlight) ? highlight : Color.FromRgb(0, 120, 215);
-                if (!IsEnabled)
-                    fill = Color.FromRgba(fill.R, fill.G, fill.B, 153);
-                ctx.FillRect(box.Inflate(-2, -2), new SolidColorBrush(fill));
+                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(Color.FromRgb(0, 92, 200)));
                 ctx.DrawPath(PathGeometry.Create()
-                    .MoveTo(new Point(box.X + 4, box.Y + 9))
-                    .LineTo(new Point(box.X + 8, box.Y + 13))
-                    .LineTo(new Point(box.X + 15, box.Y + 5)),
-                    Pen.FromColor(Color.White, 2));
+                    .MoveTo(new Point(box.X + 2.5f, box.Y + 6))
+                    .LineTo(new Point(box.X + 5, box.Y + 8.5f))
+                    .LineTo(new Point(box.X + 10.5f, box.Y + 3)),
+                    Pen.FromColor(Color.White, 1.5f));
+            }
+            else
+            {
+                var border = !IsEnabled
+                    ? Color.FromRgb(209, 209, 209)
+                    : HasState(ElementState.Active)
+                        ? Color.FromRgb(141, 141, 141)
+                        : Color.FromRgb(79, 79, 79);
+                var fill = IsEnabled ? Color.White : Color.FromRgb(248, 248, 248);
+                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(border));
+                ctx.FillGeometry(new RoundedRectGeometry(box.Inflate(-1, -1), 1, 1), new SolidColorBrush(fill));
             }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,

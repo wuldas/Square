@@ -92,6 +92,7 @@ internal static class CssBoxPainter
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
         if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
+        if (element is CheckBox checkBox && ControlDrawing.UsesWidgetAppearance(checkBox)) return;
         if (element is Input input && input.HasState(ElementState.Focus))
         {
             PaintInputFocusBorder(context, input.Geometry);
