@@ -876,5 +876,6 @@ public class TextArea : TextEditorBase
     /// <inheritdoc/>
     protected override bool IsMultiline => true;
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) => new(300, 88);
+    public override Size Measure(Size availableSize) =>
+        ControlDrawing.UsesWidgetAppearance(this) ? new Size(155, 30) : new Size(300, 88);
 }

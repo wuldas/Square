@@ -103,6 +103,57 @@ public sealed class ControlComparisonTests
         Assert.Equal("2px", input.Style.Get("border-left-width"));
     }
 
+    [Theory]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal)]
+    [InlineData(ControlAppearance.Auto, ControlState.Hover)]
+    [InlineData(ControlAppearance.Auto, ControlState.Focus)]
+    [InlineData(ControlAppearance.Auto, ControlState.Disabled)]
+    [InlineData(ControlAppearance.Auto, ControlState.Value)]
+    [InlineData(ControlAppearance.Auto, ControlState.Placeholder)]
+    [InlineData(ControlAppearance.None, ControlState.Normal)]
+    [InlineData(ControlAppearance.None, ControlState.Hover)]
+    [InlineData(ControlAppearance.None, ControlState.Focus)]
+    [InlineData(ControlAppearance.None, ControlState.Disabled)]
+    [InlineData(ControlAppearance.None, ControlState.Value)]
+    [InlineData(ControlAppearance.None, ControlState.Placeholder)]
+    public void TextAreaGeometryMatchesChromiumAcrossAppearancesAndStates(
+        ControlAppearance appearance,
+        ControlState state)
+    {
+        var root = new View
+        {
+            Style =
+            {
+                CssText = "display: flex; align-items: center; justify-content: center; " +
+                    "box-sizing: border-box; width: 320px; height: 160px;"
+            }
+        };
+        var item = Assert.Single(ControlComparisonManifest.CreateDefault().ExpandCases(), candidate =>
+            candidate.Kind == ControlKind.TextArea && candidate.Appearance == appearance && candidate.State == state);
+        var textArea = new TextArea
+        {
+            Value = state == ControlState.Placeholder ? "" : item.Value,
+            Placeholder = item.Placeholder
+        };
+        textArea.Style.CssText = item.AuthorCss;
+        ApplyState(textArea, state);
+        root.Children.Add(textArea);
+
+        new CssEngine().ApplyStylesToTree(root);
+        new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
+
+        var expected = appearance == ControlAppearance.Auto
+            ? new Rect(79.5f, 62, 161, 36)
+            : new Rect(70, 62, 180, 36);
+        AssertClose(expected.X, textArea.Geometry.X - root.Geometry.X);
+        AssertClose(expected.Y, textArea.Geometry.Y - root.Geometry.Y);
+        AssertClose(expected.Width, textArea.Geometry.Width);
+        AssertClose(expected.Height, textArea.Geometry.Height);
+        Assert.Equal(appearance == ControlAppearance.Auto ? "2px" : "6px", textArea.Style.Get("padding-top"));
+        Assert.Equal(appearance == ControlAppearance.Auto ? "2px" : "10px", textArea.Style.Get("padding-left"));
+        Assert.Equal(appearance == ControlAppearance.Auto ? "1px" : "2px", textArea.Style.Get("border-left-width"));
+    }
+
     [Fact]
     public void ManifestExpandsSemanticControlsAppearancesAndRelevantStates()
     {
