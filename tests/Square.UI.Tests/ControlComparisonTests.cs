@@ -155,6 +155,17 @@ public sealed class ControlComparisonTests
         Assert.Equal(appearance == ControlAppearance.Auto ? "1px" : "2px", textArea.Style.Get("border-left-width"));
     }
 
+    [Fact]
+    public void TextAreaAutoUsesChromiumControlFontSize()
+    {
+        var textArea = new TextArea();
+
+        new CssEngine().ApplyStyles(textArea);
+
+        Assert.Equal("13.3333px", textArea.Style.Get("font-size"));
+        Assert.Equal("monospace", textArea.Style.Get("font-family"));
+    }
+
     [Theory]
     [InlineData(ControlAppearance.Auto, ControlState.Normal)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover)]
@@ -307,6 +318,7 @@ public sealed class ControlComparisonTests
         Assert.Contains(cases, item => item.Kind == ControlKind.Input && item.State == ControlState.Placeholder);
         Assert.Contains(cases, item => item.Kind == ControlKind.CheckBox && item.State == ControlState.Checked);
         Assert.DoesNotContain(cases, item => item.Kind == ControlKind.Select && item.State == ControlState.Open);
+        Assert.Contains(cases, item => item.Kind == ControlKind.TextArea && item.Value.Contains('\n'));
     }
 
     [Fact]
@@ -683,6 +695,47 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    public void TextAreaVisualComparisonReportsMultilineTextCaretBorderAndBackgroundRegions()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-textarea-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteTextAreaFixture(chromium, drawSecondLine: true, drawCaret: true);
+            WriteTextAreaFixture(square, drawSecondLine: false, drawCaret: true);
+
+            var result = ControlVisualComparer.CompareTextArea(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 8, 40, 24),
+                new ControlRect(10, 8, 40, 24),
+                ControlState.Focus,
+                ControlVisualThresholds.TextArea);
+
+            Assert.Equal(["corner", "border", "text-line-1", "text-line-2", "caret", "background"],
+                result.Regions.Select(region => region.Name));
+            Assert.False(result.Passed);
+            Assert.False(Assert.Single(result.Regions, region => region.Name == "text-line-2").Passed);
+            Assert.All(result.Regions.Where(region => region.Name != "text-line-2"), region => Assert.True(region.Passed));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TextAreaVisualThresholdAllowsObservedFocusAntialiasingButStillBlocksMissingInk()
+    {
+        Assert.Equal(0.60f, ControlVisualThresholds.TextArea.MinimumMaskIoU);
+        Assert.True(ControlVisualThresholds.TextArea.MinimumMaskIoU > 0.5f);
+    }
+
+
+    [Fact]
     public async Task SoftwareButtonCaptureIncludesCenteredTextInk()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-capture-" + Guid.NewGuid());
@@ -869,6 +922,137 @@ public sealed class ControlComparisonTests
         }
     }
 
+    [Theory]
+    [InlineData(ControlAppearance.Auto, 3, 3)]
+    [InlineData(ControlAppearance.None, 12, 8)]
+    public async Task SoftwareTextAreaTextUsesComputedBorderAndPadding(
+        ControlAppearance appearance,
+        float expectedOffsetX,
+        float expectedOffsetY)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-textarea-padding-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.TextArea,
+                        Element = "textarea",
+                        Appearances = [appearance],
+                        States = [ControlState.Value],
+                        Value = "Line one\nLine two"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            var bounds = item.ComputedStyles["textBounds"].Trim('[', ']').Split(',');
+            var textX = float.Parse(bounds[0]);
+            var textY = float.Parse(bounds[1].Split(' ')[0]);
+
+            AssertClose(item.BorderBox.X + expectedOffsetX, textX);
+            AssertClose(item.BorderBox.Y + expectedOffsetY, textY);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Hover, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Focus, 16)]
+    [InlineData(ControlAppearance.Auto, ControlState.Disabled, 212)]
+    [InlineData(ControlAppearance.Auto, ControlState.Value, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 79)]
+    [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
+    public async Task SoftwareTextAreaStatesUseChromiumOuterBorder(
+        ControlAppearance appearance,
+        ControlState state,
+        byte expectedBorder)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-textarea-state-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.TextArea,
+                        Element = "textarea",
+                        Appearances = [appearance],
+                        States = [state],
+                        Value = "Line one\nLine two",
+                        Placeholder = "Placeholder"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero);
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 1;
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var edge = new List<byte>();
+            for (var x = left; x <= right; x++)
+            {
+                edge.Add(bitmap.GetPixel(x, top).Red);
+                edge.Add(bitmap.GetPixel(x, bottom).Red);
+            }
+            for (var y = top + 1; y < bottom; y++)
+            {
+                edge.Add(bitmap.GetPixel(left, y).Red);
+                edge.Add(bitmap.GetPixel(right, y).Red);
+            }
+
+            Assert.True(edge.Count(value => Math.Abs(value - expectedBorder) <= 4) >= edge.Count * 9 / 10,
+                $"Expected Chromium TextArea border {expectedBorder}, got {string.Join(", ", edge.GroupBy(value => value).OrderByDescending(group => group.Count()).Take(4).Select(group => $"{group.Key}:{group.Count()}"))}.");
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SoftwareTextAreaFocusPlacesCaretAtBrowserEndPosition()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-textarea-caret-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.TextArea,
+                        Element = "textarea",
+                        Appearances = [ControlAppearance.None],
+                        States = [ControlState.Focus],
+                        Value = "Line one\nLine two"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            var caret = item.ComputedStyles["caretBounds"].Trim('[', ']').Split(',');
+            var caretX = float.Parse(caret[0]);
+            var caretY = float.Parse(caret[1].Split(' ')[0]);
+
+            Assert.True(caretX > item.ContentBox.X + 30, $"Expected end-of-line caret, got {caretX}.");
+            Assert.True(caretY > item.ContentBox.Y + 10, $"Expected second-line caret, got {caretY}.");
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public void BrowserPayloadUsesJavascriptPropertyNamesAndPreservesAuthorCss()
     {
@@ -944,6 +1128,26 @@ public sealed class ControlComparisonTests
         using var stream = File.Create(path);
         data.SaveTo(stream);
     }
+
+    private static void WriteTextAreaFixture(string path, bool drawSecondLine, bool drawCaret)
+    {
+        using var bitmap = new SKBitmap(60, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        bitmap.Erase(SKColors.White);
+        using var canvas = new SKCanvas(bitmap);
+        using var fill = new SKPaint { Color = new SKColor(250, 250, 250) };
+        using var border = new SKPaint { Color = new SKColor(118, 118, 118), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
+        using var ink = new SKPaint { Color = new SKColor(32, 32, 32) };
+        canvas.DrawRect(new SKRect(10, 8, 50, 32), fill);
+        canvas.DrawRect(new SKRect(10.5f, 8.5f, 49.5f, 31.5f), border);
+        canvas.DrawRect(new SKRect(14, 13, 22, 16), ink);
+        if (drawSecondLine) canvas.DrawRect(new SKRect(14, 21, 22, 24), ink);
+        if (drawCaret) canvas.DrawRect(new SKRect(32, 12, 33, 25), ink);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
+
 
     private static void ApplyState(UIElement control, ControlState state)
     {

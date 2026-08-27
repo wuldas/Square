@@ -11,6 +11,7 @@ public sealed record ControlVisualThresholds(
 {
     public static ControlVisualThresholds Button { get; } = new(0.72f, 18f, 0.13f);
     public static ControlVisualThresholds Input { get; } = new(0.65f, 18f, 0.13f, 60f, 0.80f);
+    public static ControlVisualThresholds TextArea { get; } = new(0.60f, 18f, 0.13f, 60f, 0.80f);
 }
 
 public sealed class ControlVisualCaseResult
@@ -113,6 +114,46 @@ public static class ControlVisualComparer
         };
     }
 
+    public static ControlVisualCaseResult CompareTextArea(
+        string chromiumPath,
+        string squarePath,
+        string diffPath,
+        ControlRect chromiumBorderBox,
+        ControlRect squareBorderBox,
+        ControlState state,
+        ControlVisualThresholds thresholds,
+        string id = "textarea",
+        string renderer = "Square")
+    {
+        using var chromium = SKBitmap.Decode(chromiumPath)
+            ?? throw new InvalidOperationException($"Unable to decode '{chromiumPath}'.");
+        using var square = SKBitmap.Decode(squarePath)
+            ?? throw new InvalidOperationException($"Unable to decode '{squarePath}'.");
+        if (chromium.Width != square.Width || chromium.Height != square.Height)
+            throw new InvalidOperationException($"TextArea screenshots have different sizes: {chromium.Width}x{chromium.Height} and {square.Width}x{square.Height}.");
+
+        var box = PixelBox.Create(chromiumBorderBox, chromium.Width, chromium.Height);
+        var squareBox = PixelBox.Create(squareBorderBox, square.Width, square.Height);
+        if (box.Width != squareBox.Width || box.Height != squareBox.Height)
+            throw new InvalidOperationException($"TextArea border boxes have different pixel sizes: {box.Width}x{box.Height} and {squareBox.Width}x{squareBox.Height}.");
+        var squareOffsetX = squareBox.Left - box.Left;
+        var squareOffsetY = squareBox.Top - box.Top;
+        var regions = CreateTextAreaRegions(box, state)
+            .Select(region => CompareRegion(chromium, square, region, thresholds, squareOffsetX, squareOffsetY))
+            .ToList();
+        WriteDiff(chromium, square, diffPath, box, squareOffsetX, squareOffsetY);
+        return new ControlVisualCaseResult
+        {
+            Id = id,
+            Renderer = renderer,
+            Passed = regions.All(region => region.Passed),
+            ChromiumScreenshot = chromiumPath,
+            SquareScreenshot = squarePath,
+            DiffScreenshot = diffPath,
+            Regions = regions
+        };
+    }
+
     private static IReadOnlyList<PixelRegion> CreateButtonRegions(PixelBox box)
     {
         var corner = Math.Clamp(Math.Min(box.Width, box.Height) / 4, 2, 5);
@@ -164,6 +205,33 @@ public static class ControlVisualComparer
                 y >= box.Top + border && y < box.Bottom - border),
             new("background", (x, y) => x >= textRight && x < contentRight &&
                 y >= box.Top + border && y < box.Bottom - border)
+        ];
+    }
+
+    private static IReadOnlyList<PixelRegion> CreateTextAreaRegions(PixelBox box, ControlState state)
+    {
+        const int border = 1;
+        const int corner = 2;
+        var contentLeft = box.Left + border;
+        var contentRight = box.Right - border;
+        var textRight = contentLeft + Math.Max(1, (contentRight - contentLeft) / 2);
+        var middle = box.Top + box.Height / 2;
+        var caretLeft = state == ControlState.Focus ? textRight + 1 : contentLeft;
+        var caretRight = state == ControlState.Focus ? Math.Min(caretLeft + 5, contentRight) : contentLeft;
+        var backgroundLeft = state == ControlState.Focus ? caretRight : textRight;
+        return
+        [
+            new("corner", (x, y) => Inside(box, x, y) &&
+                (x < box.Left + corner || x >= box.Right - corner) &&
+                (y < box.Top + corner || y >= box.Bottom - corner)),
+            new("border", (x, y) => Inside(box, x, y) &&
+                (x < box.Left + border || x >= box.Right - border || y < box.Top + border || y >= box.Bottom - border) &&
+                !((x < box.Left + corner || x >= box.Right - corner) &&
+                  (y < box.Top + corner || y >= box.Bottom - corner))),
+            new("text-line-1", (x, y) => x >= contentLeft && x < textRight && y >= box.Top + border && y < middle),
+            new("text-line-2", (x, y) => x >= contentLeft && x < textRight && y >= middle && y < box.Bottom - border),
+            new("caret", (x, y) => x >= caretLeft && x < caretRight && y >= box.Top + border && y < box.Bottom - border),
+            new("background", (x, y) => x >= backgroundLeft && x < contentRight && y >= box.Top + border && y < box.Bottom - border)
         ];
     }
 
@@ -226,19 +294,22 @@ public static class ControlVisualComparer
         }
         var maskSamples = chromiumMask + squareMask;
         var iou = maskSamples == 0 ? 1f : (float)(matchedChromium + matchedSquare) / maskSamples;
+        var isText = region.Name == "text" || region.Name.StartsWith("text-line-", StringComparison.Ordinal);
         var maximumMeanDelta = region.Name switch
         {
-            "text" or "caret" => 85f,
+            "caret" => 85f,
             "corner" => thresholds.MaximumCornerMeanDelta,
+            _ when isText => 85f,
             _ => thresholds.MaximumMeanColorDelta
         };
         var maximumHighDeltaRatio = region.Name switch
         {
-            "text" or "caret" => 0.50f,
+            "caret" => 0.50f,
             "corner" => thresholds.MaximumCornerHighDeltaRatio,
+            _ when isText => 0.50f,
             _ => thresholds.MaximumHighDeltaRatio
         };
-        var maskIsBlocking = region.Name is "text" or "caret" or "corner";
+        var maskIsBlocking = isText || region.Name is "caret" or "corner";
         var failures = new List<string>();
         if (maskIsBlocking && iou < thresholds.MinimumMaskIoU)
             failures.Add($"mask IoU {iou:0.####} < {thresholds.MinimumMaskIoU:0.####}");

@@ -80,7 +80,8 @@ public sealed class ControlComparisonManifest
         States = states.ToList(),
         AutoAuthorCss = kind == ControlKind.Button ? ButtonAppearanceAutoCss : "",
         Text = kind is ControlKind.Button or ControlKind.CheckBox or ControlKind.Radio ? "Control" : "",
-        Value = kind is ControlKind.Input or ControlKind.TextArea or ControlKind.Select ? "Value" : "",
+        Value = kind == ControlKind.TextArea ? "Line one\nLine two" :
+            kind is ControlKind.Input or ControlKind.Select ? "Value" : "",
         Placeholder = kind is ControlKind.Input or ControlKind.TextArea ? "Placeholder" : ""
     };
 

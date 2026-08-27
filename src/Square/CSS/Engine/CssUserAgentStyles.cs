@@ -53,6 +53,7 @@ internal static class CssUserAgentStyles
             cursor: text;
             white-space: pre-wrap;
             font-family: monospace;
+            font-size: 13.3333px;
             border: 1px solid #767676;
             background-color: Field;
             padding: 2px;

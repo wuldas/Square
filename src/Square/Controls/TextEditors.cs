@@ -881,6 +881,14 @@ public class TextArea : TextEditorBase
     /// <inheritdoc/>
     protected override bool IsMultiline => true;
     /// <inheritdoc/>
+    protected override float TextPaddingX =>
+        ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
+        ControlDrawing.GetStyledFloat(this, "padding-left", 8);
+    /// <inheritdoc/>
+    protected override float TextPaddingY =>
+        ControlDrawing.GetStyledFloat(this, "border-top-width", 0) +
+        ControlDrawing.GetStyledFloat(this, "padding-top", 8);
+    /// <inheritdoc/>
     public override Size Measure(Size availableSize) =>
         ControlDrawing.UsesWidgetAppearance(this) ? new Size(155, 30) : new Size(300, 88);
 }

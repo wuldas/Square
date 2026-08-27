@@ -118,7 +118,8 @@ public static class ControlSquareCapture
                 ["font"] = control.Style.Get("font") ?? "",
                 ["textFragments"] = textFragments.Count.ToString(CultureInfo.InvariantCulture),
                 ["textBounds"] = textFragments.Count == 0 ? "" : textFragments[0].Bounds.ToString(),
-                ["textFamily"] = textFragments.Count == 0 ? "" : textFragments[0].Font.Family
+                ["textFamily"] = textFragments.Count == 0 ? "" : textFragments[0].Font.Family,
+                ["caretBounds"] = control is TextEditorBase editor ? editor.CaretRect.ToString() : ""
             },
             Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/')
         };
@@ -139,7 +140,11 @@ public static class ControlSquareCapture
     {
         if (state == ControlState.Disabled) control.IsDisabled = true;
         if (state == ControlState.Hover) control.SetState(ElementState.Hover, true);
-        if (state == ControlState.Focus) control.SetState(ElementState.Focus, true);
+        if (state == ControlState.Focus)
+        {
+            control.SetState(ElementState.Focus, true);
+            if (control is TextArea textArea) textArea.HandleKey(35, control: true);
+        }
         if (state == ControlState.Active) control.SetState(ElementState.Active, true);
         if (state == ControlState.Checked)
         {
