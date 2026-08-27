@@ -876,6 +876,86 @@ public sealed class ControlComparisonTests
         Assert.True(ControlVisualThresholds.CheckBox.MinimumMaskIoU > 0.5f);
     }
 
+    [Fact]
+    public void RadioVisualComparisonReportsMissingInnerDotSeparatelyFromCircle()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-radio-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteRadioFixture(chromium, drawDot: true);
+            WriteRadioFixture(square, drawDot: false);
+
+            var result = ControlVisualComparer.CompareRadio(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 20, 20),
+                new ControlRect(10, 10, 20, 20),
+                ControlVisualThresholds.Radio);
+
+            Assert.Equal(["corner", "border", "dot", "background"],
+                result.Regions.Select(region => region.Name));
+            Assert.False(result.Passed);
+            Assert.False(Assert.Single(result.Regions, region => region.Name == "dot").Passed);
+            Assert.All(result.Regions.Where(region => region.Name != "dot"), region => Assert.True(region.Passed));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ControlState.Unchecked)]
+    [InlineData(ControlState.Checked)]
+    [InlineData(ControlState.Hover)]
+    [InlineData(ControlState.Active)]
+    [InlineData(ControlState.Focus)]
+    [InlineData(ControlState.Disabled)]
+    public async Task SoftwareRadioAutoChromeStaysInsideChromiumBorderBox(ControlState state)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-radio-bounds-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Radio,
+                        Element = "input",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [state]
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero);
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 1;
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var ink = new List<Point>();
+            for (var y = 0; y < bitmap.Height; y++)
+                for (var x = 0; x < bitmap.Width; x++)
+                    if (bitmap.GetPixel(x, y) != SKColors.White) ink.Add(new Point(x, y));
+
+            Assert.NotEmpty(ink);
+            Assert.InRange(ink.Min(point => point.X), left, right);
+            Assert.InRange(ink.Max(point => point.X), left, right);
+            Assert.InRange(ink.Min(point => point.Y), top, bottom);
+            Assert.InRange(ink.Max(point => point.Y), top, bottom);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
 
     [Fact]
     public async Task SoftwareButtonCaptureIncludesCenteredTextInk()
@@ -1463,6 +1543,21 @@ public sealed class ControlComparisonTests
             canvas.DrawLine(14, 20, 18, 24, check);
             canvas.DrawLine(18, 24, 26, 15, check);
         }
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
+
+    private static void WriteRadioFixture(string path, bool drawDot)
+    {
+        using var bitmap = new SKBitmap(40, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        bitmap.Erase(SKColors.White);
+        using var canvas = new SKCanvas(bitmap);
+        using var fill = new SKPaint { Color = new SKColor(0, 92, 200) };
+        using var dot = new SKPaint { Color = SKColors.White };
+        canvas.DrawCircle(20, 20, 10, fill);
+        if (drawDot) canvas.DrawCircle(20, 20, 4, dot);
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var stream = File.Create(path);

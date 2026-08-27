@@ -14,6 +14,7 @@ public sealed record ControlVisualThresholds(
     public static ControlVisualThresholds TextArea { get; } = new(0.60f, 18f, 0.13f, 60f, 0.80f);
     public static ControlVisualThresholds Select { get; } = new(0.60f, 26f, 0.15f, 100f, 0.80f);
     public static ControlVisualThresholds CheckBox { get; } = new(0.65f, 27f, 0.19f, 100f, 0.80f);
+    public static ControlVisualThresholds Radio { get; } = new(0.65f, 27f, 0.19f, 100f, 0.80f);
 }
 
 public sealed class ControlVisualCaseResult
@@ -234,6 +235,45 @@ public static class ControlVisualComparer
         };
     }
 
+    public static ControlVisualCaseResult CompareRadio(
+        string chromiumPath,
+        string squarePath,
+        string diffPath,
+        ControlRect chromiumBorderBox,
+        ControlRect squareBorderBox,
+        ControlVisualThresholds thresholds,
+        string id = "radio",
+        string renderer = "Square")
+    {
+        using var chromium = SKBitmap.Decode(chromiumPath)
+            ?? throw new InvalidOperationException($"Unable to decode '{chromiumPath}'.");
+        using var square = SKBitmap.Decode(squarePath)
+            ?? throw new InvalidOperationException($"Unable to decode '{squarePath}'.");
+        if (chromium.Width != square.Width || chromium.Height != square.Height)
+            throw new InvalidOperationException($"Radio screenshots have different sizes: {chromium.Width}x{chromium.Height} and {square.Width}x{square.Height}.");
+
+        var box = PixelBox.Create(chromiumBorderBox, chromium.Width, chromium.Height);
+        var squareBox = PixelBox.Create(squareBorderBox, square.Width, square.Height);
+        if (box.Width != squareBox.Width || box.Height != squareBox.Height)
+            throw new InvalidOperationException($"Radio border boxes have different pixel sizes: {box.Width}x{box.Height} and {squareBox.Width}x{squareBox.Height}.");
+        var squareOffsetX = squareBox.Left - box.Left;
+        var squareOffsetY = squareBox.Top - box.Top;
+        var regions = CreateRadioRegions(box)
+            .Select(region => CompareRegion(chromium, square, region, thresholds, squareOffsetX, squareOffsetY))
+            .ToList();
+        WriteDiff(chromium, square, diffPath, box, squareOffsetX, squareOffsetY);
+        return new ControlVisualCaseResult
+        {
+            Id = id,
+            Renderer = renderer,
+            Passed = regions.All(region => region.Passed),
+            ChromiumScreenshot = chromiumPath,
+            SquareScreenshot = squarePath,
+            DiffScreenshot = diffPath,
+            Regions = regions
+        };
+    }
+
     private static IReadOnlyList<PixelRegion> CreateButtonRegions(PixelBox box)
     {
         var corner = Math.Clamp(Math.Min(box.Width, box.Height) / 4, 2, 5);
@@ -365,6 +405,33 @@ public static class ControlVisualComparer
                 !(x >= box.Left + checkInset && x < box.Right - checkInset &&
                   y >= box.Top + checkInset && y < box.Bottom - checkInset))
         ];
+    }
+
+    private static IReadOnlyList<PixelRegion> CreateRadioRegions(PixelBox box)
+    {
+        var radius = Math.Min(box.Width, box.Height) / 2f;
+        var centerX = box.Left + box.Width / 2f;
+        var centerY = box.Top + box.Height / 2f;
+        var dotRadius = Math.Max(2f, radius * 0.55f);
+        return
+        [
+            new("corner", (x, y) => Inside(box, x, y) &&
+                DistanceSquared(x, y, centerX, centerY) > (radius - 1) * (radius - 1)),
+            new("border", (x, y) => Inside(box, x, y) &&
+                DistanceSquared(x, y, centerX, centerY) <= radius * radius &&
+                DistanceSquared(x, y, centerX, centerY) > (radius - 2) * (radius - 2)),
+            new("dot", (x, y) => DistanceSquared(x, y, centerX, centerY) <= (dotRadius - 1) * (dotRadius - 1)),
+            new("background", (x, y) => Inside(box, x, y) &&
+                DistanceSquared(x, y, centerX, centerY) > (dotRadius + 1) * (dotRadius + 1) &&
+                DistanceSquared(x, y, centerX, centerY) <= (radius - 1.5f) * (radius - 1.5f))
+        ];
+    }
+
+    private static float DistanceSquared(int x, int y, float centerX, float centerY)
+    {
+        var dx = x + 0.5f - centerX;
+        var dy = y + 0.5f - centerY;
+        return dx * dx + dy * dy;
     }
 
     private static bool Inside(PixelBox box, int x, int y) =>

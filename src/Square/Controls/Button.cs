@@ -221,15 +221,29 @@ public class Radio : UIElement, ITextSelectable
     {
         if (ControlDrawing.UsesWidgetAppearance(this))
         {
-            var center = new Point(Geometry.X + 9, Geometry.Y + Geometry.Height / 2f);
-            ctx.FillGeometry(new EllipseGeometry(center, 9, 9), new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-            ctx.DrawGeometry(new EllipseGeometry(center, 9, 9), Pen.FromColor(IsEnabled ? Color.FromRgb(118, 118, 118) : Color.FromRgba(118, 118, 118, 153)));
+            var box = new Rect(
+                MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
+                MathF.Round(Geometry.Y, MidpointRounding.AwayFromZero),
+                13,
+                13);
+            var center = new Point(box.X + 6.5f, box.Y + 6.5f);
+            var border = IsChecked
+                ? Color.FromRgb(0, 117, 255)
+                : !IsEnabled
+                    ? Color.FromRgb(209, 209, 209)
+                    : HasState(ElementState.Active)
+                        ? Color.FromRgb(141, 141, 141)
+                        : Color.FromRgb(118, 118, 118);
+            var fill = IsEnabled ? Color.White : Color.FromRgb(248, 248, 248);
+            ctx.FillGeometry(new EllipseGeometry(center, 6.5f, 6.5f), new SolidColorBrush(border));
             if (IsChecked)
             {
-                var fill = Color.TryParse("Highlight", out var highlight) ? highlight : Color.FromRgb(0, 120, 215);
-                if (!IsEnabled)
-                    fill = Color.FromRgba(fill.R, fill.G, fill.B, 153);
-                ctx.FillGeometry(new EllipseGeometry(center, 5, 5), new SolidColorBrush(fill));
+                ctx.FillGeometry(new EllipseGeometry(center, 5.5f, 5.5f), new SolidColorBrush(fill));
+                ctx.FillGeometry(new EllipseGeometry(center, 3.5f, 3.5f), new SolidColorBrush(border));
+            }
+            else
+            {
+                ctx.FillGeometry(new EllipseGeometry(center, 5.5f, 5.5f), new SolidColorBrush(fill));
             }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,

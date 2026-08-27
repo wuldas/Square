@@ -106,7 +106,7 @@ internal static class ControlComparisonRunner
             ["Chromium", .. backends]);
 
         var visualCases = reports[0].Cases
-            .Where(item => item.Kind is ControlKind.Button or ControlKind.Input or ControlKind.TextArea or ControlKind.Select or ControlKind.CheckBox)
+            .Where(item => item.Kind is ControlKind.Button or ControlKind.Input or ControlKind.TextArea or ControlKind.Select or ControlKind.CheckBox or ControlKind.Radio)
             .ToArray();
         var comparisons = new List<ControlVisualCaseResult>();
         foreach (var backend in backends)
@@ -136,6 +136,9 @@ internal static class ControlComparisonRunner
                     ControlKind.CheckBox => ControlVisualComparer.CompareCheckBox(
                         chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox,
                         ControlVisualThresholds.CheckBox, chromiumCase.Id, backend),
+                    ControlKind.Radio => ControlVisualComparer.CompareRadio(
+                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox,
+                        ControlVisualThresholds.Radio, chromiumCase.Id, backend),
                     _ => throw new InvalidOperationException($"Unsupported visual control '{chromiumCase.Kind}'.")
                 });
             }
@@ -143,7 +146,7 @@ internal static class ControlComparisonRunner
 
         var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square form-control visual comparison</title>");
         html.Append("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #ccc}img{width:320px}.fail{background:#fee}.pass{background:#efe}</style>");
-        html.Append("<h1>Button, Input, TextArea, Select and CheckBox visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
+        html.Append("<h1>Button, Input, TextArea, Select, CheckBox and Radio visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
         html.Append("<table><tr><th>Case</th><th>Renderer</th><th>Status</th><th>Chromium before</th><th>Square after</th><th>Diff</th><th>Regions</th></tr>");
         foreach (var comparison in comparisons)
         {
@@ -170,8 +173,8 @@ internal static class ControlComparisonRunner
         {
             phase = "visual",
             geometryGate = "pass",
-            controls = new[] { "Button", "Input", "TextArea", "Select", "CheckBox" },
-            thresholds = new { button = ControlVisualThresholds.Button, input = ControlVisualThresholds.Input, textArea = ControlVisualThresholds.TextArea, select = ControlVisualThresholds.Select, checkBox = ControlVisualThresholds.CheckBox },
+            controls = new[] { "Button", "Input", "TextArea", "Select", "CheckBox", "Radio" },
+            thresholds = new { button = ControlVisualThresholds.Button, input = ControlVisualThresholds.Input, textArea = ControlVisualThresholds.TextArea, select = ControlVisualThresholds.Select, checkBox = ControlVisualThresholds.CheckBox, radio = ControlVisualThresholds.Radio },
             cases = comparisons,
             supported = new
             {
@@ -179,7 +182,8 @@ internal static class ControlComparisonRunner
                 input = new[] { "normal", "hover", "focus", "disabled", "value", "placeholder" },
                 textArea = new[] { "normal", "hover", "focus", "disabled", "value", "placeholder" },
                 select = new[] { "normal", "hover", "focus", "disabled", "arrow" },
-                checkBox = new[] { "unchecked", "checked", "hover", "active", "focus", "disabled" }
+                checkBox = new[] { "unchecked", "checked", "hover", "active", "focus", "disabled" },
+                radio = new[] { "unchecked", "checked", "hover", "active", "focus", "disabled" }
             },
             unsupported = new[] { "Select native popup/open capture is unsupported in headless Chromium." }
         }, ControlReportIO.JsonOptions));
@@ -188,7 +192,7 @@ internal static class ControlComparisonRunner
         {
             phase = "visual",
             geometryGate = "pass",
-            controls = new[] { "Button", "Input", "TextArea", "Select", "CheckBox" },
+            controls = new[] { "Button", "Input", "TextArea", "Select", "CheckBox", "Radio" },
             passed = comparisons.Count - failed,
             failed,
             report = Path.Combine(output, "report.html")
