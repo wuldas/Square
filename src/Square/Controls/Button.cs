@@ -127,6 +127,8 @@ public class CheckBox : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
     {
+        if (ControlDrawing.UsesWidgetAppearance(this) && string.IsNullOrEmpty(TextContent))
+            return new Size(13, 13);
         var text = ControlDrawing.MeasureText(this, TextContent, 14f);
         return new Size(26 + text.Width, Math.Max(24, text.Height));
     }
