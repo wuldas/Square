@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Square.Compiler.Syntax;
 
 namespace Square.Compiler.Parser;
@@ -11,13 +10,14 @@ internal static class SqvDocumentParser
 {
     public static SqxDocument Parse(string source, string fileName, bool tolerant = false)
     {
-        var sections = ReadSections(source, tolerant);
+        var sections = ReadSections(source, tolerant, out var syntax);
         if (!sections.TryGetValue("template", out var templateSection))
         {
             if (tolerant)
             {
                 return new SqxDocument
                 {
+                    Syntax = syntax,
                     Name = string.IsNullOrEmpty(fileName) ? "Component" : Path.GetFileNameWithoutExtension(fileName),
                     SourcePath = fileName,
                     Template = new SqxTemplate()
@@ -32,6 +32,7 @@ internal static class SqvDocumentParser
 
         var document = new SqxDocument
         {
+            Syntax = syntax,
             Name = string.IsNullOrEmpty(fileName) ? "Component" : Path.GetFileNameWithoutExtension(fileName),
             SourcePath = fileName,
             Template = new SqxTemplate { Roots = roots }
@@ -39,13 +40,22 @@ internal static class SqvDocumentParser
 
         if (sections.TryGetValue("script", out var scriptSection))
         {
-            var meta = ParseScriptMetadata(scriptSection.OpeningTag);
-            if (!string.Equals(meta.Language, "csharp", StringComparison.OrdinalIgnoreCase))
+            var meta = syntax.Script.Metadata;
+            var metadataDiagnostic = meta.Diagnostics.FirstOrDefault();
+            if (!tolerant && metadataDiagnostic != null)
                 throw new SqxParseException(
-                    "Unsupported script language '" + meta.Language + "'",
-                    scriptSection.Start,
-                    "SQV0001");
-            document.ScriptCode = scriptSection.Content.Trim();
+                    metadataDiagnostic.Message,
+                    metadataDiagnostic.Range.Offset,
+                    "SQV0001",
+                    metadataDiagnostic.Range.Length);
+            var csharpDiagnostic = syntax.Script.CSharp.Diagnostics.FirstOrDefault();
+            if (!tolerant && csharpDiagnostic != null)
+                throw new SqxParseException(
+                    csharpDiagnostic.Message,
+                    csharpDiagnostic.Range.Offset,
+                    "SQV0001",
+                    csharpDiagnostic.Range.Length);
+            document.ScriptCode = syntax.Script.ContentText.Trim();
             document.ScriptLang = meta.Language;
             document.Namespace = meta.Namespace;
             document.Access = meta.Access;
@@ -58,13 +68,17 @@ internal static class SqvDocumentParser
         return document;
     }
 
-    private static Dictionary<string, Section> ReadSections(string source, bool tolerant)
+    private static Dictionary<string, Section> ReadSections(
+        string source,
+        bool tolerant,
+        out ComponentDocumentSyntax syntax)
     {
         var scan = ComponentSectionScanner.Scan(
             source,
             string.Empty,
             ComponentDialect.Sqv,
             tolerant);
+        syntax = scan.Document;
         var diagnostic = scan.Diagnostics.FirstOrDefault(item =>
             !tolerant || !CanRecover(item.Kind));
         if (diagnostic != null)
@@ -91,54 +105,18 @@ internal static class SqvDocumentParser
     {
         if (syntax == null) return;
         sections.Add(name, new Section(
-            source.Substring(syntax.OpeningTagRange.Offset, syntax.OpeningTagRange.Length),
             syntax.ContentText,
-            syntax.FullRange.Offset,
             syntax.ContentRange.Offset));
-    }
-
-    private static ScriptMetadata ParseScriptMetadata(string openingTag)
-    {
-        var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var tagNameEnd = openingTag.IndexOf("script", StringComparison.OrdinalIgnoreCase) + 6;
-        var attributeText = openingTag.Substring(tagNameEnd, openingTag.Length - tagNameEnd - 1);
-        var matches = Regex.Matches(attributeText, @"([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:""([^""]*)""|'([^']*)')");
-        foreach (Match match in matches)
-        {
-            var name = match.Groups[1].Value;
-            if (attributes.ContainsKey(name)) continue;
-            attributes.Add(name, match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value);
-        }
-
-        var language = attributes.TryGetValue("lang", out var lang) ? lang : "csharp";
-        var access = attributes.TryGetValue("access", out var acc) ? acc : "public";
-        attributes.TryGetValue("namespace", out var ns);
-        attributes.TryGetValue("name", out var componentName);
-        return new ScriptMetadata(language, ns, componentName, access);
     }
 
     private sealed class Section
     {
-        public string OpeningTag { get; }
         public string Content { get; }
-        public int Start { get; }
         public int ContentStart { get; }
-        public Section(string openingTag, string content, int start, int contentStart)
+        public Section(string content, int contentStart)
         {
-            OpeningTag = openingTag;
             Content = content;
-            Start = start;
             ContentStart = contentStart;
         }
-    }
-
-    private sealed class ScriptMetadata
-    {
-        public string Language { get; }
-        public string Namespace { get; }
-        public string ComponentName { get; }
-        public string Access { get; }
-        public ScriptMetadata(string language, string ns, string componentName, string access)
-        { Language = language; Namespace = ns; ComponentName = componentName; Access = access; }
     }
 }

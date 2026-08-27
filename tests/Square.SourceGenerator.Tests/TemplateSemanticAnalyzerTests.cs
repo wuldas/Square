@@ -34,6 +34,29 @@ public sealed class TemplateSemanticAnalyzerTests
     }
 
     [Fact]
+    public void ExtractsPropContractsFromRoslynPropertySyntax()
+    {
+        const string source = """
+            <template><View /></template>
+            <script>
+              [Prop(
+                  Required = true)]
+              public global::Square.Runtime.Binding.ObservableValue<string> Title { get; } = new("");
+            </script>
+            """;
+
+        var analyzer = new TemplateSemanticAnalyzer();
+        var contracts = analyzer.BuildPropContracts(
+            CreateCompilation(),
+            new[] { ("QualifiedCard.sqx", source, "Sample") });
+
+        var prop = Assert.Single(Assert.Single(contracts).Value);
+        Assert.Equal("Title", prop.Name);
+        Assert.True(prop.Required);
+        Assert.Equal("global::Square.Runtime.Binding.ObservableValue<string>", prop.TypeName);
+    }
+
+    [Fact]
     public void ExtractsGeneratedComponentMetadataWithFullAndShortNames()
     {
         const string source = "<template><View /></template>";

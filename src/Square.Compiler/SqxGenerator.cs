@@ -213,16 +213,6 @@ public sealed class SqxGenerator : IIncrementalGenerator
             : value;
     }
 
-    private static string ExtractScript(string source)
-    {
-        var start = source.IndexOf("<script", StringComparison.OrdinalIgnoreCase);
-        if (start < 0) return null;
-        var openEnd = source.IndexOf('>', start);
-        if (openEnd < 0) return null;
-        var close = source.IndexOf("</script", openEnd, StringComparison.OrdinalIgnoreCase);
-        return close < 0 ? null : source.Substring(openEnd + 1, close - openEnd - 1);
-    }
-
     private static void ValidateRequiredProps(
         SourceProductionContext context,
         SqxInput input,
@@ -232,7 +222,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
         var currentNamespace = string.IsNullOrWhiteSpace(document.Namespace)
             ? input.Namespace
             : document.Namespace;
-        var scriptUsings = ExtractNamespaceUsings(document.ScriptCode);
+        var scriptUsings = ExtractNamespaceUsings(document);
         foreach (var element in EnumerateElements(document.Template.Roots))
         {
             var contractName = ResolveContractName(
@@ -306,6 +296,19 @@ public sealed class SqxGenerator : IIncrementalGenerator
                      @"(?m)^\s*using\s+(?!static\b)(?<namespace>[A-Za-z_][A-Za-z0-9_.]*)\s*;"))
             result.Add(match.Groups["namespace"].Value);
         return result;
+    }
+
+    private static IReadOnlyList<string> ExtractNamespaceUsings(SqxDocument document)
+    {
+        var script = document.Syntax?.Script;
+        if (script == null) return ExtractNamespaceUsings(document.ScriptCode);
+
+        return script.CSharp.Usings
+            .Where(directive => directive.Alias == null && directive.StaticKeyword.RawKind == 0)
+            .Select(directive => directive.Name?.ToString())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
+            .ToArray();
     }
 
     private static string ExtractInnerType(string typeName)
@@ -382,7 +385,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, TemplateSlotDescriptor>> contracts)
     {
         var currentNamespace = string.IsNullOrWhiteSpace(document.Namespace) ? input.Namespace : document.Namespace;
-        var scriptUsings = ExtractNamespaceUsings(document.ScriptCode);
+        var scriptUsings = ExtractNamespaceUsings(document);
         Visit(document.Template.Roots);
 
         void Visit(IEnumerable<SqxNode> nodes)

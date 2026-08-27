@@ -247,9 +247,9 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **TDD:**
 
-- [ ] lang/namespace/name/access 保存 value 与 attribute/value range。
-- [ ] duplicate/unknown/invalid access 定位精确。
-- [ ] SQX/SQV 共用相同 metadata parser 与 defaults。
+- [x] lang/namespace/name/access 保存 value 与 attribute/value range。
+- [x] duplicate/unknown/invalid access 定位精确。
+- [x] SQX/SQV 共用相同 metadata parser 与 defaults。
 
 ### Task A2.2：实现 C# member-fragment parser
 
@@ -261,11 +261,11 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **TDD:**
 
-- [ ] using + field/property/method 解析成功。
-- [ ] 空 script 产生空 AST，不产生错误。
-- [ ] C# diagnostic 映射回 section absolute offset。
-- [ ] LF/CRLF、Unicode、多个 using 的 mapping 正确。
-- [ ] synthetic wrapper token 不出现在用户诊断中。
+- [x] using + field/property/method 解析成功。
+- [x] 空 script 产生空 AST，不产生错误。
+- [x] C# diagnostic 映射回 section absolute offset。
+- [x] LF/CRLF、Unicode、多个 using 的 mapping 正确。
+- [x] synthetic wrapper token 不出现在用户诊断中。
 
 ### Task A2.3：迁移语义分析器和 Emitter
 
@@ -279,9 +279,9 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **Steps:**
 
-- [ ] `[Prop]` 提取从 regex 迁移到 Roslyn Script AST。
-- [ ] using/member 输出从 Script AST 读取。
-- [ ] 保留兼容 `ScriptCode` adapter，消费者全部迁移后再删。
+- [x] `[Prop]` 提取从 regex 迁移到 Roslyn Script AST。
+- [x] using/member 输出从 Script AST 读取。
+- [x] 保留兼容 `ScriptCode` adapter，消费者全部迁移后再删。
 
 **Commit:** `重构: 引入脚本分区语法树`
 

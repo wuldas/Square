@@ -45,20 +45,6 @@ internal sealed class TemplateSectionSyntax : ComponentSectionSyntax
     }
 }
 
-internal sealed class ScriptSectionSyntax : ComponentSectionSyntax
-{
-    public ScriptSectionSyntax(
-        SquareSourceRange fullRange,
-        SquareSourceRange openingTagRange,
-        SquareSourceRange contentRange,
-        SquareSourceRange closingTagRange,
-        string contentText,
-        bool isClosed)
-        : base(ComponentSectionKind.Script, fullRange, openingTagRange, contentRange, closingTagRange, contentText, isClosed)
-    {
-    }
-}
-
 internal sealed class StyleSectionSyntax : ComponentSectionSyntax
 {
     public StyleSectionSyntax(

@@ -1,3 +1,5 @@
+using Square.Compiler.Syntax;
+
 namespace Square.Compiler.Parser
 {
     /// <summary>
@@ -61,6 +63,7 @@ namespace Square.Compiler.Parser
 
     internal class SqxDocument
     {
+        public ComponentDocumentSyntax Syntax;
         public string SourcePath = "";
         public string Name = "";
         public SqxTemplate Template = new SqxTemplate();

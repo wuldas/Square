@@ -1,3 +1,5 @@
+using Square.Compiler.Syntax;
+
 namespace Square.Compiler.ParserCore
 {
     internal abstract class CoreNode
@@ -62,6 +64,7 @@ namespace Square.Compiler.ParserCore
 
     internal sealed class CoreDocument
     {
+        public ComponentDocumentSyntax Syntax;
         public string FileName = "";
         public string SourcePath = "";
         public CoreTemplate Template = new CoreTemplate();

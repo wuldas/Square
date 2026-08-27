@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Square.Compiler.Syntax;
 
 namespace Square.Compiler.ParserCore
@@ -6,13 +5,15 @@ namespace Square.Compiler.ParserCore
     internal sealed class CoreParseException : Exception
     {
         public int Position { get; private set; }
+        public int Length { get; private set; }
         public int Line { get; private set; }
         public int Column { get; private set; }
 
-        public CoreParseException(string message, int position, int line, int column)
+        public CoreParseException(string message, int position, int line, int column, int length = 0)
             : base(message)
         {
             Position = position;
+            Length = length;
             Line = line;
             Column = column;
         }
@@ -32,13 +33,18 @@ namespace Square.Compiler.ParserCore
             if (source == null) throw new ArgumentNullException(nameof(source));
             if (options == null) throw new ArgumentNullException(nameof(options));
 
-            var sections = ReadSections(source, options.CaseSensitiveSectionNames, options.Tolerant);
+            var sections = ReadSections(
+                source,
+                options.CaseSensitiveSectionNames,
+                options.Tolerant,
+                out var syntax);
             Section templateSection;
             if (!sections.TryGetValue("template", out templateSection))
                 throw Error(source, 0, "Missing required <template> section");
 
             var document = new CoreDocument
             {
+                Syntax = syntax,
                 FileName = string.IsNullOrEmpty(fileName) ? "Component" : Path.GetFileNameWithoutExtension(fileName),
                 SourcePath = fileName ?? "",
                 Template = ParseTemplate(source, templateSection, options.StrictTemplate)
@@ -47,11 +53,25 @@ namespace Square.Compiler.ParserCore
             Section scriptSection;
             if (sections.TryGetValue("script", out scriptSection))
             {
-                var metadata = ParseScriptMetadata(source, scriptSection);
+                var metadata = syntax.Script.Metadata;
+                var metadataDiagnostic = metadata.Diagnostics.FirstOrDefault();
+                if (!options.Tolerant && metadataDiagnostic != null)
+                    throw Error(
+                        source,
+                        metadataDiagnostic.Range.Offset,
+                        metadataDiagnostic.Message,
+                        metadataDiagnostic.Range.Length);
+                var csharpDiagnostic = syntax.Script.CSharp.Diagnostics.FirstOrDefault();
+                if (!options.Tolerant && csharpDiagnostic != null)
+                    throw Error(
+                        source,
+                        csharpDiagnostic.Range.Offset,
+                        csharpDiagnostic.Message,
+                        csharpDiagnostic.Range.Length);
                 document.Script = new CoreScript
                 {
                     Language = metadata.Language,
-                    Code = scriptSection.Content.Trim(),
+                    Code = syntax.Script.ContentText.Trim(),
                     Namespace = metadata.Namespace,
                     ComponentName = metadata.ComponentName,
                     Access = metadata.Access,
@@ -74,13 +94,18 @@ namespace Square.Compiler.ParserCore
             return document;
         }
 
-        private static Dictionary<string, Section> ReadSections(string source, bool caseSensitive, bool tolerant)
+        private static Dictionary<string, Section> ReadSections(
+            string source,
+            bool caseSensitive,
+            bool tolerant,
+            out ComponentDocumentSyntax syntax)
         {
             var scan = ComponentSectionScanner.Scan(
                 source,
                 string.Empty,
                 caseSensitive ? ComponentDialect.Sqx : ComponentDialect.Sqv,
                 tolerant);
+            syntax = scan.Document;
             var diagnostic = scan.Diagnostics.FirstOrDefault(item =>
                 !tolerant || !CanRecover(item.Kind));
             if (diagnostic != null)
@@ -107,8 +132,6 @@ namespace Square.Compiler.ParserCore
         {
             if (syntax == null) return;
             sections.Add(name, new Section(
-                syntax.FullRange.Offset,
-                source.Substring(syntax.OpeningTagRange.Offset, syntax.OpeningTagRange.Length),
                 syntax.ContentText,
                 syntax.ContentRange.Offset,
                 GetLine(source, syntax.ContentRange.Offset)));
@@ -145,45 +168,17 @@ namespace Square.Compiler.ParserCore
             }
         }
 
-        private static ScriptMetadata ParseScriptMetadata(string source, Section section)
-        {
-            var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var tagNameEnd = section.OpeningTag.IndexOf("script", StringComparison.OrdinalIgnoreCase) + 6;
-            var attributeText = section.OpeningTag.Substring(tagNameEnd, section.OpeningTag.Length - tagNameEnd - 1);
-            var matches = Regex.Matches(attributeText, @"([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:""([^""]*)""|'([^']*)')");
-            foreach (Match match in matches)
-            {
-                var name = match.Groups[1].Value;
-                if (name != "lang" && name != "namespace" && name != "name" && name != "access")
-                    throw Error(source, section.Start + tagNameEnd + match.Index, "Unknown script metadata '" + name + "'");
-                if (attributes.ContainsKey(name))
-                    throw Error(source, section.Start + tagNameEnd + match.Index, "Duplicate script metadata '" + name + "'");
-                attributes.Add(name, match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value);
-            }
 
-            string language;
-            if (!attributes.TryGetValue("lang", out language)) language = "csharp";
-            if (!string.Equals(language, "csharp", StringComparison.OrdinalIgnoreCase))
-                throw Error(source, section.Start, "Unsupported script language '" + language + "'");
-
-            string access;
-            if (!attributes.TryGetValue("access", out access)) access = "public";
-            if (access != "public" && access != "internal")
-                throw Error(source, section.Start, "Script access must be 'public' or 'internal'");
-
-            string namespaceName;
-            string componentName;
-            attributes.TryGetValue("namespace", out namespaceName);
-            attributes.TryGetValue("name", out componentName);
-            return new ScriptMetadata(language, namespaceName, componentName, access);
-        }
-
-        private static CoreParseException Error(string source, int position, string message)
+        private static CoreParseException Error(
+            string source,
+            int position,
+            string message,
+            int length = 0)
         {
             position = Math.Max(0, Math.Min(position, source.Length));
             var line = GetLine(source, position);
             var lastNewLine = position > 0 ? source.LastIndexOf('\n', Math.Min(position - 1, source.Length - 1)) : -1;
-            return new CoreParseException(message, position, line, position - lastNewLine);
+            return new CoreParseException(message, position, line, position - lastNewLine, length);
         }
 
         private static int GetLine(string source, int position)
@@ -196,35 +191,15 @@ namespace Square.Compiler.ParserCore
 
         private sealed class Section
         {
-            public int Start { get; private set; }
-            public string OpeningTag { get; private set; }
             public string Content { get; private set; }
             public int ContentStart { get; private set; }
             public int ContentLine { get; private set; }
 
-            public Section(int start, string openingTag, string content, int contentStart, int contentLine)
+            public Section(string content, int contentStart, int contentLine)
             {
-                Start = start;
-                OpeningTag = openingTag;
                 Content = content;
                 ContentStart = contentStart;
                 ContentLine = contentLine;
-            }
-        }
-
-        private sealed class ScriptMetadata
-        {
-            public string Language { get; private set; }
-            public string Namespace { get; private set; }
-            public string ComponentName { get; private set; }
-            public string Access { get; private set; }
-
-            public ScriptMetadata(string language, string namespaceName, string componentName, string access)
-            {
-                Language = language;
-                Namespace = namespaceName;
-                ComponentName = componentName;
-                Access = access;
             }
         }
     }

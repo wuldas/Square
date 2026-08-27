@@ -1,7 +1,6 @@
-using System.Collections.Immutable;
-using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Square.Compiler.Parser;
 
 namespace Square.Compiler.LanguageServices;
@@ -65,19 +64,19 @@ public sealed class TemplateSemanticAnalyzer
             if (!TryParse(input.Content, input.Path, out var document)) continue;
 
             var props = new Dictionary<string, TemplatePropDescriptor>(StringComparer.OrdinalIgnoreCase);
-            var script = ExtractScript(input.Content);
+            var script = document.Syntax?.Script;
             if (script != null)
             {
-                foreach (Match match in Regex.Matches(
-                    script,
-                    @"\[Prop(?:Attribute)?\s*(?:\((?<options>[^)]*)\))?\]\s*(?:public|internal|protected|private)?\s*(?<type>[A-Za-z_][A-Za-z0-9_<>?., ]*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{"))
+                foreach (var property in script.CSharp.Members.OfType<PropertyDeclarationSyntax>())
                 {
-                    var options = match.Groups["options"].Value;
+                    var attribute = property.AttributeLists
+                        .SelectMany(list => list.Attributes)
+                        .FirstOrDefault(IsPropAttribute);
+                    if (attribute == null) continue;
                     var prop = new TemplatePropDescriptor(
-                        match.Groups["name"].Value,
-                        match.Groups["type"].Value.Trim(),
-                        options.Contains("Required", StringComparison.OrdinalIgnoreCase) &&
-                        options.Contains("true", StringComparison.OrdinalIgnoreCase));
+                        property.Identifier.ValueText,
+                        property.Type.ToString(),
+                        IsRequired(attribute));
                     props[prop.Name] = prop;
                 }
             }
@@ -166,14 +165,26 @@ public sealed class TemplateSemanticAnalyzer
             type.Name is "PropAttribute" or "Prop";
     }
 
-    private static string ExtractScript(string source)
+    private static bool IsPropAttribute(AttributeSyntax attribute)
     {
-        var start = source.IndexOf("<script", StringComparison.OrdinalIgnoreCase);
-        if (start < 0) return null;
-        var openEnd = source.IndexOf('>', start);
-        if (openEnd < 0) return null;
-        var close = source.IndexOf("</script", openEnd, StringComparison.OrdinalIgnoreCase);
-        return close < 0 ? null : source.Substring(openEnd + 1, close - openEnd - 1);
+        var name = attribute.Name.ToString();
+        var separator = name.LastIndexOf('.');
+        if (separator >= 0) name = name.Substring(separator + 1);
+        if (name.StartsWith("global::", StringComparison.Ordinal))
+            name = name.Substring("global::".Length);
+        return name is "Prop" or "PropAttribute";
+    }
+
+    private static bool IsRequired(AttributeSyntax attribute)
+    {
+        if (attribute.ArgumentList == null) return false;
+        foreach (var argument in attribute.ArgumentList.Arguments)
+        {
+            if (argument.NameEquals?.Name.Identifier.ValueText == "Required" &&
+                argument.Expression.IsKind(SyntaxKind.TrueLiteralExpression))
+                return true;
+        }
+        return false;
     }
 }
 

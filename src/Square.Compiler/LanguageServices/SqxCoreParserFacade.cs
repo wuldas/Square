@@ -26,6 +26,7 @@ internal static class SqxCoreParserFacade
     {
         var document = new Square.Compiler.Parser.SqxDocument
         {
+            Syntax = core.Syntax,
             SourcePath = core.SourcePath,
             Name = core.Script != null && core.Script.ComponentName != null
                 ? core.Script.ComponentName

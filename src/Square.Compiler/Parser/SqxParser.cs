@@ -20,7 +20,7 @@ namespace Square.Compiler.Parser
             }
             catch (CoreParseException exception)
             {
-                throw new SqxParseException(exception.Message, exception.Position);
+                throw new SqxParseException(exception.Message, exception.Position, length: exception.Length);
             }
         }
 
@@ -28,6 +28,7 @@ namespace Square.Compiler.Parser
         {
             var document = new SqxDocument
             {
+                Syntax = core.Syntax,
                 SourcePath = core.SourcePath,
                 Name = core.Script != null && core.Script.ComponentName != null
                     ? core.Script.ComponentName
@@ -124,11 +125,17 @@ namespace Square.Compiler.Parser
     internal sealed class SqxParseException : Exception
     {
         public int Position { get; }
+        public int Length { get; }
         public string DiagnosticId { get; }
 
-        public SqxParseException(string message, int position, string diagnosticId = null) : base(message)
+        public SqxParseException(
+            string message,
+            int position,
+            string diagnosticId = null,
+            int length = 0) : base(message)
         {
             Position = position;
+            Length = length;
             DiagnosticId = diagnosticId;
         }
     }

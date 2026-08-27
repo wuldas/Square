@@ -96,11 +96,12 @@ public static class SquareDocumentService
                 ? isSqv ? "SQV0001" : "SQX0001"
                 : exception.DiagnosticId;
             var position = Math.Max(0, Math.Min(exception.Position, sourceText.Length));
+            var length = Math.Max(0, Math.Min(exception.Length, sourceText.Length - position));
             var diagnostic = new SquareDiagnostic(
                 diagnosticId,
                 SquareDiagnosticSeverity.Error,
                 exception.Message,
-                new SquareSourceRange(position, 0),
+                new SquareSourceRange(position, length),
                 sourcePath);
 
             return new SquareParseResult(

@@ -1,4 +1,5 @@
 using Square.Compiler.Parser;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.Template;
 
@@ -6,6 +7,7 @@ namespace Square.Compiler.Template;
 internal sealed class TemplateDocument
 {
     public string SourcePath = "";
+    public ComponentDocumentSyntax Syntax;
     public string Name = "";
     public List<SqxNode> Roots = new();
     public string ScriptCode;
@@ -17,6 +19,7 @@ internal sealed class TemplateDocument
     public static TemplateDocument From(SqxDocument document) => new()
     {
         SourcePath = document.SourcePath,
+        Syntax = document.Syntax,
         Name = document.Name,
         Roots = document.Template.Roots,
         ScriptCode = document.ScriptCode,

@@ -60,6 +60,30 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void MultilineScriptUsingIsEmittedOutsideTheGeneratedClass()
+    {
+        const string source = """
+            <template><View /></template>
+            <script>
+              using
+                  System;
+
+              private DateTime CreatedAt = DateTime.UtcNow;
+            </script>
+            """;
+
+        var generated = Assert.Single(RunGenerator(
+            new InMemoryAdditionalText("MultilineUsing.sqx", source)).GeneratedTrees)
+            .GetText().ToString();
+
+        var usingPosition = generated.IndexOf("using System;", StringComparison.Ordinal);
+        var classPosition = generated.IndexOf("partial class MultilineUsing", StringComparison.Ordinal);
+        var scriptPosition = generated.IndexOf("#region Script", StringComparison.Ordinal);
+        Assert.InRange(usingPosition, 0, classPosition - 1);
+        Assert.DoesNotContain("using\n", generated.Substring(scriptPosition), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TemplateDirectoryContributesToDefaultNamespace()
     {
         const string source = "<template><View /></template>";

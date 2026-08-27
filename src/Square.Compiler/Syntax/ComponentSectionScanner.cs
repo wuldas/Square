@@ -145,7 +145,14 @@ internal static class ComponentSectionScanner
         return kind switch
         {
             ComponentSectionKind.Template => new TemplateSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, true),
-            ComponentSectionKind.Script => new ScriptSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, true),
+            ComponentSectionKind.Script => new ScriptSectionSyntax(
+                fullRange,
+                openingRange,
+                contentRange,
+                closingRange,
+                source.Substring(openingRange.Offset, openingRange.Length),
+                content,
+                true),
             _ => new StyleSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, true)
         };
     }
@@ -167,7 +174,14 @@ internal static class ComponentSectionScanner
         return kind switch
         {
             ComponentSectionKind.Template => new TemplateSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, false),
-            ComponentSectionKind.Script => new ScriptSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, false),
+            ComponentSectionKind.Script => new ScriptSectionSyntax(
+                fullRange,
+                openingRange,
+                contentRange,
+                closingRange,
+                source.Substring(openingRange.Offset, openingRange.Length),
+                content,
+                false),
             _ => new StyleSectionSyntax(fullRange, openingRange, contentRange, closingRange, content, false)
         };
     }
