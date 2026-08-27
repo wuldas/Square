@@ -4,6 +4,7 @@ using Square.CSS.Engine;
 using Square.Graphics;
 using Square.Rendering;
 using Square.UI;
+using SkiaSharp;
 using Xunit;
 
 namespace Square.UI.Tests;
@@ -532,6 +533,187 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    public void ButtonVisualComparisonReportsAChangedCenteredTextRegion()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            var diff = Path.Combine(artifactRoot, "diff.png");
+            WriteButtonFixture(chromium, SKColors.Black);
+            WriteButtonFixture(square, new SKColor(232, 238, 244));
+
+            var result = ControlVisualComparer.CompareButton(
+                chromium,
+                square,
+                diff,
+                new ControlRect(10, 10, 40, 20),
+                ControlVisualThresholds.Button);
+
+            Assert.False(result.Passed);
+            Assert.Contains(result.Regions, region => region.Name == "text" && !region.Passed);
+            Assert.All(result.Regions.Where(region => region.Name != "text"), region => Assert.True(region.Passed));
+            Assert.True(File.Exists(diff));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ButtonVisualComparisonIgnoresPixelsOutsideTheBorderBox()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteButtonFixture(chromium, SKColors.Black, SKColors.Black);
+            WriteButtonFixture(square, SKColors.Black, SKColors.White);
+
+            var result = ControlVisualComparer.CompareButton(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 40, 20),
+                ControlVisualThresholds.Button);
+
+            Assert.True(result.Passed, string.Join(" | ", result.Regions.SelectMany(region => region.Failures)));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ButtonVisualComparisonDetectsMissingSparseTextInk()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteButtonFixture(chromium, SKColors.Black, sparseText: true);
+            WriteButtonFixture(square, new SKColor(232, 238, 244), sparseText: true);
+
+            var result = ControlVisualComparer.CompareButton(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 40, 20),
+                ControlVisualThresholds.Button);
+
+            var text = Assert.Single(result.Regions, region => region.Name == "text");
+            Assert.False(text.Passed);
+            Assert.Equal(0, text.MaskIoU);
+            Assert.All(result.Regions.Where(region => region.Name != "text"), region => Assert.True(region.Passed));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SoftwareButtonCaptureIncludesCenteredTextInk()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-capture-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Button,
+                        Element = "button",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [ControlState.Normal],
+                        AutoAuthorCss = ControlComparisonManifest.ButtonAppearanceAutoCss,
+                        Text = "Control"
+                    }
+                ]
+            };
+
+            var report = await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot);
+            var item = Assert.Single(report.Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var box = item.BorderBox;
+            var darkPixels = 0;
+            for (var y = (int)(box.Y + 4); y < (int)(box.Y + box.Height - 4); y++)
+                for (var x = (int)(box.X + 8); x < (int)(box.X + box.Width - 8); x++)
+                    if (bitmap.GetPixel(x, y).Red < 80) darkPixels++;
+
+            Assert.True(darkPixels >= 10,
+                $"Expected centered Button text ink, found {darkPixels} dark pixels; " +
+                $"fragments={item.ComputedStyles["textFragments"]}, bounds={item.ComputedStyles["textBounds"]}, family={item.ComputedStyles["textFamily"]}.");
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ControlState.Normal, 239, 118)]
+    [InlineData(ControlState.Hover, 229, 79)]
+    [InlineData(ControlState.Active, 245, 141)]
+    [InlineData(ControlState.Focus, 229, 79)]
+    [InlineData(ControlState.Disabled, 238, 208)]
+    public async Task SoftwareButtonAutoStatesUseChromiumWidgetColors(
+        ControlState state,
+        byte expectedFill,
+        byte expectedBorder)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-state-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Button,
+                        Element = "button",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [state],
+                        AutoAuthorCss = ControlComparisonManifest.ButtonAppearanceAutoCss,
+                        Text = "Control"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var colors = new Dictionary<byte, int>();
+            for (var y = (int)MathF.Floor(item.BorderBox.Y); y < (int)MathF.Ceiling(item.BorderBox.Y + item.BorderBox.Height); y++)
+            {
+                for (var x = (int)MathF.Floor(item.BorderBox.X); x < (int)MathF.Ceiling(item.BorderBox.X + item.BorderBox.Width); x++)
+                {
+                    var color = bitmap.GetPixel(x, y);
+                    if (color.Red != color.Green || color.Green != color.Blue || color.Red == 255) continue;
+                    colors[color.Red] = colors.TryGetValue(color.Red, out var count) ? count + 1 : 1;
+                }
+            }
+            var dominant = colors.MaxBy(pair => pair.Value).Key;
+
+            Assert.Equal(expectedFill, dominant);
+            Assert.Contains(colors.Keys, value => Math.Abs(value - expectedBorder) <= 10);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void BrowserPayloadUsesJavascriptPropertyNamesAndPreservesAuthorCss()
     {
         var item = Assert.Single(ControlComparisonManifest.CreateSmoke().ExpandCases(), item =>
@@ -562,6 +744,32 @@ public sealed class ControlComparisonTests
                 }
             ]
         };
+
+    private static void WriteButtonFixture(
+        string path,
+        SKColor textColor,
+        SKColor? outsideColor = null,
+        bool sparseText = false)
+    {
+        using var bitmap = new SKBitmap(60, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        bitmap.Erase(SKColors.White);
+        using var canvas = new SKCanvas(bitmap);
+        using var fill = new SKPaint { Color = new SKColor(232, 238, 244) };
+        using var border = new SKPaint { Color = new SKColor(52, 86, 120), Style = SKPaintStyle.Stroke, StrokeWidth = 2 };
+        using var text = new SKPaint { Color = textColor };
+        canvas.DrawRoundRect(new SKRect(10, 10, 50, 30), 4, 4, fill);
+        canvas.DrawRoundRect(new SKRect(11, 11, 49, 29), 3, 3, border);
+        canvas.DrawRect(sparseText ? new SKRect(29, 19, 31, 21) : new SKRect(26, 17, 34, 23), text);
+        if (outsideColor is SKColor color)
+        {
+            using var outside = new SKPaint { Color = color };
+            canvas.DrawRect(new SKRect(0, 0, 8, 8), outside);
+        }
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
 
     private static void ApplyState(UIElement control, ControlState state)
     {

@@ -28,6 +28,11 @@ internal static class CssBoxPainter
         }
 
         var geometry = element.Geometry;
+        if (element is Button button && ControlDrawing.UsesWidgetAppearance(button))
+        {
+            PaintButtonWidget(context, button, geometry);
+            return;
+        }
         var roundedGeometry = TryGetRoundedGeometry(element, geometry, out var rounded) ? rounded : null;
         var declarations = element.Style.GetAll();
         if (declarations.ContainsKey("box-shadow") &&
@@ -55,6 +60,7 @@ internal static class CssBoxPainter
     public static void PaintAfterContent(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
+        if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
         {
             context.PopClip();
@@ -70,9 +76,37 @@ internal static class CssBoxPainter
     public static void PaintAfterChildren(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
+        if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
             return;
         PaintOutline(context, element, element.Style.GetAll());
+    }
+
+    private static void PaintButtonWidget(IRenderContext context, Button button, Rect geometry)
+    {
+        var (fill, border) = !button.IsEnabled
+            ? (Color.FromRgb(238, 238, 238), Color.FromRgb(208, 208, 208))
+            : button.HasState(ElementState.Active)
+                ? (Color.FromRgb(245, 245, 245), Color.FromRgb(141, 141, 141))
+                : button.HasState(ElementState.Hover) || button.HasState(ElementState.Focus)
+                    ? (Color.FromRgb(229, 229, 229), Color.FromRgb(79, 79, 79))
+                    : (Color.FromRgb(239, 239, 239), Color.FromRgb(118, 118, 118));
+        var outer = new Rect(geometry.X + 1.5f, geometry.Y + 1.5f, geometry.Width - 2f, geometry.Height - 2f);
+        context.FillGeometry(new RoundedRectGeometry(outer, 3, 3), new SolidColorBrush(border));
+        var inner = new Rect(outer.X + 1, outer.Y + 1, outer.Width - 2, outer.Height - 2);
+        context.FillGeometry(new RoundedRectGeometry(inner, 2, 2), new SolidColorBrush(fill));
+        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
+        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
+        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
+        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        var fillBrush = new SolidColorBrush(fill);
+        context.FillRect(new Rect(left + 2, top + 4, right - left - 3, bottom - top - 5), fillBrush);
+        context.FillRect(new Rect(left + 4, top + 2, right - left - 6, bottom - top - 2), fillBrush);
+        var borderBrush = new SolidColorBrush(border);
+        context.FillRect(new Rect(left + 4, top + 1, right - left - 6, 1), borderBrush);
+        context.FillRect(new Rect(left + 4, bottom + 1, right - left - 6, 1), borderBrush);
+        context.FillRect(new Rect(left + 1, top + 4, 1, bottom - top - 6), borderBrush);
+        context.FillRect(new Rect(right, top + 4, 1, bottom - top - 6), borderBrush);
     }
 
     private static void PaintCollapsedBorderFragments(

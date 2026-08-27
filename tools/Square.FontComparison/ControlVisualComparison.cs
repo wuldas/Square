@@ -1,0 +1,271 @@
+using SkiaSharp;
+
+namespace Square.FontComparison;
+
+public sealed record ControlVisualThresholds(float MinimumMaskIoU, float MaximumMeanColorDelta, float MaximumHighDeltaRatio)
+{
+    public static ControlVisualThresholds Button { get; } = new(0.72f, 18f, 0.13f);
+}
+
+public sealed class ControlVisualCaseResult
+{
+    public required string Id { get; init; }
+    public required string Renderer { get; init; }
+    public required bool Passed { get; init; }
+    public required string ChromiumScreenshot { get; init; }
+    public required string SquareScreenshot { get; init; }
+    public required string DiffScreenshot { get; init; }
+    public required List<ControlVisualRegionResult> Regions { get; init; }
+}
+
+public sealed class ControlVisualRegionResult
+{
+    public required string Name { get; init; }
+    public required bool Passed { get; init; }
+    public required float MaskIoU { get; init; }
+    public required float MeanColorDelta { get; init; }
+    public required float HighDeltaRatio { get; init; }
+    public required bool MaskIsBlocking { get; init; }
+    public required float MinimumMaskIoU { get; init; }
+    public required float MaximumMeanColorDelta { get; init; }
+    public required float MaximumHighDeltaRatio { get; init; }
+    public required string[] Failures { get; init; }
+}
+
+public static class ControlVisualComparer
+{
+    public static ControlVisualCaseResult CompareButton(
+        string chromiumPath,
+        string squarePath,
+        string diffPath,
+        ControlRect borderBox,
+        ControlVisualThresholds thresholds,
+        string id = "button",
+        string renderer = "Square")
+    {
+        using var chromium = SKBitmap.Decode(chromiumPath)
+            ?? throw new InvalidOperationException($"Unable to decode '{chromiumPath}'.");
+        using var square = SKBitmap.Decode(squarePath)
+            ?? throw new InvalidOperationException($"Unable to decode '{squarePath}'.");
+        if (chromium.Width != square.Width || chromium.Height != square.Height)
+            throw new InvalidOperationException($"Button screenshots have different sizes: {chromium.Width}x{chromium.Height} and {square.Width}x{square.Height}.");
+
+        var box = PixelBox.Create(borderBox, chromium.Width, chromium.Height);
+        var regions = CreateButtonRegions(box)
+            .Select(region => CompareRegion(chromium, square, region, thresholds))
+            .ToList();
+        WriteDiff(chromium, square, diffPath, box);
+        return new ControlVisualCaseResult
+        {
+            Id = id,
+            Renderer = renderer,
+            Passed = regions.All(region => region.Passed),
+            ChromiumScreenshot = chromiumPath,
+            SquareScreenshot = squarePath,
+            DiffScreenshot = diffPath,
+            Regions = regions
+        };
+    }
+
+    private static IReadOnlyList<PixelRegion> CreateButtonRegions(PixelBox box)
+    {
+        var corner = Math.Clamp(Math.Min(box.Width, box.Height) / 4, 2, 5);
+        const int border = 1;
+        var textMargin = box.Width < 100 ? 8 : box.Width / 5;
+        var textLeft = box.Left + textMargin;
+        var textRight = box.Right - textMargin;
+        var textTop = box.Top + box.Height / 4;
+        var textBottom = box.Bottom - box.Height / 4;
+        return
+        [
+            new("corner", (x, y) =>
+                Inside(box, x, y) &&
+                (x < box.Left + corner || x >= box.Right - corner) &&
+                (y < box.Top + corner || y >= box.Bottom - corner)),
+            new("border-top", (x, y) => Inside(box, x, y) && y < box.Top + border && x >= box.Left + corner && x < box.Right - corner),
+            new("border-right", (x, y) => Inside(box, x, y) && x >= box.Right - border && y >= box.Top + corner && y < box.Bottom - corner),
+            new("border-bottom", (x, y) => Inside(box, x, y) && y >= box.Bottom - border && x >= box.Left + corner && x < box.Right - corner),
+            new("border-left", (x, y) => Inside(box, x, y) && x < box.Left + border && y >= box.Top + corner && y < box.Bottom - corner),
+            new("text", (x, y) => x >= textLeft && x < textRight && y >= textTop && y < textBottom),
+            new("background", (x, y) =>
+                x >= box.Left + border && x < box.Right - border &&
+                y >= box.Top + border && y < box.Bottom - border &&
+                !(x >= textLeft && x < textRight && y >= textTop && y < textBottom))
+        ];
+    }
+
+    private static bool Inside(PixelBox box, int x, int y) =>
+        x >= box.Left && x < box.Right && y >= box.Top && y < box.Bottom;
+
+    private static ControlVisualRegionResult CompareRegion(
+        SKBitmap chromium,
+        SKBitmap square,
+        PixelRegion region,
+        ControlVisualThresholds thresholds)
+    {
+        long samples = 0;
+        long highDelta = 0;
+        double totalDelta = 0;
+        var chromiumPixels = new bool[chromium.Width * chromium.Height];
+        var squarePixels = new bool[square.Width * square.Height];
+        long chromiumMask = 0;
+        long squareMask = 0;
+        var chromiumBackground = DominantColor(chromium, region);
+        var squareBackground = DominantColor(square, region);
+        for (var y = 0; y < chromium.Height; y++)
+        {
+            for (var x = 0; x < chromium.Width; x++)
+            {
+                if (!region.Contains(x, y)) continue;
+                var expected = chromium.GetPixel(x, y);
+                var actual = square.GetPixel(x, y);
+                var delta = ColorDelta(expected, actual);
+                totalDelta += delta;
+                if (delta > 48) highDelta++;
+                samples++;
+                var expectedInk = ColorDelta(expected, chromiumBackground) > 12;
+                var actualInk = ColorDelta(actual, squareBackground) > 12;
+                var index = y * chromium.Width + x;
+                chromiumPixels[index] = expectedInk;
+                squarePixels[index] = actualInk;
+                if (expectedInk) chromiumMask++;
+                if (actualInk) squareMask++;
+            }
+        }
+
+        var mean = samples == 0 ? 0 : (float)(totalDelta / samples);
+        var highRatio = samples == 0 ? 0 : (float)highDelta / samples;
+        long matchedChromium = 0;
+        long matchedSquare = 0;
+        for (var y = 0; y < chromium.Height; y++)
+        {
+            for (var x = 0; x < chromium.Width; x++)
+            {
+                if (!region.Contains(x, y)) continue;
+                var index = y * chromium.Width + x;
+                if (chromiumPixels[index] && HasNeighbor(squarePixels, chromium.Width, chromium.Height, region, x, y)) matchedChromium++;
+                if (squarePixels[index] && HasNeighbor(chromiumPixels, chromium.Width, chromium.Height, region, x, y)) matchedSquare++;
+            }
+        }
+        var maskSamples = chromiumMask + squareMask;
+        var iou = maskSamples == 0 ? 1f : (float)(matchedChromium + matchedSquare) / maskSamples;
+        var maximumMeanDelta = region.Name switch
+        {
+            "text" => 85f,
+            "corner" => 40f,
+            _ => thresholds.MaximumMeanColorDelta
+        };
+        var maximumHighDeltaRatio = region.Name switch
+        {
+            "text" => 0.50f,
+            "corner" => 0.45f,
+            _ => thresholds.MaximumHighDeltaRatio
+        };
+        var maskIsBlocking = region.Name == "text" || region.Name == "corner";
+        var failures = new List<string>();
+        if (maskIsBlocking && iou < thresholds.MinimumMaskIoU)
+            failures.Add($"mask IoU {iou:0.####} < {thresholds.MinimumMaskIoU:0.####}");
+        if (mean > maximumMeanDelta) failures.Add($"mean color delta {mean:0.###} > {maximumMeanDelta:0.###}");
+        if (highRatio > maximumHighDeltaRatio)
+            failures.Add($"high delta ratio {highRatio:P2} > {maximumHighDeltaRatio:P2}");
+        return new ControlVisualRegionResult
+        {
+            Name = region.Name,
+            Passed = failures.Count == 0,
+            MaskIoU = iou,
+            MeanColorDelta = mean,
+            HighDeltaRatio = highRatio,
+            MaskIsBlocking = maskIsBlocking,
+            MinimumMaskIoU = thresholds.MinimumMaskIoU,
+            MaximumMeanColorDelta = maximumMeanDelta,
+            MaximumHighDeltaRatio = maximumHighDeltaRatio,
+            Failures = failures.ToArray()
+        };
+    }
+
+    private static bool HasNeighbor(
+        bool[] mask,
+        int width,
+        int height,
+        PixelRegion region,
+        int x,
+        int y)
+    {
+        for (var dy = -1; dy <= 1; dy++)
+        {
+            var candidateY = y + dy;
+            if ((uint)candidateY >= (uint)height) continue;
+            for (var dx = -1; dx <= 1; dx++)
+            {
+                var candidateX = x + dx;
+                if ((uint)candidateX >= (uint)width || !region.Contains(candidateX, candidateY)) continue;
+                if (mask[candidateY * width + candidateX]) return true;
+            }
+        }
+        return false;
+    }
+
+    private static SKColor DominantColor(SKBitmap bitmap, PixelRegion region)
+    {
+        var counts = new Dictionary<uint, int>();
+        uint dominant = 0;
+        var dominantCount = 0;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                if (!region.Contains(x, y)) continue;
+                var color = bitmap.GetPixel(x, y);
+                var key = (uint)(color.Red << 16 | color.Green << 8 | color.Blue);
+                var count = counts.TryGetValue(key, out var current) ? current + 1 : 1;
+                counts[key] = count;
+                if (count <= dominantCount) continue;
+                dominant = key;
+                dominantCount = count;
+            }
+        }
+        return new SKColor((byte)(dominant >> 16), (byte)(dominant >> 8), (byte)dominant);
+    }
+
+    private static void WriteDiff(SKBitmap chromium, SKBitmap square, string path, PixelBox box)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var diff = new SKBitmap(chromium.Width, chromium.Height, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        diff.Erase(new SKColor(12, 15, 20));
+        for (var y = box.Top; y < box.Bottom; y++)
+        {
+            for (var x = box.Left; x < box.Right; x++)
+            {
+                var delta = ColorDelta(chromium.GetPixel(x, y), square.GetPixel(x, y));
+                diff.SetPixel(x, y, new SKColor((byte)Math.Clamp(delta * 3, 0, 255), 30, (byte)Math.Clamp(80 + delta, 0, 255)));
+            }
+        }
+        using var image = SKImage.FromBitmap(diff);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
+
+    private static int ColorDelta(SKColor left, SKColor right) => Math.Abs(Luminance(left) - Luminance(right));
+
+    private static int Luminance(SKColor color) =>
+        (color.Red * 299 + color.Green * 587 + color.Blue * 114) / 1000;
+
+    private sealed record PixelRegion(string Name, Func<int, int, bool> Contains);
+
+    private readonly record struct PixelBox(int Left, int Top, int Right, int Bottom)
+    {
+        public int Width => Right - Left;
+        public int Height => Bottom - Top;
+
+        public static PixelBox Create(ControlRect rect, int imageWidth, int imageHeight)
+        {
+            var left = Math.Clamp((int)MathF.Round(rect.X, MidpointRounding.AwayFromZero), 0, imageWidth);
+            var top = Math.Clamp((int)MathF.Round(rect.Y, MidpointRounding.AwayFromZero), 0, imageHeight);
+            var right = Math.Clamp((int)MathF.Round(rect.X + rect.Width, MidpointRounding.AwayFromZero), left, imageWidth);
+            var bottom = Math.Clamp((int)MathF.Round(rect.Y + rect.Height, MidpointRounding.AwayFromZero), top, imageHeight);
+            if (right <= left || bottom <= top) throw new InvalidOperationException("Button visual comparison requires a non-empty border box.");
+            return new PixelBox(left, top, right, bottom);
+        }
+    }
+}

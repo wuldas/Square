@@ -105,18 +105,47 @@ internal static class ControlComparisonRunner
             output,
             ["Chromium", .. backends]);
 
-        var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square control comparison</title>");
-        html.Append("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #ccc}img{width:320px}</style>");
-        html.Append("<h1>Control visual capture</h1><table><tr><th>Case</th><th>Chromium</th>");
-        foreach (var backend in backends) html.Append("<th>").Append(WebUtility.HtmlEncode(backend)).Append("</th>");
-        html.Append("</tr>");
-        foreach (var item in reports[0].Cases)
+        var buttonCases = reports[0].Cases.Where(item => item.Kind == ControlKind.Button).ToArray();
+        var comparisons = new List<ControlVisualCaseResult>();
+        foreach (var backend in backends)
         {
-            html.Append("<tr><td>").Append(WebUtility.HtmlEncode(item.Id)).Append("</td>");
-            html.Append("<td><img src=\"chrome/cases/").Append(WebUtility.HtmlEncode(item.Id)).Append(".png\"></td>");
-            foreach (var backend in backends)
-                html.Append("<td><img src=\"").Append(backend.ToLowerInvariant()).Append("/cases/")
-                    .Append(WebUtility.HtmlEncode(item.Id)).Append(".png\"></td>");
+            var squareReport = reports.Single(report => report.Renderer.Equals(backend, StringComparison.OrdinalIgnoreCase));
+            foreach (var chromiumCase in buttonCases)
+            {
+                var squareCase = squareReport.Cases.Single(item => item.Id == chromiumCase.Id);
+                var diffRelative = Path.Combine("diff", backend.ToLowerInvariant(), chromiumCase.Id + ".png");
+                comparisons.Add(ControlVisualComparer.CompareButton(
+                    Path.Combine(output, "chrome", chromiumCase.Screenshot.Replace('/', Path.DirectorySeparatorChar)),
+                    Path.Combine(output, backend.ToLowerInvariant(), squareCase.Screenshot.Replace('/', Path.DirectorySeparatorChar)),
+                    Path.Combine(output, diffRelative),
+                    chromiumCase.BorderBox,
+                    ControlVisualThresholds.Button,
+                    chromiumCase.Id,
+                    backend));
+            }
+        }
+
+        var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square Button visual comparison</title>");
+        html.Append("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #ccc}img{width:320px}.fail{background:#fee}.pass{background:#efe}</style>");
+        html.Append("<h1>Button visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
+        html.Append("<table><tr><th>Case</th><th>Renderer</th><th>Status</th><th>Chromium before</th><th>Square after</th><th>Diff</th><th>Regions</th></tr>");
+        foreach (var comparison in comparisons)
+        {
+            var rendererDirectory = comparison.Renderer.ToLowerInvariant();
+            html.Append("<tr class=\"").Append(comparison.Passed ? "pass" : "fail").Append("\"><td>")
+                .Append(WebUtility.HtmlEncode(comparison.Id)).Append("</td><td>")
+                .Append(WebUtility.HtmlEncode(comparison.Renderer)).Append("</td><td>")
+                .Append(comparison.Passed ? "pass" : "fail").Append("</td>");
+            html.Append("<td><img src=\"chrome/cases/").Append(WebUtility.HtmlEncode(comparison.Id)).Append(".png\"></td>");
+            html.Append("<td><img src=\"").Append(rendererDirectory).Append("/cases/")
+                .Append(WebUtility.HtmlEncode(comparison.Id)).Append(".png\"></td>");
+            html.Append("<td><img src=\"diff/").Append(rendererDirectory).Append('/')
+                .Append(WebUtility.HtmlEncode(comparison.Id)).Append(".png\"></td><td><ul>");
+            foreach (var region in comparison.Regions)
+                html.Append("<li>").Append(WebUtility.HtmlEncode(region.Name)).Append(": ")
+                    .Append(region.Passed ? "pass" : WebUtility.HtmlEncode(string.Join("; ", region.Failures)))
+                    .Append("</li>");
+            html.Append("</ul></td>");
             html.Append("</tr>");
         }
         html.Append("</table>");
@@ -125,13 +154,23 @@ internal static class ControlComparisonRunner
         {
             phase = "visual",
             geometryGate = "pass",
-            comparison = "capture-only",
-            note = "Region-aware visual thresholds are intentionally not inferred from raw RGBA equality.",
-            cases = reports[0].Cases.Select(item => item.Id),
-            backends
+            control = "Button",
+            thresholds = ControlVisualThresholds.Button,
+            cases = comparisons,
+            supported = new[] { "normal", "hover", "active", "focus", "disabled" },
+            unsupported = Array.Empty<string>()
         }, ControlReportIO.JsonOptions));
-        Console.WriteLine(JsonSerializer.Serialize(new { phase = "visual", geometryGate = "pass", report = Path.Combine(output, "report.html") }));
-        return 0;
+        var failed = comparisons.Count(item => !item.Passed);
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            phase = "visual",
+            geometryGate = "pass",
+            control = "Button",
+            passed = comparisons.Count - failed,
+            failed,
+            report = Path.Combine(output, "report.html")
+        }));
+        return failed == 0 ? 0 : 1;
     }
 
     private static async Task RunSquareChildAsync(string backend, string manifestPath, string output)

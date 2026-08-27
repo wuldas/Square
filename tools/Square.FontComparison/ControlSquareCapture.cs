@@ -11,7 +11,7 @@ using Square.UI;
 
 namespace Square.FontComparison;
 
-internal static class ControlSquareCapture
+public static class ControlSquareCapture
 {
     private static readonly Size CanvasSize = new(320, 160);
 
@@ -75,6 +75,7 @@ internal static class ControlSquareCapture
         context.Clear(Color.White);
         var displayTree = new DisplayTree();
         displayTree.BuildFrom(root);
+        var textFragments = displayTree.CollectTextFragments(control);
         displayTree.Render(context);
         using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
         var screenshotPath = Path.Combine(outputDirectory, "cases", item.Id + ".png");
@@ -114,7 +115,10 @@ internal static class ControlSquareCapture
                 ["borderRadius"] = control.Style.Get("border-radius") ?? "",
                 ["backgroundColor"] = control.Style.Get("background-color") ?? control.Style.Get("background") ?? "",
                 ["color"] = control.Style.Get("color") ?? "",
-                ["font"] = control.Style.Get("font") ?? ""
+                ["font"] = control.Style.Get("font") ?? "",
+                ["textFragments"] = textFragments.Count.ToString(CultureInfo.InvariantCulture),
+                ["textBounds"] = textFragments.Count == 0 ? "" : textFragments[0].Bounds.ToString(),
+                ["textFamily"] = textFragments.Count == 0 ? "" : textFragments[0].Font.Family
             },
             Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/')
         };

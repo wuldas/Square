@@ -70,13 +70,12 @@ public class Button : UIElement, ITextSelectable
             this,
             "color",
             IsEnabled ? Color.Black : Color.FromRgb(235, 235, 235));
-        var active = IsEnabled && HasState(ElementState.Active);
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        var pressOffset = active && ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;
+        var widgetOffset = ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;
         var textPosition = new Point(
             Geometry.X + (Geometry.Width - textSize.Width) / 2f,
-            Geometry.Y + (Geometry.Height - textSize.Height) / 2f + pressOffset);
-        ControlDrawing.DrawText(ctx, this, TextContent, textPosition, foreground, 14f);
+            Geometry.Y + (Geometry.Height - textSize.Height) / 2f + widgetOffset);
+        ControlDrawing.DrawText(ctx, this, TextContent, textPosition, foreground, 14f, maxSize: textSize);
     }
 
     /// <inheritdoc/>
