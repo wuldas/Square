@@ -1,0 +1,281 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Square.FontComparison;
+
+[JsonConverter(typeof(JsonStringEnumConverter<ControlKind>))]
+public enum ControlKind { Button, Input, TextArea, Select, CheckBox, Radio }
+
+[JsonConverter(typeof(JsonStringEnumConverter<ControlAppearance>))]
+public enum ControlAppearance { Auto, None }
+
+[JsonConverter(typeof(JsonStringEnumConverter<ControlState>))]
+public enum ControlState { Normal, Hover, Active, Focus, Disabled, Value, Placeholder, Unchecked, Checked, Open }
+
+public sealed class ControlComparisonManifest
+{
+    public const string AppearanceNoneCss =
+        "appearance: none; box-sizing: border-box; margin: 0; width: 180px; height: 36px; " +
+        "padding: 6px 10px; border: 2px solid #345678; border-radius: 4px; " +
+        "background: #e8eef4; color: #102030; font: 14px Arial;";
+
+    public string AppearanceNoneAuthorCss { get; init; } = AppearanceNoneCss;
+    public required List<ControlDefinition> Controls { get; init; }
+
+    public static ControlComparisonManifest CreateDefault() => new()
+    {
+        Controls =
+        [
+            Define(ControlKind.Button, ControlState.Normal, ControlState.Hover, ControlState.Active, ControlState.Focus, ControlState.Disabled),
+            Define(ControlKind.Input, ControlState.Normal, ControlState.Hover, ControlState.Focus, ControlState.Disabled, ControlState.Value, ControlState.Placeholder),
+            Define(ControlKind.TextArea, ControlState.Normal, ControlState.Hover, ControlState.Focus, ControlState.Disabled, ControlState.Value, ControlState.Placeholder),
+            Define(ControlKind.Select, ControlState.Normal, ControlState.Hover, ControlState.Focus, ControlState.Disabled),
+            Define(ControlKind.CheckBox, ControlState.Unchecked, ControlState.Checked, ControlState.Hover, ControlState.Active, ControlState.Focus, ControlState.Disabled),
+            Define(ControlKind.Radio, ControlState.Unchecked, ControlState.Checked, ControlState.Hover, ControlState.Active, ControlState.Focus, ControlState.Disabled)
+        ]
+    };
+
+    public static ControlComparisonManifest CreateSmoke() => new()
+    {
+        Controls = Enum.GetValues<ControlKind>()
+            .Select(kind => Define(kind, ControlState.Normal))
+            .ToList()
+    };
+
+    public IReadOnlyList<ControlComparisonCase> ExpandCases() => Controls
+        .SelectMany(control => control.Appearances.SelectMany(appearance => control.States.Select(state =>
+            new ControlComparisonCase
+            {
+                Id = $"{ToId(control.Kind)}-{appearance.ToString().ToLowerInvariant()}-{state.ToString().ToLowerInvariant()}",
+                Kind = control.Kind,
+                Element = control.Element,
+                Appearance = appearance,
+                State = state,
+                Text = control.Text,
+                Value = control.Value,
+                Placeholder = control.Placeholder,
+                AuthorCss = appearance == ControlAppearance.None ? AppearanceNoneAuthorCss : ""
+            })))
+        .ToArray();
+
+    public string ComputeFingerprint()
+    {
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this));
+        return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    }
+
+    private static ControlDefinition Define(ControlKind kind, params ControlState[] states) => new()
+    {
+        Kind = kind,
+        Element = kind switch
+        {
+            ControlKind.TextArea => "textarea",
+            ControlKind.CheckBox or ControlKind.Radio or ControlKind.Input => "input",
+            _ => kind.ToString().ToLowerInvariant()
+        },
+        Appearances = [ControlAppearance.Auto, ControlAppearance.None],
+        States = states.ToList(),
+        Text = kind is ControlKind.Button or ControlKind.CheckBox or ControlKind.Radio ? "Control" : "",
+        Value = kind is ControlKind.Input or ControlKind.TextArea or ControlKind.Select ? "Value" : "",
+        Placeholder = kind is ControlKind.Input or ControlKind.TextArea ? "Placeholder" : ""
+    };
+
+    private static string ToId(ControlKind kind) => kind switch
+    {
+        ControlKind.TextArea => "textarea",
+        ControlKind.CheckBox => "checkbox",
+        _ => kind.ToString().ToLowerInvariant()
+    };
+}
+
+public sealed class ControlDefinition
+{
+    public required ControlKind Kind { get; init; }
+    public required string Element { get; init; }
+    public required List<ControlAppearance> Appearances { get; init; }
+    public required List<ControlState> States { get; init; }
+    public string Text { get; init; } = "";
+    public string Value { get; init; } = "";
+    public string Placeholder { get; init; } = "";
+}
+
+public sealed class ControlComparisonCase
+{
+    public required string Id { get; init; }
+    public required ControlKind Kind { get; init; }
+    public required string Element { get; init; }
+    public required ControlAppearance Appearance { get; init; }
+    public required ControlState State { get; init; }
+    public required string Text { get; init; }
+    public required string Value { get; init; }
+    public required string Placeholder { get; init; }
+    public required string AuthorCss { get; init; }
+    [JsonIgnore] public string ChromiumAuthorCss => AuthorCss;
+    [JsonIgnore] public string SquareAuthorCss => AuthorCss;
+}
+
+public sealed record ControlBrowserCaseConfig(
+    string element,
+    string kind,
+    string state,
+    string text,
+    string value,
+    string placeholder,
+    string authorCss)
+{
+    public static ControlBrowserCaseConfig Create(ControlComparisonCase item) => new(
+        item.Element,
+        item.Kind.ToString(),
+        item.State.ToString(),
+        item.Text,
+        item.Value,
+        item.Placeholder,
+        item.AuthorCss);
+}
+
+public sealed record ControlArtifactPaths(string Metrics, string Screenshot)
+{
+    public static ControlArtifactPaths For(string root, string renderer, string caseId)
+    {
+        var rendererDirectory = Path.Combine(root, renderer.ToLowerInvariant());
+        return new(
+            Path.Combine(rendererDirectory, "geometry.json"),
+            Path.Combine(rendererDirectory, "cases", caseId + ".png"));
+    }
+}
+
+public sealed class ControlGeometryReport
+{
+    public required string Renderer { get; init; }
+    public string ManifestFingerprint { get; init; } = "";
+    public string Version { get; init; } = "unknown";
+    public DateTimeOffset CapturedAt { get; init; } = DateTimeOffset.UtcNow;
+    public required List<ControlGeometryCaseResult> Cases { get; init; }
+}
+
+public sealed class ControlGeometryCaseResult
+{
+    public required string Id { get; init; }
+    public required bool Passed { get; init; }
+    public ControlKind Kind { get; init; }
+    public ControlAppearance Appearance { get; init; }
+    public ControlState State { get; init; }
+    public ControlRect BorderBox { get; init; }
+    public ControlRect ContentBox { get; init; }
+    public ControlEdges Padding { get; init; }
+    public ControlEdges Border { get; init; }
+    public Dictionary<string, string> ComputedStyles { get; init; } = [];
+    public string Screenshot { get; init; } = "";
+    public string[] Failures { get; init; } = [];
+}
+
+public readonly record struct ControlRect(float X, float Y, float Width, float Height);
+public readonly record struct ControlEdges(float Top, float Right, float Bottom, float Left);
+
+public static class ControlGeometryComparer
+{
+    public static ControlGeometryReport Compare(
+        ControlGeometryReport chromium,
+        ControlGeometryReport square,
+        float tolerance = 0.5f)
+    {
+        var expected = chromium.Cases.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        if (!string.Equals(chromium.ManifestFingerprint, square.ManifestFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"{square.Renderer} geometry manifest fingerprint does not match Chromium.");
+        var actualIds = square.Cases.Select(item => item.Id).ToArray();
+        if (actualIds.Distinct(StringComparer.Ordinal).Count() != actualIds.Length)
+            throw new InvalidOperationException($"{square.Renderer} geometry contains duplicate case IDs.");
+        var missing = expected.Keys.Except(actualIds, StringComparer.Ordinal).ToArray();
+        if (missing.Length != 0)
+            throw new InvalidOperationException(
+                $"{square.Renderer} geometry is missing cases: {string.Join(", ", missing)}");
+        var cases = new List<ControlGeometryCaseResult>();
+        foreach (var actual in square.Cases)
+        {
+            if (!expected.TryGetValue(actual.Id, out var baseline))
+                throw new InvalidOperationException($"Chromium geometry is missing case '{actual.Id}'.");
+            var failures = new List<string>();
+            CompareRect("border-box", baseline.BorderBox, actual.BorderBox, tolerance, failures);
+            CompareRect("content-box", baseline.ContentBox, actual.ContentBox, tolerance, failures);
+            cases.Add(new ControlGeometryCaseResult
+            {
+                Id = actual.Id,
+                Kind = actual.Kind,
+                Appearance = actual.Appearance,
+                State = actual.State,
+                Passed = failures.Count == 0,
+                BorderBox = actual.BorderBox,
+                ContentBox = actual.ContentBox,
+                Padding = actual.Padding,
+                Border = actual.Border,
+                ComputedStyles = actual.ComputedStyles,
+                Screenshot = actual.Screenshot,
+                Failures = failures.ToArray()
+            });
+        }
+        return new ControlGeometryReport
+        {
+            Renderer = square.Renderer,
+            ManifestFingerprint = square.ManifestFingerprint,
+            Version = square.Version,
+            CapturedAt = square.CapturedAt,
+            Cases = cases
+        };
+    }
+
+    private static void CompareRect(
+        string name, ControlRect expected, ControlRect actual, float tolerance, List<string> failures)
+    {
+        CompareValue(name + " x", expected.X, actual.X, tolerance, failures);
+        CompareValue(name + " y", expected.Y, actual.Y, tolerance, failures);
+        CompareValue(name + " width", expected.Width, actual.Width, tolerance, failures);
+        CompareValue(name + " height", expected.Height, actual.Height, tolerance, failures);
+    }
+
+    private static void CompareValue(string name, float expected, float actual, float tolerance, List<string> failures)
+    {
+        var delta = Math.Abs(actual - expected);
+        if (delta > tolerance)
+            failures.Add($"{name} {delta:0.###}px ({actual:0.###}/{expected:0.###})");
+    }
+}
+
+public static class ControlGeometryGate
+{
+    public static void EnsureVisualAllowed(
+        IEnumerable<ControlGeometryReport> reports,
+        IEnumerable<string> requiredCaseIds,
+        string manifestFingerprint)
+    {
+        var materialized = reports.ToArray();
+        if (materialized.Length == 0)
+            throw new InvalidOperationException("Visual comparison requires at least one geometry report.");
+        var required = requiredCaseIds.Distinct(StringComparer.Ordinal).ToArray();
+        if (required.Length == 0)
+            throw new InvalidOperationException("Visual comparison requires at least one manifest case.");
+        foreach (var report in materialized)
+        {
+            if (!string.Equals(report.ManifestFingerprint, manifestFingerprint, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"{report.Renderer} geometry manifest fingerprint is stale or mismatched.");
+            var actual = report.Cases.Select(item => item.Id).ToArray();
+            if (actual.Distinct(StringComparer.Ordinal).Count() != actual.Length)
+                throw new InvalidOperationException($"{report.Renderer} geometry contains duplicate case IDs.");
+            var missing = required.Except(actual, StringComparer.Ordinal).ToArray();
+            var extra = actual.Except(required, StringComparer.Ordinal).ToArray();
+            if (missing.Length != 0 || extra.Length != 0)
+                throw new InvalidOperationException(
+                    $"{report.Renderer} geometry does not match the selected manifest. " +
+                    $"Missing: {string.Join(", ", missing)}; Extra: {string.Join(", ", extra)}");
+        }
+        var failed = materialized.SelectMany(report => report.Cases
+            .Where(item => !item.Passed)
+            .Select(item => $"{report.Renderer}/{item.Id}"))
+            .ToArray();
+        if (failed.Length != 0)
+            throw new InvalidOperationException("Visual comparison requires a passing geometry gate. Failed: " + string.Join(", ", failed));
+    }
+}

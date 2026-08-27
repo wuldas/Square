@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Square.Extensions.Markdown\Square.Extensions.Markdown.csproj" />
     <ProjectReference Include="..\..\samples\Square.Sample\Square.Sample.csproj" />
     <ProjectReference Include="..\..\samples\Square.Sample.Vue\Square.Sample.Vue.csproj" />
+    <ProjectReference Include="..\..\tools\Square.FontComparison\Square.FontComparison.csproj" />
   </ItemGroup>
 
   <ItemGroup>

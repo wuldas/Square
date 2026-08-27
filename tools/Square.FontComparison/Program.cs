@@ -17,8 +17,10 @@ internal static class Program
                     GetOption(args, "--backend") ?? "Software",
                     GetOption(args, "--output") ?? "artifacts/font-comparison/software"),
                 "compare" => await CompareAsync(args),
+                "compare-controls" => await CompareControlsAsync(args),
+                "capture-controls-square" => await CaptureControlsSquareAsync(args),
                 _ => throw new ArgumentException(
-                    $"Unknown command '{command}'. Supported commands: validate, capture-browser, capture-square.")
+                    $"Unknown command '{command}'. Supported commands: validate, capture-browser, capture-square, compare, compare-controls.")
             };
         }
         catch (Exception exception)
@@ -99,6 +101,29 @@ internal static class Program
         await process.WaitForExitAsync();
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"Square {backend} capture exited with code {process.ExitCode}.");
+    }
+
+    private static async Task<int> CompareControlsAsync(string[] args)
+    {
+        var phase = GetOption(args, "--phase") ?? "geometry";
+        var manifest = Path.GetFullPath(GetOption(args, "--manifest")
+            ?? Path.Combine(AppContext.BaseDirectory, "Cases", "ControlComparisonCases.json"));
+        var output = Path.GetFullPath(GetOption(args, "--output") ?? "artifacts/control-comparison");
+        var backends = (GetOption(args, "--backends") ?? "Software,Skia")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return await ControlComparisonRunner.RunAsync(phase, manifest, output, backends);
+    }
+
+    private static async Task<int> CaptureControlsSquareAsync(string[] args)
+    {
+        var backend = GetOption(args, "--backend") ?? "Software";
+        var manifestPath = Path.GetFullPath(GetOption(args, "--manifest")
+            ?? throw new ArgumentException("capture-controls-square requires --manifest."));
+        var output = Path.GetFullPath(GetOption(args, "--output")
+            ?? throw new ArgumentException("capture-controls-square requires --output."));
+        var manifest = await ControlReportIO.LoadManifestAsync(manifestPath);
+        await ControlSquareCapture.CaptureAsync(backend, manifest, output);
+        return 0;
     }
 
     private static string? GetOption(string[] args, string name)
