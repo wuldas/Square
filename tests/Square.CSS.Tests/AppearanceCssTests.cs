@@ -51,7 +51,7 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
-    public void AppearanceAutoPaintsRoundedChromeThroughCssBoxOnSoftwareRenderer()
+    public void AppearanceAutoPaintsChromiumRoundedButtonCornersOnSoftwareRenderer()
     {
         var engine = new CssEngine();
         var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
@@ -72,8 +72,9 @@ public sealed class AppearanceCssTests
 
         Assert.True(interior[2] > 200 && interior[1] > 200 && interior[0] > 200,
             "appearance:auto should fill the button interior from Chrome ButtonFace");
-        Assert.True(corner[2] > 180 && corner[1] > 180 && corner[0] > 180,
-            "Chrome outset button chrome should cover the corner instead of leaving a rounded cutout");
+        Assert.Equal(255, corner[2]);
+        Assert.Equal(0, corner[1]);
+        Assert.Equal(0, corner[0]);
     }
 
     [Fact]
@@ -234,7 +235,7 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
-    public void AppearanceAutoCheckBoxUsesChromeHighlightInsteadOfFluentBlue()
+    public void AppearanceAutoCheckBoxUsesCapturedChromiumCheckedFill()
     {
         var engine = new CssEngine();
         var check = new CheckBox
@@ -256,8 +257,7 @@ public sealed class AppearanceCssTests
 
         using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
         var foundFluentBlue = false;
-        var foundHighlight = false;
-        Assert.True(Color.TryParse("Highlight", out var highlight));
+        var foundChromiumBlue = false;
         for (var y = 6; y < 22; y++)
         {
             for (var x = 4; x < 22; x++)
@@ -265,13 +265,13 @@ public sealed class AppearanceCssTests
                 var pixel = bitmap.GetPixel(x, y);
                 if (pixel[2] == 0 && pixel[1] == 120 && pixel[0] == 212)
                     foundFluentBlue = true;
-                if (pixel[2] == highlight.R && pixel[1] == highlight.G && pixel[0] == highlight.B)
-                    foundHighlight = true;
+                if (pixel[2] == 0 && pixel[1] == 92 && pixel[0] == 200)
+                    foundChromiumBlue = true;
             }
         }
 
         Assert.False(foundFluentBlue, "checked CheckBox must not paint Fluent #0078d4");
-        Assert.True(foundHighlight, "checked CheckBox should use Chrome Highlight fill");
+        Assert.True(foundChromiumBlue, "checked CheckBox should use the captured Chromium #005cc8 fill");
     }
 
     [Fact]

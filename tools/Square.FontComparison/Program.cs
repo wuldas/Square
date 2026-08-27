@@ -20,7 +20,7 @@ internal static class Program
                 "compare-controls" => await CompareControlsAsync(args),
                 "capture-controls-square" => await CaptureControlsSquareAsync(args),
                 _ => throw new ArgumentException(
-                    $"Unknown command '{command}'. Supported commands: validate, capture-browser, capture-square, compare, compare-controls.")
+                    $"Unknown command '{command}'. Supported commands: validate, capture-browser, capture-square, compare, compare-controls, capture-controls-square.")
             };
         }
         catch (Exception exception)
@@ -105,7 +105,7 @@ internal static class Program
 
     private static async Task<int> CompareControlsAsync(string[] args)
     {
-        var phase = GetOption(args, "--phase") ?? "geometry";
+        var phase = GetOption(args, "--phase") ?? "all";
         var manifest = Path.GetFullPath(GetOption(args, "--manifest")
             ?? Path.Combine(AppContext.BaseDirectory, "Cases", "ControlComparisonCases.json"));
         var output = Path.GetFullPath(GetOption(args, "--output") ?? "artifacts/control-comparison");

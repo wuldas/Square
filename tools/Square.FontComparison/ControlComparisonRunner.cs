@@ -38,11 +38,19 @@ internal static class ControlComparisonRunner
 {
     public static async Task<int> RunAsync(string phase, string manifestPath, string output, string[] backends)
     {
+        if (phase.Equals("all", StringComparison.OrdinalIgnoreCase))
+            return await RunCompleteAsync(currentPhase => RunAsync(currentPhase, manifestPath, output, backends));
         if (phase.Equals("geometry", StringComparison.OrdinalIgnoreCase))
             return await RunGeometryAsync(manifestPath, output, backends);
         if (phase.Equals("visual", StringComparison.OrdinalIgnoreCase))
             return await RunVisualAsync(manifestPath, output, backends);
-        throw new ArgumentException($"Unknown control comparison phase '{phase}'. Expected geometry or visual.");
+        throw new ArgumentException($"Unknown control comparison phase '{phase}'. Expected all, geometry or visual.");
+    }
+
+    internal static async Task<int> RunCompleteAsync(Func<string, Task<int>> runPhase)
+    {
+        var geometryExitCode = await runPhase("geometry");
+        return geometryExitCode == 0 ? await runPhase("visual") : geometryExitCode;
     }
 
     private static async Task<int> RunGeometryAsync(string manifestPath, string output, string[] backends)

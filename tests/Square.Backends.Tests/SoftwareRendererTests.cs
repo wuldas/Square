@@ -767,15 +767,17 @@ public class SoftwareRendererTests
         Render(button, activeContext);
         var active = activeContext.GetBitmap().GetPixel(8, 8);
 
-        Assert.Equal(normal[0], hover[0]);
-        Assert.Equal(normal[1], hover[1]);
-        Assert.Equal(normal[2], hover[2]);
-        Assert.Equal(normal[3], hover[3]);
-        Assert.True(interiorIsButtonFace(active),
-            "button:active keeps ButtonFace fill; Chrome UA only changes border-style to inset");
+        AssertPixel(normal, 239);
+        AssertPixel(hover, 229);
+        AssertPixel(active, 245);
 
-        static bool interiorIsButtonFace(ReadOnlySpan<byte> pixel) =>
-            pixel[2] > 200 && pixel[1] > 200 && pixel[0] > 200 && pixel[3] == 255;
+        static void AssertPixel(ReadOnlySpan<byte> pixel, byte expected)
+        {
+            Assert.Equal(expected, pixel[0]);
+            Assert.Equal(expected, pixel[1]);
+            Assert.Equal(expected, pixel[2]);
+            Assert.Equal(255, pixel[3]);
+        }
     }
 
     [Fact]
@@ -1052,7 +1054,7 @@ public class SoftwareRendererTests
             (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
             (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset);
         AssertControlChrome(context.GetBitmap(), autoInput.Geometry, popupOffset, Color.White, expectAuthorBorder: false);
-        AssertControlChrome(context.GetBitmap(), autoButton.Geometry, popupOffset, Color.FromRgb(240, 240, 240), expectAuthorBorder: false);
+        AssertControlChrome(context.GetBitmap(), autoButton.Geometry, popupOffset, Color.FromRgb(239, 239, 239), expectAuthorBorder: false);
         AssertControlChrome(context.GetBitmap(), authorInput.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
         AssertControlChrome(context.GetBitmap(), authorButton.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
         CssStyleReconciler.UnregisterScopesForTree(document.Ui);
@@ -1640,7 +1642,7 @@ public class SoftwareRendererTests
 
         tree.Render(context);
 
-        Assert.True(ContainsBgra(context.GetBitmap(), 215, 120, 0, 255));
+        Assert.True(ContainsBgra(context.GetBitmap(), 255, 117, 0, 255));
     }
 
     [Fact]

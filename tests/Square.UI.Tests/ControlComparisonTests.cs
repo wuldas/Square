@@ -11,6 +11,22 @@ namespace Square.UI.Tests;
 
 public sealed class ControlComparisonTests
 {
+    [Fact]
+    public async Task CompleteControlComparisonRunsGeometryBeforeVisual()
+    {
+        var phases = new List<string>();
+
+        var exitCode = await ControlComparisonRunner.RunCompleteAsync(async phase =>
+        {
+            phases.Add(phase);
+            await Task.CompletedTask;
+            return 0;
+        });
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(["geometry", "visual"], phases);
+    }
+
     [Theory]
     [InlineData(ControlAppearance.Auto, ControlState.Normal)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover)]

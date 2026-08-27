@@ -123,6 +123,8 @@ internal static class CssBoxPainter
                 : button.HasState(ElementState.Hover) || button.HasState(ElementState.Focus)
                     ? (Color.FromRgb(229, 229, 229), Color.FromRgb(79, 79, 79))
                     : (Color.FromRgb(239, 239, 239), Color.FromRgb(118, 118, 118));
+        if (button.Properties.HasValue(nameof(Button.Background)))
+            fill = button.Background;
         var outer = new Rect(geometry.X + 1.5f, geometry.Y + 1.5f, geometry.Width - 2f, geometry.Height - 2f);
         context.FillGeometry(new RoundedRectGeometry(outer, 3, 3), new SolidColorBrush(border));
         var inner = new Rect(outer.X + 1, outer.Y + 1, outer.Width - 2, outer.Height - 2);

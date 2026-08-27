@@ -87,6 +87,18 @@ jobs:
           path: artifacts/font-comparison
           if-no-files-found: warn
 
+      - name: Chromium control conformance
+        if: runner.os == 'Windows'
+        run: dotnet run --project tools/Square.FontComparison/Square.FontComparison.csproj --configuration Release --no-build --no-restore -p:SquareTargetPlatform=Win32 -- compare-controls --backends Software,Skia --output artifacts/control-comparison
+
+      - name: Upload control conformance report
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-conformance-windows
+          path: artifacts/control-comparison
+          if-no-files-found: warn
+
       - name: NativeAOT publish
         run: dotnet publish samples/Square.Sample/Square.Sample.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:SquareTargetPlatform=${{ matrix.platform }} -p:SquareSamplePublishAot=true -o artifacts/nativeaot
 

@@ -117,7 +117,7 @@ public sealed class ChromeUserAgentFormControlTests
     }
 
     [Fact]
-    public void UserAgentFocusPaintsOutlineOnInput()
+    public void UserAgentInputFocusPaintsCapturedChromiumInnerBorder()
     {
         var engine = new CssEngine();
         var input = new Input { Geometry = new Rect(8, 8, 80, 24) };
@@ -139,10 +139,13 @@ public sealed class ChromeUserAgentFormControlTests
 
         using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
         var outside = bitmap.GetPixel(7, 20);
-        Assert.True(Color.TryParse("Highlight", out var highlight));
-        Assert.Equal(highlight.R, outside[2]);
-        Assert.Equal(highlight.G, outside[1]);
-        Assert.Equal(highlight.B, outside[0]);
+        Assert.Equal(255, outside[2]);
+        Assert.Equal(0, outside[1]);
+        Assert.Equal(0, outside[0]);
+        var border = bitmap.GetPixel(8, 20);
+        Assert.Equal(16, border[2]);
+        Assert.Equal(16, border[1]);
+        Assert.Equal(16, border[0]);
     }
 
     [Fact]
@@ -213,7 +216,7 @@ public sealed class ChromeUserAgentFormControlTests
     }
 
     [Fact]
-    public void CheckBoxFocusOutlineHonorsTwoPixelOffset()
+    public void CheckBoxFocusChromeStaysInsideIndicatorBorderBox()
     {
         var engine = new CssEngine();
         var check = new CheckBox
@@ -234,11 +237,10 @@ public sealed class ChromeUserAgentFormControlTests
         tree.Render(context);
 
         using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
-        Assert.True(Color.TryParse("Highlight", out var highlight));
         var outlinePixel = bitmap.GetPixel(5, 20);
-        Assert.Equal(highlight.R, outlinePixel[2]);
-        Assert.Equal(highlight.G, outlinePixel[1]);
-        Assert.Equal(highlight.B, outlinePixel[0]);
+        Assert.Equal(255, outlinePixel[2]);
+        Assert.Equal(0, outlinePixel[1]);
+        Assert.Equal(0, outlinePixel[0]);
         var gap = bitmap.GetPixel(6, 20);
         Assert.Equal(255, gap[2]);
         Assert.Equal(0, gap[1]);

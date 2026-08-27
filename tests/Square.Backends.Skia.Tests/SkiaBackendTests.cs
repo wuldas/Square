@@ -320,7 +320,7 @@ public sealed class SkiaBackendTests
     }
 
     [Fact]
-    public void AppearanceAutoPaintsRoundedChromeThroughCssBox()
+    public void AppearanceAutoPaintsChromiumRoundedButtonCorners()
     {
         var engine = new CssEngine();
         var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
@@ -338,8 +338,9 @@ public sealed class SkiaBackendTests
 
         Assert.True(interior[2] > 200 && interior[1] > 200 && interior[0] > 200,
             "appearance:auto should fill the button interior from Chrome ButtonFace on Skia");
-        Assert.True(corner[2] > 180 && corner[1] > 180 && corner[0] > 180,
-            "Chrome outset button chrome should cover the corner instead of leaving a rounded cutout");
+        Assert.Equal(255, corner[2]);
+        Assert.Equal(0, corner[1]);
+        Assert.Equal(0, corner[0]);
     }
 
     [Fact]
