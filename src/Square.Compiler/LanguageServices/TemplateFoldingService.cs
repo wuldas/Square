@@ -1,4 +1,5 @@
 using Square.Compiler.Parser;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
 
@@ -22,11 +23,12 @@ public static class TemplateFoldingService
     {
         text ??= string.Empty;
         var ranges = new List<TemplateFoldingRange>();
-        AddSectionRanges(text, ranges);
-
         var document = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty).ParsedSqxDocument;
+        AddSectionRanges(text, document?.Syntax, ranges);
         if (document?.Template != null)
             CollectElements(document.Template.Roots, text, ranges);
+        if (document?.Syntax?.Style?.Css != null)
+            CollectStyleRanges(document.Syntax.Style.Css, text, ranges);
 
         return ranges
             .Where(range => range.EndLine > range.StartLine)
@@ -37,15 +39,44 @@ public static class TemplateFoldingService
             .ToArray();
     }
 
-    private static void AddSectionRanges(string text, List<TemplateFoldingRange> ranges)
+    private static void AddSectionRanges(
+        string text,
+        ComponentDocumentSyntax document,
+        List<TemplateFoldingRange> ranges)
     {
-        foreach (var name in new[] { "template", "script", "style" })
+        if (document == null) return;
+        foreach (var section in new ComponentSectionSyntax[]
+                 { document.Template, document.Script, document.Style })
         {
-            var open = IndexOfTag(text, "<" + name, 0);
-            if (open < 0) continue;
-            var close = IndexOfTag(text, "</" + name, open + name.Length + 1);
-            if (close < 0) continue;
-            ranges.Add(new TemplateFoldingRange(LineOf(text, open), LineOf(text, close), "region"));
+            if (section == null || !section.IsClosed) continue;
+            ranges.Add(new TemplateFoldingRange(
+                LineOf(text, section.OpeningTagRange.Offset),
+                LineOf(text, section.ClosingTagRange.Offset),
+                "region"));
+        }
+    }
+
+    private static void CollectStyleRanges(
+        CssStyleSheetSyntax style,
+        string text,
+        List<TemplateFoldingRange> ranges)
+    {
+        foreach (var rule in style.Rules) AddRange(rule.FullRange);
+        foreach (var atRule in style.AtRules) CollectAtRule(atRule);
+
+        void CollectAtRule(CssAtRuleSyntax atRule)
+        {
+            AddRange(atRule.FullRange);
+            foreach (var rule in atRule.Rules) AddRange(rule.FullRange);
+            foreach (var child in atRule.AtRules) CollectAtRule(child);
+        }
+
+        void AddRange(SquareSourceRange range)
+        {
+            ranges.Add(new TemplateFoldingRange(
+                LineOf(text, range.Offset),
+                LineOf(text, Math.Max(range.Offset, range.End - 1)),
+                "region"));
         }
     }
 

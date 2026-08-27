@@ -40,4 +40,24 @@ public sealed class TemplateFoldingAndColorTests
         Assert.Contains(presentations, item => item.Label.Equals("#2A2D2E", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(presentations, item => item.Label.StartsWith("rgb(", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void FoldsCssAtRulesAndNestedRulesFromStyleAst()
+    {
+        const string source = """
+            <template><View /></template>
+            <style>
+              @media screen {
+                .page {
+                  color: #cccccc;
+                }
+              }
+            </style>
+            """;
+
+        var ranges = TemplateFoldingService.GetRanges(source, "StyleFold.sqx");
+
+        Assert.Contains(ranges, range => range.StartLine == 2 && range.EndLine == 6);
+        Assert.Contains(ranges, range => range.StartLine == 3 && range.EndLine == 5);
+    }
 }

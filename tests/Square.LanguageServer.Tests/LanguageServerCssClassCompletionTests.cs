@@ -15,7 +15,7 @@ public sealed class LanguageServerCssClassCompletionTests
         _ = await Read(process.StandardOutput);
         await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
 
-        const string text = "<template><View class=\"split" + " /></template>\n<style>\n.panel-left { color: red; }\n.splitter-page { display: flex; }\n</style>";
+        const string text = "<template><View class=\"split" + " /></template>\n<style>\n.panel-left { color: red; }\n.splitter-page { display: flex; content: \".split-fake\"; }\n/* .split-comment {} */\n</style>";
         await Write(process, JsonSerializer.Serialize(new
         {
             jsonrpc = "2.0",
@@ -49,6 +49,8 @@ public sealed class LanguageServerCssClassCompletionTests
         Assert.Contains("\"label\":\"splitter-page\"", completion, StringComparison.Ordinal);
         Assert.Contains("\"kind\":12", completion, StringComparison.Ordinal);
         Assert.Contains("CSS class", completion, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"label\":\"split-fake\"", completion, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"label\":\"split-comment\"", completion, StringComparison.Ordinal);
 
         await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
         _ = await Read(process.StandardOutput);

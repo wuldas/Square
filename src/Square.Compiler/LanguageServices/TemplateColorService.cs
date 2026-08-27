@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Square.Compiler.Parser;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
 
@@ -51,27 +53,110 @@ public static class TemplateColorService
     {
         text ??= string.Empty;
         var colors = new List<TemplateDocumentColor>();
-        foreach (Match match in HexColor.Matches(text))
+        var document = SquareDocumentService.ParseSyntaxTree(text, "Colors.sqx").ParsedSqxDocument;
+        if (document?.Template != null)
+        {
+            foreach (var element in EnumerateElements(document.Template.Roots))
+            {
+                foreach (var attribute in element.Attributes.Where(attribute =>
+                             attribute.Name.Equals("style", StringComparison.OrdinalIgnoreCase) &&
+                             !attribute.IsExpression && attribute.RawValue != null))
+                {
+                    var valueOffset = FindAttributeValueOffset(text, attribute);
+                    if (valueOffset >= 0) AddColors(attribute.RawValue, valueOffset, colors);
+                }
+            }
+        }
+        var style = ComponentSectionScanner.Scan(
+            text,
+            "Colors.sqx",
+            ComponentDialect.Sqx,
+            tolerant: true).Document.Style?.Css;
+        if (style == null) return colors;
+        foreach (var declaration in EnumerateDeclarations(style))
+            AddColors(declaration.Value, declaration.ValueRange.Offset, colors);
+        return colors
+            .OrderBy(color => color.Start)
+            .ToArray();
+    }
+
+    private static void AddColors(string value, int offset, List<TemplateDocumentColor> colors)
+    {
+        foreach (Match match in HexColor.Matches(value))
         {
             if (!TryParseHex(match.Value, out var red, out var green, out var blue, out var alpha))
                 continue;
-            colors.Add(new TemplateDocumentColor(match.Index, match.Length, red, green, blue, alpha));
+            colors.Add(new TemplateDocumentColor(
+                offset + match.Index,
+                match.Length,
+                red,
+                green,
+                blue,
+                alpha));
         }
-
-        foreach (Match match in RgbColor.Matches(text))
+        foreach (Match match in RgbColor.Matches(value))
         {
             colors.Add(new TemplateDocumentColor(
-                match.Index,
+                offset + match.Index,
                 match.Length,
                 ClampChannel(match.Groups[1].Value) / 255d,
                 ClampChannel(match.Groups[2].Value) / 255d,
                 ClampChannel(match.Groups[3].Value) / 255d,
                 match.Groups[4].Success ? ParseAlpha(match.Groups[4].Value) : 1d));
         }
+    }
 
-        return colors
-            .OrderBy(color => color.Start)
-            .ToArray();
+    private static int FindAttributeValueOffset(string text, SqxAttribute attribute)
+    {
+        var start = Math.Min(Math.Max(attribute.Position, 0), text.Length);
+        var tagEnd = text.IndexOf('>', start);
+        if (tagEnd < 0) tagEnd = text.Length;
+        var equals = text.IndexOf('=', start, tagEnd - start);
+        if (equals < 0) return -1;
+        var position = equals + 1;
+        while (position < tagEnd && char.IsWhiteSpace(text[position])) position++;
+        if (position >= tagEnd || text[position] is not ('"' or '\'')) return -1;
+        return position + 1;
+    }
+
+    private static IEnumerable<SqxElement> EnumerateElements(IEnumerable<SqxNode> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (node is SqxElement element)
+            {
+                yield return element;
+                foreach (var child in EnumerateElements(element.Children)) yield return child;
+            }
+            else if (node is TemplateForDirective loop)
+            {
+                foreach (var child in EnumerateElements(loop.Children)) yield return child;
+            }
+            else if (node is TemplateIfChainDirective chain)
+            {
+                foreach (var branch in chain.Branches)
+                    foreach (var child in EnumerateElements(branch.Children)) yield return child;
+            }
+        }
+    }
+
+    private static IEnumerable<CssDeclarationSyntax> EnumerateDeclarations(CssStyleSheetSyntax style)
+    {
+        foreach (var declaration in style.Rules.SelectMany(rule => rule.Declarations)) yield return declaration;
+        foreach (var atRule in style.AtRules)
+        {
+            foreach (var declaration in EnumerateDeclarations(atRule)) yield return declaration;
+        }
+    }
+
+    private static IEnumerable<CssDeclarationSyntax> EnumerateDeclarations(CssAtRuleSyntax atRule)
+    {
+        foreach (var declaration in atRule.Declarations) yield return declaration;
+        foreach (var declaration in atRule.Rules.SelectMany(rule => rule.Declarations)) yield return declaration;
+        foreach (var child in atRule.AtRules)
+        {
+            foreach (var declaration in EnumerateDeclarations(child)) yield return declaration;
+        }
     }
 
     public static IReadOnlyList<TemplateColorPresentation> GetPresentations(

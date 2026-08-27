@@ -84,6 +84,29 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void ComponentStylesEmitRuntimeAstWithoutRuntimeCssParsing()
+    {
+        const string source = """
+            <template><View class="page" /></template>
+            <style>
+              .page { color: #123456; gap: 8px !important; }
+              @media screen { .page:hover { opacity: 0.5; } }
+              @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+            </style>
+            """;
+
+        var generated = Assert.Single(RunGenerator(
+            new InMemoryAdditionalText("StyledCard.sqx", source)).GeneratedTrees)
+            .GetText().ToString();
+
+        Assert.Contains("new Square.CSS.Ast.CssStyleSheet", generated, StringComparison.Ordinal);
+        Assert.Contains("Square.CSS.Ast.CssMediaRule", generated, StringComparison.Ordinal);
+        Assert.Contains("Square.CSS.Ast.KeyFramesRule", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("Square.CSS.Engine.CssParser", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("Square.CSS.Tokenizer.CssTokenizer", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TemplateDirectoryContributesToDefaultNamespace()
     {
         const string source = "<template><View /></template>";

@@ -295,32 +295,32 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 - Create: `src/Square.Compiler/Syntax/Style/StyleSectionSyntax.cs`
 - Create: `src/Square.Compiler/Syntax/Style/CssSyntaxNodes.cs`
-- Create: `src/Square.Compiler/Syntax/Style/CssSyntaxToken.cs`
+- Create: `src/Square.Compiler/Syntax/Style/CssSelectorSyntaxNodes.cs`
+- Create: `src/Square.Compiler/Syntax/Style/CssSelectorSyntaxParser.cs`
 - Test: `tests/Square.SourceGenerator.Tests/StyleSectionSyntaxTests.cs`
 
 **Requirements:**
 
-- [ ] 每个 selector/declaration/value/at-rule 保留 source range。
-- [ ] 节点保留 raw slice，不只保存 normalized value。
-- [ ] 错误编辑态可产生 bounded partial AST。
-- [ ] 不引用 `Square.CSS.Ast`。
+- [x] 每个 selector/declaration/value/at-rule 保留 source range。
+- [x] 节点保留 raw slice，不只保存 normalized value。
+- [x] 错误编辑态可产生 bounded partial AST。
+- [x] 不引用 `Square.CSS.Ast`。
 
 ### Task A3.2：实现 CSS syntax parser 与 runtime parity fixtures
 
 **Files:**
 
 - Create: `src/Square.Compiler/Syntax/Style/CssSyntaxParser.cs`
-- Create: `tests/Square.SourceGenerator.Tests/Fixtures/Styles/*.css`
-- Create: `tests/Square.SourceGenerator.Tests/StyleAstParityTests.cs`
-- Modify: `tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.csproj`（仅在测试侧引用 runtime CSS）
+- Create with inline parity fixtures: `tests/Square.SourceGenerator.Tests/StyleAstParityTests.cs`
+- Reuse the test project's existing runtime CSS reference; Compiler remains dependency-free。
 
 **TDD matrix:**
 
-- [ ] selectors/combinators/attribute selectors/pseudo states。
-- [ ] declarations、unit、function、CSS variable、important。
-- [ ] import/media/keyframes/unknown at-rule。
-- [ ] malformed declaration/block/comment/string。
-- [ ] compiler AST 与 runtime AST normalized snapshot parity。
+- [x] selectors/combinators/attribute selectors/pseudo states。
+- [x] declarations、unit、function、CSS variable、important。
+- [x] import/media/keyframes/unknown at-rule。
+- [x] malformed declaration/block/comment/string。
+- [x] compiler AST 与 runtime AST normalized snapshot parity。
 
 ### Task A3.3：迁移 LSP style 功能
 
@@ -334,10 +334,10 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **Steps:**
 
-- [ ] class completion 从 regex 改为 Style AST selector index。
-- [ ] color 仅扫描 style/inline-style 范围。
-- [ ] folding 使用 section/style AST range。
-- [ ] comment/string 中的伪 class/color 不产生候选。
+- [x] class completion 从 regex 改为 Style AST selector index。
+- [x] color 仅扫描 style/inline-style 范围。
+- [x] folding 使用 section/style AST range。
+- [x] comment/string 中的伪 class/color 不产生候选。
 
 ### Task A3.4：生成 runtime CSS AST adapter
 
@@ -345,14 +345,14 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 - Create: `src/Square.Compiler/Emit/StyleAstRuntimeEmitter.cs`
 - Modify: `src/Square.Compiler/Emit/ComponentEmitter.cs`
-- Test: `tests/Square.SourceGenerator.Tests/StyleAstRuntimeEmitterTests.cs`
+- Test: `tests/Square.SourceGenerator.Tests/VueGeneratorTests.cs`
 - Test: `tests/Square.CSS.Tests/CssTests.cs`
 
 **Gate:**
 
-- [ ] parity matrix 未通过前不移除 runtime raw parse fallback。
-- [ ] generated C# 使用 fully-qualified `Square.CSS.Ast.*`，Compiler 无 runtime reference。
-- [ ] generated AST 与当前 runtime parser 的渲染行为一致。
+- [x] parity matrix 未通过前不移除 runtime raw parse fallback。
+- [x] generated C# 使用 fully-qualified `Square.CSS.Ast.*`，Compiler 无 runtime reference。
+- [x] generated AST 与当前 runtime parser 的渲染行为一致。
 
 **Commit:** `重构: 引入样式分区语法树`
 

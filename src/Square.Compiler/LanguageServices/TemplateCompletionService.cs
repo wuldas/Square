@@ -284,21 +284,29 @@ public static class TemplateCompletionService
 
     private static IReadOnlyCollection<string> ExtractCssClassNames(string text)
     {
-        var style = Regex.Match(
-            text,
-            @"<style\b[^>]*>(?<body>[\s\S]*?)</style\s*>",
-            RegexOptions.IgnoreCase);
-        if (!style.Success) return Array.Empty<string>();
-
+        var document = SquareDocumentService.ParseSyntaxTree(text, "Styles.sqx").ParsedSqxDocument;
+        var style = document?.Syntax?.Style?.Css;
+        if (style == null) return Array.Empty<string>();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (Match match in Regex.Matches(
-            style.Groups["body"].Value,
-            @"(?<![A-Za-z0-9_-])\.([A-Za-z_][A-Za-z0-9_-]*)"))
+        foreach (var selector in style.Rules.SelectMany(rule => rule.Selectors))
         {
-            names.Add(match.Groups[1].Value);
+            var value = selector.Text;
+            for (var index = 0; index + 1 < value.Length; index++)
+            {
+                if (value[index] != '.' || !IsCssIdentifierStart(value[index + 1])) continue;
+                var start = ++index;
+                while (index + 1 < value.Length && IsCssIdentifierPart(value[index + 1])) index++;
+                names.Add(value.Substring(start, index - start + 1));
+            }
         }
         return names;
     }
+
+    private static bool IsCssIdentifierStart(char value) =>
+        char.IsLetter(value) || value is '_' or '-';
+
+    private static bool IsCssIdentifierPart(char value) =>
+        char.IsLetterOrDigit(value) || value is '_' or '-';
 
     private static bool IsTokenCharacter(char value) =>
         char.IsLetterOrDigit(value) || value is '-' or '_' or ':' or '#';

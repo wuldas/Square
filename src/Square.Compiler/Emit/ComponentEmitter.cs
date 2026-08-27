@@ -658,10 +658,15 @@ namespace Square.Compiler.Emit
         private void EmitStyleSupport()
         {
             if (string.IsNullOrWhiteSpace(_doc.StyleCode)) return;
-            var css = _doc.StyleCode.Replace("\"", "\"\"");
             _sb.AppendLine();
             _sb.AppendLine("    private static readonly Square.CSS.Ast.CssStyleSheet ComponentStyleSheet =");
-            _sb.AppendLine("        new Square.CSS.Engine.CssParser(new Square.CSS.Tokenizer.CssTokenizer(@\"" + css + "\").Tokenize()).Parse();");
+            if (_doc.Syntax?.Style?.Css != null)
+                _sb.AppendLine("        " + StyleAstRuntimeEmitter.Emit(_doc.Syntax.Style.Css) + ";");
+            else
+            {
+                var css = _doc.StyleCode.Replace("\"", "\"\"");
+                _sb.AppendLine("        new Square.CSS.Engine.CssParser(new Square.CSS.Tokenizer.CssTokenizer(@\"" + css + "\").Tokenize()).Parse();");
+            }
             _sb.AppendLine();
             _sb.AppendLine("    private static void ApplyComponentStyles(Element root)");
             _sb.AppendLine("    {");
