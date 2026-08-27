@@ -32,7 +32,7 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     /// <inheritdoc/>
     public string SelectableText => string.IsNullOrEmpty(Value) ? Placeholder : Value;
     /// <inheritdoc/>
-    public Rect SelectableTextBounds => ControlDrawing.GetTextBounds(this, SelectableText, 14f, new Point(Geometry.X + 8, Geometry.Y + 8));
+    public Rect SelectableTextBounds => ControlDrawing.GetTextBounds(this, SelectableText, 14f, GetTextOrigin());
 
     /// <inheritdoc/>
     public override int ZIndex
@@ -60,17 +60,21 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     {
         var value = string.IsNullOrEmpty(Value) ? Placeholder : Value;
         var color = string.IsNullOrEmpty(Value) ? Color.FromRgb(117, 117, 117) : Color.Black;
-        ControlDrawing.DrawText(ctx, this, value, new Point(Geometry.X + 8, Geometry.Y + 8), color, 14f,
+        ControlDrawing.DrawText(ctx, this, value, GetTextOrigin(), color, 14f,
             useStyledColor: !string.IsNullOrEmpty(Value));
         if (!ControlDrawing.UsesWidgetAppearance(this))
             return;
 
         var arrowY = Geometry.Y + Geometry.Height / 2f;
         var arrow = IsOpen
-            ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY + 3)).LineTo(new Point(Geometry.Right - 15, arrowY - 2)).LineTo(new Point(Geometry.Right - 10, arrowY + 3))
-            : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY - 2)).LineTo(new Point(Geometry.Right - 15, arrowY + 3)).LineTo(new Point(Geometry.Right - 10, arrowY - 2));
-        ctx.DrawPath(arrow, Pen.FromColor(Color.FromRgb(70, 75, 80), 1.5f));
+            ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 12, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 8, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 4, arrowY + 2.5f))
+            : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 12, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 8, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 4, arrowY - 2.5f));
+        ctx.DrawPath(arrow, Pen.FromColor(IsEnabled ? Color.Black : Color.FromRgb(109, 109, 109)));
     }
+
+    private Point GetTextOrigin() => ControlDrawing.UsesWidgetAppearance(this)
+        ? new Point(Geometry.X + 4, Geometry.Y + 3)
+        : new Point(Geometry.X + 8, Geometry.Y + 8);
 
     /// <inheritdoc/>
     public void PaintPopup(IRenderContext ctx)

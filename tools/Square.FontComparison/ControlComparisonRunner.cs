@@ -106,7 +106,7 @@ internal static class ControlComparisonRunner
             ["Chromium", .. backends]);
 
         var visualCases = reports[0].Cases
-            .Where(item => item.Kind is ControlKind.Button or ControlKind.Input or ControlKind.TextArea)
+            .Where(item => item.Kind is ControlKind.Button or ControlKind.Input or ControlKind.TextArea or ControlKind.Select)
             .ToArray();
         var comparisons = new List<ControlVisualCaseResult>();
         foreach (var backend in backends)
@@ -130,6 +130,9 @@ internal static class ControlComparisonRunner
                     ControlKind.TextArea => ControlVisualComparer.CompareTextArea(
                         chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox, chromiumCase.State,
                         ControlVisualThresholds.TextArea, chromiumCase.Id, backend),
+                    ControlKind.Select => ControlVisualComparer.CompareSelect(
+                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox,
+                        ControlVisualThresholds.Select, chromiumCase.Id, backend),
                     _ => throw new InvalidOperationException($"Unsupported visual control '{chromiumCase.Kind}'.")
                 });
             }
@@ -137,7 +140,7 @@ internal static class ControlComparisonRunner
 
         var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square form-control visual comparison</title>");
         html.Append("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #ccc}img{width:320px}.fail{background:#fee}.pass{background:#efe}</style>");
-        html.Append("<h1>Button, Input and TextArea visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
+        html.Append("<h1>Button, Input, TextArea and Select visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
         html.Append("<table><tr><th>Case</th><th>Renderer</th><th>Status</th><th>Chromium before</th><th>Square after</th><th>Diff</th><th>Regions</th></tr>");
         foreach (var comparison in comparisons)
         {
@@ -164,23 +167,24 @@ internal static class ControlComparisonRunner
         {
             phase = "visual",
             geometryGate = "pass",
-            controls = new[] { "Button", "Input", "TextArea" },
-            thresholds = new { button = ControlVisualThresholds.Button, input = ControlVisualThresholds.Input, textArea = ControlVisualThresholds.TextArea },
+            controls = new[] { "Button", "Input", "TextArea", "Select" },
+            thresholds = new { button = ControlVisualThresholds.Button, input = ControlVisualThresholds.Input, textArea = ControlVisualThresholds.TextArea, select = ControlVisualThresholds.Select },
             cases = comparisons,
             supported = new
             {
                 button = new[] { "normal", "hover", "active", "focus", "disabled" },
                 input = new[] { "normal", "hover", "focus", "disabled", "value", "placeholder" },
-                textArea = new[] { "normal", "hover", "focus", "disabled", "value", "placeholder" }
+                textArea = new[] { "normal", "hover", "focus", "disabled", "value", "placeholder" },
+                select = new[] { "normal", "hover", "focus", "disabled", "arrow" }
             },
-            unsupported = Array.Empty<string>()
+            unsupported = new[] { "Select native popup/open capture is unsupported in headless Chromium." }
         }, ControlReportIO.JsonOptions));
         var failed = comparisons.Count(item => !item.Passed);
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             phase = "visual",
             geometryGate = "pass",
-            controls = new[] { "Button", "Input", "TextArea" },
+            controls = new[] { "Button", "Input", "TextArea", "Select" },
             passed = comparisons.Count - failed,
             failed,
             report = Path.Combine(output, "report.html")

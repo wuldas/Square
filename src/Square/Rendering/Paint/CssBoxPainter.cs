@@ -71,6 +71,11 @@ internal static class CssBoxPainter
             PaintTextAreaWidgetBorder(context, textArea, textArea.Geometry);
             return;
         }
+        if (element is Select select && select.IsEnabled && ControlDrawing.UsesWidgetAppearance(select))
+        {
+            PaintSelectWidgetBorder(context, select.Geometry);
+            return;
+        }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
         {
             context.PopClip();
@@ -95,6 +100,11 @@ internal static class CssBoxPainter
         if (element is TextArea textArea && textArea.HasState(ElementState.Focus))
         {
             PaintInputFocusBorder(context, textArea.Geometry);
+            return;
+        }
+        if (element is Select select && select.HasState(ElementState.Focus))
+        {
+            PaintInputFocusBorder(context, select.Geometry);
             return;
         }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
@@ -171,6 +181,19 @@ internal static class CssBoxPainter
         var brush = new SolidColorBrush(textArea.IsEnabled
             ? Color.FromRgb(79, 79, 79)
             : Color.FromRgb(212, 212, 212));
+        context.FillRect(new Rect(left, top, right - left + 1, 1), brush);
+        context.FillRect(new Rect(left, bottom, right - left + 1, 1), brush);
+        context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), brush);
+        context.FillRect(new Rect(right, top + 1, 1, bottom - top - 1), brush);
+    }
+
+    private static void PaintSelectWidgetBorder(IRenderContext context, Rect geometry)
+    {
+        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
+        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
+        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
+        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        var brush = new SolidColorBrush(Color.FromRgb(79, 79, 79));
         context.FillRect(new Rect(left, top, right - left + 1, 1), brush);
         context.FillRect(new Rect(left, bottom, right - left + 1, 1), brush);
         context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), brush);

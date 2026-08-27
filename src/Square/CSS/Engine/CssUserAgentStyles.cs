@@ -62,6 +62,8 @@ internal static class CssUserAgentStyles
             appearance: auto;
             box-sizing: border-box;
             white-space: pre;
+            font-family: Arial;
+            font-size: 13.3333px;
             color: FieldText;
             background-color: Field;
             border: 1px solid #767676;
