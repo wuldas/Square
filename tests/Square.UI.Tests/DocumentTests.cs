@@ -671,6 +671,38 @@ public class DocumentTests
     }
 
     [Fact]
+    public void ModalChildWindowInheritsOwnerGlobalAndUserAgentStyles()
+    {
+        var owner = new AppWindow("Owner");
+        owner.Load(new View());
+        owner.LoadGlobalCssText(".modal-control { color: #123456; }");
+        var host = new SplitterTestHost();
+        owner.Attach(host);
+        var button = new Button("Modal");
+        button.SetProperty("class", "modal-control");
+
+        try
+        {
+            var createChild = typeof(AppWindow).GetMethod(
+                "CreateChildWindow",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(createChild);
+            var child = Assert.IsType<AppWindow>(createChild!.Invoke(owner, [button, null, null, true]));
+
+            ApplyWindowStyles(child);
+
+            Assert.Equal("auto", button.Style.Get("appearance"));
+            Assert.Equal("#123456", button.Style.Get("color"));
+            Assert.Single(child.Document.StyleSheets);
+            CssStyleReconciler.UnregisterScopesForTree(child.WindowDocument.DocumentElement);
+        }
+        finally
+        {
+            owner.Detach(host);
+        }
+    }
+
+    [Fact]
     public void AppWindowLoadsMultipleGlobalCssFilesRelativeToApplicationDirectory()
     {
         var window = new AppWindow("Styles");
@@ -1334,8 +1366,9 @@ public class DocumentTests
         Assert.Equal("documentationsubmit", range.ToString());
     }
 
-    private sealed class SplitterTestHost : IPlatformHost
+    private sealed class SplitterTestHost : IPlatformHost, IPlatformNativeWindow
     {
+        public IntPtr Handle => 1;
         public Square.Graphics.Size ClientSize => new(800, 600);
         public float DpiScale => 1;
         public bool IsRunning => true;

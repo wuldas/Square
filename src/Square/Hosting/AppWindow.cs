@@ -417,6 +417,7 @@ public sealed class AppWindow : IRenderBackendApplication
             OwnerHandle = nativeOwner.Handle,
             IsModal = isModal
         };
+        child._document.InheritGlobalStylesFrom(_document);
         child.Load(content);
         if (customTitleBar != null) child.LoadCustomTitleBar(customTitleBar);
         return child;

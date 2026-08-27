@@ -7,6 +7,7 @@ using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
 using Square.Text.Fonts;
+using Square.UI;
 using Xunit;
 
 namespace Square.Backends.Skia.Tests;
@@ -363,6 +364,44 @@ public sealed class SkiaBackendTests
         Assert.Equal(0x33, corner[0]);
     }
 
+    [Fact]
+    public void DialogDescendantsPaintAutoAndAuthorChromeOnSkia()
+    {
+        var document = new UIDocument();
+        document.Ui.Geometry = new Rect(0, 0, 240, 150);
+        document.Body.Geometry = document.Ui.Geometry;
+        var dialog = new Dialog { Geometry = new Rect(0, 0, 180, 100) };
+        dialog.Style.Set("background", "#ff0000");
+        var autoInput = new Input { Geometry = new Rect(10, 15, 70, 26) };
+        var authorButton = new Button("None") { Geometry = new Rect(95, 15, 70, 26) };
+        authorButton.SetProperty("class", "author-none");
+        dialog.Children.Add(autoInput);
+        dialog.Children.Add(authorButton);
+        document.Body.Children.Add(dialog);
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".author-none { appearance: none; background: #123456; border: 2px solid #abcdef; }").Tokenize()).Parse());
+        engine.ApplyStylesToTree(document.Ui);
+        dialog.Open();
+
+        using var context = CreateContext(240, 150);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(document.Ui);
+        tree.Render(context);
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+
+        var offset = new Point(
+            (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
+            (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset);
+        AssertFourEdges(bitmap, autoInput.Geometry, offset, expectedBorder: null);
+        AssertFourEdges(bitmap, authorButton.Geometry, offset, Color.FromRgb(0xab, 0xcd, 0xef));
+        AssertPixel(bitmap, (int)(offset.X + autoInput.Geometry.Right) - 8,
+            (int)(offset.Y + autoInput.Geometry.Y) + 8, 255, 255, 255, 255);
+        AssertPixel(bitmap, (int)(offset.X + authorButton.Geometry.Right) - 8,
+            (int)(offset.Y + authorButton.Geometry.Y) + 8, 0x12, 0x34, 0x56, 255);
+    }
+
     private static IRenderContext CreateContext(int width, int height)
         => new SkiaBackendFactory().CreateContext(new RenderContextCreateInfo
         {
@@ -388,6 +427,34 @@ public sealed class SkiaBackendTests
         Assert.Equal(green, pixel[1]);
         Assert.Equal(red, pixel[2]);
         Assert.Equal(alpha, pixel[3]);
+    }
+
+    private static void AssertFourEdges(Bitmap bitmap, Rect geometry, Point offset, Color? expectedBorder)
+    {
+        var left = (int)(offset.X + geometry.X);
+        var top = (int)(offset.Y + geometry.Y);
+        var right = (int)(offset.X + geometry.Right) - 1;
+        var bottom = (int)(offset.Y + geometry.Bottom) - 1;
+        var middleX = (left + right) / 2;
+        var middleY = (top + bottom) / 2;
+        var edges = new[]
+        {
+            Enumerable.Range(top, 4).Select(y => (middleX, y)),
+            Enumerable.Range(right - 3, 4).Select(x => (x, middleY)),
+            Enumerable.Range(bottom - 3, 4).Select(y => (middleX, y)),
+            Enumerable.Range(left, 4).Select(x => (x, middleY))
+        };
+        foreach (var edge in edges)
+        {
+            var found = edge.Any(point =>
+            {
+                var pixel = bitmap.GetPixel(point.Item1, point.Item2);
+                return expectedBorder is { } color
+                    ? pixel[0] == color.B && pixel[1] == color.G && pixel[2] == color.R
+                    : pixel[0] < 245 && pixel[1] < 245 && pixel[2] < 245;
+            });
+            Assert.True(found, "Expected CSS border on every popup-translated edge.");
+        }
     }
 
     private sealed class TestApplication : IRenderBackendApplication
