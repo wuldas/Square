@@ -56,7 +56,11 @@ public class Button : UIElement, ITextSelectable
     public override Size Measure(Size availableSize)
     {
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        return new Size(textSize.Width + 32, Math.Max(36, textSize.Height + 12));
+        if (Style.Get("appearance") == null)
+            return new Size(textSize.Width + 32, Math.Max(36, textSize.Height + 12));
+        return ControlDrawing.UsesWidgetAppearance(this)
+            ? new Size(MathF.Round(ControlDrawing.MeasureFontFileTextWidth(this, TextContent, 14f)), 15)
+            : textSize;
     }
 
     /// <inheritdoc/>

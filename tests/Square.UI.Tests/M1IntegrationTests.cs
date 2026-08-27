@@ -226,7 +226,7 @@ public class M1IntegrationTests
 
         Assert.True(tabPanels.ScrollContentSize.Height > tabPanels.Geometry.Height);
         Assert.True(tabPanels.ScrollBy(0, 120));
-        Assert.True(controlsPage.QueryAll<Button>().All(item => item.Geometry.Height >= 36));
+        Assert.True(controlsPage.QueryAll<Button>().All(item => item.Geometry.Height >= 21));
         ((IComponentLifecycle)component).OnDetached();
     }
 

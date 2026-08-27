@@ -1,10 +1,57 @@
 using Square.FontComparison;
+using Square.Controls;
+using Square.CSS.Engine;
+using Square.Graphics;
+using Square.Rendering;
+using Square.UI;
 using Xunit;
 
 namespace Square.UI.Tests;
 
 public sealed class ControlComparisonTests
 {
+    [Theory]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal)]
+    [InlineData(ControlAppearance.Auto, ControlState.Hover)]
+    [InlineData(ControlAppearance.Auto, ControlState.Active)]
+    [InlineData(ControlAppearance.Auto, ControlState.Focus)]
+    [InlineData(ControlAppearance.Auto, ControlState.Disabled)]
+    [InlineData(ControlAppearance.None, ControlState.Normal)]
+    [InlineData(ControlAppearance.None, ControlState.Hover)]
+    [InlineData(ControlAppearance.None, ControlState.Active)]
+    [InlineData(ControlAppearance.None, ControlState.Focus)]
+    [InlineData(ControlAppearance.None, ControlState.Disabled)]
+    public void ButtonGeometryMatchesChromiumAcrossAppearancesAndStates(
+        ControlAppearance appearance,
+        ControlState state)
+    {
+        var root = new View
+        {
+            Style =
+            {
+                CssText = "display: flex; align-items: center; justify-content: center; " +
+                    "box-sizing: border-box; width: 320px; height: 160px;"
+            }
+        };
+        var button = new Button("Control");
+        var item = Assert.Single(ControlComparisonManifest.CreateDefault().ExpandCases(), candidate =>
+            candidate.Kind == ControlKind.Button && candidate.Appearance == appearance && candidate.State == state);
+        button.Style.CssText = item.AuthorCss;
+        ApplyState(button, state);
+        root.Children.Add(button);
+
+        new CssEngine().ApplyStylesToTree(root);
+        new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
+
+        var expected = appearance == ControlAppearance.Auto
+            ? new Rect(130.5f, 69.5f, 58.984375f, 21)
+            : new Rect(70, 62, 180, 36);
+        AssertClose(expected.X, button.Geometry.X - root.Geometry.X);
+        AssertClose(expected.Y, button.Geometry.Y - root.Geometry.Y);
+        AssertClose(expected.Width, button.Geometry.Width);
+        AssertClose(expected.Height, button.Geometry.Height);
+    }
+
     [Fact]
     public void ManifestExpandsSemanticControlsAppearancesAndRelevantStates()
     {
@@ -171,4 +218,15 @@ public sealed class ControlComparisonTests
                 }
             ]
         };
+
+    private static void ApplyState(Button button, ControlState state)
+    {
+        if (state == ControlState.Disabled) button.IsDisabled = true;
+        if (state == ControlState.Hover) button.SetState(ElementState.Hover, true);
+        if (state == ControlState.Active) button.SetState(ElementState.Active, true);
+        if (state == ControlState.Focus) button.SetState(ElementState.Focus, true);
+    }
+
+    private static void AssertClose(float expected, float actual) =>
+        Assert.InRange(Math.Abs(actual - expected), 0, 0.5f);
 }

@@ -16,6 +16,7 @@ public enum ControlState { Normal, Hover, Active, Focus, Disabled, Value, Placeh
 
 public sealed class ControlComparisonManifest
 {
+    public const string ButtonAppearanceAutoCss = "font: 13.3333px Arial;";
     public const string AppearanceNoneCss =
         "appearance: none; box-sizing: border-box; margin: 0; width: 180px; height: 36px; " +
         "padding: 6px 10px; border: 2px solid #345678; border-radius: 4px; " +
@@ -56,7 +57,7 @@ public sealed class ControlComparisonManifest
                 Text = control.Text,
                 Value = control.Value,
                 Placeholder = control.Placeholder,
-                AuthorCss = appearance == ControlAppearance.None ? AppearanceNoneAuthorCss : ""
+                AuthorCss = appearance == ControlAppearance.None ? AppearanceNoneAuthorCss : control.AutoAuthorCss
             })))
         .ToArray();
 
@@ -77,6 +78,7 @@ public sealed class ControlComparisonManifest
         },
         Appearances = [ControlAppearance.Auto, ControlAppearance.None],
         States = states.ToList(),
+        AutoAuthorCss = kind == ControlKind.Button ? ButtonAppearanceAutoCss : "",
         Text = kind is ControlKind.Button or ControlKind.CheckBox or ControlKind.Radio ? "Control" : "",
         Value = kind is ControlKind.Input or ControlKind.TextArea or ControlKind.Select ? "Value" : "",
         Placeholder = kind is ControlKind.Input or ControlKind.TextArea ? "Placeholder" : ""
@@ -96,6 +98,7 @@ public sealed class ControlDefinition
     public required string Element { get; init; }
     public required List<ControlAppearance> Appearances { get; init; }
     public required List<ControlState> States { get; init; }
+    public string AutoAuthorCss { get; init; } = "";
     public string Text { get; init; } = "";
     public string Value { get; init; } = "";
     public string Placeholder { get; init; } = "";
