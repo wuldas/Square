@@ -13,13 +13,17 @@
     <GeneratePkgDefFile>false</GeneratePkgDefFile>
     <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
     <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
-    <IncludeAssemblyInVSIXContainer>false</IncludeAssemblyInVSIXContainer>
+    <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
     <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="System.ComponentModel.Composition" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" PrivateAssets="all" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.VisualStudio.LanguageServer.Client"
+                      PrivateAssets="all"
+                      ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>
@@ -53,5 +57,19 @@
   <Target Name="BuildVsixContainer"
           AfterTargets="Build"
           DependsOnTargets="CreateVsixContainer" />
+
+  <Target Name="PublishLanguageServer" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <LanguageServerOutput>$(IntermediateOutputPath)server\</LanguageServerOutput>
+    </PropertyGroup>
+    <RemoveDir Directories="$(LanguageServerOutput)" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\tools\Square.LanguageServer\Square.LanguageServer.csproj&quot; -c Release -p:DebugType=None -p:DebugSymbols=false -o &quot;$(LanguageServerOutput)&quot;" />
+    <ItemGroup>
+      <Content Include="$(LanguageServerOutput)*.*">
+        <Link>Server\%(Filename)%(Extension)</Link>
+        <IncludeInVSIX>true</IncludeInVSIX>
+      </Content>
+    </ItemGroup>
+  </Target>
 
 </Project>

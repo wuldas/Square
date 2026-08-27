@@ -184,6 +184,10 @@ jobs:
         working-directory: tooling/visualstudio-square
         run: dotnet build Square.VisualStudio.csproj --configuration Release -p:SquareTargetPlatform=Win32
 
+      - name: Verify Visual Studio extension archive
+        working-directory: tooling/visualstudio-square
+        run: node verify-vsix.mjs bin/Release/Square.LanguageSupport.VisualStudio.vsix
+
       - name: Build Rider plugin
         working-directory: tooling/rider-square
         run: .\gradlew.bat buildPlugin --no-daemon

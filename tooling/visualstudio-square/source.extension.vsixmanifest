@@ -4,11 +4,11 @@
                  xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Id="Square.LanguageSupport.VisualStudio"
-              Version="0.1.0"
+              Version="0.2.0"
               Language="en-US"
               Publisher="Wuldas" />
     <DisplayName>Square Language Support</DisplayName>
-    <Description xml:space="preserve">Syntax highlighting and basic editing support for Square SQX and SQV component files.</Description>
+    <Description xml:space="preserve">Syntax highlighting and Language Server support for Square SQX and SQV component files.</Description>
     <MoreInfo>https://github.com/wuldas/Square</MoreInfo>
     <License>LICENSE.txt</License>
     <Tags>Square, SQX, SQV, CSharp, UI</Tags>
@@ -36,5 +36,6 @@
     <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="File" Path="Square.pkgdef" />
     <Asset Type="Microsoft.VisualStudio.Content" d:Source="Project" d:ProjectName="%CurrentProject%" Path="Grammars" />
     <Asset Type="Microsoft.VisualStudio.Content" d:Source="Project" d:ProjectName="%CurrentProject%" Path="language-configuration.json" />
+    <Asset Type="Microsoft.VisualStudio.MefComponent" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%|" />
   </Assets>
 </PackageManifest>

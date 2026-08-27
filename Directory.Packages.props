@@ -20,6 +20,11 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
     <PackageVersion Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3" />
     <PackageVersion Include="Microsoft.VSSDK.BuildTools" Version="17.14.2094" />
+    <PackageVersion Include="Microsoft.VisualStudio.LanguageServer.Client" Version="17.14.60" />
+    <PackageVersion Include="Microsoft.VisualStudio.CoreUtility" Version="17.14.249" />
+    <PackageVersion Include="Microsoft.VisualStudio.Text.Logic" Version="17.14.249" />
+    <PackageVersion Include="Microsoft.VisualStudio.Utilities" Version="17.13.40008" />
+    <PackageVersion Include="Microsoft.VisualStudio.Telemetry" Version="17.14.2" />
     <PackageVersion Include="Silk.NET.Shaderc" Version="2.22.0" />
     <PackageVersion Include="StbTrueTypeSharp" Version="1.26.12" />
     <PackageVersion Include="xunit" Version="2.9.3" />

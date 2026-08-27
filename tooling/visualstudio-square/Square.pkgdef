@@ -1,4 +1,9 @@
 // Register the shared Square TextMate grammar repository.
+// Force SQX/SQV through the core text editor instead of XML content sniffing.
+[$RootKey$\Editors\{8B382828-6202-11D1-8870-0000F87579D2}\Extensions]
+"sqx"=dword:00000032
+"sqv"=dword:00000032
+
 [$RootKey$\TextMate\Repositories]
 "Square"="$PackageFolder$\Grammars"
 

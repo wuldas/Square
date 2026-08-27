@@ -1,5 +1,7 @@
 # Square Language Support for Visual Studio
 
-TextMate grammar and language configuration packaging for `.sqx` and `.sqv` files in Visual Studio 2022.
+TextMate grammar and Language Server packaging for `.sqx` and `.sqv` files in Visual Studio 2022 17.14 or later.
 
-This extension provides file recognition, TextMate highlighting, folding, bracket matching, and embedded C#/CSS highlighting. Shared Language Server features (diagnostics, syntax-tree completion, hover, symbols, and semantic tokens) are consumed by the VS Code and Rider hosts.
+The extension provides file recognition, TextMate highlighting, folding, bracket matching, embedded C#/CSS highlighting, and the shared Square Language Server for diagnostics, syntax-tree completion, hover, symbols, semantic tokens, component navigation, and CSS color support.
+
+The VSIX bundles the framework-dependent `.NET 10` language server and starts it through `dotnet` when an SQX or SQV document is opened.
