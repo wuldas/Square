@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.Parser;
 
@@ -10,7 +11,7 @@ internal static class SqvDocumentParser
 {
     public static SqxDocument Parse(string source, string fileName, bool tolerant = false)
     {
-        var sections = SplitSections(source, tolerant);
+        var sections = ReadSections(source, tolerant);
         if (!sections.TryGetValue("template", out var templateSection))
         {
             if (tolerant)
@@ -57,66 +58,43 @@ internal static class SqvDocumentParser
         return document;
     }
 
-    private static Dictionary<string, Section> SplitSections(string source, bool tolerant)
+    private static Dictionary<string, Section> ReadSections(string source, bool tolerant)
     {
+        var scan = ComponentSectionScanner.Scan(
+            source,
+            string.Empty,
+            ComponentDialect.Sqv,
+            tolerant);
+        var diagnostic = scan.Diagnostics.FirstOrDefault(item =>
+            !tolerant || !CanRecover(item.Kind));
+        if (diagnostic != null)
+            throw new SqxParseException(diagnostic.Message, diagnostic.Range.Offset, "SQV0001");
+
         var sections = new Dictionary<string, Section>(StringComparer.OrdinalIgnoreCase);
-        var position = 0;
-        while (position < source.Length)
-        {
-            SkipTrivia(source, ref position, tolerant);
-            if (position >= source.Length) break;
-            if (source[position] != '<')
-                throw new SqxParseException("Unexpected content outside a top-level section", position);
-
-            var nameStart = position + 1;
-            var nameEnd = nameStart;
-            while (nameEnd < source.Length && char.IsLetter(source[nameEnd])) nameEnd++;
-            if (nameEnd == nameStart)
-                throw new SqxParseException("Invalid top-level section", position);
-
-            var sourceName = source.Substring(nameStart, nameEnd - nameStart);
-            var name = sourceName.ToLowerInvariant();
-            // 必须是完整的标签名边界（空格/属性/>/ /），避免误匹配嵌套的 <template v-slot:...>
-            var boundary = nameEnd;
-            if (boundary < source.Length && source[boundary] != '>' && source[boundary] != '/' && !char.IsWhiteSpace(source[boundary]))
-                throw new SqxParseException("Invalid top-level section", position);
-            if (name != "template" && name != "script" && name != "style")
-                throw new SqxParseException("Unknown top-level section <" + sourceName + ">", position);
-            if (sections.ContainsKey(name))
-                throw new SqxParseException("Duplicate <" + name + "> section", position);
-
-            var openingEnd = FindTagEnd(source, nameEnd);
-            if (openingEnd < 0)
-            {
-                if (!tolerant) throw new SqxParseException("Unclosed <" + name + "> opening tag", position);
-                sections.Add(name, new Section(source.Substring(position), string.Empty, position, source.Length));
-                break;
-            }
-
-            var closeStart = FindMatchingCloseTag(source, name, openingEnd + 1);
-            var closeEnd = closeStart < 0 ? -1 : FindTagEnd(source, closeStart + name.Length + 2);
-            var contentStart = openingEnd + 1;
-            if (closeStart < 0 || closeEnd < 0)
-            {
-                if (!tolerant)
-                    throw new SqxParseException(
-                        closeStart < 0 ? "Unclosed <" + name + "> section" : "Unclosed </" + name + "> tag",
-                        closeStart < 0 ? position : closeStart);
-                sections.Add(name, new Section(
-                    source.Substring(position, openingEnd - position + 1),
-                    source.Substring(contentStart),
-                    position,
-                    contentStart));
-                break;
-            }
-            sections.Add(name, new Section(
-                source.Substring(position, openingEnd - position + 1),
-                source.Substring(contentStart, closeStart - contentStart),
-                position,
-                contentStart));
-            position = closeEnd + 1;
-        }
+        AddSection(source, sections, "template", scan.Document.Template);
+        AddSection(source, sections, "script", scan.Document.Script);
+        AddSection(source, sections, "style", scan.Document.Style);
         return sections;
+    }
+
+    private static bool CanRecover(ComponentSectionDiagnosticKind kind) =>
+        kind == ComponentSectionDiagnosticKind.UnclosedOpeningTag ||
+        kind == ComponentSectionDiagnosticKind.UnclosedSection ||
+        kind == ComponentSectionDiagnosticKind.UnclosedClosingTag ||
+        kind == ComponentSectionDiagnosticKind.UnclosedComment;
+
+    private static void AddSection(
+        string source,
+        Dictionary<string, Section> sections,
+        string name,
+        ComponentSectionSyntax syntax)
+    {
+        if (syntax == null) return;
+        sections.Add(name, new Section(
+            source.Substring(syntax.OpeningTagRange.Offset, syntax.OpeningTagRange.Length),
+            syntax.ContentText,
+            syntax.FullRange.Offset,
+            syntax.ContentRange.Offset));
     }
 
     private static ScriptMetadata ParseScriptMetadata(string openingTag)
@@ -137,85 +115,6 @@ internal static class SqvDocumentParser
         attributes.TryGetValue("namespace", out var ns);
         attributes.TryGetValue("name", out var componentName);
         return new ScriptMetadata(language, ns, componentName, access);
-    }
-
-    private static void SkipTrivia(string source, ref int position, bool tolerant)
-    {
-        while (position < source.Length)
-        {
-            if (char.IsWhiteSpace(source[position])) { position++; continue; }
-            if (source.Substring(position).StartsWith("<!--", StringComparison.Ordinal))
-            {
-                var end = source.IndexOf("-->", position + 4, StringComparison.Ordinal);
-                if (end < 0)
-                {
-                    if (tolerant)
-                    {
-                        position = source.Length;
-                        break;
-                    }
-                    throw new SqxParseException("Unclosed Vue comment", position, "SQV0001");
-                }
-                position = end + 3;
-                continue;
-            }
-            break;
-        }
-    }
-
-    private static int FindTagEnd(string source, int start)
-    {
-        var quote = '\0';
-        for (var i = start; i < source.Length; i++)
-        {
-            var c = source[i];
-            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
-            if (c == '\'' || c == '"') quote = c;
-            else if (c == '>') return i;
-        }
-        return -1;
-    }
-
-    /// <summary>查找与起始 &lt;name&gt; 配对的闭合标签，跳过同名嵌套标签。</summary>
-    private static int FindMatchingCloseTag(string source, string name, int start)
-    {
-        var openTag = "<" + name;
-        var closeTag = "</" + name;
-        var depth = 1;
-        var i = start;
-        while (i < source.Length)
-        {
-            var openAt = IndexOfTag(source, openTag, i);
-            var closeAt = source.IndexOf(closeTag, i, StringComparison.OrdinalIgnoreCase);
-            if (closeAt < 0) return -1;
-            if (openAt >= 0 && openAt < closeAt)
-            {
-                depth++;
-                i = openAt + openTag.Length;
-            }
-            else
-            {
-                depth--;
-                if (depth == 0) return closeAt;
-                i = closeAt + closeTag.Length;
-            }
-        }
-        return -1;
-    }
-
-    private static int IndexOfTag(string source, string prefix, int start)
-    {
-        var i = start;
-        while (i < source.Length)
-        {
-            var at = source.IndexOf(prefix, i, StringComparison.OrdinalIgnoreCase);
-            if (at < 0) return -1;
-            var after = at + prefix.Length;
-            if (after >= source.Length || source[after] == '>' || source[after] == '/' || char.IsWhiteSpace(source[after]))
-                return at;
-            i = at + 1;
-        }
-        return -1;
     }
 
     private sealed class Section

@@ -174,11 +174,11 @@ Compiler 内建立 source-preserving CSS syntax AST，至少覆盖当前 runtime
 
 **TDD:**
 
-- [ ] RED：LF/CRLF 下 Full/Opening/Content/Closing range 精确。
-- [ ] RED：空 script/style content range 精确。
-- [ ] RED：带 metadata、quoted `>`、comment 的 opening tag range 精确。
-- [ ] GREEN：添加 immutable-looking netstandard2.0-compatible syntax classes。
-- [ ] REFACTOR：所有范围统一使用 `SquareSourceRange`。
+- [x] RED：LF/CRLF 下 Full/Opening/Content/Closing range 精确。
+- [x] RED：空 script/style content range 精确。
+- [x] RED：带 metadata、quoted `>`、comment 的 opening tag range 精确。
+- [x] GREEN：添加 immutable-looking netstandard2.0-compatible syntax classes。
+- [x] REFACTOR：所有范围统一使用 `SquareSourceRange`。
 
 **Focused command:**
 
@@ -197,12 +197,12 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **TDD:**
 
-- [ ] RED：missing/duplicate/unclosed/unknown/outside-content fixture matrix。
-- [ ] RED：duplicate 诊断定位第二个 section。
-- [ ] RED：section content 中的 `<template>` 字符串、comment、nested SQV slot template 不终止外层 section。
-- [ ] RED：strict/tolerant 模式边界一致，只有恢复结果不同。
-- [ ] GREEN：实现一次 scanner，输出 section syntax + diagnostics。
-- [ ] REFACTOR：删除 scanner 内行列计算，只保存 absolute ranges。
+- [x] RED：missing/duplicate/unclosed/unknown/outside-content fixture matrix。
+- [x] RED：duplicate 诊断定位第二个 section。
+- [x] RED：section content 中的 `<template>` 字符串、comment、nested SQV slot template 不终止外层 section。
+- [x] RED：strict/tolerant 模式边界一致，只有恢复结果不同。
+- [x] GREEN：实现一次 scanner，输出 section syntax + diagnostics。
+- [x] REFACTOR：删除 scanner 内行列计算，只保存 absolute ranges。
 
 ### Task A1.3：让 SQX/SQV document parser 共用 scanner
 
@@ -218,17 +218,17 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 **TDD:**
 
-- [ ] RED：同一 section 错误在 SQX/SQV 使用对应 ID，但 range 相同。
-- [ ] GREEN：两端委托共享 scanner。
-- [ ] 保留现有模板 parser，不在本 task 改节点模型。
-- [ ] 删除旧 `SplitSections` 前确认所有 fixture 通过。
+- [x] RED：同一 section 错误在 SQX/SQV 使用对应 ID，但 range 相同。
+- [x] GREEN：两端委托共享 scanner。
+- [x] 保留现有模板 parser，不在本 task 改节点模型。
+- [x] 删除旧 `SplitSections` 前确认所有 fixture 通过。
 
 **Phase A1 exit criteria:**
 
-- [ ] 仓库只有一个顶层 section scanner。
-- [ ] SQX/SQV section range parity 覆盖 LF/CRLF/Unicode。
-- [ ] Generator 输出 snapshot 不变化。
-- [ ] `Square.Compiler` netstandard2.0/net10.0 均构建通过。
+- [x] 仓库只有一个顶层 section scanner。
+- [x] SQX/SQV section range parity 覆盖 LF/CRLF/Unicode。
+- [x] Generator 输出 snapshot 不变化。
+- [x] `Square.Compiler` netstandard2.0/net10.0 均构建通过。
 
 **Commit:** `重构: 统一组件文档分区语法`
 

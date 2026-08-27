@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.ParserCore
 {
@@ -31,7 +32,7 @@ namespace Square.Compiler.ParserCore
             if (source == null) throw new ArgumentNullException(nameof(source));
             if (options == null) throw new ArgumentNullException(nameof(options));
 
-            var sections = SplitSections(source, options.CaseSensitiveSectionNames, options.Tolerant);
+            var sections = ReadSections(source, options.CaseSensitiveSectionNames, options.Tolerant);
             Section templateSection;
             if (!sections.TryGetValue("template", out templateSection))
                 throw Error(source, 0, "Missing required <template> section");
@@ -73,70 +74,44 @@ namespace Square.Compiler.ParserCore
             return document;
         }
 
-        private static Dictionary<string, Section> SplitSections(string source, bool caseSensitive, bool tolerant)
+        private static Dictionary<string, Section> ReadSections(string source, bool caseSensitive, bool tolerant)
         {
+            var scan = ComponentSectionScanner.Scan(
+                source,
+                string.Empty,
+                caseSensitive ? ComponentDialect.Sqx : ComponentDialect.Sqv,
+                tolerant);
+            var diagnostic = scan.Diagnostics.FirstOrDefault(item =>
+                !tolerant || !CanRecover(item.Kind));
+            if (diagnostic != null)
+                throw Error(source, diagnostic.Range.Offset, diagnostic.Message);
+
             var sections = new Dictionary<string, Section>(StringComparer.OrdinalIgnoreCase);
-            var position = 0;
-            while (position < source.Length)
-            {
-                SkipTrivia(source, ref position);
-                if (position >= source.Length) break;
-
-                if (StartsWithTag(source, position, "sqx"))
-                    throw Error(source, position, "The <sqx> document root is no longer supported");
-                if (source[position] != '<')
-                    throw Error(source, position, "Unexpected content outside a top-level section");
-
-                var nameStart = position + 1;
-                var nameEnd = nameStart;
-                while (nameEnd < source.Length && char.IsLetter(source[nameEnd])) nameEnd++;
-                if (nameEnd == nameStart)
-                    throw Error(source, position, "Invalid top-level section");
-
-                var sourceName = source.Substring(nameStart, nameEnd - nameStart);
-                var name = caseSensitive ? sourceName : sourceName.ToLowerInvariant();
-                if (name != "template" && name != "script" && name != "style")
-                    throw Error(source, position, "Unknown top-level section <" + sourceName + ">");
-                if (sections.ContainsKey(name))
-                    throw Error(source, position, "Duplicate <" + name + "> section");
-
-                var openingEnd = FindTagEnd(source, nameEnd);
-                if (openingEnd < 0)
-                {
-                    if (!tolerant) throw Error(source, position, "Unclosed <" + name + "> opening tag");
-                    sections.Add(name, new Section(
-                        position,
-                        source.Substring(position),
-                        string.Empty,
-                        source.Length,
-                        GetLine(source, source.Length)));
-                    break;
-                }
-
-                var closeStart = source.IndexOf("</" + name, openingEnd + 1, StringComparison.OrdinalIgnoreCase);
-                var closeEnd = closeStart < 0 ? -1 : FindTagEnd(source, closeStart + name.Length + 2);
-                var contentStart = openingEnd + 1;
-                if (closeStart < 0 || closeEnd < 0)
-                {
-                    if (!tolerant) throw Error(source, closeStart < 0 ? position : closeStart,
-                        closeStart < 0 ? "Unclosed <" + name + "> section" : "Unclosed </" + name + "> tag");
-                    sections.Add(name, new Section(
-                        position,
-                        source.Substring(position, openingEnd - position + 1),
-                        source.Substring(contentStart),
-                        contentStart,
-                        GetLine(source, contentStart)));
-                    break;
-                }
-                sections.Add(name, new Section(
-                    position,
-                    source.Substring(position, openingEnd - position + 1),
-                    source.Substring(contentStart, closeStart - contentStart),
-                    contentStart,
-                    GetLine(source, contentStart)));
-                position = closeEnd + 1;
-            }
+            AddSection(source, sections, "template", scan.Document.Template);
+            AddSection(source, sections, "script", scan.Document.Script);
+            AddSection(source, sections, "style", scan.Document.Style);
             return sections;
+        }
+
+        private static bool CanRecover(ComponentSectionDiagnosticKind kind) =>
+            kind == ComponentSectionDiagnosticKind.UnclosedOpeningTag ||
+            kind == ComponentSectionDiagnosticKind.UnclosedSection ||
+            kind == ComponentSectionDiagnosticKind.UnclosedClosingTag ||
+            kind == ComponentSectionDiagnosticKind.UnclosedComment;
+
+        private static void AddSection(
+            string source,
+            Dictionary<string, Section> sections,
+            string name,
+            ComponentSectionSyntax syntax)
+        {
+            if (syntax == null) return;
+            sections.Add(name, new Section(
+                syntax.FullRange.Offset,
+                source.Substring(syntax.OpeningTagRange.Offset, syntax.OpeningTagRange.Length),
+                syntax.ContentText,
+                syntax.ContentRange.Offset,
+                GetLine(source, syntax.ContentRange.Offset)));
         }
 
         private static CoreTemplate ParseTemplate(string source, Section section, bool strict)
@@ -201,52 +176,6 @@ namespace Square.Compiler.ParserCore
             attributes.TryGetValue("namespace", out namespaceName);
             attributes.TryGetValue("name", out componentName);
             return new ScriptMetadata(language, namespaceName, componentName, access);
-        }
-
-        private static void SkipTrivia(string source, ref int position)
-        {
-            while (position < source.Length)
-            {
-                if (char.IsWhiteSpace(source[position]))
-                {
-                    position++;
-                    continue;
-                }
-                if (source.Substring(position).StartsWith("<!--", StringComparison.Ordinal))
-                {
-                    var end = source.IndexOf("-->", position + 4, StringComparison.Ordinal);
-                    if (end < 0) throw Error(source, position, "Unclosed top-level comment");
-                    position = end + 3;
-                    continue;
-                }
-                break;
-            }
-        }
-
-        private static int FindTagEnd(string source, int start)
-        {
-            var quote = '\0';
-            for (var i = start; i < source.Length; i++)
-            {
-                var c = source[i];
-                if (quote != '\0')
-                {
-                    if (c == quote) quote = '\0';
-                    continue;
-                }
-                if (c == '\'' || c == '"') quote = c;
-                else if (c == '>') return i;
-            }
-            return -1;
-        }
-
-        private static bool StartsWithTag(string source, int position, string name)
-        {
-            var text = "<" + name;
-            if (position + text.Length > source.Length ||
-                !source.Substring(position, text.Length).Equals(text, StringComparison.OrdinalIgnoreCase)) return false;
-            var boundary = position + text.Length;
-            return boundary >= source.Length || char.IsWhiteSpace(source[boundary]) || source[boundary] == '>' || source[boundary] == '/';
         }
 
         private static CoreParseException Error(string source, int position, string message)

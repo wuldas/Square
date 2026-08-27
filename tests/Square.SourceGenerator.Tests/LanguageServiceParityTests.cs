@@ -94,6 +94,37 @@ public sealed class LanguageServiceParityTests
     }
 
     [Fact]
+    public void SqxAndSqvSectionDiagnosticsShareRangeAndUseDialectIds()
+    {
+        const string source = "<template><View /></template>" +
+            "<script></script><script></script>";
+
+        var sqx = Assert.Single(SquareDocumentService.ParseSyntaxTree(source, "Duplicate.sqx").Diagnostics);
+        var sqv = Assert.Single(SquareDocumentService.ParseSyntaxTree(source, "Duplicate.sqv").Diagnostics);
+
+        Assert.Equal("SQX0001", sqx.Id);
+        Assert.Equal("SQV0001", sqv.Id);
+        Assert.Equal(sqx.Range, sqv.Range);
+        Assert.Equal(source.LastIndexOf("<script>", StringComparison.Ordinal), sqx.Range.Offset);
+    }
+
+    [Theory]
+    [InlineData("sqx")]
+    [InlineData("sqv")]
+    public void DocumentParsersUseRawSectionBoundaries(string extension)
+    {
+        const string source = "<template><View /></template>" +
+            "<script>private const string End = \"</script>\";</script>" +
+            "<style>.label::after { content: \"</style>\"; }</style>";
+
+        var result = SquareDocumentService.ParseSyntaxTree(source, "Strings." + extension);
+
+        Assert.True(result.IsSuccess, string.Join("\n", result.Diagnostics.Select(diagnostic => diagnostic.Message)));
+        Assert.Equal("private const string End = \"</script>\";", result.ParsedSqxDocument.ScriptCode);
+        Assert.Equal(".label::after { content: \"</style>\"; }", result.ParsedSqxDocument.StyleCode);
+    }
+
+    [Fact]
     public void MarkupFacadeAndGeneratorShareSqxDiagnosticIdAndSourceRange()
     {
         const string source = "<template><View /></template>\r\n<script lang=\"csharp\"></script>\r\n<script lang=\"csharp\"></script>";
