@@ -66,6 +66,7 @@ public sealed class TemplateCatalog
             ["style"] = "style",
             ["ref"] = "ref",
             ["slot"] = "slot",
+            ["key"] = "key",
             ["when"] = "when",
             ["each"] = "each",
             ["fallback"] = "fallback",
@@ -131,9 +132,70 @@ public sealed class TemplateCatalog
             ["stroke-opacity"] = "StrokeOpacity"
         };
 
+    private static readonly string[] CommonPropertyNames =
+        { "id", "class", "style", "ref", "slot" };
+
+    private static readonly string[] UiElementPropertyNames =
+        { "width", "height", "disabled" };
+
+    private static readonly HashSet<string> NonUiElementTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Show", "For", "Index", "Switch", "Match", "Slot", "Outlet",
+        "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon"
+    };
+
+    private static readonly IReadOnlyDictionary<string, string[]> TagPropertyNames =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Text"] = new[] { "text", "color" },
+            ["FontIcon"] = new[] { "glyph", "color", "font-family" },
+            ["Button"] = new[] { "text", "background" },
+            ["Input"] = new[] { "value", "placeholder", "type" },
+            ["TextArea"] = new[] { "value", "placeholder" },
+            ["CheckBox"] = new[] { "text", "checked" },
+            ["Radio"] = new[] { "text", "checked", "group" },
+            ["Select"] = new[] { "options", "value", "placeholder" },
+            ["Image"] = new[] { "source", "image" },
+            ["Splitter"] = new[] { "minimum", "maximum", "value", "vertical", "reversed" },
+            ["SplitContainer"] = new[]
+                { "minimum", "maximum", "value", "vertical", "splitter-thickness", "seamless" },
+            ["List"] = new[] { "items", "selected-index" },
+            ["VirtualList"] = new[] { "selected-index", "item-height", "overscan-count" },
+            ["VirtualTree"] = new[]
+                { "item-height", "overscan-count", "indent-size" },
+            ["TreeItem"] = new[] { "text", "expanded", "color" },
+            ["ListItem"] = new[] { "text", "marker", "color" },
+            ["Swiper"] = new[] { "selected-index", "loop" },
+            ["MenuItem"] = new[]
+                { "text", "icon", "group", "shortcut", "checkable", "checked", "stays-open-on-click", "disabled" },
+            ["Link"] = new[] { "text", "href", "underline", "color" },
+            ["Show"] = new[] { "when", "fallback" },
+            ["For"] = new[] { "each", "key", "fallback" },
+            ["Index"] = new[] { "each", "fallback" },
+            ["Switch"] = new[] { "fallback" },
+            ["Match"] = new[] { "when" },
+            ["Slot"] = new[] { "name", "fallback" },
+            ["Outlet"] = new[] { "name", "fallback" },
+            ["svg"] = new[] { "viewbox", "width", "height", "fill", "stroke", "opacity" },
+            ["g"] = new[] { "transform", "fill", "stroke", "opacity" },
+            ["path"] = new[] { "d", "transform", "fill", "stroke", "stroke-width", "opacity" },
+            ["rect"] = new[] { "x", "y", "width", "height", "rx", "ry", "fill", "stroke", "opacity" },
+            ["circle"] = new[] { "cx", "cy", "r", "fill", "stroke", "opacity" },
+            ["ellipse"] = new[] { "cx", "cy", "rx", "ry", "fill", "stroke", "opacity" },
+            ["line"] = new[] { "x1", "y1", "x2", "y2", "stroke", "stroke-width", "opacity" },
+            ["polyline"] = new[] { "points", "fill", "stroke", "stroke-width", "opacity" },
+            ["polygon"] = new[] { "points", "fill", "stroke", "stroke-width", "opacity" }
+        };
+
     private static readonly HashSet<string> TextContentTags = new(StringComparer.OrdinalIgnoreCase)
     {
         "Text", "Button", "Link", "ListItem", "TreeItem"
+    };
+
+    private static readonly HashSet<string> BooleanPropertyNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "seamless", "vertical", "reversed", "checked", "disabled", "checkable",
+        "stays-open-on-click", "expanded", "loop", "replace", "underline"
     };
 
     private static readonly (string Name, string CanonicalName)[] StandardEvents =
@@ -174,7 +236,10 @@ public sealed class TemplateCatalog
 
     public IReadOnlyCollection<TemplatePropertyDescriptor> Properties { get; } =
         new ReadOnlyCollection<TemplatePropertyDescriptor>(PropertyAliases
-            .Select(pair => new TemplatePropertyDescriptor(pair.Key, pair.Value))
+            .Select(pair => new TemplatePropertyDescriptor(
+                pair.Key,
+                pair.Value,
+                GetPropertyValueKind(pair.Key)))
             .ToArray());
 
     public IReadOnlyCollection<TemplateComponentDescriptor> Components =>
@@ -205,6 +270,28 @@ public sealed class TemplateCatalog
         return PropertyAliases.TryGetValue(markupName, out var propertyName)
             ? propertyName
             : markupName;
+    }
+
+    public IReadOnlyCollection<TemplatePropertyDescriptor> GetPropertiesForTag(string tagName)
+    {
+        if (string.IsNullOrWhiteSpace(tagName)) return Properties;
+        var names = new HashSet<string>(CommonPropertyNames, StringComparer.OrdinalIgnoreCase);
+        if (!NonUiElementTags.Contains(tagName)) names.UnionWith(UiElementPropertyNames);
+        if (!_components.ContainsKey(tagName))
+            return Properties.Where(property => names.Contains(property.Name)).ToArray();
+        if (TagPropertyNames.TryGetValue(tagName, out var tagProperties)) names.UnionWith(tagProperties);
+        return Properties.Where(property => names.Contains(property.Name)).ToArray();
+    }
+
+    public TemplatePropertyDescriptor GetProperty(string name) =>
+        Properties.FirstOrDefault(property => property.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    private static TemplatePropertyValueKind GetPropertyValueKind(string name)
+    {
+        if (name.Equals("class", StringComparison.OrdinalIgnoreCase)) return TemplatePropertyValueKind.CssClass;
+        return BooleanPropertyNames.Contains(name)
+            ? TemplatePropertyValueKind.Boolean
+            : TemplatePropertyValueKind.String;
     }
 
     private static TemplateCatalog CreateBuiltIn()

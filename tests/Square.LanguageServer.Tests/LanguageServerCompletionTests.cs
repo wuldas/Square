@@ -54,6 +54,301 @@ public sealed class LanguageServerCompletionTests
         Assert.Equal(0, process.ExitCode);
     }
 
+    [Fact]
+    public async Task EventExpressionCompletionOffersCurrentScriptMethods()
+    {
+        using var process = StartServer();
+        await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+        const string source = "<template><Button onClick={OnS} /></template><script>private Event? OnState { get; set; } private void OnSave(Event e) { }</script>";
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new
+            {
+                textDocument = new
+                {
+                    uri = "file:///C:/Square/Handlers.sqx",
+                    languageId = "sqx",
+                    version = 1,
+                    text = source
+                }
+            }
+        }));
+        _ = await Read(process.StandardOutput);
+        var character = source.IndexOf("OnS}", StringComparison.Ordinal) + "OnS".Length;
+        await Write(process,
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///C:/Square/Handlers.sqx\"},\"position\":{\"line\":0,\"character\":" + character + "}}}");
+
+        var completion = await Read(process.StandardOutput);
+
+        Assert.Contains("\"label\":\"OnSave\"", completion, StringComparison.Ordinal);
+        Assert.Contains("\"kind\":3", completion, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"label\":\"OnState\"", completion, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public async Task TagCompletionOffersComponentsFromOtherOpenDocuments()
+    {
+        using var process = StartServer();
+        await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Card.sqx","languageId":"sqx","version":1,"text":"<template><View /></template>"}}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Page.sqx","languageId":"sqx","version":1,"text":"<template><Ca"}}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Page.sqx"},"position":{"line":0,"character":13}}}""");
+
+        var completion = await Read(process.StandardOutput);
+
+        Assert.Contains("\"label\":\"Card\"", completion, StringComparison.Ordinal);
+        Assert.Contains("\"detail\":\"Card\"", completion, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Card.sqx","version":2},"contentChanges":[{"text":"<template><"}]}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Page.sqx"},"position":{"line":0,"character":13}}}""");
+        var completionDuringInvalidEdit = await Read(process.StandardOutput);
+        Assert.Contains("\"label\":\"Card\"", completionDuringInvalidEdit, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","id":4,"method":"shutdown","params":null}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public async Task CompletionUsesExactTextEditForTheCurrentPrefix()
+    {
+        using var process = StartServer();
+        await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+        const string source = "<template><Button onCl";
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new { textDocument = new { uri = "file:///C:/Square/Edit.sqx", languageId = "sqx", version = 1, text = source } }
+        }));
+        _ = await Read(process.StandardOutput);
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 2,
+            method = "textDocument/completion",
+            @params = new { textDocument = new { uri = "file:///C:/Square/Edit.sqx" }, position = new { line = 0, character = source.Length } }
+        }));
+
+        using var response = JsonDocument.Parse(await Read(process.StandardOutput));
+        var item = response.RootElement.GetProperty("result").GetProperty("items")
+            .EnumerateArray()
+            .Single(candidate => candidate.GetProperty("label").GetString() == "onClick");
+        var textEdit = item.GetProperty("textEdit");
+
+        Assert.Equal(source.IndexOf("onCl", StringComparison.Ordinal),
+            textEdit.GetProperty("range").GetProperty("start").GetProperty("character").GetInt32());
+        Assert.Equal(source.Length,
+            textEdit.GetProperty("range").GetProperty("end").GetProperty("character").GetInt32());
+        Assert.Equal("onClick", textEdit.GetProperty("newText").GetString());
+
+        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public async Task TagCompletionIndexesUnopenedComponentsFromTheWorkspaceRoot()
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), "square-lsp-completion-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workspace);
+        await File.WriteAllTextAsync(
+            Path.Combine(workspace, "Card.sqx"),
+            "<template><View /></template>");
+        var ignored = Path.Combine(workspace, "obj");
+        Directory.CreateDirectory(ignored);
+        await File.WriteAllTextAsync(
+            Path.Combine(ignored, "Hidden.sqx"),
+            "<template><View /></template>");
+        using var process = StartServer();
+        try
+        {
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "initialize",
+                @params = new { rootUri = new Uri(workspace + Path.DirectorySeparatorChar).AbsoluteUri }
+            }));
+            _ = await Read(process.StandardOutput);
+            await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+            var pageUri = new Uri(Path.Combine(workspace, "Page.sqx")).AbsoluteUri;
+            const string page = "<template><";
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "textDocument/didOpen",
+                @params = new { textDocument = new { uri = pageUri, languageId = "sqx", version = 1, text = page } }
+            }));
+            _ = await Read(process.StandardOutput);
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = 2,
+                method = "textDocument/completion",
+                @params = new { textDocument = new { uri = pageUri }, position = new { line = 0, character = page.Length } }
+            }));
+
+            var completion = await Read(process.StandardOutput);
+
+            Assert.Contains("\"label\":\"Card\"", completion, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"label\":\"Hidden\"", completion, StringComparison.Ordinal);
+
+            await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+            _ = await Read(process.StandardOutput);
+            await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DidCloseDoesNotIndexADocumentThatWasNeverOpened()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "square-lsp-close-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var secretPath = Path.Combine(directory, "Secret.sqx");
+        await File.WriteAllTextAsync(secretPath, "<template><View /></template>");
+        using var process = StartServer();
+        try
+        {
+            await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+            _ = await Read(process.StandardOutput);
+            await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "textDocument/didClose",
+                @params = new { textDocument = new { uri = new Uri(secretPath).AbsoluteUri } }
+            }));
+            _ = await Read(process.StandardOutput);
+
+            var pageUri = new Uri(Path.Combine(directory, "Page.sqx")).AbsoluteUri;
+            const string page = "<template><";
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "textDocument/didOpen",
+                @params = new { textDocument = new { uri = pageUri, languageId = "sqx", version = 1, text = page } }
+            }));
+            _ = await Read(process.StandardOutput);
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = 2,
+                method = "textDocument/completion",
+                @params = new { textDocument = new { uri = pageUri }, position = new { line = 0, character = page.Length } }
+            }));
+
+            var completion = await Read(process.StandardOutput);
+
+            Assert.DoesNotContain("\"label\":\"Secret\"", completion, StringComparison.Ordinal);
+
+            await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+            _ = await Read(process.StandardOutput);
+            await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DidCloseDoesNotRestoreAnOpenedDocumentOutsideTheWorkspace()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "square-lsp-close-open-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var externalPath = Path.Combine(directory, "External.sqx");
+        await File.WriteAllTextAsync(
+            externalPath,
+            "<template><View /></template><script>[Prop] public string SecretValue { get; set; }</script>");
+        var externalUri = new Uri(externalPath).AbsoluteUri;
+        using var process = StartServer();
+        try
+        {
+            await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+            _ = await Read(process.StandardOutput);
+            await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "textDocument/didOpen",
+                @params = new { textDocument = new { uri = externalUri, languageId = "sqx", version = 1, text = "<template><View /></template>" } }
+            }));
+            _ = await Read(process.StandardOutput);
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "textDocument/didClose",
+                @params = new { textDocument = new { uri = externalUri } }
+            }));
+            _ = await Read(process.StandardOutput);
+
+            var pageUri = new Uri(Path.Combine(directory, "Page.sqx")).AbsoluteUri;
+            const string page = "<template><";
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "textDocument/didOpen",
+                @params = new { textDocument = new { uri = pageUri, languageId = "sqx", version = 1, text = page } }
+            }));
+            _ = await Read(process.StandardOutput);
+            await Write(process, JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = 2,
+                method = "textDocument/completion",
+                @params = new { textDocument = new { uri = pageUri }, position = new { line = 0, character = page.Length } }
+            }));
+
+            var completion = await Read(process.StandardOutput);
+
+            Assert.DoesNotContain("\"label\":\"External\"", completion, StringComparison.Ordinal);
+
+            await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+            _ = await Read(process.StandardOutput);
+            await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static Process StartServer()
     {
         var project = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Square.LanguageServer", "Square.LanguageServer.csproj"));

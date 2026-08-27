@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace Square.LanguageServer.Tests;
@@ -31,6 +32,22 @@ public sealed class LanguageServerLifecycleTests
         var initialize = await ReadMessageAsync(process.StandardOutput);
         Assert.Contains("\"id\":1", initialize, StringComparison.Ordinal);
         Assert.Contains("\"capabilities\"", initialize, StringComparison.Ordinal);
+        using (var initializeDocument = JsonDocument.Parse(initialize))
+        {
+            var triggers = initializeDocument.RootElement
+                .GetProperty("result")
+                .GetProperty("capabilities")
+                .GetProperty("completionProvider")
+                .GetProperty("triggerCharacters")
+                .EnumerateArray()
+                .Select(value => value.GetString())
+                .ToArray();
+            Assert.Contains("{", triggers);
+            Assert.Contains("\"", triggers);
+            Assert.Contains("/", triggers);
+            Assert.Contains("#", triggers);
+            Assert.Contains("-", triggers);
+        }
 
         await WriteMessageAsync(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
         await WriteMessageAsync(process, """{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}""");

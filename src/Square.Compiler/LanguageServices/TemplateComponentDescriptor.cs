@@ -50,13 +50,26 @@ public sealed class TemplateEventDescriptor
 
 public sealed class TemplatePropertyDescriptor
 {
-    public TemplatePropertyDescriptor(string name, string canonicalName)
+    public TemplatePropertyDescriptor(
+        string name,
+        string canonicalName,
+        TemplatePropertyValueKind valueKind = TemplatePropertyValueKind.String)
     {
         Name = name;
         CanonicalName = canonicalName;
+        ValueKind = valueKind;
     }
 
     public string Name { get; }
 
     public string CanonicalName { get; }
+
+    public TemplatePropertyValueKind ValueKind { get; }
+}
+
+public enum TemplatePropertyValueKind
+{
+    String,
+    Boolean,
+    CssClass
 }

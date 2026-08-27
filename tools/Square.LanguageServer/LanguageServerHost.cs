@@ -9,6 +9,7 @@ public sealed class LanguageServerHost
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly DocumentStore _documents = new();
+    private readonly WorkspaceComponentIndex _componentIndex = new();
     private bool _shutdownRequested;
 
     public LanguageServerHost(Stream input, Stream output)
@@ -34,12 +35,17 @@ public sealed class LanguageServerHost
             switch (method)
             {
                 case "initialize" when hasId:
+                    IndexWorkspaceComponents(root, cancellationToken);
                     await WriteResponseAsync(id, new
                     {
                         capabilities = new
                         {
                             textDocumentSync = 1,
-                            completionProvider = new { triggerCharacters = new[] { "<", "@", ":", "v", ".", " " } },
+                            completionProvider = new
+                            {
+                                triggerCharacters = new[]
+                                    { "<", "/", "@", ":", "#", "v", "-", ".", " ", "{", "\"" }
+                            },
                             hoverProvider = true,
                             documentSymbolProvider = true,
                             definitionProvider = true,
@@ -63,15 +69,15 @@ public sealed class LanguageServerHost
                     await WriteResponseAsync(id, null, cancellationToken);
                     break;
                 case "textDocument/didOpen":
-                    HandleDidOpen(root);
+                    HandleDidOpen(root, cancellationToken);
                     await PublishDiagnosticsAsync(root, cancellationToken);
                     break;
                 case "textDocument/didChange":
-                    HandleDidChange(root);
+                    HandleDidChange(root, cancellationToken);
                     await PublishDiagnosticsAsync(root, cancellationToken);
                     break;
                 case "textDocument/didClose":
-                    HandleDidClose(root);
+                    HandleDidClose(root, cancellationToken);
                     await PublishEmptyDiagnosticsAsync(root, cancellationToken);
                     break;
                 case "textDocument/completion" when hasId:
@@ -110,16 +116,19 @@ public sealed class LanguageServerHost
         return 0;
     }
 
-    private void HandleDidOpen(JsonElement root)
+    private void HandleDidOpen(JsonElement root, CancellationToken cancellationToken)
     {
         var textDocument = root.GetProperty("params").GetProperty("textDocument");
+        var uri = textDocument.GetProperty("uri").GetString() ?? string.Empty;
+        var text = textDocument.GetProperty("text").GetString() ?? string.Empty;
+        _componentIndex.Update(GetSourcePath(uri), text, cancellationToken: cancellationToken);
         _documents.Open(
-            textDocument.GetProperty("uri").GetString() ?? string.Empty,
+            uri,
             textDocument.GetProperty("version").GetInt32(),
-            textDocument.GetProperty("text").GetString() ?? string.Empty);
+            text);
     }
 
-    private void HandleDidChange(JsonElement root)
+    private void HandleDidChange(JsonElement root, CancellationToken cancellationToken)
     {
         var parameters = root.GetProperty("params");
         var textDocument = parameters.GetProperty("textDocument");
@@ -135,16 +144,19 @@ public sealed class LanguageServerHost
         {
             text = changes[0].GetProperty("text").GetString() ?? string.Empty;
         }
+        _componentIndex.Update(GetSourcePath(uri), text, cancellationToken: cancellationToken);
         _documents.Change(
             uri,
             textDocument.GetProperty("version").GetInt32(),
             text);
     }
 
-    private void HandleDidClose(JsonElement root)
+    private void HandleDidClose(JsonElement root, CancellationToken cancellationToken)
     {
         var uri = root.GetProperty("params").GetProperty("textDocument").GetProperty("uri").GetString();
-        if (uri != null) _documents.Close(uri);
+        if (uri == null || !_documents.TryGet(uri, out var document) || document == null) return;
+        _componentIndex.Close(GetSourcePath(uri), cancellationToken);
+        _documents.Close(uri);
     }
 
     private async Task PublishDiagnosticsAsync(JsonElement root, CancellationToken cancellationToken)
@@ -204,17 +216,130 @@ public sealed class LanguageServerHost
 
         var position = parameters.GetProperty("position");
         var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
-        var items = TemplateCompletionService.GetItems(document.Text, offset, GetSourcePath(uri))
+        var context = TemplateCompletionService.GetContext(document.Text, offset, GetSourcePath(uri));
+        var completionItems = TemplateCompletionService.GetItems(context, document.Text).ToList();
+        if (context.Kind is TemplateCompletionKind.Tag or
+            TemplateCompletionKind.Attribute or
+            TemplateCompletionKind.Binding)
+        {
+            if (context.Kind == TemplateCompletionKind.Tag)
+            {
+                completionItems.AddRange(_componentIndex.Components
+                    .Where(component => component.TagName.StartsWith(
+                        context.Prefix,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(component => new TemplateCompletionItem(
+                        component.TagName,
+                        14,
+                        component.TypeName,
+                        component.TagName)));
+            }
+            else
+            {
+                if (_componentIndex.TryGetProps(context.TagName, out var props))
+                {
+                    var existing = new HashSet<string>(
+                        context.ExistingAttributes.Select(NormalizeComponentPropertyName),
+                        StringComparer.OrdinalIgnoreCase);
+                    var availableProps = props
+                        .Where(prop => !existing.Contains(prop.Name))
+                        .ToArray();
+                    completionItems.AddRange(availableProps
+                        .Where(prop => prop.Name.StartsWith(
+                            context.Prefix,
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(prop => new TemplateCompletionItem(
+                            prop.Name,
+                            10,
+                            prop.TypeName + (prop.Required ? " (required)" : string.Empty),
+                            prop.Name)));
+                    if (context.IsSqv && context.Kind == TemplateCompletionKind.Attribute)
+                        completionItems.AddRange(availableProps
+                            .Select(prop => (Prop: prop, Name: ":" + prop.Name))
+                            .Where(item => item.Name.StartsWith(
+                                context.Prefix,
+                                StringComparison.OrdinalIgnoreCase))
+                            .Select(item => new TemplateCompletionItem(
+                                item.Name,
+                                10,
+                                "Dynamic " + item.Prop.TypeName +
+                                (item.Prop.Required ? " (required)" : string.Empty),
+                                item.Name)));
+                }
+            }
+        }
+        var items = completionItems
+            .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
             .Select(item => new
             {
                 label = item.Label,
                 kind = item.Kind,
                 detail = item.Detail,
-                insertText = item.InsertText
+                insertText = item.InsertText,
+                textEdit = new
+                {
+                    range = ToRange(
+                        document.Text,
+                        Math.Max(0, offset - context.Prefix.Length),
+                        offset),
+                    newText = item.InsertText
+                }
             })
             .Cast<object>()
             .ToArray();
         return new { isIncomplete = false, items };
+    }
+
+    private void IndexWorkspaceComponents(
+        JsonElement initializeRequest,
+        CancellationToken cancellationToken) =>
+        _componentIndex.Index(
+            EnumerateWorkspaceRoots(initializeRequest, cancellationToken),
+            cancellationToken);
+
+    internal static IEnumerable<string> EnumerateWorkspaceRoots(
+        JsonElement initializeRequest,
+        CancellationToken cancellationToken)
+    {
+        if (!initializeRequest.TryGetProperty("params", out var parameters)) yield break;
+        var hasWorkspaceFolders = false;
+        if (parameters.TryGetProperty("workspaceFolders", out var folders) &&
+            folders.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var folder in folders.EnumerateArray())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!folder.TryGetProperty("uri", out var uri)) continue;
+                var value = uri.GetString();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                hasWorkspaceFolders = true;
+                yield return GetSourcePath(value);
+            }
+        }
+        if (hasWorkspaceFolders) yield break;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (parameters.TryGetProperty("rootUri", out var rootUri) &&
+            rootUri.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(rootUri.GetString()))
+        {
+            yield return GetSourcePath(rootUri.GetString()!);
+            yield break;
+        }
+        if (parameters.TryGetProperty("rootPath", out var rootPath) &&
+            rootPath.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(rootPath.GetString()))
+            yield return rootPath.GetString()!;
+    }
+
+    private static string NormalizeComponentPropertyName(string name)
+    {
+        if (name.StartsWith(":", StringComparison.Ordinal)) name = name.Substring(1);
+        else if (name.StartsWith("v-bind:", StringComparison.OrdinalIgnoreCase))
+            name = name.Substring("v-bind:".Length);
+        var modifier = name.IndexOf('.');
+        return modifier < 0 ? name : name.Substring(0, modifier);
     }
 
     private static int GetOffset(string text, int line, int character)

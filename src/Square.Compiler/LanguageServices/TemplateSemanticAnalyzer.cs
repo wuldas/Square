@@ -63,23 +63,7 @@ public sealed class TemplateSemanticAnalyzer
         {
             if (!TryParse(input.Content, input.Path, out var document)) continue;
 
-            var props = new Dictionary<string, TemplatePropDescriptor>(StringComparer.OrdinalIgnoreCase);
-            var script = document.Syntax?.Script;
-            if (script != null)
-            {
-                foreach (var property in script.CSharp.Members.OfType<PropertyDeclarationSyntax>())
-                {
-                    var attribute = property.AttributeLists
-                        .SelectMany(list => list.Attributes)
-                        .FirstOrDefault(IsPropAttribute);
-                    if (attribute == null) continue;
-                    var prop = new TemplatePropDescriptor(
-                        property.Identifier.ValueText,
-                        property.Type.ToString(),
-                        IsRequired(attribute));
-                    props[prop.Name] = prop;
-                }
-            }
+            var props = ExtractEmbeddedProps(document);
 
             var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
                 ? input.Namespace
@@ -107,6 +91,24 @@ public sealed class TemplateSemanticAnalyzer
             contracts[metadataName] = props.Values.ToArray();
         }
 
+        return contracts;
+    }
+
+    public IReadOnlyDictionary<string, TemplatePropDescriptor[]> BuildEmbeddedPropContracts(
+        IEnumerable<(string Path, string Content, string Namespace)> inputs)
+    {
+        var contracts = new Dictionary<string, TemplatePropDescriptor[]>(StringComparer.Ordinal);
+        foreach (var input in inputs)
+        {
+            if (!TryParse(input.Content, input.Path, out var document)) continue;
+            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
+                ? input.Namespace
+                : document.Namespace;
+            var metadataName = string.IsNullOrWhiteSpace(namespaceName)
+                ? document.Name
+                : namespaceName + "." + document.Name;
+            contracts[metadataName] = ExtractEmbeddedProps(document).Values.ToArray();
+        }
         return contracts;
     }
 
@@ -185,6 +187,26 @@ public sealed class TemplateSemanticAnalyzer
                 return true;
         }
         return false;
+    }
+
+    private static Dictionary<string, TemplatePropDescriptor> ExtractEmbeddedProps(SqxDocument document)
+    {
+        var props = new Dictionary<string, TemplatePropDescriptor>(StringComparer.OrdinalIgnoreCase);
+        var script = document.Syntax?.Script;
+        if (script == null) return props;
+        foreach (var property in script.CSharp.Members.OfType<PropertyDeclarationSyntax>())
+        {
+            var attribute = property.AttributeLists
+                .SelectMany(list => list.Attributes)
+                .FirstOrDefault(IsPropAttribute);
+            if (attribute == null) continue;
+            var prop = new TemplatePropDescriptor(
+                property.Identifier.ValueText,
+                property.Type.ToString(),
+                IsRequired(attribute));
+            props[prop.Name] = prop;
+        }
+        return props;
     }
 }
 
