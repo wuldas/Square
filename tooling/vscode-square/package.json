@@ -17,15 +17,17 @@
   "keywords": ["square", "sqx", "sqv", "csharp", "ui"],
   "scripts": {
     "sync-assets": "node scripts/sync-assets.mjs",
-    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run typecheck && node scripts/build-extension.mjs",
     "test": "npm run sync-assets && npm run build && npm run build-server && node ../square-language/test/verify-vscode-package.mjs",
     "build-server": "node scripts/build-server.mjs",
-    "package": "npm run test && vsce package --out ../../artifacts/square-language-support.vsix"
+    "package": "npm run test && vsce package --out ../../artifacts/square-language-support.vsix && node scripts/verify-vsix.mjs ../../artifacts/square-language-support.vsix"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^3.6.2",
+    "esbuild": "^0.28.2",
     "typescript": "^5.8.3"
   },
   "dependencies": {
