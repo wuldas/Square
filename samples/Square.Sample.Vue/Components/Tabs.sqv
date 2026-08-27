@@ -123,8 +123,6 @@
     {
       var isSelected = i == selected;
       _tabButtons[i].ClassList.Toggle("selected", isSelected);
-      _tabButtons[i].Style.Set("background", isSelected ? "#ffffff" : "#eef1f4");
-      _tabButtons[i].Style.Set("color", isSelected ? "#005ea6" : "#454b52");
     }
   }
 
@@ -142,8 +140,13 @@
 <style>
   .tabs { display: flex; flex-direction: column; gap: 0; padding: 0; height: 850px; }
   .tab-list { display: flex; flex-direction: row; gap: 2px; padding: 0; height: 42px; background: #eef1f4; }
-  .tab-button { height: 42px; background: #eef1f4; color: #454b52; }
-  .tab-button.selected { background: #ffffff; color: #005ea6; }
+  .tab-button { appearance: none; box-sizing: border-box; height: 42px; padding: 0 14px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: #eef1f4; color: #454b52; }
+  .tab-button:hover { background: #e4e8ed; color: #24313d; }
+  .tab-button:active { background: #d8dee5; color: #17212b; }
+  .tab-button.selected { background: #ffffff; color: #005ea6; border-bottom-color: #0078d4; }
+  .tab-button.selected:hover { background: #ffffff; color: #004f8c; border-bottom-color: #005ea6; }
+  .tab-button:focus-visible { outline: 2px solid #005ea6; outline-offset: -2px; }
+  .tab-button:disabled { background: #eef1f4; color: #9aa1a9; border-bottom-color: transparent; }
   .tab-panels { padding: 16px 0 0; height: 792px; overflow-y: auto; }
   .tab-router { width: 100%; min-height: 100%; }
   .tabs-fallback { color: #667085; font-size: 14px; }
