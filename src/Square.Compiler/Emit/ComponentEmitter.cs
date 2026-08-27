@@ -262,7 +262,7 @@ namespace Square.Compiler.Emit
             var variableName = isRef ? refAttr.RawValue : NextVariable();
             var tagName = MapTagName(element.TagName);
             var isCustomComponent = !IsBuiltInTag(element.TagName);
-            var usesSlots = isCustomComponent || IsTitleBar(element.TagName);
+            var usesSlots = isCustomComponent || IsBuiltInSlotHost(element.TagName);
 
             if (isRef)
                 _sb.AppendLine(indent + variableName + " = new " + tagName + "();");
@@ -775,11 +775,12 @@ namespace Square.Compiler.Emit
 
         private bool IsBuiltInTag(string tag) => _templateCatalog.GetComponent(tag).IsBuiltIn;
 
-        private static bool IsTitleBar(string tag) =>
-            string.Equals(tag, "titlebar", StringComparison.OrdinalIgnoreCase);
+        private static bool IsBuiltInSlotHost(string tag) =>
+            string.Equals(tag, "titlebar", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(tag, "splitcontainer", StringComparison.OrdinalIgnoreCase);
 
         private bool RequiresBuildAfterAttach(string tag) =>
-            !IsBuiltInTag(tag) || IsTitleBar(tag);
+            !IsBuiltInTag(tag) || IsBuiltInSlotHost(tag);
 
         private bool IsTextContentElement(string tag) => _templateCatalog.GetComponent(tag).IsTextContentElement;
 
