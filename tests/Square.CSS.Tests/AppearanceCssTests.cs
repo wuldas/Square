@@ -77,6 +77,45 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    public void AppearanceAutoPaintsButtonText()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+        engine.ApplyStyles(button);
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(90, 36)
+        });
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(button);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var darkTextPixels = 0;
+        var left = int.MaxValue;
+        var right = int.MinValue;
+        for (var y = 6; y < 28; y++)
+        for (var x = 10; x < 74; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel[2] < 160 && pixel[1] < 160 && pixel[0] < 160)
+            {
+                darkTextPixels++;
+                left = Math.Min(left, x);
+                right = Math.Max(right, x);
+            }
+        }
+
+        Assert.True(darkTextPixels > 8,
+            $"Expected visible button glyphs, found {darkTextPixels} dark interior pixels.");
+        var glyphCenter = (left + right) / 2f;
+        var buttonCenter = button.Geometry.X + button.Geometry.Width / 2f;
+        Assert.InRange(Math.Abs(glyphCenter - buttonCenter), 0, 2);
+    }
+
+    [Fact]
     public void AppearanceNoneKeepsAuthorBoxWithoutWidgetRadius()
     {
         var engine = new CssEngine();

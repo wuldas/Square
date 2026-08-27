@@ -95,7 +95,7 @@ public static class CssStyleReconciler
                     .ToArray();
                 var expandToParent = candidateScopes.Any(scope => scope.Engine.HasSiblingCombinators);
                 var styleRoots = MinimizeRoots(dirtyElements
-                    .Select(element => expandToParent && element.Parent != null ? element.Parent : element));
+                    .Select(element => GetStyleReplayRoot(element, expandToParent)));
                 scopes = Scopes
                     .Where(scope => styleRoots.Any(root => AreInSameStyleBranch(scope.Root, root)))
                     .ToArray();
@@ -107,7 +107,7 @@ public static class CssStyleReconciler
             {
                 var expandToParent = scopes.Any(scope => scope.Engine.HasSiblingCombinators);
                 var styleRoots = MinimizeRoots(dirtyElements
-                    .Select(element => expandToParent && element.Parent != null ? element.Parent : element));
+                    .Select(element => GetStyleReplayRoot(element, expandToParent)));
                 var styleSnapshots = styleRoots.Select(CaptureStyleSnapshot).ToArray();
                 var pseudoElementChanges = new HashSet<Element>();
 
@@ -144,6 +144,12 @@ public static class CssStyleReconciler
                 _applying--;
             }
         }
+    }
+
+    private static Element GetStyleReplayRoot(Element element, bool expandToParent)
+    {
+        if (element is CssGeneratedPseudoElement && element.Parent != null) return element.Parent;
+        return expandToParent && element.Parent != null ? element.Parent : element;
     }
 
     internal static void RefreshAnimations(CssEngine engine, Element root)

@@ -689,7 +689,10 @@ public sealed class CssParser
             }
 
             if (token.Type == CssTokenType.Hash) result.Append('#').Append(token.Text);
-            else if (token.Type == CssTokenType.String) result.Append('"').Append(token.Text.Replace("\"", "\\\"", StringComparison.Ordinal)).Append('"');
+            else if (token.Type == CssTokenType.String)
+                result.Append('"').Append(token.Text
+                    .Replace("\\", "\\\\", StringComparison.Ordinal)
+                    .Replace("\"", "\\\"", StringComparison.Ordinal)).Append('"');
             else if (token.Type == CssTokenType.OpenParen) result.Append('(');
             else if (token.Type == CssTokenType.CloseParen) { while (result.Length > 0 && result[result.Length - 1] == ' ') result.Length--; result.Append(')'); }
             else if (token.Type == CssTokenType.Comma) result.Append(',');

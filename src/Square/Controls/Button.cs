@@ -72,7 +72,14 @@ public class Button : UIElement, ITextSelectable
         var textPosition = new Point(
             Geometry.X + (Geometry.Width - textSize.Width) / 2f,
             Geometry.Y + (Geometry.Height - textSize.Height) / 2f + pressOffset);
-        ControlDrawing.DrawText(ctx, this, TextContent, textPosition, foreground, 14f);
+        ControlDrawing.DrawText(
+            ctx,
+            this,
+            TextContent,
+            textPosition,
+            foreground,
+            14f,
+            maxSize: textSize);
     }
 
     /// <inheritdoc/>

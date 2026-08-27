@@ -407,11 +407,49 @@ internal static class CssGeneratedContentEvaluator
                 result = text.ToString();
                 return true;
             }
-            if (character == '\\' && index < value.Length) character = value[index++];
+            if (character == '\\')
+            {
+                if (!TryAppendCssEscape(value, ref index, text)) return false;
+                continue;
+            }
             text.Append(character);
         }
         return false;
     }
+
+    private static bool TryAppendCssEscape(string value, ref int index, StringBuilder result)
+    {
+        if (index >= value.Length) return false;
+        if (IsCssNewline(value[index]))
+        {
+            if (value[index] == '\u000d' && index + 1 < value.Length && value[index + 1] == '\u000a') index++;
+            index++;
+            return true;
+        }
+
+        var hexStart = index;
+        while (index < value.Length && index - hexStart < 6 && Uri.IsHexDigit(value[index])) index++;
+        if (index == hexStart)
+        {
+            result.Append(value[index++]);
+            return true;
+        }
+
+        var codePoint = Convert.ToInt32(value.Substring(hexStart, index - hexStart), 16);
+        if (index < value.Length && IsCssWhitespace(value[index]))
+        {
+            if (value[index] == '\u000d' && index + 1 < value.Length && value[index + 1] == '\u000a') index++;
+            index++;
+        }
+        result.Append(codePoint is > 0 and <= 0x10ffff and not (>= 0xd800 and <= 0xdfff)
+            ? char.ConvertFromUtf32(codePoint)
+            : "\ufffd");
+        return true;
+    }
+
+    private static bool IsCssNewline(char value) => value is '\u000d' or '\u000a' or '\u000c';
+
+    private static bool IsCssWhitespace(char value) => value is ' ' or '\t' or '\u000d' or '\u000a' or '\u000c';
 
     private static bool TryReadFunction(string value, ref int index, out string arguments)
     {

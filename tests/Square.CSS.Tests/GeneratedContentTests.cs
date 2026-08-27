@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.CSS.Ast;
 using Square.CSS.Engine;
 using Square.CSS.Tokenizer;
 using Xunit;
@@ -65,6 +66,50 @@ public sealed class GeneratedContentTests
         CssStyleReconciler.Flush();
 
         Assert.Equal("<updatednested]>", GeneratedText(target, 0));
+    }
+
+    [Fact]
+    public void GeneratedRuntimeAstDecodesCssHexEscapeContent()
+    {
+        var sheet = new CssParser(new CssTokenizer(".icon::before { content: '*'; }").Tokenize()).Parse();
+        sheet.Rules[0].Declarations[0] = new Declaration("content", "\"\\2605\"");
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(sheet);
+        var host = new View();
+        host.ClassList.Add("icon");
+
+        engine.ApplyStylesToTree(host);
+
+        Assert.Equal("\u2605", GeneratedText(host, 0));
+    }
+
+    [Fact]
+    public void RuntimeParsedGeneratedContentPreservesEscapedBackslash()
+    {
+        var engine = CreateEngine(".target::before { content: '\\\\'; }");
+        var host = new View();
+        host.ClassList.Add("target");
+
+        engine.ApplyStylesToTree(host);
+
+        Assert.Equal("\\", GeneratedText(host, 0));
+    }
+
+    [Fact]
+    public void HoveringGeneratedPseudoElementPreservesItsContent()
+    {
+        var engine = CreateEngine(".icon::before { content: '\\2605'; color: #ea580c; }");
+        var host = new View();
+        host.ClassList.Add("icon");
+        engine.ApplyStylesToTree(host);
+        var generated = Assert.IsAssignableFrom<Square.Controls.Text>(Assert.Single(host.Children));
+        Assert.Equal("\u2605", generated.TextContent);
+
+        generated.SetState(Square.UI.ElementState.Hover, true);
+        CssStyleReconciler.Flush(host);
+
+        Assert.Same(generated, Assert.Single(host.Children));
+        Assert.Equal("\u2605", generated.TextContent);
     }
 
     [Fact]
