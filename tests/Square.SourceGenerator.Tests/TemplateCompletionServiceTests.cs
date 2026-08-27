@@ -42,4 +42,26 @@ public sealed class TemplateCompletionServiceTests
         Assert.Contains(items, item => item.Label == "v-for");
         Assert.DoesNotContain(items, item => item.Label == "v-html");
     }
+
+    [Fact]
+    public void SqxEventPrefixCompletesCanonicalEventName()
+    {
+        const string source = "<template><Button on";
+
+        var items = TemplateCompletionService.GetItems(source, source.Length, "Editing.sqx");
+
+        Assert.Contains(items, item => item.Label == "onClick");
+        Assert.DoesNotContain(items, item => item.Label == "click");
+    }
+
+    [Fact]
+    public void SqvAtPrefixCompletesVueEventName()
+    {
+        const string source = "<template><Button @";
+
+        var items = TemplateCompletionService.GetItems(source, source.Length, "Editing.sqv");
+
+        Assert.Contains(items, item => item.Label == "click");
+        Assert.DoesNotContain(items, item => item.Label == "onClick");
+    }
 }

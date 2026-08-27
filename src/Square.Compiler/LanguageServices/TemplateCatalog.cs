@@ -136,11 +136,26 @@ public sealed class TemplateCatalog
         "Text", "Button", "Link", "ListItem", "TreeItem"
     };
 
-    private static readonly string[] StandardEventNames =
+    private static readonly (string Name, string CanonicalName)[] StandardEvents =
     {
-        "pointerdown", "pointerup", "pointermove", "wheel", "scroll",
-        "keydown", "keyup", "textinput", "focusin", "focusout", "focus", "blur",
-        "click", "contextmenu", "change", "selectionchange", "input", "requestframe"
+        ("pointerdown", "onPointerDown"),
+        ("pointerup", "onPointerUp"),
+        ("pointermove", "onPointerMove"),
+        ("wheel", "onWheel"),
+        ("scroll", "onScroll"),
+        ("keydown", "onKeyDown"),
+        ("keyup", "onKeyUp"),
+        ("textinput", "onTextInput"),
+        ("focusin", "onFocusIn"),
+        ("focusout", "onFocusOut"),
+        ("focus", "onFocus"),
+        ("blur", "onBlur"),
+        ("click", "onClick"),
+        ("contextmenu", "onContextMenu"),
+        ("change", "onChange"),
+        ("selectionchange", "onSelectionChange"),
+        ("input", "onInput"),
+        ("requestframe", "onRequestFrame")
     };
 
     private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _components;
@@ -153,8 +168,8 @@ public sealed class TemplateCatalog
     public static TemplateCatalog BuiltIn { get; } = CreateBuiltIn();
 
     public IReadOnlyCollection<TemplateEventDescriptor> Events { get; } =
-        new ReadOnlyCollection<TemplateEventDescriptor>(StandardEventNames
-            .Select(name => new TemplateEventDescriptor(name, name))
+        new ReadOnlyCollection<TemplateEventDescriptor>(StandardEvents
+            .Select(item => new TemplateEventDescriptor(item.Name, item.CanonicalName))
             .ToArray());
 
     public IReadOnlyCollection<TemplatePropertyDescriptor> Properties { get; } =

@@ -150,6 +150,12 @@ namespace Square.Compiler.ParserCore
                     var offset = _position;
                     tokens.Add(New(CoreTokenType.Identifier, ReadIdentifier(), line, column, offset));
                 }
+                else if (_inTag)
+                {
+                    if (!_tolerant)
+                        throw Error("Unexpected character '" + c + "' in tag", _position, _line, _column);
+                    AdvanceChar();
+                }
                 else
                 {
                     var line = _line;

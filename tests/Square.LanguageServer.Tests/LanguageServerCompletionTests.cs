@@ -21,11 +21,11 @@ public sealed class LanguageServerCompletionTests
         var tags = await Read(process.StandardOutput);
         Assert.Contains("\"label\":\"Button\"", tags, StringComparison.Ordinal);
 
-        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","version":2},"contentChanges":[{"text":"<template><Button @"}]}}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","version":2},"contentChanges":[{"text":"<template><Button on"}]}}""");
         _ = await Read(process.StandardOutput);
-        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx"},"position":{"line":0,"character":19}}}""");
+        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx"},"position":{"line":0,"character":20}}}""");
         var events = await Read(process.StandardOutput);
-        Assert.Contains("\"label\":\"click\"", events, StringComparison.Ordinal);
+        Assert.Contains("\"label\":\"onClick\"", events, StringComparison.Ordinal);
         Assert.Contains("\"kind\":23", events, StringComparison.Ordinal);
 
         await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","version":3},"contentChanges":[{"text":"<template><Sh"}]}}""");
@@ -41,7 +41,13 @@ public sealed class LanguageServerCompletionTests
         Assert.Contains("\"label\":\"v-if\"", directives, StringComparison.Ordinal);
         Assert.Contains("Vue directive", directives, StringComparison.Ordinal);
 
-        await Write(process, """{"jsonrpc":"2.0","id":6,"method":"shutdown","params":null}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqv","version":2},"contentChanges":[{"text":"<template><Button @"}]}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","id":6,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqv"},"position":{"line":0,"character":19}}}""");
+        var vueEvents = await Read(process.StandardOutput);
+        Assert.Contains("\"label\":\"click\"", vueEvents, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","id":7,"method":"shutdown","params":null}""");
         _ = await Read(process.StandardOutput);
         await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));

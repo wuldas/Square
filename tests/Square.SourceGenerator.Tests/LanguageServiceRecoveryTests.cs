@@ -37,6 +37,19 @@ public sealed class LanguageServiceRecoveryTests
     }
 
     [Fact]
+    public void InvalidSqxAttributeCharacterIsReportedAtTheCharacterInsteadOfEof()
+    {
+        const string source = "<template><Button @click=\"OnSave\" /></template>";
+
+        var result = SquareDocumentService.Parse(source, "InvalidAttribute.sqx");
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("SQX0001", diagnostic.Id);
+        Assert.Equal(source.IndexOf('@'), diagnostic.Range.Offset);
+        Assert.Equal("Unexpected character '@' in tag", diagnostic.Message);
+    }
+
+    [Fact]
     public void TolerantSqvParseKeepsCompletedRootWhenInterpolationIsUnclosed()
     {
         const string source = "<template><View>{{ Title</View></template>";

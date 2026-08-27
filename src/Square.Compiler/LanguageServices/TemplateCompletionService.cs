@@ -99,8 +99,12 @@ public static class TemplateCompletionService
                 return Filter(
                     TemplateCatalog.BuiltIn.Events,
                     context.Prefix,
-                    item => item.Name,
-                    item => new TemplateCompletionItem(item.Name, 23, "Square event", item.Name));
+                    item => context.IsSqv ? item.Name : item.CanonicalName,
+                    item =>
+                    {
+                        var name = context.IsSqv ? item.Name : item.CanonicalName;
+                        return new TemplateCompletionItem(name, 23, "Square event", name);
+                    });
             case TemplateCompletionKind.Directive:
                 return VueDirectives
                     .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -162,8 +166,10 @@ public static class TemplateCompletionService
             return new TemplateCompletionContext(TemplateCompletionKind.CssClass, classPrefix, element.TagName, isSqv);
 
         var token = GetTokenPrefix(text, offset, out var tokenStart);
-        if (tokenStart > 0 && text[tokenStart - 1] == '@')
+        if (isSqv && tokenStart > 0 && text[tokenStart - 1] == '@')
             return new TemplateCompletionContext(TemplateCompletionKind.Event, token, element.TagName, isSqv);
+        if (!isSqv && token.StartsWith("on", StringComparison.OrdinalIgnoreCase))
+            return new TemplateCompletionContext(TemplateCompletionKind.Event, token, element.TagName, false);
         if (isSqv && (token.StartsWith("v-", StringComparison.OrdinalIgnoreCase) ||
                       token.StartsWith(":", StringComparison.Ordinal) ||
                       token.StartsWith("#", StringComparison.Ordinal)))
@@ -175,8 +181,10 @@ public static class TemplateCompletionService
     private static TemplateCompletionContext ContextFromPrefix(string text, int offset, bool isSqv)
     {
         var token = GetTokenPrefix(text, offset, out var tokenStart);
-        if (tokenStart > 0 && text[tokenStart - 1] == '@')
+        if (isSqv && tokenStart > 0 && text[tokenStart - 1] == '@')
             return new TemplateCompletionContext(TemplateCompletionKind.Event, token, string.Empty, isSqv);
+        if (!isSqv && token.StartsWith("on", StringComparison.OrdinalIgnoreCase))
+            return new TemplateCompletionContext(TemplateCompletionKind.Event, token, string.Empty, false);
         if (tokenStart > 0 && text[tokenStart - 1] == '<')
             return new TemplateCompletionContext(TemplateCompletionKind.Tag, token, string.Empty, isSqv);
         if (TryGetClassPrefix(text, offset, out var classPrefix))
