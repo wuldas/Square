@@ -93,7 +93,8 @@ internal static class SqvTemplateLowerer
                     {
                         LowerElement(element, new HashSet<string>(new[] { slot.Name }, StringComparer.Ordinal))
                     },
-                element.Origin);
+                element.Origin,
+                LowerSlotScope(slot));
         }
         return LowerElement(element, null);
     }
@@ -161,6 +162,19 @@ internal static class SqvTemplateLowerer
 
     private static SqvAttributeSyntax FindConditional(SqvElementSyntax element) =>
         element.Attributes.FirstOrDefault(attribute => ConditionalAttributes.Contains(attribute.Name));
+
+    private static TemplateIrSlotScope LowerSlotScope(SqvAttributeSyntax slot)
+    {
+        if (string.IsNullOrWhiteSpace(slot.Value)) return null;
+        var scope = SqvAttributeConverter.ParseSlotScope(slot.Value, slot.FullRange.Offset);
+        return new TemplateIrSlotScope(
+            scope.WholePropsName,
+            scope.Properties.Select(binding => new TemplateIrSlotBinding(
+                binding.PropertyName,
+                binding.LocalName,
+                slot.FullRange)).ToArray(),
+            slot.FullRange);
+    }
 
     private static bool TryParseLoop(
         string expression,

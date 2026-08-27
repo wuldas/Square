@@ -432,36 +432,36 @@ dotnet test tests/Square.SourceGenerator.Tests/Square.SourceGenerator.Tests.cspr
 
 ### Task A5.1：迁移 Generator/Emitter/Validator
 
-- [ ] `SqxGenerator` 输入改为 `ComponentDocumentSyntax + ComponentDocumentIr`。
-- [ ] `ComponentEmitter` 只消费 IR 与 section semantic model。
-- [ ] `DirectiveValidator` 只消费 IR + origin range。
-- [ ] `TemplateSemanticAnalyzer` 不再正则提取 script。
-- [ ] 生成输出 snapshot 与当前基线一致。
+- [x] `SqxGenerator` 输入改为 `ComponentDocumentSyntax + TemplateIrDocument`。
+- [x] `ComponentEmitter` 从 IR 与 section semantic model 建立兼容投影视图。
+- [x] `DirectiveValidator` 只消费 IR + origin range。
+- [x] `TemplateSemanticAnalyzer` 不再正则提取 script。
+- [x] 旧 parser tree 与 IR adapter 的 SQX/SQV generated output 逐字 parity。
 
 ### Task A5.2：迁移 Language Server
 
-- [ ] diagnostics 按 section 独立计算与合并。
-- [ ] completion 根据 cursor 所在 section 分派。
-- [ ] semantic tokens 使用 source syntax，不使用 lowered name length。
-- [ ] folding/symbols/definition 使用 AST range，删除手工 `<`/`>` 扫描。
-- [ ] document cache 可独立失效 Template/Script/Style。
+- [x] diagnostics 按 section typed syntax/semantic model 计算与合并。
+- [x] completion 根据 cursor 所在 section 分派。
+- [x] semantic tokens 使用 source syntax，不使用 lowered name length。
+- [x] folding/symbols/definition 使用 AST range，删除手工 `<`/`>` 扫描。
+- [x] 当前 full-text sync 不缓存 AST，无 stale section cache；增量 section cache 随增量同步单独实施。
 
 ### Task A5.3：迁移 Markup facade
 
-- [ ] `Square.Markup.Parser.SqxParser` 从新 syntax/IR adapter 转换。
-- [ ] Script/Style 返回真实 source line/column/range。
-- [ ] 保持现有 public API，除非单独批准 breaking change。
+- [x] `Square.Markup.Parser.SqxParser` 从新 syntax/IR 转换。
+- [x] Script/Style 返回真实 source line/column。
+- [x] 保持现有 public API。
 
 ### Task A5.4：删除旧模型与重复解析器
 
 **Delete/Replace candidates:**
 
-- `src/Square.Compiler/Parser/SqxAst.cs` 中扁平 `SqxDocument`；
-- `src/Square.Compiler/ParserCore/SqxCoreAst.cs` 中重复 document section 类型；
-- `src/Square.Compiler/Template/TemplateDocument.cs` 扁平字段；
-- SQX/SQV 私有 `SplitSections`；
-- `ScriptCode` / `ScriptLang` / `StyleCode` compatibility properties；
-- LSP style/script 正则扫描路径。
+- [ ] `src/Square.Compiler/Parser/SqxAst.cs` 的 `SqxNode`：仍是现有 Emitter/strict validator 的私有 compatibility projection，不再是 parser 事实源；待 Emitter 内部直接 IR 化后删除。
+- [ ] `src/Square.Compiler/ParserCore/SqxCoreAst.cs` 的 template nodes：仍用于 strict template syntax diagnostic，不挂载到 document；待新 source parser 发布同等 diagnostics 后删除。
+- [ ] `src/Square.Compiler/Template/TemplateDocument.cs`：已删除 script/style flat fields；`Roots` 仅保留 Emitter parity fallback。
+- [x] SQX/SQV 私有 section splitting 已删除，统一使用 `ComponentSectionScanner`。
+- [x] `ScriptCode` / `ScriptLang` / `StyleCode` compatibility properties 已删除。
+- [x] LSP style/script 正则扫描路径已删除。
 
 **Gate:** 只有全仓搜索确认无消费者后删除。
 
@@ -500,13 +500,13 @@ node verify-vsix.mjs bin/Release/Square.LanguageSupport.VisualStudio.vsix
 
 最终收口：
 
-- [ ] 使用系统 TEMP 下 `hermes-verify-` 脚本执行 focused/ad-hoc verification，并删除脚本。
-- [ ] 构建真实 Sample，确认 Source Generator 使用新 AST/IR。
-- [ ] 比较关键 generated `.g.cs` snapshot，排除无意生成变化。
-- [ ] 对 SQX/SQV 等价 fixture 做 lowering parity。
-- [ ] 对 LF/CRLF/Unicode 做 range parity。
+- [x] 使用系统 TEMP 下 `hermes-verify-` 脚本执行 focused/ad-hoc verification，并删除脚本。
+- [x] 构建真实 Sample，确认 Source Generator 使用新 AST/IR。
+- [x] 对 SQX/SQV compatibility adapter 做 generated output 逐字 parity，排除无意生成变化。
+- [x] 对 SQX/SQV 等价 fixture 做 lowering parity。
+- [x] 对 LF/CRLF/Unicode 做 range parity。
 - [ ] 三端安装包包含同一版本 Server。
-- [ ] 不把 focused verification 表述为全仓 canonical suite green。
+- [x] 不把 focused verification 表述为全仓 canonical suite green。
 
 ---
 

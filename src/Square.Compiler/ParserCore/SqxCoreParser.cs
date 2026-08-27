@@ -42,12 +42,12 @@ namespace Square.Compiler.ParserCore
             if (!sections.TryGetValue("template", out templateSection))
                 throw Error(source, 0, "Missing required <template> section");
 
+            ParseTemplate(source, templateSection, options.StrictTemplate);
             var document = new CoreDocument
             {
                 Syntax = syntax,
                 FileName = string.IsNullOrEmpty(fileName) ? "Component" : Path.GetFileNameWithoutExtension(fileName),
-                SourcePath = fileName ?? "",
-                Template = ParseTemplate(source, templateSection, options.StrictTemplate)
+                SourcePath = fileName ?? ""
             };
 
             Section scriptSection;
@@ -137,34 +137,17 @@ namespace Square.Compiler.ParserCore
                 GetLine(source, syntax.ContentRange.Offset)));
         }
 
-        private static CoreTemplate ParseTemplate(string source, Section section, bool strict)
+        private static void ParseTemplate(string source, Section section, bool strict)
         {
             try
             {
                 var tokens = new SqxCoreLexer(section.Content, !strict).Tokenize();
-                var roots = new SqxCoreTemplateParser(tokens, strict).ParseRoots();
-                OffsetPositions(roots, section.ContentStart);
-                return new CoreTemplate { Roots = roots, Line = section.ContentLine, Column = 1 };
+                _ = new SqxCoreTemplateParser(tokens, strict).ParseRoots();
             }
             catch (CoreParseException exception)
             {
                 var position = Math.Min(source.Length, section.ContentStart + exception.Position);
                 throw Error(source, position, exception.Message);
-            }
-        }
-
-        private static void OffsetPositions(IEnumerable<CoreNode> nodes, int offset)
-        {
-            foreach (var node in nodes)
-            {
-                node.Position += offset;
-                if (node is not CoreElement element) continue;
-                foreach (var attribute in element.Attributes)
-                {
-                    attribute.Position += offset;
-                    if (attribute.FragmentNodes != null) OffsetPositions(attribute.FragmentNodes, offset);
-                }
-                OffsetPositions(element.Children, offset);
             }
         }
 

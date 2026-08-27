@@ -27,6 +27,25 @@ public sealed class TemplateFoldingAndColorTests
     }
 
     [Fact]
+    public void FoldingUsesExactRangeForNestedElementsWithTheSameTag()
+    {
+        const string source = """
+            <template>
+              <View>
+                <View>
+                  <Text />
+                </View>
+              </View>
+            </template>
+            """;
+
+        var ranges = TemplateFoldingService.GetRanges(source, "Nested.sqx");
+
+        Assert.Contains(ranges, range => range.StartLine == 1 && range.EndLine == 5);
+        Assert.Contains(ranges, range => range.StartLine == 2 && range.EndLine == 4);
+    }
+
+    [Fact]
     public void FindsCssHexColorsAndPresentsRgb()
     {
         const string source = "<style>.page { color: #2a2d2e; }</style>";
@@ -39,6 +58,16 @@ public sealed class TemplateFoldingAndColorTests
             source, color.Start, color.Length, color.Red, color.Green, color.Blue, color.Alpha);
         Assert.Contains(presentations, item => item.Label.Equals("#2A2D2E", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(presentations, item => item.Label.StartsWith("rgb(", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FindsSqvInlineStyleColorAfterDirectiveAttribute()
+    {
+        const string source = "<template><Button @click=\"Save\" style=\"color: #abcdef\" /></template>";
+
+        var color = Assert.Single(TemplateColorService.GetColors(source, "Colors.sqv"));
+
+        Assert.Equal("#abcdef", source.Substring(color.Start, color.Length));
     }
 
     [Fact]

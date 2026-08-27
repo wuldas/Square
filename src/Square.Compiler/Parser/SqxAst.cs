@@ -67,9 +67,6 @@ namespace Square.Compiler.Parser
         public string SourcePath = "";
         public string Name = "";
         public SqxTemplate Template = new SqxTemplate();
-        public string ScriptCode;
-        public string ScriptLang;
-        public string StyleCode;
         public string Namespace;
         public string Access = "public";
     }

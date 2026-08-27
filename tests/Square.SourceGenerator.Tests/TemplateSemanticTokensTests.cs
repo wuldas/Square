@@ -26,4 +26,24 @@ public sealed class TemplateSemanticTokensTests
         Assert.NotEmpty(data);
         Assert.Contains(1, data.Where((_, index) => index % 5 == 3));
     }
+
+    [Fact]
+    public void SqvDirectiveTokenUsesOriginalNameRange()
+    {
+        const string source = "<template><Button @click.stop=\"OnSave\" /></template>";
+
+        var data = TemplateSemanticTokens.Encode(source, "Event.sqv");
+        var character = 0;
+        var found = false;
+        for (var index = 0; index < data.Count; index += 5)
+        {
+            Assert.Equal(0, data[index]);
+            character += data[index + 1];
+            if (data[index + 3] != 4) continue;
+            found = character == source.IndexOf("@click.stop", StringComparison.Ordinal) &&
+                    data[index + 2] == "@click.stop".Length;
+        }
+
+        Assert.True(found);
+    }
 }

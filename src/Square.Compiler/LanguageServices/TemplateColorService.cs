@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
-using Square.Compiler.Parser;
 using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
@@ -49,28 +48,24 @@ public static class TemplateColorService
         @"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    public static IReadOnlyList<TemplateDocumentColor> GetColors(string text)
+    public static IReadOnlyList<TemplateDocumentColor> GetColors(string text) =>
+        GetColors(text, "Colors.sqx");
+
+    public static IReadOnlyList<TemplateDocumentColor> GetColors(string text, string sourcePath)
     {
         text ??= string.Empty;
         var colors = new List<TemplateDocumentColor>();
-        var document = SquareDocumentService.ParseSyntaxTree(text, "Colors.sqx").ParsedSqxDocument;
-        if (document?.Template != null)
-        {
-            foreach (var element in EnumerateElements(document.Template.Roots))
-            {
-                foreach (var attribute in element.Attributes.Where(attribute =>
-                             attribute.Name.Equals("style", StringComparison.OrdinalIgnoreCase) &&
-                             !attribute.IsExpression && attribute.RawValue != null))
-                {
-                    var valueOffset = FindAttributeValueOffset(text, attribute);
-                    if (valueOffset >= 0) AddColors(attribute.RawValue, valueOffset, colors);
-                }
-            }
-        }
-        var style = ComponentSectionScanner.Scan(
+        var document = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty).ParsedSqxDocument;
+        var template = document?.Syntax?.Template;
+        if (template?.SqxSyntax != null) CollectSqxInlineColors(template.SqxSyntax.Roots, colors);
+        else if (template?.SqvSyntax != null) CollectSqvInlineColors(template.SqvSyntax.Roots, colors);
+        var dialect = sourcePath != null && sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
+            ? ComponentDialect.Sqv
+            : ComponentDialect.Sqx;
+        var style = document?.Syntax?.Style?.Css ?? ComponentSectionScanner.Scan(
             text,
-            "Colors.sqx",
-            ComponentDialect.Sqx,
+            sourcePath ?? string.Empty,
+            dialect,
             tolerant: true).Document.Style?.Css;
         if (style == null) return colors;
         foreach (var declaration in EnumerateDeclarations(style))
@@ -106,37 +101,31 @@ public static class TemplateColorService
         }
     }
 
-    private static int FindAttributeValueOffset(string text, SqxAttribute attribute)
+    private static void CollectSqxInlineColors(
+        IEnumerable<SqxSyntaxNode> nodes,
+        List<TemplateDocumentColor> colors)
     {
-        var start = Math.Min(Math.Max(attribute.Position, 0), text.Length);
-        var tagEnd = text.IndexOf('>', start);
-        if (tagEnd < 0) tagEnd = text.Length;
-        var equals = text.IndexOf('=', start, tagEnd - start);
-        if (equals < 0) return -1;
-        var position = equals + 1;
-        while (position < tagEnd && char.IsWhiteSpace(text[position])) position++;
-        if (position >= tagEnd || text[position] is not ('"' or '\'')) return -1;
-        return position + 1;
+        foreach (var element in nodes.OfType<SqxElementSyntax>())
+        {
+            foreach (var attribute in element.Attributes.Where(attribute =>
+                         attribute.Name.Equals("style", StringComparison.OrdinalIgnoreCase) &&
+                         !attribute.IsExpression && attribute.Value != null))
+                AddColors(attribute.Value, attribute.ValueRange.Offset, colors);
+            CollectSqxInlineColors(element.Children, colors);
+        }
     }
 
-    private static IEnumerable<SqxElement> EnumerateElements(IEnumerable<SqxNode> nodes)
+    private static void CollectSqvInlineColors(
+        IEnumerable<SqvSyntaxNode> nodes,
+        List<TemplateDocumentColor> colors)
     {
-        foreach (var node in nodes)
+        foreach (var element in nodes.OfType<SqvElementSyntax>())
         {
-            if (node is SqxElement element)
-            {
-                yield return element;
-                foreach (var child in EnumerateElements(element.Children)) yield return child;
-            }
-            else if (node is TemplateForDirective loop)
-            {
-                foreach (var child in EnumerateElements(loop.Children)) yield return child;
-            }
-            else if (node is TemplateIfChainDirective chain)
-            {
-                foreach (var branch in chain.Branches)
-                    foreach (var child in EnumerateElements(branch.Children)) yield return child;
-            }
+            foreach (var attribute in element.Attributes.Where(attribute =>
+                         attribute.Name.Equals("style", StringComparison.OrdinalIgnoreCase) &&
+                         attribute.DirectiveName == null && attribute.Value != null))
+                AddColors(attribute.Value, attribute.ValueRange.Offset, colors);
+            CollectSqvInlineColors(element.Children, colors);
         }
     }
 

@@ -1,5 +1,6 @@
 using Square.Compiler.Parser;
 using Square.Compiler.Syntax;
+using Square.Compiler.Directives;
 using Square.Compiler.Emit;
 using Square.Compiler.Template;
 using Square.Compiler.Template.Compatibility;
@@ -39,16 +40,42 @@ public sealed class TemplateIrCompatibilityAdapterTests
         var parsed = fileName.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
             ? SqvDocumentParser.Parse(source, fileName)
             : SqxParser.Parse(source, fileName);
-        var expected = new ComponentEmitter(parsed).Emit();
-        var adapted = TemplateDocument.From(parsed);
-        adapted.Roots = TemplateIrCompatibilityAdapter.ToSqxNodes(
-            parsed.Syntax.Template.Ir,
-            source,
-            parsed.Syntax.Dialect,
-            parsed.Syntax.Template.ContentRange.Offset);
+        var legacy = TemplateDocument.From(parsed);
+        legacy.Ir = null!;
+        var expected = new ComponentEmitter(legacy).Emit();
 
-        var actual = new ComponentEmitter(adapted).Emit();
+        var actual = new ComponentEmitter(parsed).Emit();
 
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void ComponentEmitterUsesSectionIrWhenLegacyRootsAreEmpty()
+    {
+        const string source = "<template><Button text=\"Save\" onClick={OnSave} /></template>";
+        var parsed = SqxParser.Parse(source, "Parity.sqx");
+        var expected = new ComponentEmitter(parsed).Emit();
+        var document = TemplateDocument.From(parsed);
+        document.Roots.Clear();
+
+        var actual = new ComponentEmitter(document).Emit();
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void DirectiveValidatorUsesIrWhenLegacyRootsAreEmpty()
+    {
+        const string source = "<template><Show><Text /></Show></template>";
+        var document = SqxParser.Parse(source, "MissingWhen.sqx");
+        document.Template.Roots.Clear();
+
+        var diagnostics = DirectiveValidator.CollectDiagnostics(
+            "MissingWhen.sqx",
+            source,
+            document,
+            DirectiveCatalog.BuiltIn);
+
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "SQXD002");
     }
 }

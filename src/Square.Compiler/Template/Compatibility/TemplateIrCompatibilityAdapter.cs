@@ -192,14 +192,15 @@ internal static class TemplateIrCompatibilityAdapter
                 Column = location.Column + 1,
                 Position = chain.Origin.Offset
             };
-            element.Attributes.Add(new SqxAttribute
-            {
-                Name = "when",
-                RawValue = primary?.Condition ?? "false",
-                IsExpression = true,
-                Line = location.Line,
-                Position = primary?.Origin.Offset ?? chain.Origin.Offset
-            });
+            if (!string.IsNullOrWhiteSpace(primary?.Condition))
+                element.Attributes.Add(new SqxAttribute
+                {
+                    Name = "when",
+                    RawValue = primary.Condition,
+                    IsExpression = true,
+                    Line = location.Line,
+                    Position = primary.Origin.Offset
+                });
             if (fallback != null)
                 element.Attributes.Add(new SqxAttribute
                 {
@@ -231,7 +232,23 @@ internal static class TemplateIrCompatibilityAdapter
                 Line = location.Line,
                 Position = slot.Origin.Offset
             });
-            if (!string.IsNullOrWhiteSpace(slot.ScopeExpression))
+            if (slot.Scope != null)
+            {
+                slotElement.SlotScope = new TemplateSlotScope
+                {
+                    WholePropsName = slot.Scope.WholePropertiesName,
+                    Position = slot.Scope.Origin.Offset
+                };
+                foreach (var binding in slot.Scope.Properties)
+                    slotElement.SlotScope.Properties.Add(new TemplateSlotPropertyBinding
+                    {
+                        PropertyName = binding.PropertyName,
+                        LocalName = binding.LocalName,
+                        TypeName = binding.TypeName,
+                        Position = binding.Origin.Offset
+                    });
+            }
+            else if (!string.IsNullOrWhiteSpace(slot.ScopeExpression))
                 slotElement.SlotScope = SqvAttributeConverter.ParseSlotScope(
                     slot.ScopeExpression,
                     slot.Origin.Offset);
@@ -277,6 +294,9 @@ internal static class TemplateIrCompatibilityAdapter
                 IsDynamicEvent = attribute.Kind == TemplateIrAttributeKind.DynamicEvent,
                 IsModelEvent = attribute.IsModelEvent,
                 ArgumentExpression = attribute.ArgumentExpression,
+                FragmentNodes = attribute.FragmentNodes == null
+                    ? null
+                    : ConvertFragmentNodes(attribute.FragmentNodes),
                 Line = location.Line,
                 Position = attribute.Origin.Offset
             };

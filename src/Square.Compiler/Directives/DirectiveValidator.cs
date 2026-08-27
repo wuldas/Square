@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.Text;
 using Square.Compiler.Diagnostics;
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
+using Square.Compiler.Template.Ir;
 
 namespace Square.Compiler.Directives;
 
@@ -51,9 +52,10 @@ internal static class DirectiveValidator
     {
         var reports = new List<DirectiveValidationReport>();
         var canEmit = true;
+        var roots = document.Syntax?.Template?.Ir?.Roots ?? Array.Empty<TemplateIrNode>();
         ValidateNodes(
             content,
-            document.Template.Roots,
+            roots,
             parentDirectiveId: null,
             catalog,
             reports,
@@ -65,7 +67,7 @@ internal static class DirectiveValidator
 
     private static void ValidateNodes(
         string content,
-        IEnumerable<SqxNode> nodes,
+        IEnumerable<TemplateIrNode> nodes,
         string parentDirectiveId,
         DirectiveCatalog catalog,
         List<DirectiveValidationReport> reports,
@@ -73,7 +75,37 @@ internal static class DirectiveValidator
     {
         foreach (var node in nodes)
         {
-            if (node is not SqxElement element) continue;
+            if (node is TemplateIrFor loop)
+            {
+                if (string.IsNullOrWhiteSpace(loop.SourceExpression))
+                    Report(reports, content, loop.Origin,
+                        SqxDiagnostics.SQXD002_MissingRequiredAttribute,
+                        false,
+                        "For",
+                        "each");
+                ValidateNodes(content, loop.Children, null, catalog, reports, ref canEmit);
+                ValidateNodes(content, loop.Fallback, null, catalog, reports, ref canEmit);
+                continue;
+            }
+            if (node is TemplateIrIfChain chain)
+            {
+                var primary = chain.Branches.FirstOrDefault(branch => !branch.IsElse);
+                if (primary == null || string.IsNullOrWhiteSpace(primary.Condition))
+                    Report(reports, content, chain.Origin,
+                        SqxDiagnostics.SQXD002_MissingRequiredAttribute,
+                        false,
+                        "Show",
+                        "when");
+                foreach (var branch in chain.Branches)
+                    ValidateNodes(content, branch.Children, null, catalog, reports, ref canEmit);
+                continue;
+            }
+            if (node is TemplateIrSlot slot)
+            {
+                ValidateNodes(content, slot.Children, null, catalog, reports, ref canEmit);
+                continue;
+            }
+            if (node is not TemplateIrElement element) continue;
 
             if (catalog.TryGet(element.TagName, out var descriptor))
             {
@@ -86,7 +118,7 @@ internal static class DirectiveValidator
                      string.IsNullOrWhiteSpace(descriptor.FieldPrefix) ||
                      string.IsNullOrWhiteSpace(descriptor.PrimaryAttribute)))
                 {
-                    Report(reports, content, element,
+                    Report(reports, content, element.Origin,
                         SqxDiagnostics.SQXD007_UnsupportedControlFlowShape, true, id);
                     canEmit = false;
                 }
@@ -94,7 +126,7 @@ internal static class DirectiveValidator
                 if (!IsKnownPattern(descriptor.Pattern) &&
                     !IsKnownTagFallback(id))
                 {
-                    Report(reports, content, element,
+                    Report(reports, content, element.Origin,
                         SqxDiagnostics.SQXD004_UnknownPattern, false, id, descriptor.Pattern ?? "");
                 }
 
@@ -102,9 +134,9 @@ internal static class DirectiveValidator
                     RequiresPrimaryAttribute(id, descriptor))
                 {
                     var attr = FindAttr(element, descriptor.PrimaryAttribute);
-                    if (attr == null || string.IsNullOrWhiteSpace(attr.RawValue))
+                    if (attr == null || string.IsNullOrWhiteSpace(attr.Value))
                     {
-                        Report(reports, content, element,
+                        Report(reports, content, element.Origin,
                             SqxDiagnostics.SQXD002_MissingRequiredAttribute,
                             false,
                             id,
@@ -116,27 +148,27 @@ internal static class DirectiveValidator
                 {
                     if (parentDirectiveId == null && descriptor.SkipStandaloneEmit)
                     {
-                        Report(reports, content, element,
+                        Report(reports, content, element.Origin,
                             SqxDiagnostics.SQXD005_IllegalStandalone, false, id);
                     }
                     else
                     {
                         var expected = DescribeExpectedParent(id, descriptor);
-                        Report(reports, content, element,
+                        Report(reports, content, element.Origin,
                             SqxDiagnostics.SQXD003_InvalidParent, false, id, expected);
                     }
                 }
 
                 if (!descriptor.AllowedChildTags.IsDefaultOrEmpty)
                 {
-                    foreach (var child in element.Children.OfType<SqxElement>())
+                    foreach (var child in element.Children.OfType<TemplateIrElement>())
                     {
                         var childId = child.TagName;
                         if (catalog.TryGet(child.TagName, out var childDescriptor))
                             childId = childDescriptor.TagName;
                         if (descriptor.AllowedChildTags.Any(allowed =>
                             string.Equals(allowed, childId, StringComparison.Ordinal))) continue;
-                        Report(reports, content, child,
+                        Report(reports, content, child.Origin,
                             SqxDiagnostics.SQXD006_InvalidChild,
                             false,
                             id,
@@ -187,19 +219,19 @@ internal static class DirectiveValidator
         return descriptor.ParentTag ?? "(非根)";
     }
 
-    private static SqxAttribute FindAttr(SqxElement element, string name) =>
+    private static TemplateIrAttribute FindAttr(TemplateIrElement element, string name) =>
         element.Attributes.FirstOrDefault(a =>
             string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
 
     private static void Report(
         List<DirectiveValidationReport> reports,
         string content,
-        SqxElement element,
+        SquareSourceRange origin,
         DiagnosticDescriptor descriptor,
         bool preventsEmission,
         params object[] messageArgs)
     {
-        var position = Math.Max(0, Math.Min(element.Position, content.Length));
+        var position = Math.Max(0, Math.Min(origin.Offset, content.Length));
         reports.Add(new DirectiveValidationReport(
             descriptor,
             messageArgs,

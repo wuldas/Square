@@ -1,4 +1,4 @@
-using Square.Compiler.Parser;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
 
@@ -23,63 +23,67 @@ public static class TemplateSemanticTokens
     public static IReadOnlyList<int> Encode(string text, string sourcePath)
     {
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
-        var document = result.ParsedSqxDocument;
-        if (document?.Template == null) return Array.Empty<int>();
+        var template = result.ParsedSqxDocument?.Syntax?.Template;
+        if (template == null) return Array.Empty<int>();
 
         var tokens = new List<(int Offset, int Length, int Type, int Modifiers)>();
-        Collect(document.Template.Roots, tokens);
+        if (template.SqvSyntax != null)
+            CollectSqv(template.SqvSyntax.Roots, tokens);
+        else if (template.SqxSyntax != null)
+            CollectSqx(template.SqxSyntax.Roots, tokens);
         tokens.Sort((left, right) => left.Offset.CompareTo(right.Offset));
         return Encode(text, tokens);
     }
 
-    private static void Collect(
-        IEnumerable<SqxNode> nodes,
+    private static void CollectSqx(
+        IEnumerable<SqxSyntaxNode> nodes,
         List<(int Offset, int Length, int Type, int Modifiers)> tokens)
     {
         foreach (var node in nodes)
         {
-            if (node is SqxElement element)
+            if (node is not SqxElementSyntax element) continue;
+            CollectElement(element.TagName, element.Origin.Offset + 1, tokens);
+            foreach (var attribute in element.Attributes)
             {
-                var descriptor = TemplateCatalog.BuiltIn.GetComponent(element.TagName);
-                var type = descriptor.IsBuiltIn ? Class : Type;
-                var modifiers = descriptor.IsBuiltIn || IsControlFlow(element.TagName) ? 2 : 0;
-                if (IsControlFlow(element.TagName)) type = Type;
-                Add(tokens, element.Position + 1, element.TagName.Length, type, modifiers);
-
-                foreach (var attribute in element.Attributes)
-                    CollectAttribute(attribute, tokens);
-
-                Collect(element.Children, tokens);
+                var type = attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) &&
+                           attribute.Name.Length > 2
+                    ? Event
+                    : Property;
+                Add(tokens, attribute.NameRange.Offset, attribute.NameRange.Length, type, 0);
             }
-            else if (node is TemplateForDirective forDirective)
-            {
-                Collect(forDirective.Children, tokens);
-            }
-            else if (node is TemplateIfChainDirective ifChain)
-            {
-                foreach (var branch in ifChain.Branches)
-                    Collect(branch.Children, tokens);
-            }
+            CollectSqx(element.Children, tokens);
         }
     }
 
-    private static void CollectAttribute(
-        SqxAttribute attribute,
+    private static void CollectSqv(
+        IEnumerable<SqvSyntaxNode> nodes,
         List<(int Offset, int Length, int Type, int Modifiers)> tokens)
     {
-        if (attribute.Position <= 0 || string.IsNullOrEmpty(attribute.Name)) return;
-        if (attribute.Name.StartsWith("__", StringComparison.Ordinal)) return;
+        foreach (var node in nodes)
+        {
+            if (node is not SqvElementSyntax element) continue;
+            CollectElement(element.TagName, element.Origin.Offset + 1, tokens);
+            foreach (var attribute in element.Attributes)
+                Add(
+                    tokens,
+                    attribute.NameRange.Offset,
+                    attribute.NameRange.Length,
+                    attribute.DirectiveName == null ? Property : Keyword,
+                    0);
+            CollectSqv(element.Children, tokens);
+        }
+    }
 
-        var type = Property;
-        if (attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) && attribute.Name.Length > 2)
-            type = Event;
-        else if (attribute.Name.StartsWith("v-", StringComparison.OrdinalIgnoreCase) ||
-                 attribute.Name.StartsWith(":", StringComparison.Ordinal) ||
-                 attribute.Name.StartsWith("@", StringComparison.Ordinal) ||
-                 attribute.Name.StartsWith("#", StringComparison.Ordinal))
-            type = Keyword;
-
-        Add(tokens, attribute.Position, attribute.Name.Length, type, 0);
+    private static void CollectElement(
+        string tagName,
+        int offset,
+        List<(int Offset, int Length, int Type, int Modifiers)> tokens)
+    {
+        var descriptor = TemplateCatalog.BuiltIn.GetComponent(tagName);
+        var type = descriptor.IsBuiltIn ? Class : Type;
+        var modifiers = descriptor.IsBuiltIn || IsControlFlow(tagName) ? 2 : 0;
+        if (IsControlFlow(tagName)) type = Type;
+        Add(tokens, offset, tagName.Length, type, modifiers);
     }
 
     private static void Add(

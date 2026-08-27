@@ -37,12 +37,6 @@ namespace Square.Compiler.ParserCore
         public int Position;
     }
 
-    internal sealed class CoreTemplate
-    {
-        public List<CoreNode> Roots = new List<CoreNode>();
-        public int Line;
-        public int Column;
-    }
 
     internal sealed class CoreScript
     {
@@ -67,7 +61,6 @@ namespace Square.Compiler.ParserCore
         public ComponentDocumentSyntax Syntax;
         public string FileName = "";
         public string SourcePath = "";
-        public CoreTemplate Template = new CoreTemplate();
         public CoreScript Script;
         public CoreStyle Style;
     }

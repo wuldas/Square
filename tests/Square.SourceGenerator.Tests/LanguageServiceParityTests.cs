@@ -120,8 +120,8 @@ public sealed class LanguageServiceParityTests
         var result = SquareDocumentService.ParseSyntaxTree(source, "Strings." + extension);
 
         Assert.True(result.IsSuccess, string.Join("\n", result.Diagnostics.Select(diagnostic => diagnostic.Message)));
-        Assert.Equal("private const string End = \"</script>\";", result.ParsedSqxDocument.ScriptCode);
-        Assert.Equal(".label::after { content: \"</style>\"; }", result.ParsedSqxDocument.StyleCode);
+        Assert.Equal("private const string End = \"</script>\";", result.ParsedSqxDocument.Syntax.Script.ContentText.Trim());
+        Assert.Equal(".label::after { content: \"</style>\"; }", result.ParsedSqxDocument.Syntax.Style.ContentText.Trim());
     }
 
     [Fact]

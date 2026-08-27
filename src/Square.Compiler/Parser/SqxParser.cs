@@ -1,5 +1,5 @@
-using Square.Compiler.Directives;
 using Square.Compiler.ParserCore;
+using Square.Compiler.Template.Compatibility;
 
 namespace Square.Compiler.Parser
 {
@@ -33,93 +33,24 @@ namespace Square.Compiler.Parser
                 Name = core.Script != null && core.Script.ComponentName != null
                     ? core.Script.ComponentName
                     : core.FileName,
-                Template = new SqxTemplate { Roots = ConvertNodes(core.Template.Roots, core.Template.Line - 1) }
+                Template = new SqxTemplate
+                {
+                    Roots = TemplateIrCompatibilityAdapter.ToSqxNodes(
+                        core.Syntax.Template.Ir,
+                        core.Syntax.SourceText,
+                        core.Syntax.Dialect,
+                        core.Syntax.Template.ContentRange.Offset)
+                }
             };
             if (core.Script != null)
             {
-                document.ScriptCode = core.Script.Code;
-                document.ScriptLang = core.Script.Language;
                 document.Namespace = core.Script.Namespace;
                 document.Access = core.Script.Access;
             }
-            if (core.Style != null) document.StyleCode = core.Style.Css;
             return document;
         }
 
-        private static List<SqxNode> ConvertNodes(List<CoreNode> nodes, int lineOffset)
-        {
-            var result = new List<SqxNode>(nodes.Count);
-            foreach (var node in nodes)
-            {
-                var text = node as CoreText;
-                if (text != null)
-                {
-                    result.Add(new SqxText
-                    {
-                        Text = text.Text,
-                        Kind = SqxNodeKind.Text,
-                        Line = text.Line + lineOffset,
-                        Column = text.Column,
-                        Position = text.Position
-                    });
-                    continue;
-                }
 
-                var expression = node as CoreExpression;
-                if (expression != null)
-                {
-                    result.Add(new SqxExpression
-                    {
-                        Expression = expression.Expression,
-                        Kind = SqxNodeKind.Expression,
-                        Line = expression.Line + lineOffset,
-                        Column = expression.Column,
-                        Position = expression.Position
-                    });
-                    continue;
-                }
-
-                var element = (CoreElement)node;
-                string directiveId = null;
-                var kind = SqxNodeKind.Element;
-                DirectiveDescriptor descriptor;
-                if (DirectiveCatalog.BuiltIn.TryGet(element.TagName, out descriptor))
-                {
-                    kind = SqxNodeKind.Directive;
-                    directiveId = descriptor.TagName;
-                }
-                result.Add(new SqxElement
-                {
-                    TagName = element.TagName,
-                    DirectiveId = directiveId,
-                    Attributes = ConvertAttributes(element.Attributes, lineOffset),
-                    Children = ConvertNodes(element.Children, lineOffset),
-                    Kind = kind,
-                    Line = element.Line + lineOffset,
-                    Column = element.Column + 1,
-                    Position = element.Position
-                });
-            }
-            return result;
-        }
-
-        private static List<SqxAttribute> ConvertAttributes(List<CoreAttribute> attributes, int lineOffset)
-        {
-            var result = new List<SqxAttribute>(attributes.Count);
-            foreach (var attribute in attributes)
-            {
-                result.Add(new SqxAttribute
-                {
-                    Name = attribute.Name,
-                    RawValue = attribute.RawValue,
-                    IsExpression = attribute.IsExpression,
-                    FragmentNodes = attribute.FragmentNodes == null ? null : ConvertNodes(attribute.FragmentNodes, lineOffset),
-                    Line = attribute.Line + lineOffset,
-                    Position = attribute.Position
-                });
-            }
-            return result;
-        }
     }
 
     internal sealed class SqxParseException : Exception

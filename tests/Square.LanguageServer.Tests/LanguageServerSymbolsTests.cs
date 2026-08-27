@@ -14,7 +14,7 @@ public sealed class LanguageServerSymbolsTests
         await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
         _ = await Read(process.StandardOutput);
         await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
-        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Card.sqx","languageId":"sqx","version":1,"text":"<template>\n  <Button />\n  <Text />\n</template>"}}}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Card.sqx","languageId":"sqx","version":1,"text":"<template>\n  <Button />\n  <Text />\n</template><style>.x::after { content: \"<Fake />\"; }</style>"}}}""");
         _ = await Read(process.StandardOutput);
 
         await Write(process, """{"jsonrpc":"2.0","id":2,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///C:/Square/Card.sqx"}}}""");
@@ -22,6 +22,7 @@ public sealed class LanguageServerSymbolsTests
         Assert.Contains("\"name\":\"Card\"", symbols, StringComparison.Ordinal);
         Assert.Contains("\"name\":\"Button\"", symbols, StringComparison.Ordinal);
         Assert.Contains("\"name\":\"Text\"", symbols, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"name\":\"Fake\"", symbols, StringComparison.Ordinal);
 
         await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
         _ = await Read(process.StandardOutput);

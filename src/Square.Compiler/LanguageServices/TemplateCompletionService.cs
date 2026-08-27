@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using Square.Compiler.Parser;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
 
@@ -64,12 +64,20 @@ public static class TemplateCompletionService
         var isSqv = sourcePath != null && sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
         var document = result.ParsedSqxDocument;
-        if (document?.Template != null)
+        var template = document?.Syntax?.Template;
+        if (template != null &&
+            (offset < template.ContentRange.Offset || offset > template.ContentRange.End))
+            return new TemplateCompletionContext(TemplateCompletionKind.None, string.Empty, string.Empty, isSqv);
+        if (template != null)
         {
-            var element = FindElement(document.Template.Roots, offset, text.Length);
+            var element = template.SqxSyntax != null
+                ? FindSqxElement(template.SqxSyntax.Roots, offset)
+                : template.SqvSyntax != null
+                    ? FindSqvElement(template.SqvSyntax.Roots, offset)
+                    : null;
             if (element != null)
             {
-                var headerEnd = FindHeaderEnd(text, element, offset);
+                var headerEnd = FindHeaderEnd(text, element.Start, offset);
                 if (headerEnd < 0 || offset <= headerEnd)
                     return ContextInTag(text, offset, element, isSqv);
             }
@@ -151,10 +159,10 @@ public static class TemplateCompletionService
     private static TemplateCompletionContext ContextInTag(
         string text,
         int offset,
-        SqxElement element,
+        TemplateElementContext element,
         bool isSqv)
     {
-        var nameStart = element.Position + 1;
+        var nameStart = element.Start + 1;
         var nameEnd = nameStart + element.TagName.Length;
         if (offset <= nameEnd)
         {
@@ -194,38 +202,31 @@ public static class TemplateCompletionService
         return new TemplateCompletionContext(TemplateCompletionKind.None, token, string.Empty, isSqv);
     }
 
-    private static SqxElement FindElement(IEnumerable<SqxNode> nodes, int offset, int parentEnd)
+    private static TemplateElementContext FindSqxElement(IEnumerable<SqxSyntaxNode> nodes, int offset)
     {
-        SqxElement match = null;
-        var siblings = nodes.OfType<SqxElement>().ToArray();
-        for (var index = 0; index < siblings.Length; index++)
+        foreach (var element in nodes.OfType<SqxElementSyntax>())
         {
-            var element = siblings[index];
-            var isLast = index + 1 >= siblings.Length;
-            var end = isLast ? parentEnd : siblings[index + 1].Position;
-            if (offset < element.Position || (isLast ? offset > end : offset >= end)) continue;
-
-            var child = FindElement(element.Children, offset, end);
-            return child ?? element;
+            if (offset < element.Origin.Offset || offset > element.Origin.End) continue;
+            return FindSqxElement(element.Children, offset) ??
+                   new TemplateElementContext(element.TagName, element.Origin.Offset);
         }
-
-        foreach (var node in nodes)
-        {
-            if (node is TemplateForDirective forDirective)
-                match = FindElement(forDirective.Children, offset, parentEnd) ?? match;
-            else if (node is TemplateIfChainDirective ifChain)
-            {
-                foreach (var branch in ifChain.Branches)
-                    match = FindElement(branch.Children, offset, parentEnd) ?? match;
-            }
-        }
-
-        return match;
+        return null;
     }
 
-    private static int FindHeaderEnd(string text, SqxElement element, int offset)
+    private static TemplateElementContext FindSqvElement(IEnumerable<SqvSyntaxNode> nodes, int offset)
     {
-        var start = Math.Min(Math.Max(element.Position, 0), text.Length);
+        foreach (var element in nodes.OfType<SqvElementSyntax>())
+        {
+            if (offset < element.Origin.Offset || offset > element.Origin.End) continue;
+            return FindSqvElement(element.Children, offset) ??
+                   new TemplateElementContext(element.TagName, element.Origin.Offset);
+        }
+        return null;
+    }
+
+    private static int FindHeaderEnd(string text, int elementStart, int offset)
+    {
+        var start = Math.Min(Math.Max(elementStart, 0), text.Length);
         var limit = Math.Min(text.Length, Math.Max(offset, start));
         var quote = '\0';
         for (var index = start; index < limit; index++)
@@ -240,6 +241,18 @@ public static class TemplateCompletionService
             else if (value == '>') return index;
         }
         return -1;
+    }
+
+    private sealed class TemplateElementContext
+    {
+        public TemplateElementContext(string tagName, int start)
+        {
+            TagName = tagName ?? string.Empty;
+            Start = start;
+        }
+
+        public string TagName { get; }
+        public int Start { get; }
     }
 
     private static string GetTokenPrefix(string text, int offset, out int start)

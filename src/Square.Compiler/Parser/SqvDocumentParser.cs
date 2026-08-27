@@ -1,4 +1,5 @@
 using Square.Compiler.Syntax;
+using Square.Compiler.Template.Compatibility;
 
 namespace Square.Compiler.Parser;
 
@@ -26,9 +27,14 @@ internal static class SqvDocumentParser
             throw new SqxParseException("Missing required <template> section", 0);
         }
 
-        var roots = SqvTemplateParser.Parse(templateSection.Content, templateSection.ContentStart, tolerant);
+        var validationRoots = SqvTemplateParser.Parse(templateSection.Content, templateSection.ContentStart, tolerant);
         if (!tolerant)
-            SqvValidator.Validate(roots);
+            SqvValidator.Validate(validationRoots);
+        var roots = TemplateIrCompatibilityAdapter.ToSqxNodes(
+            syntax.Template.Ir,
+            syntax.SourceText,
+            syntax.Dialect,
+            syntax.Template.ContentRange.Offset);
 
         var document = new SqxDocument
         {
@@ -55,15 +61,10 @@ internal static class SqvDocumentParser
                     csharpDiagnostic.Range.Offset,
                     "SQV0001",
                     csharpDiagnostic.Range.Length);
-            document.ScriptCode = syntax.Script.ContentText.Trim();
-            document.ScriptLang = meta.Language;
             document.Namespace = meta.Namespace;
             document.Access = meta.Access;
             if (!string.IsNullOrEmpty(meta.ComponentName)) document.Name = meta.ComponentName;
         }
-
-        if (sections.TryGetValue("style", out var styleSection))
-            document.StyleCode = styleSection.Content.Trim();
 
         return document;
     }

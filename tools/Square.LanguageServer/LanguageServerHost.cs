@@ -319,63 +319,22 @@ public sealed class LanguageServerHost
         if (!_documents.TryGet(uri, out var document) || document == null)
             return Array.Empty<object>();
 
-        var children = new List<Dictionary<string, object?>>();
-        var stack = new Stack<(string Name, Dictionary<string, object?> Node)>();
-        var index = 0;
-        while (index < document.Text.Length)
+        var children = TemplateDocumentSymbols.GetSymbols(document.Text, GetSourcePath(uri))
+            .Select(MapSymbol)
+            .ToList();
+
+        Dictionary<string, object?> MapSymbol(TemplateDocumentSymbol symbol) => new()
         {
-            var open = document.Text.IndexOf('<', index);
-            if (open < 0) break;
-            index = open + 1;
-            if (index >= document.Text.Length) break;
-
-            var closing = document.Text[index] == '/';
-            if (closing) index++;
-            while (index < document.Text.Length && char.IsWhiteSpace(document.Text[index])) index++;
-            var nameStart = index;
-            while (index < document.Text.Length && IsTokenCharacter(document.Text[index])) index++;
-            if (nameStart == index)
-            {
-                index++;
-                continue;
-            }
-
-            var name = document.Text[nameStart..index];
-            var tagEnd = document.Text.IndexOf('>', index);
-            if (tagEnd < 0) tagEnd = document.Text.Length - 1;
-            if (closing)
-            {
-                if (stack.Count > 0 && stack.Peek().Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-                    stack.Pop();
-                index = tagEnd + 1;
-                continue;
-            }
-
-            if (name is "template" or "script" or "style")
-            {
-                index = tagEnd + 1;
-                continue;
-            }
-
-            var nodeChildren = new List<Dictionary<string, object?>>();
-            var node = new Dictionary<string, object?>
-            {
-                ["name"] = name,
-                ["detail"] = TemplateCatalog.BuiltIn.GetComponent(name).TypeName,
-                ["kind"] = 19,
-                ["range"] = ToRange(document.Text, open, Math.Min(document.Text.Length, tagEnd + 1)),
-                ["selectionRange"] = ToRange(document.Text, nameStart, index),
-                ["children"] = nodeChildren
-            };
-            if (stack.Count > 0)
-                ((List<Dictionary<string, object?>>)stack.Peek().Node["children"]!).Add(node);
-            else
-                children.Add(node);
-
-            var selfClosing = tagEnd > open && document.Text[tagEnd - 1] == '/';
-            if (!selfClosing) stack.Push((name, node));
-            index = tagEnd + 1;
-        }
+            ["name"] = symbol.Name,
+            ["detail"] = symbol.Detail,
+            ["kind"] = 19,
+            ["range"] = ToRange(document.Text, symbol.Range.Offset, symbol.Range.End),
+            ["selectionRange"] = ToRange(
+                document.Text,
+                symbol.SelectionRange.Offset,
+                symbol.SelectionRange.End),
+            ["children"] = symbol.Children.Select(MapSymbol).ToList()
+        };
 
         var componentName = GetSourcePath(uri);
         componentName = Path.GetFileNameWithoutExtension(componentName);
@@ -432,7 +391,7 @@ public sealed class LanguageServerHost
         if (!_documents.TryGet(uri, out var document) || document == null)
             return Array.Empty<object>();
 
-        return TemplateColorService.GetColors(document.Text)
+        return TemplateColorService.GetColors(document.Text, GetSourcePath(uri))
             .Select(color => new
             {
                 range = ToRange(document.Text, color.Start, color.Start + color.Length),
@@ -485,7 +444,7 @@ public sealed class LanguageServerHost
 
         var position = parameters.GetProperty("position");
         var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
-        var token = GetTokenAt(document.Text, offset, out _, out _);
+        var token = TemplateDefinitionService.GetTagNameAt(document.Text, GetSourcePath(uri), offset);
         if (string.IsNullOrWhiteSpace(token)) return Array.Empty<object>();
 
         foreach (var candidate in _documents.All)

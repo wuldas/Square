@@ -12,9 +12,6 @@ internal sealed class TemplateDocument
     public TemplateIrDocument Ir;
     public string Name = "";
     public List<SqxNode> Roots = new();
-    public string ScriptCode;
-    public string ScriptLang;
-    public string StyleCode;
     public string Namespace;
     public string Access = "public";
 
@@ -25,9 +22,6 @@ internal sealed class TemplateDocument
         Ir = document.Syntax?.Template?.Ir,
         Name = document.Name,
         Roots = document.Template.Roots,
-        ScriptCode = document.ScriptCode,
-        ScriptLang = document.ScriptLang,
-        StyleCode = document.StyleCode,
         Namespace = document.Namespace,
         Access = document.Access
     };

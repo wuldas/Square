@@ -99,19 +99,57 @@ internal sealed class TemplateIrSlot : TemplateIrNode
         bool nameIsExpression,
         string scopeExpression,
         IReadOnlyList<TemplateIrNode> children,
-        SquareSourceRange origin)
+        SquareSourceRange origin,
+        TemplateIrSlotScope scope = null)
         : base(origin)
     {
         Name = name ?? string.Empty;
         NameIsExpression = nameIsExpression;
         ScopeExpression = scopeExpression;
+        Scope = scope;
         Children = children ?? throw new ArgumentNullException(nameof(children));
     }
 
     public string Name { get; }
     public bool NameIsExpression { get; }
     public string ScopeExpression { get; }
+    public TemplateIrSlotScope Scope { get; }
     public IReadOnlyList<TemplateIrNode> Children { get; }
+}
+
+internal sealed class TemplateIrSlotScope
+{
+    public TemplateIrSlotScope(
+        string wholePropertiesName,
+        IReadOnlyList<TemplateIrSlotBinding> properties,
+        SquareSourceRange origin)
+    {
+        WholePropertiesName = wholePropertiesName;
+        Properties = properties ?? throw new ArgumentNullException(nameof(properties));
+        Origin = origin;
+    }
+
+    public string WholePropertiesName { get; }
+    public IReadOnlyList<TemplateIrSlotBinding> Properties { get; }
+    public SquareSourceRange Origin { get; }
+}
+
+internal sealed class TemplateIrSlotBinding
+{
+    public TemplateIrSlotBinding(
+        string propertyName,
+        string localName,
+        SquareSourceRange origin)
+    {
+        PropertyName = propertyName ?? string.Empty;
+        LocalName = localName ?? string.Empty;
+        Origin = origin;
+    }
+
+    public string PropertyName { get; }
+    public string LocalName { get; }
+    public string TypeName { get; set; }
+    public SquareSourceRange Origin { get; }
 }
 
 internal sealed class TemplateIrAttribute
@@ -123,7 +161,8 @@ internal sealed class TemplateIrAttribute
         SquareSourceRange origin,
         TemplateIrAttributeKind kind = TemplateIrAttributeKind.Property,
         string argumentExpression = null,
-        bool isModelEvent = false)
+        bool isModelEvent = false,
+        IReadOnlyList<TemplateIrNode> fragmentNodes = null)
     {
         Name = name ?? string.Empty;
         Value = value;
@@ -132,6 +171,7 @@ internal sealed class TemplateIrAttribute
         Kind = kind;
         ArgumentExpression = argumentExpression;
         IsModelEvent = isModelEvent;
+        FragmentNodes = fragmentNodes;
     }
 
     public string Name { get; }
@@ -141,6 +181,7 @@ internal sealed class TemplateIrAttribute
     public TemplateIrAttributeKind Kind { get; }
     public string ArgumentExpression { get; }
     public bool IsModelEvent { get; }
+    public IReadOnlyList<TemplateIrNode> FragmentNodes { get; }
 }
 
 internal enum TemplateIrAttributeKind

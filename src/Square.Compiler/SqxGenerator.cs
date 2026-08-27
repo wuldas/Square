@@ -1,12 +1,13 @@
 using System.Collections.Immutable;
 using System.Text;
-using System.Text.RegularExpressions;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 using Square.Compiler.Directives;
 using Square.Compiler.Emit;
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
+using Square.Compiler.Template.Ir;
 
 namespace Square.Compiler;
 
@@ -223,7 +224,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
             ? input.Namespace
             : document.Namespace;
         var scriptUsings = ExtractNamespaceUsings(document);
-        foreach (var element in EnumerateElements(document.Template.Roots))
+        foreach (var element in EnumerateElements(document.Syntax.Template.Ir.Roots))
         {
             var contractName = ResolveContractName(
                 element.TagName,
@@ -240,18 +241,18 @@ public sealed class SqxGenerator : IIncrementalGenerator
                     if (prop.Required)
                         context.ReportDiagnostic(Diagnostic.Create(
                             Diagnostics.SqxDiagnostics.SQX0003_RequiredPropMissing,
-                            CreateLocation(input, element.Line, element.Column),
+                            CreateLocation(input, element.Origin.Offset),
                             element.TagName,
                             prop.Name));
                     continue;
                 }
-                if (!attr.IsExpression && !string.IsNullOrEmpty(attr.RawValue))
+                if (!attr.IsExpression && !string.IsNullOrEmpty(attr.Value))
                 {
                     var innerType = ExtractInnerType(prop.TypeName);
-                    if (!IsAssignableTo(innerType, attr.RawValue))
+                    if (!IsAssignableTo(innerType, attr.Value))
                         context.ReportDiagnostic(Diagnostic.Create(
                             Diagnostics.SqxDiagnostics.SQX0007_PropTypeMismatch,
-                            CreateLocation(input, element.Line, element.Column),
+                            CreateLocation(input, element.Origin.Offset),
                             prop.Name));
                 }
             }
@@ -286,22 +287,10 @@ public sealed class SqxGenerator : IIncrementalGenerator
         return matches.Length == 1 ? matches[0] : null;
     }
 
-    private static IReadOnlyList<string> ExtractNamespaceUsings(string scriptCode)
-    {
-        if (string.IsNullOrWhiteSpace(scriptCode)) return Array.Empty<string>();
-
-        var result = new List<string>();
-        foreach (Match match in Regex.Matches(
-                     scriptCode,
-                     @"(?m)^\s*using\s+(?!static\b)(?<namespace>[A-Za-z_][A-Za-z0-9_.]*)\s*;"))
-            result.Add(match.Groups["namespace"].Value);
-        return result;
-    }
-
     private static IReadOnlyList<string> ExtractNamespaceUsings(SqxDocument document)
     {
         var script = document.Syntax?.Script;
-        if (script == null) return ExtractNamespaceUsings(document.ScriptCode);
+        if (script == null) return Array.Empty<string>();
 
         return script.CSharp.Usings
             .Where(directive => directive.Alias == null && directive.StaticKeyword.RawKind == 0)
@@ -333,25 +322,32 @@ public sealed class SqxGenerator : IIncrementalGenerator
         return true;
     }
 
-    private static IEnumerable<SqxElement> EnumerateElements(IEnumerable<SqxNode> nodes)
+    private static IEnumerable<TemplateIrElement> EnumerateElements(IEnumerable<TemplateIrNode> nodes)
     {
         foreach (var node in nodes)
         {
-            if (node is SqxElement element)
+            if (node is TemplateIrElement element)
             {
                 yield return element;
                 foreach (var child in EnumerateElements(element.Children))
                     yield return child;
             }
-            else if (node is TemplateForDirective forDirective)
+            else if (node is TemplateIrFor loop)
             {
-                foreach (var child in EnumerateElements(forDirective.Children))
+                foreach (var child in EnumerateElements(loop.Children))
+                    yield return child;
+                foreach (var child in EnumerateElements(loop.Fallback))
                     yield return child;
             }
-            else if (node is TemplateIfChainDirective ifChain)
+            else if (node is TemplateIrIfChain chain)
             {
-                foreach (var branch in ifChain.Branches)
-                foreach (var child in EnumerateElements(branch.Children))
+                foreach (var branch in chain.Branches)
+                    foreach (var child in EnumerateElements(branch.Children))
+                        yield return child;
+            }
+            else if (node is TemplateIrSlot slot)
+            {
+                foreach (var child in EnumerateElements(slot.Children))
                     yield return child;
             }
         }
@@ -363,17 +359,17 @@ public sealed class SqxGenerator : IIncrementalGenerator
         SqxDocument document)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var element in EnumerateElements(document.Template.Roots))
+        foreach (var element in EnumerateElements(document.Syntax.Template.Ir.Roots))
         {
             var refAttr = element.Attributes.FirstOrDefault(
                 a => string.Equals(a.Name, "ref", StringComparison.OrdinalIgnoreCase));
-            if (refAttr == null || string.IsNullOrWhiteSpace(refAttr.RawValue)) continue;
-            if (!seen.Add(refAttr.RawValue))
+            if (refAttr == null || string.IsNullOrWhiteSpace(refAttr.Value)) continue;
+            if (!seen.Add(refAttr.Value))
             {
                 context.ReportDiagnostic(Diagnostic.Create(
                     Diagnostics.SqxDiagnostics.SQX0006_RefNameConflict,
-                    CreateLocation(input, element.Line, element.Column),
-                    refAttr.RawValue));
+                    CreateLocation(input, element.Origin.Offset),
+                    refAttr.Value));
             }
         }
     }
@@ -386,45 +382,50 @@ public sealed class SqxGenerator : IIncrementalGenerator
     {
         var currentNamespace = string.IsNullOrWhiteSpace(document.Namespace) ? input.Namespace : document.Namespace;
         var scriptUsings = ExtractNamespaceUsings(document);
-        Visit(document.Template.Roots);
+        var ir = document.Syntax?.Template?.Ir;
+        if (ir == null) return;
+        Visit(ir.Roots);
 
-        void Visit(IEnumerable<SqxNode> nodes)
+        void Visit(IEnumerable<TemplateIrNode> nodes)
         {
             foreach (var node in nodes)
             {
-                if (node is SqxElement element)
+                if (node is TemplateIrElement element)
                 {
                     ValidateComponentSlots(element);
                     Visit(element.Children);
                 }
-                else if (node is TemplateForDirective loop) Visit(loop.Children);
-                else if (node is TemplateIfChainDirective chain)
+                else if (node is TemplateIrFor loop)
+                {
+                    Visit(loop.Children);
+                    Visit(loop.Fallback);
+                }
+                else if (node is TemplateIrIfChain chain)
                     foreach (var branch in chain.Branches) Visit(branch.Children);
+                else if (node is TemplateIrSlot slot) Visit(slot.Children);
             }
         }
 
-        void ValidateComponentSlots(SqxElement component)
+        void ValidateComponentSlots(TemplateIrElement component)
         {
-            foreach (var child in component.Children.OfType<SqxElement>())
+            foreach (var slot in component.Children.OfType<TemplateIrSlot>())
             {
-                var scope = child.SlotScope;
+                var scope = slot.Scope;
                 if (scope == null || scope.Properties.Count == 0) continue;
-                var slotAttribute = child.Attributes.FirstOrDefault(attribute =>
-                    string.Equals(attribute.Name, "slot", StringComparison.OrdinalIgnoreCase));
-                if (slotAttribute?.IsExpression == true)
+                if (slot.NameIsExpression)
                 {
-                    Report(Diagnostics.SqvDiagnostics.SQV0012_DynamicSlotDestructuring, scope.Position,
+                    Report(Diagnostics.SqvDiagnostics.SQV0012_DynamicSlotDestructuring, scope.Origin.Offset,
                         "Dynamic slot names cannot use typed destructuring.");
                     continue;
                 }
 
                 var componentName = ResolveContractName(component.TagName, currentNamespace, scriptUsings, contracts.Keys);
-                var slotName = slotAttribute?.RawValue ?? "";
+                var slotName = slot.Name;
                 if (componentName == null || !contracts.TryGetValue(componentName, out var componentSlots) ||
                     !componentSlots.TryGetValue(slotName, out var contract))
                 {
                     foreach (var binding in scope.Properties) binding.TypeName = "object";
-                    Report(Diagnostics.SqvDiagnostics.SQV0010_SlotContractMissing, scope.Position,
+                    Report(Diagnostics.SqvDiagnostics.SQV0010_SlotContractMissing, scope.Origin.Offset,
                         "Component <" + component.TagName + "> does not declare a contract for slot '" +
                         (slotName.Length == 0 ? "default" : slotName) + "'.");
                     continue;
@@ -435,7 +436,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
                     if (!contract.Properties.TryGetValue(binding.PropertyName, out var typeName))
                     {
                         binding.TypeName = "object";
-                        Report(Diagnostics.SqvDiagnostics.SQV0011_SlotPropertyMissing, binding.Position,
+                        Report(Diagnostics.SqvDiagnostics.SQV0011_SlotPropertyMissing, binding.Origin.Offset,
                             "Slot '" + (slotName.Length == 0 ? "default" : slotName) +
                             "' does not provide property '" + binding.PropertyName + "'.");
                         continue;
@@ -457,12 +458,10 @@ public sealed class SqxGenerator : IIncrementalGenerator
         }
     }
 
-    private static Location CreateLocation(SqxInput input, int line, int column)
+    private static Location CreateLocation(SqxInput input, int position)
     {
         var source = SourceText.From(input.Content, Encoding.UTF8);
-        var lineIndex = Math.Max(0, Math.Min(line - 1, source.Lines.Count - 1));
-        var textLine = source.Lines[lineIndex];
-        var position = Math.Min(textLine.End, textLine.Start + Math.Max(0, column - 1));
+        position = Math.Max(0, Math.Min(position, source.Length));
         var span = new TextSpan(position, 0);
         return Location.Create(input.Path, span, source.Lines.GetLinePositionSpan(span));
     }

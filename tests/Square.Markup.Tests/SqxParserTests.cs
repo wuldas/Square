@@ -129,6 +129,30 @@ public class SqxParserTests
     }
 
     [Fact]
+    public void ScriptAndStyleLocationsComeFromSectionRanges()
+    {
+        const string source = """
+            <template>
+              <View />
+            </template>
+            <script lang="csharp">
+            int x;
+            </script>
+            <style>
+            View { color: red; }
+            </style>
+            """;
+
+        var document = new SqxParser().Parse(source, "Locations.sqx");
+
+        Assert.Equal(2, Assert.IsType<SqxElement>(Assert.Single(document.Template.Roots)).Line);
+        Assert.Equal(4, Assert.IsType<SqxScript>(document.Script).Line);
+        Assert.True(document.Script.Column > 1);
+        Assert.Equal(7, Assert.IsType<SqxStyle>(document.Style).Line);
+        Assert.True(document.Style.Column > 1);
+    }
+
+    [Fact]
     public void ParseSelfClosing()
     {
         var parser = new SqxParser();

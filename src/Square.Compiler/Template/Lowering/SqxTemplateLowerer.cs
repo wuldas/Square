@@ -32,7 +32,7 @@ internal static class SqxTemplateLowerer
             var branches = new List<TemplateIrIfBranch>
             {
                 new(
-                    when?.Value ?? "false",
+                    when?.Value ?? string.Empty,
                     false,
                     element.Children.Select(LowerNode).ToArray(),
                     when?.FullRange ?? element.Origin)
@@ -85,7 +85,8 @@ internal static class SqxTemplateLowerer
                 attribute.FullRange,
                 attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase)
                     ? TemplateIrAttributeKind.Event
-                    : TemplateIrAttributeKind.Property)).ToArray(),
+                    : TemplateIrAttributeKind.Property,
+                fragmentNodes: attribute.FragmentNodes?.Select(LowerNode).ToArray())).ToArray(),
             element.Children.Select(LowerNode).ToArray(),
             element.Origin);
     }

@@ -16,7 +16,22 @@ public sealed class LanguageServerDefinitionTests
         await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
         await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Card.sqx","languageId":"sqx","version":1,"text":"<template><Text /></template>"}}}""");
         _ = await Read(process.StandardOutput);
-        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Page.sqx","languageId":"sqx","version":1,"text":"<template><Card /></template>"}}}""");
+        const string pageText = "<template><Card /></template><script>private const string Markup = \"<Card />\";</script>";
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new
+            {
+                textDocument = new
+                {
+                    uri = "file:///C:/Square/Page.sqx",
+                    languageId = "sqx",
+                    version = 1,
+                    text = pageText
+                }
+            }
+        }));
         _ = await Read(process.StandardOutput);
 
         await Write(process, """{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///C:/Square/Page.sqx"},"position":{"line":0,"character":14}}}""");
@@ -24,7 +39,13 @@ public sealed class LanguageServerDefinitionTests
         Assert.Contains("file:///C:/Square/Card.sqx", definition, StringComparison.Ordinal);
         Assert.Contains("\"line\":0", definition, StringComparison.Ordinal);
 
-        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+        var scriptCard = pageText.LastIndexOf("Card", StringComparison.Ordinal) + 1;
+        await Write(process,
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///C:/Square/Page.sqx\"},\"position\":{\"line\":0,\"character\":" + scriptCard + "}}}");
+        var scriptDefinition = await Read(process.StandardOutput);
+        Assert.Contains("\"result\":[]", scriptDefinition, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","id":4,"method":"shutdown","params":null}""");
         _ = await Read(process.StandardOutput);
         await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));

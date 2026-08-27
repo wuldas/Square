@@ -64,4 +64,16 @@ public sealed class TemplateCompletionServiceTests
         Assert.Contains(items, item => item.Label == "click");
         Assert.DoesNotContain(items, item => item.Label == "onClick");
     }
+
+    [Theory]
+    [InlineData("<template><View /></template><script>private const string X = \"<Bu\";</script>")]
+    [InlineData("<template><View /></template><style>.x { content: \"<Bu\"; }</style>")]
+    public void CompletionDoesNotUseTemplateFallbackOutsideTemplateSection(string source)
+    {
+        var offset = source.IndexOf("<Bu", source.IndexOf("</template>", StringComparison.Ordinal), StringComparison.Ordinal) + 3;
+
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+
+        Assert.Equal(TemplateCompletionKind.None, context.Kind);
+    }
 }
