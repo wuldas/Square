@@ -827,7 +827,8 @@ public class Input : TextEditorBase
     }
 
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) => new(200, 36);
+    public override Size Measure(Size availableSize) =>
+        ControlDrawing.UsesWidgetAppearance(this) ? new Size(169, 15) : new Size(200, 36);
 
     private string FilterNumberInput(string text)
     {
