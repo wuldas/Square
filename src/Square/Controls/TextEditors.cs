@@ -794,6 +794,11 @@ public class Input : TextEditorBase
     /// <inheritdoc/>
     protected override bool IsMultiline => false;
 
+    /// <inheritdoc/>
+    protected override float TextPaddingX =>
+        ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
+        ControlDrawing.GetStyledFloat(this, "padding-left", 8);
+
     /// <summary>输入类型。</summary>
     public string Type
     {

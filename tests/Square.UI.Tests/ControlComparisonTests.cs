@@ -621,6 +621,68 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    public void InputVisualComparisonReportsBackgroundBorderTextAndCaretRegions()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-input-visual-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteInputFixture(chromium, drawCaret: true);
+            WriteInputFixture(square, drawCaret: false);
+
+            var result = ControlVisualComparer.CompareInput(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 40, 20),
+                new ControlRect(10, 10, 40, 20),
+                ControlState.Focus,
+                ControlVisualThresholds.Input);
+
+            Assert.Equal(["corner", "border", "text", "caret", "background"],
+                result.Regions.Select(region => region.Name));
+            Assert.False(result.Passed);
+            Assert.False(Assert.Single(result.Regions, region => region.Name == "caret").Passed);
+            Assert.All(result.Regions.Where(region => region.Name != "caret"), region => Assert.True(region.Passed));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void InputVisualComparisonAlignsEachRendererBorderBox()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-input-align-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteInputFixture(chromium, drawCaret: false, left: 10);
+            WriteInputFixture(square, drawCaret: false, left: 11);
+
+            var result = ControlVisualComparer.CompareInput(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 40, 20),
+                new ControlRect(11, 10, 40, 20),
+                ControlState.Normal,
+                ControlVisualThresholds.Input);
+
+            Assert.True(result.Passed, string.Join(" | ", result.Regions.SelectMany(region => region.Failures)));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task SoftwareButtonCaptureIncludesCenteredTextInk()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-capture-" + Guid.NewGuid());
@@ -713,6 +775,100 @@ public sealed class ControlComparisonTests
         }
     }
 
+    [Theory]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Hover, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Focus, 16)]
+    [InlineData(ControlAppearance.Auto, ControlState.Disabled, 212)]
+    [InlineData(ControlAppearance.Auto, ControlState.Value, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 79)]
+    [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
+    public async Task SoftwareInputStatesUseChromiumOuterBorder(
+        ControlAppearance appearance,
+        ControlState state,
+        byte expectedBorder)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-input-state-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Input,
+                        Element = "input",
+                        Appearances = [appearance],
+                        States = [state],
+                        Value = "Value",
+                        Placeholder = "Placeholder"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero);
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 1;
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var edge = new List<byte>();
+            for (var x = left; x <= right; x++)
+            {
+                edge.Add(bitmap.GetPixel(x, top).Red);
+                edge.Add(bitmap.GetPixel(x, bottom).Red);
+            }
+            for (var y = top + 1; y < bottom; y++)
+            {
+                edge.Add(bitmap.GetPixel(left, y).Red);
+                edge.Add(bitmap.GetPixel(right, y).Red);
+            }
+
+            Assert.True(edge.Count(value => Math.Abs(value - expectedBorder) <= 4) >= edge.Count * 9 / 10,
+                $"Expected Chromium border {expectedBorder}, got {string.Join(", ", edge.GroupBy(value => value).OrderByDescending(group => group.Count()).Take(4).Select(group => $"{group.Key}:{group.Count()}"))}.");
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ControlAppearance.Auto, 4)]
+    [InlineData(ControlAppearance.None, 12)]
+    public async Task SoftwareInputTextUsesComputedBorderAndPadding(
+        ControlAppearance appearance,
+        float expectedOffset)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-input-padding-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Input,
+                        Element = "input",
+                        Appearances = [appearance],
+                        States = [ControlState.Focus],
+                        Value = "Value"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            var textBounds = item.ComputedStyles["textBounds"];
+            var textX = float.Parse(textBounds[1..textBounds.IndexOf(',')]);
+
+            AssertClose(item.BorderBox.X + expectedOffset, textX);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public void BrowserPayloadUsesJavascriptPropertyNamesAndPreservesAuthorCss()
     {
@@ -765,6 +921,24 @@ public sealed class ControlComparisonTests
             using var outside = new SKPaint { Color = color };
             canvas.DrawRect(new SKRect(0, 0, 8, 8), outside);
         }
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
+
+    private static void WriteInputFixture(string path, bool drawCaret, int left = 10)
+    {
+        using var bitmap = new SKBitmap(60, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        bitmap.Erase(SKColors.White);
+        using var canvas = new SKCanvas(bitmap);
+        using var fill = new SKPaint { Color = new SKColor(250, 250, 250) };
+        using var border = new SKPaint { Color = new SKColor(118, 118, 118), Style = SKPaintStyle.Stroke, StrokeWidth = 2 };
+        using var ink = new SKPaint { Color = new SKColor(32, 32, 32) };
+        canvas.DrawRect(new SKRect(left, 10, left + 40, 30), fill);
+        canvas.DrawRect(new SKRect(left + 1, 11, left + 39, 29), border);
+        canvas.DrawRect(new SKRect(left + 6, 17, left + 14, 23), ink);
+        if (drawCaret) canvas.DrawRect(new SKRect(left + 37, 16, left + 38, 24), ink);
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var stream = File.Create(path);

@@ -41,6 +41,7 @@ internal static class ControlBrowserCapture
             {
                 Path = paths.Screenshot,
                 Animations = ScreenshotAnimations.Disabled,
+                Caret = ScreenshotCaret.Initial,
                 Scale = ScreenshotScale.Css
             });
             var json = await locator.EvaluateAsync<string>("""

@@ -105,29 +105,33 @@ internal static class ControlComparisonRunner
             output,
             ["Chromium", .. backends]);
 
-        var buttonCases = reports[0].Cases.Where(item => item.Kind == ControlKind.Button).ToArray();
+        var visualCases = reports[0].Cases
+            .Where(item => item.Kind is ControlKind.Button or ControlKind.Input)
+            .ToArray();
         var comparisons = new List<ControlVisualCaseResult>();
         foreach (var backend in backends)
         {
             var squareReport = reports.Single(report => report.Renderer.Equals(backend, StringComparison.OrdinalIgnoreCase));
-            foreach (var chromiumCase in buttonCases)
+            foreach (var chromiumCase in visualCases)
             {
                 var squareCase = squareReport.Cases.Single(item => item.Id == chromiumCase.Id);
                 var diffRelative = Path.Combine("diff", backend.ToLowerInvariant(), chromiumCase.Id + ".png");
-                comparisons.Add(ControlVisualComparer.CompareButton(
-                    Path.Combine(output, "chrome", chromiumCase.Screenshot.Replace('/', Path.DirectorySeparatorChar)),
-                    Path.Combine(output, backend.ToLowerInvariant(), squareCase.Screenshot.Replace('/', Path.DirectorySeparatorChar)),
-                    Path.Combine(output, diffRelative),
-                    chromiumCase.BorderBox,
-                    ControlVisualThresholds.Button,
-                    chromiumCase.Id,
-                    backend));
+                var chromiumPath = Path.Combine(output, "chrome", chromiumCase.Screenshot.Replace('/', Path.DirectorySeparatorChar));
+                var squarePath = Path.Combine(output, backend.ToLowerInvariant(), squareCase.Screenshot.Replace('/', Path.DirectorySeparatorChar));
+                var diffPath = Path.Combine(output, diffRelative);
+                comparisons.Add(chromiumCase.Kind == ControlKind.Button
+                    ? ControlVisualComparer.CompareButton(
+                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox,
+                        ControlVisualThresholds.Button, chromiumCase.Id, backend)
+                    : ControlVisualComparer.CompareInput(
+                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox, chromiumCase.State,
+                        ControlVisualThresholds.Input, chromiumCase.Id, backend));
             }
         }
 
-        var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square Button visual comparison</title>");
+        var html = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>Square form-control visual comparison</title>");
         html.Append("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #ccc}img{width:320px}.fail{background:#fee}.pass{background:#efe}</style>");
-        html.Append("<h1>Button visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
+        html.Append("<h1>Button and Input visual comparison</h1><p>Chromium is the before/baseline capture; Square is the after capture.</p>");
         html.Append("<table><tr><th>Case</th><th>Renderer</th><th>Status</th><th>Chromium before</th><th>Square after</th><th>Diff</th><th>Regions</th></tr>");
         foreach (var comparison in comparisons)
         {
@@ -154,10 +158,14 @@ internal static class ControlComparisonRunner
         {
             phase = "visual",
             geometryGate = "pass",
-            control = "Button",
-            thresholds = ControlVisualThresholds.Button,
+            controls = new[] { "Button", "Input" },
+            thresholds = new { button = ControlVisualThresholds.Button, input = ControlVisualThresholds.Input },
             cases = comparisons,
-            supported = new[] { "normal", "hover", "active", "focus", "disabled" },
+            supported = new
+            {
+                button = new[] { "normal", "hover", "active", "focus", "disabled" },
+                input = new[] { "normal", "hover", "focus", "disabled", "value", "placeholder" }
+            },
             unsupported = Array.Empty<string>()
         }, ControlReportIO.JsonOptions));
         var failed = comparisons.Count(item => !item.Passed);
@@ -165,7 +173,7 @@ internal static class ControlComparisonRunner
         {
             phase = "visual",
             geometryGate = "pass",
-            control = "Button",
+            controls = new[] { "Button", "Input" },
             passed = comparisons.Count - failed,
             failed,
             report = Path.Combine(output, "report.html")

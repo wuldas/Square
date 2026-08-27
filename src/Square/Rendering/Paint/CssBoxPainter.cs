@@ -61,6 +61,11 @@ internal static class CssBoxPainter
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
         if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
+        if (element is Input input && ControlDrawing.UsesWidgetAppearance(input))
+        {
+            PaintInputWidgetBorder(context, input, input.Geometry);
+            return;
+        }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
         {
             context.PopClip();
@@ -77,6 +82,11 @@ internal static class CssBoxPainter
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
         if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
+        if (element is Input input && input.HasState(ElementState.Focus))
+        {
+            PaintInputFocusBorder(context, input.Geometry);
+            return;
+        }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
             return;
         PaintOutline(context, element, element.Style.GetAll());
@@ -107,6 +117,39 @@ internal static class CssBoxPainter
         context.FillRect(new Rect(left + 4, bottom + 1, right - left - 6, 1), borderBrush);
         context.FillRect(new Rect(left + 1, top + 4, 1, bottom - top - 6), borderBrush);
         context.FillRect(new Rect(right, top + 4, 1, bottom - top - 6), borderBrush);
+    }
+
+    private static void PaintInputWidgetBorder(IRenderContext context, Input input, Rect geometry)
+    {
+        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
+        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
+        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
+        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        var topLeft = new SolidColorBrush(input.IsEnabled
+            ? Color.FromRgb(79, 79, 79)
+            : Color.FromRgb(212, 212, 212));
+        var bottomRight = new SolidColorBrush(input.IsEnabled
+            ? Color.FromRgb(79, 79, 79)
+            : Color.FromRgb(208, 208, 208));
+        context.FillRect(new Rect(left + 1, top, right - left - 1, 1), topLeft);
+        context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), topLeft);
+        context.FillRect(new Rect(left + 1, bottom, right - left - 1, 1), bottomRight);
+        context.FillRect(new Rect(right, top + 1, 1, bottom - top - 1), bottomRight);
+    }
+
+    private static void PaintInputFocusBorder(IRenderContext context, Rect geometry)
+    {
+        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
+        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
+        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
+        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        var brush = new SolidColorBrush(Color.FromRgb(16, 16, 16));
+        context.FillRect(new Rect(left + 2, top, right - left - 3, 1), brush);
+        context.FillRect(new Rect(left + 1, top + 1, right - left - 1, 1), brush);
+        context.FillRect(new Rect(left, top + 2, 2, bottom - top - 3), brush);
+        context.FillRect(new Rect(right - 1, top + 2, 2, bottom - top - 3), brush);
+        context.FillRect(new Rect(left + 1, bottom - 1, right - left - 1, 1), brush);
+        context.FillRect(new Rect(left + 2, bottom, right - left - 3, 1), brush);
     }
 
     private static void PaintCollapsedBorderFragments(
