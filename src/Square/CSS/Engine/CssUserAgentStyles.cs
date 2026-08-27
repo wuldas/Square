@@ -95,6 +95,9 @@ internal static class CssUserAgentStyles
         CheckBox {
             margin: 3px 3px 3px 4px;
         }
+        Radio {
+            margin: 3px 3px 0 5px;
+        }
         CheckBox:disabled, Radio:disabled {
             color: GrayText;
             cursor: default;

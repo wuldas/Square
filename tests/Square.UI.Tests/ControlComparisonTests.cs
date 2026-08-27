@@ -244,6 +244,53 @@ public sealed class ControlComparisonTests
         Assert.Equal(appearance == ControlAppearance.Auto ? "0" : "2px", checkBox.Style.Get("border-left-width") ?? "0");
     }
 
+    [Theory]
+    [InlineData(ControlAppearance.Auto, ControlState.Unchecked)]
+    [InlineData(ControlAppearance.Auto, ControlState.Checked)]
+    [InlineData(ControlAppearance.Auto, ControlState.Hover)]
+    [InlineData(ControlAppearance.Auto, ControlState.Active)]
+    [InlineData(ControlAppearance.Auto, ControlState.Focus)]
+    [InlineData(ControlAppearance.Auto, ControlState.Disabled)]
+    [InlineData(ControlAppearance.None, ControlState.Unchecked)]
+    [InlineData(ControlAppearance.None, ControlState.Checked)]
+    [InlineData(ControlAppearance.None, ControlState.Hover)]
+    [InlineData(ControlAppearance.None, ControlState.Active)]
+    [InlineData(ControlAppearance.None, ControlState.Focus)]
+    [InlineData(ControlAppearance.None, ControlState.Disabled)]
+    public void RadioGeometryMatchesChromiumAcrossAppearancesAndStates(
+        ControlAppearance appearance,
+        ControlState state)
+    {
+        var root = new View
+        {
+            Style =
+            {
+                CssText = "display: flex; align-items: center; justify-content: center; " +
+                    "box-sizing: border-box; width: 320px; height: 160px;"
+            }
+        };
+        var item = Assert.Single(ControlComparisonManifest.CreateDefault().ExpandCases(), candidate =>
+            candidate.Kind == ControlKind.Radio && candidate.Appearance == appearance && candidate.State == state);
+        var radio = new Radio { TextContent = "", IsChecked = state == ControlState.Checked };
+        radio.Style.CssText = item.AuthorCss;
+        ApplyState(radio, state);
+        root.Children.Add(radio);
+
+        new CssEngine().ApplyStylesToTree(root);
+        new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
+
+        var expected = appearance == ControlAppearance.Auto
+            ? new Rect(154.5f, 75, 13, 13)
+            : new Rect(70, 62, 180, 36);
+        AssertClose(expected.X, radio.Geometry.X - root.Geometry.X);
+        AssertClose(expected.Y, radio.Geometry.Y - root.Geometry.Y);
+        AssertClose(expected.Width, radio.Geometry.Width);
+        AssertClose(expected.Height, radio.Geometry.Height);
+        Assert.Equal(appearance == ControlAppearance.Auto ? "0" : "6px", radio.Style.Get("padding-top") ?? "0");
+        Assert.Equal(appearance == ControlAppearance.Auto ? "0" : "10px", radio.Style.Get("padding-left") ?? "0");
+        Assert.Equal(appearance == ControlAppearance.Auto ? "0" : "2px", radio.Style.Get("border-left-width") ?? "0");
+    }
+
     [Fact]
     public void ManifestExpandsSemanticControlsAppearancesAndRelevantStates()
     {
