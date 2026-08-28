@@ -792,6 +792,7 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public void SelectPlaceholderPaintsGrayInsteadOfFieldText()
     {
         var engine = new CssEngine();

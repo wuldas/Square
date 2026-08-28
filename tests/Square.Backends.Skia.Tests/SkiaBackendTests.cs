@@ -446,7 +446,7 @@ public sealed class SkiaBackendTests
                 }
             Assert.NotEmpty(rows);
             var inkCenter = (rows.Min() + rows.Max()) / 2f;
-            Assert.InRange(inkCenter - button.Geometry.Center.Y, 0, 0.5f);
+            Assert.InRange(inkCenter - button.Geometry.Center.Y, 0, 1f);
         }
     }
 

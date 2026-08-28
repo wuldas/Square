@@ -82,7 +82,12 @@ public sealed class ControlComparisonManifest
         },
         Appearances = [ControlAppearance.Auto, ControlAppearance.None],
         States = states.ToList(),
-        AutoAuthorCss = kind == ControlKind.Button ? ButtonAppearanceAutoCss : "",
+        AutoAuthorCss = kind switch
+        {
+            ControlKind.Button => ButtonAppearanceAutoCss,
+            ControlKind.TextArea => "box-sizing: border-box; width: 168px;",
+            _ => ""
+        },
         Text = kind is ControlKind.Button or ControlKind.CheckBox or ControlKind.Radio ? "Control" : "",
         Value = kind == ControlKind.TextArea ? "Line one\nLine two" :
             kind is ControlKind.Input or ControlKind.Select ? "Value" : "",

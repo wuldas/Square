@@ -3,7 +3,7 @@
   "controls": [
     { "kind": "Button", "element": "button", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Active", "Focus", "Disabled"], "autoAuthorCss": "font: 13.3333px Arial;", "text": "Control" },
     { "kind": "Input", "element": "input", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled", "Value", "Placeholder"], "value": "Value", "placeholder": "Placeholder" },
-    { "kind": "TextArea", "element": "textarea", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled", "Value", "Placeholder"], "value": "Line one\nLine two", "placeholder": "Placeholder" },
+    { "kind": "TextArea", "element": "textarea", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled", "Value", "Placeholder"], "autoAuthorCss": "box-sizing: border-box; width: 168px;", "value": "Line one\nLine two", "placeholder": "Placeholder" },
     { "kind": "Select", "element": "select", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled"], "value": "Value" },
     { "kind": "CheckBox", "element": "input", "appearances": ["Auto", "None"], "states": ["Unchecked", "Checked", "Hover", "Active", "Focus", "Disabled"] },
     { "kind": "Radio", "element": "input", "appearances": ["Auto", "None"], "states": ["Unchecked", "Checked", "Hover", "Active", "Focus", "Disabled"] }

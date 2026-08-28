@@ -56,19 +56,25 @@ public sealed class ControlComparisonTests
     }
 
     [Theory]
-    [InlineData(ControlAppearance.Auto, ControlState.Normal)]
-    [InlineData(ControlAppearance.Auto, ControlState.Hover)]
-    [InlineData(ControlAppearance.Auto, ControlState.Active)]
-    [InlineData(ControlAppearance.Auto, ControlState.Focus)]
-    [InlineData(ControlAppearance.Auto, ControlState.Disabled)]
-    [InlineData(ControlAppearance.None, ControlState.Normal)]
-    [InlineData(ControlAppearance.None, ControlState.Hover)]
-    [InlineData(ControlAppearance.None, ControlState.Active)]
-    [InlineData(ControlAppearance.None, ControlState.Focus)]
-    [InlineData(ControlAppearance.None, ControlState.Disabled)]
-    public void ButtonGeometryMatchesChromiumAcrossAppearancesAndStates(
-        ControlAppearance appearance,
-        ControlState state)
+    [Trait("Category", "WindowsRenderingMetrics")]
+    [InlineData(ControlState.Normal)]
+    [InlineData(ControlState.Hover)]
+    [InlineData(ControlState.Active)]
+    [InlineData(ControlState.Focus)]
+    [InlineData(ControlState.Disabled)]
+    public void ButtonAutoGeometryMatchesChromiumAcrossStates(ControlState state) =>
+        AssertButtonGeometry(ControlAppearance.Auto, state);
+
+    [Theory]
+    [InlineData(ControlState.Normal)]
+    [InlineData(ControlState.Hover)]
+    [InlineData(ControlState.Active)]
+    [InlineData(ControlState.Focus)]
+    [InlineData(ControlState.Disabled)]
+    public void ButtonNoneGeometryMatchesFixedAuthorBoxAcrossStates(ControlState state) =>
+        AssertButtonGeometry(ControlAppearance.None, state);
+
+    private static void AssertButtonGeometry(ControlAppearance appearance, ControlState state)
     {
         var root = new View
         {
@@ -188,7 +194,7 @@ public sealed class ControlComparisonTests
         new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
 
         var expected = appearance == ControlAppearance.Auto
-            ? new Rect(79.5f, 62, 161, 36)
+            ? new Rect(76, 62, 168, 36)
             : new Rect(70, 62, 180, 36);
         AssertClose(expected.X, textArea.Geometry.X - root.Geometry.X);
         AssertClose(expected.Y, textArea.Geometry.Y - root.Geometry.Y);
@@ -208,6 +214,23 @@ public sealed class ControlComparisonTests
 
         Assert.Equal("13.3333px", textArea.Style.Get("font-size"));
         Assert.Equal("monospace", textArea.Style.Get("font-family"));
+        Assert.Equal(new Size(155, 30), textArea.Measure(new Size(float.MaxValue, float.MaxValue)));
+    }
+
+    [Fact]
+    public async Task ControlManifestPinsTextAreaAutoWidthAcrossBrowserFontEnvironments()
+    {
+        var manifestPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+            "tools", "Square.FontComparison", "Cases", "ControlComparisonCases.json"));
+        var manifest = await ControlReportIO.LoadManifestAsync(manifestPath);
+        var item = Assert.Single(manifest.ExpandCases(), candidate =>
+            candidate.Kind == ControlKind.TextArea &&
+            candidate.Appearance == ControlAppearance.Auto &&
+            candidate.State == ControlState.Normal);
+
+        Assert.Contains("box-sizing: border-box", item.AuthorCss, StringComparison.Ordinal);
+        Assert.Contains("width: 168px", item.AuthorCss, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -1461,6 +1484,7 @@ public sealed class ControlComparisonTests
 
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public async Task SoftwareButtonCaptureIncludesCenteredTextInk()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-capture-" + Guid.NewGuid());
@@ -1557,6 +1581,7 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public async Task SoftwareMultilineAuthorButtonCentersAllRenderedTextInk()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-multiline-center-" + Guid.NewGuid());
@@ -1833,6 +1858,7 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public async Task SoftwareAuthorStyledSelectUsesBootstrapContentBox()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-select-bootstrap-content-" + Guid.NewGuid());
@@ -1976,6 +2002,7 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public async Task SoftwareSelectAutoArrowUsesChromiumIndicatorPosition()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-select-arrow-" + Guid.NewGuid());
@@ -2075,6 +2102,7 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public async Task SoftwareTextAreaFocusPlacesCaretAtBrowserEndPosition()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-textarea-caret-" + Guid.NewGuid());
