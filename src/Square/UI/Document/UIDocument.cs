@@ -91,6 +91,22 @@ public sealed class UIDocument : Document
         AddStyleSheet(styleSheet);
     }
 
+    internal void InheritGlobalStylesFrom(UIDocument source)
+    {
+        foreach (var styleSheet in source.StyleSheets)
+        {
+            LoadStyleSheetTree(styleSheet);
+            AddStyleSheet(styleSheet);
+        }
+    }
+
+    private void LoadStyleSheetTree(DocumentStyleSheet styleSheet)
+    {
+        foreach (var import in styleSheet.Imports)
+            LoadStyleSheetTree(import);
+        GlobalCssEngine.LoadStyleSheet(styleSheet.ParsedSheet);
+    }
+
     private DocumentStyleSheetLoader GetStyleSheetLoader() =>
         _styleSheetLoader ??= new DocumentStyleSheetLoader(GlobalCssEngine);
 }

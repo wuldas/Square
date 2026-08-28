@@ -281,6 +281,83 @@ public class DocumentTests
         Assert.Equal(container.First.Geometry.Bottom, container.Second.Geometry.Y, precision: 1);
     }
 
+    [Theory]
+    [InlineData(true, true, 1f)]
+    [InlineData(true, true, 8f)]
+    [InlineData(true, true, 16f)]
+    [InlineData(true, false, 1f)]
+    [InlineData(true, false, 8f)]
+    [InlineData(true, false, 16f)]
+    [InlineData(false, true, 1f)]
+    [InlineData(false, true, 8f)]
+    [InlineData(false, true, 16f)]
+    [InlineData(false, false, 1f)]
+    [InlineData(false, false, 8f)]
+    [InlineData(false, false, 16f)]
+    public void SplitContainerPaneChildrenStartAtTheirPaneContentOrigins(
+        bool isVertical, bool isSeamless, float splitterThickness)
+    {
+        var firstContent = new View();
+        firstContent.Style.Set("width", "40px");
+        firstContent.Style.Set("height", "24px");
+        var secondContent = new View();
+        secondContent.Style.Set("width", "52px");
+        secondContent.Style.Set("height", "28px");
+        var container = new SplitContainer
+        {
+            Value = 180,
+            Minimum = 100,
+            Maximum = 300,
+            SplitterThickness = splitterThickness,
+            IsVertical = isVertical,
+            IsSeamless = isSeamless
+        };
+        container.First.Children.Add(firstContent);
+        container.Second.Children.Add(secondContent);
+
+        var layout = new LayoutEngine();
+        layout.Measure(container, new Size(640, 420));
+        layout.Arrange(container, new Rect(37, 53, 640, 420));
+
+        Assert.Equal(3, container.Children.Count);
+        Assert.Same(container.First, container.Children[0]);
+        Assert.Same(container.Splitter, container.Children[1]);
+        Assert.Same(container.Second, container.Children[2]);
+        Assert.Equal(37, container.Geometry.X, precision: 1);
+        Assert.Equal(53, container.Geometry.Y, precision: 1);
+        if (isVertical)
+        {
+            var paneGap = container.Second.Geometry.X - container.First.Geometry.Right;
+            Assert.InRange(Math.Abs(paneGap - (isSeamless ? 0 : splitterThickness)), 0, 0.5f);
+        }
+        else
+        {
+            var paneGap = container.Second.Geometry.Y - container.First.Geometry.Bottom;
+            Assert.InRange(Math.Abs(paneGap - (isSeamless ? 0 : splitterThickness)), 0, 0.5f);
+        }
+        Assert.InRange(Math.Abs(firstContent.Geometry.X - container.First.Geometry.X), 0, 0.5f);
+        Assert.InRange(Math.Abs(firstContent.Geometry.Y - container.First.Geometry.Y), 0, 0.5f);
+        Assert.InRange(Math.Abs(secondContent.Geometry.X - container.Second.Geometry.X), 0, 0.5f);
+        Assert.InRange(Math.Abs(secondContent.Geometry.Y - container.Second.Geometry.Y), 0, 0.5f);
+    }
+
+    [Fact]
+    public void GeneratedSplitContainerSlotsRemainUnderTheirPanes()
+    {
+        var page = new Square.Sample.Components.SplitterSamplesPage();
+
+        page.BuildElementTree();
+
+        var container = Assert.Single(page.QueryAll<SplitContainer>());
+        Assert.Equal(3, container.Children.Count);
+        var firstContent = Assert.Single(container.First.Children);
+        var secondContent = Assert.Single(container.Second.Children);
+        Assert.True(firstContent.ClassList.Contains("panel-left"));
+        Assert.True(secondContent.ClassList.Contains("panel-right"));
+        Assert.Same(container.First, firstContent.Parent);
+        Assert.Same(container.Second, secondContent.Parent);
+    }
+
     [Fact]
     public void SplitContainerRegistersFromElementRegistry()
     {
@@ -591,6 +668,38 @@ public class DocumentTests
         Assert.Equal("blue", button.Style.Get("color"));
         Assert.Equal("white", button.Style.Get("background"));
         CssStyleReconciler.UnregisterScopesForTree(window.WindowDocument.DocumentElement);
+    }
+
+    [Fact]
+    public void ModalChildWindowInheritsOwnerGlobalAndUserAgentStyles()
+    {
+        var owner = new AppWindow("Owner");
+        owner.Load(new View());
+        owner.LoadGlobalCssText(".modal-control { color: #123456; }");
+        var host = new SplitterTestHost();
+        owner.Attach(host);
+        var button = new Button("Modal");
+        button.SetProperty("class", "modal-control");
+
+        try
+        {
+            var createChild = typeof(AppWindow).GetMethod(
+                "CreateChildWindow",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(createChild);
+            var child = Assert.IsType<AppWindow>(createChild!.Invoke(owner, [button, null, null, true]));
+
+            ApplyWindowStyles(child);
+
+            Assert.Equal("auto", button.Style.Get("appearance"));
+            Assert.Equal("#123456", button.Style.Get("color"));
+            Assert.Single(child.Document.StyleSheets);
+            CssStyleReconciler.UnregisterScopesForTree(child.WindowDocument.DocumentElement);
+        }
+        finally
+        {
+            owner.Detach(host);
+        }
     }
 
     [Fact]
@@ -1257,8 +1366,9 @@ public class DocumentTests
         Assert.Equal("documentationsubmit", range.ToString());
     }
 
-    private sealed class SplitterTestHost : IPlatformHost
+    private sealed class SplitterTestHost : IPlatformHost, IPlatformNativeWindow
     {
+        public IntPtr Handle => 1;
         public Square.Graphics.Size ClientSize => new(800, 600);
         public float DpiScale => 1;
         public bool IsRunning => true;

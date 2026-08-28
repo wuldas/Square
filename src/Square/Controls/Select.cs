@@ -1,6 +1,7 @@
 using System.Numerics;
 using Square.Events;
 using Square.Graphics;
+using Square.Rendering.Paint;
 using Square.UI;
 
 namespace Square.Controls;
@@ -31,7 +32,7 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     /// <inheritdoc/>
     public string SelectableText => string.IsNullOrEmpty(Value) ? Placeholder : Value;
     /// <inheritdoc/>
-    public Rect SelectableTextBounds => ControlDrawing.GetTextBounds(this, SelectableText, 14f, new Point(Geometry.X + 8, Geometry.Y + 8));
+    public Rect SelectableTextBounds => ControlDrawing.GetTextBounds(this, SelectableText, 14f, GetTextOrigin());
 
     /// <inheritdoc/>
     public override int ZIndex
@@ -51,24 +52,29 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     }
 
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) => new(200, 36);
+    public override Size Measure(Size availableSize) =>
+        ControlDrawing.UsesWidgetAppearance(this) ? new Size(54, 17) : new Size(200, 36);
 
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
         var value = string.IsNullOrEmpty(Value) ? Placeholder : Value;
         var color = string.IsNullOrEmpty(Value) ? Color.FromRgb(117, 117, 117) : Color.Black;
-        ControlDrawing.DrawText(ctx, this, value, new Point(Geometry.X + 8, Geometry.Y + 8), color, 14f,
+        ControlDrawing.DrawText(ctx, this, value, GetTextOrigin(), color, 14f,
             useStyledColor: !string.IsNullOrEmpty(Value));
         if (!ControlDrawing.UsesWidgetAppearance(this))
             return;
 
         var arrowY = Geometry.Y + Geometry.Height / 2f;
         var arrow = IsOpen
-            ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY + 3)).LineTo(new Point(Geometry.Right - 15, arrowY - 2)).LineTo(new Point(Geometry.Right - 10, arrowY + 3))
-            : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 20, arrowY - 2)).LineTo(new Point(Geometry.Right - 15, arrowY + 3)).LineTo(new Point(Geometry.Right - 10, arrowY - 2));
-        ctx.DrawPath(arrow, Pen.FromColor(Color.FromRgb(70, 75, 80), 1.5f));
+            ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 12, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 8, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 4, arrowY + 2.5f))
+            : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 12, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 8, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 4, arrowY - 2.5f));
+        ctx.DrawPath(arrow, Pen.FromColor(IsEnabled ? Color.Black : Color.FromRgb(109, 109, 109)));
     }
+
+    private Point GetTextOrigin() => ControlDrawing.UsesWidgetAppearance(this)
+        ? new Point(Geometry.X + 4, Geometry.Y + 3)
+        : new Point(Geometry.X + 8, Geometry.Y + 8);
 
     /// <inheritdoc/>
     public void PaintPopup(IRenderContext ctx)
@@ -476,8 +482,14 @@ public class Popup : View, IPopupElement
 
     private static void PaintPopupSubtree(IRenderContext context, Element element)
     {
-        if (!element.IsVisible || element is IPopupElement) return;
-        element.Paint(context);
+        if (!element.IsVisible || !element.IsCssDisplayed() || element is IPopupElement) return;
+        var paintsNode = !element.IsCssVisibilityHidden();
+        if (paintsNode)
+        {
+            CssBoxPainter.PaintBeforeContent(context, element);
+            element.Paint(context);
+            CssBoxPainter.PaintAfterContent(context, element);
+        }
         var clip = element.GetOverflowClipRect();
         if (!clip.IsEmpty) context.PushClip(clip);
         var offset = element.ScrollOffset;
@@ -487,5 +499,6 @@ public class Popup : View, IPopupElement
             PaintPopupSubtree(context, child);
         if (scrolls) context.PopTransform();
         if (!clip.IsEmpty) context.PopClip();
+        if (paintsNode) CssBoxPainter.PaintAfterChildren(context, element);
     }
 }

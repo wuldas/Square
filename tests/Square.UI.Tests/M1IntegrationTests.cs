@@ -105,6 +105,115 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void GeneratedSqxTabHeadersOverrideNativeButtonAppearance()
+    {
+        var component = new Main();
+        component.BuildElementTree();
+
+        AssertTabHeadersOverrideNativeButtonAppearance(component);
+    }
+
+    [Fact]
+    public void GeneratedSqxTabHeaderStatesRemainFlatWithoutLayoutShift()
+    {
+        var component = new Main();
+        component.BuildElementTree();
+        ((IComponentLifecycle)component).OnAttached();
+
+        AssertTabHeaderStatesRemainFlatWithoutLayoutShift(component);
+
+        ((IComponentLifecycle)component).OnDetached();
+    }
+
+    [Fact]
+    public void GeneratedSqvTabHeadersOverrideNativeButtonAppearance()
+    {
+        var component = new VueMain();
+        component.BuildElementTree();
+
+        AssertTabHeadersOverrideNativeButtonAppearance(component);
+    }
+
+    [Fact]
+    public void GeneratedSqvTabHeaderStatesRemainFlatWithoutLayoutShift()
+    {
+        var component = new VueMain();
+        component.BuildElementTree();
+        ((IComponentLifecycle)component).OnAttached();
+
+        AssertTabHeaderStatesRemainFlatWithoutLayoutShift(component);
+
+        ((IComponentLifecycle)component).OnDetached();
+    }
+
+    private static void AssertTabHeadersOverrideNativeButtonAppearance(UIElement component)
+    {
+        var buttons = GetTabHeaderButtons(component);
+        Assert.All(buttons, button =>
+        {
+            Assert.Equal("none", button.Style.Get("appearance"));
+            Assert.Equal("none", button.Style.Get("border-top-style"));
+            Assert.Equal("none", button.Style.Get("border-right-style"));
+            Assert.Equal("solid", button.Style.Get("border-bottom-style"));
+            Assert.Equal("none", button.Style.Get("border-left-style"));
+        });
+    }
+
+    private static void AssertTabHeaderStatesRemainFlatWithoutLayoutShift(UIElement component)
+    {
+        CssStyleReconciler.Flush();
+        var buttons = GetTabHeaderButtons(component);
+        var layout = new LayoutEngine();
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+        var selected = buttons[0];
+        var resting = buttons[1];
+        var restingBounds = resting.Geometry;
+
+        Assert.Equal("#eef1f4", resting.Style.Get("background"));
+        Assert.Equal("#ffffff", selected.Style.Get("background"));
+        Assert.Equal("#0078d4", selected.Style.Get("border-bottom-color"));
+
+        resting.SetState(ElementState.Hover, true);
+        CssStyleReconciler.Flush();
+        Assert.Equal("#e4e8ed", resting.Style.Get("background"));
+        Assert.Equal(restingBounds, resting.Geometry);
+
+        resting.SetState(ElementState.Hover, false);
+        resting.SetState(ElementState.Active, true);
+        CssStyleReconciler.Flush();
+        Assert.Equal("#d8dee5", resting.Style.Get("background"));
+        Assert.Equal(restingBounds, resting.Geometry);
+
+        resting.SetState(ElementState.Active, false);
+        resting.Focus();
+        CssStyleReconciler.Flush();
+        Assert.Equal("2px solid #005ea6", resting.Style.Get("outline"));
+        Assert.Equal("-2px", resting.Style.Get("outline-offset"));
+        Assert.Equal(restingBounds, resting.Geometry);
+
+        resting.Unfocus();
+        resting.SetState(ElementState.Disabled, true);
+        CssStyleReconciler.Flush();
+        Assert.Equal("#9aa1a9", resting.Style.Get("color"));
+        Assert.Equal(restingBounds, resting.Geometry);
+
+        selected.SetState(ElementState.Hover, true);
+        CssStyleReconciler.Flush();
+        Assert.Equal("#ffffff", selected.Style.Get("background"));
+        Assert.Equal("#005ea6", selected.Style.Get("border-bottom-color"));
+    }
+
+    private static Button[] GetTabHeaderButtons(UIElement component)
+    {
+        var buttons = component.QueryAll<Button>()
+            .Where(button => button.ClassList.Contains("tab-button"))
+            .ToArray();
+        Assert.Equal(8, buttons.Length);
+        return buttons;
+    }
+
+    [Fact]
     public void OverlaySampleIncludesPopupDialogAndContextMenu()
     {
         var page = new OverlaySamplesPage();
@@ -226,7 +335,7 @@ public class M1IntegrationTests
 
         Assert.True(tabPanels.ScrollContentSize.Height > tabPanels.Geometry.Height);
         Assert.True(tabPanels.ScrollBy(0, 120));
-        Assert.True(controlsPage.QueryAll<Button>().All(item => item.Geometry.Height >= 36));
+        Assert.True(controlsPage.QueryAll<Button>().All(item => item.Geometry.Height >= 21));
         ((IComponentLifecycle)component).OnDetached();
     }
 
@@ -1963,7 +2072,10 @@ public class M1IntegrationTests
         Assert.InRange(secondPage.Geometry.Y, 0, 500);
         Assert.Same(secondPage, tabs.QueryAll<View>().Single(view => view == secondPage));
         Assert.Equal(1, tabs.SelectedIndex);
-        Assert.Equal("#ffffff", secondButton.Style.Get("background"));
+        Assert.False(firstButton.ClassList.Contains("selected"));
+        Assert.True(secondButton.ClassList.Contains("selected"));
+        Assert.Equal("", secondButton.Style.GetPropertyValue("background"));
+        Assert.Equal("", secondButton.Style.GetPropertyValue("color"));
 
         firstButton.DispatchEvent(StandardEvents.CreateClick());
         Assert.Same(firstPage, tabs.QueryAll<View>().Single(view => view == firstPage));

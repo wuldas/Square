@@ -1,0 +1,11 @@
+{
+  "appearanceNoneAuthorCss": "appearance: none; box-sizing: border-box; margin: 0; width: 180px; height: 36px; padding: 6px 10px; border: 2px solid #345678; border-radius: 4px; background: #e8eef4; color: #102030; font: 14px Arial;",
+  "controls": [
+    { "kind": "Button", "element": "button", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Active", "Focus", "Disabled"], "autoAuthorCss": "font: 13.3333px Arial;", "text": "Control" },
+    { "kind": "Input", "element": "input", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled", "Value", "Placeholder"], "value": "Value", "placeholder": "Placeholder" },
+    { "kind": "TextArea", "element": "textarea", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled", "Value", "Placeholder"], "value": "Line one\nLine two", "placeholder": "Placeholder" },
+    { "kind": "Select", "element": "select", "appearances": ["Auto", "None"], "states": ["Normal", "Hover", "Focus", "Disabled"], "value": "Value" },
+    { "kind": "CheckBox", "element": "input", "appearances": ["Auto", "None"], "states": ["Unchecked", "Checked", "Hover", "Active", "Focus", "Disabled"] },
+    { "kind": "Radio", "element": "input", "appearances": ["Auto", "None"], "states": ["Unchecked", "Checked", "Hover", "Active", "Focus", "Disabled"] }
+  ]
+}

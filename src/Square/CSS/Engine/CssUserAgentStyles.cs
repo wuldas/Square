@@ -53,6 +53,7 @@ internal static class CssUserAgentStyles
             cursor: text;
             white-space: pre-wrap;
             font-family: monospace;
+            font-size: 13.3333px;
             border: 1px solid #767676;
             background-color: Field;
             padding: 2px;
@@ -61,6 +62,8 @@ internal static class CssUserAgentStyles
             appearance: auto;
             box-sizing: border-box;
             white-space: pre;
+            font-family: Arial;
+            font-size: 13.3333px;
             color: FieldText;
             background-color: Field;
             border: 1px solid #767676;
@@ -91,6 +94,12 @@ internal static class CssUserAgentStyles
             appearance: auto;
             box-sizing: border-box;
             cursor: default;
+        }
+        CheckBox {
+            margin: 3px 3px 3px 4px;
+        }
+        Radio {
+            margin: 3px 3px 0 5px;
         }
         CheckBox:disabled, Radio:disabled {
             color: GrayText;

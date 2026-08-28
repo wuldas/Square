@@ -56,7 +56,11 @@ public class Button : UIElement, ITextSelectable
     public override Size Measure(Size availableSize)
     {
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        return new Size(textSize.Width + 32, Math.Max(36, textSize.Height + 12));
+        if (Style.Get("appearance") == null)
+            return new Size(textSize.Width + 32, Math.Max(36, textSize.Height + 12));
+        return ControlDrawing.UsesWidgetAppearance(this)
+            ? new Size(MathF.Round(ControlDrawing.MeasureFontFileTextWidth(this, TextContent, 14f)), 15)
+            : textSize;
     }
 
     /// <inheritdoc/>
@@ -66,12 +70,11 @@ public class Button : UIElement, ITextSelectable
             this,
             "color",
             IsEnabled ? Color.Black : Color.FromRgb(235, 235, 235));
-        var active = IsEnabled && HasState(ElementState.Active);
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        var pressOffset = active && ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;
+        var widgetOffset = ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;
         var textPosition = new Point(
             Geometry.X + (Geometry.Width - textSize.Width) / 2f,
-            Geometry.Y + (Geometry.Height - textSize.Height) / 2f + pressOffset);
+            Geometry.Y + (Geometry.Height - textSize.Height) / 2f + widgetOffset);
         ControlDrawing.DrawText(
             ctx,
             this,
@@ -130,6 +133,8 @@ public class CheckBox : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
     {
+        if (ControlDrawing.UsesWidgetAppearance(this) && string.IsNullOrEmpty(TextContent))
+            return new Size(13, 13);
         var text = ControlDrawing.MeasureText(this, TextContent, 14f);
         return new Size(26 + text.Width, Math.Max(24, text.Height));
     }
@@ -139,20 +144,30 @@ public class CheckBox : UIElement, ITextSelectable
     {
         if (ControlDrawing.UsesWidgetAppearance(this))
         {
-            var box = new Rect(Geometry.X, Geometry.Y + (Geometry.Height - 18) / 2f, 18, 18);
-            ctx.FillRect(box, new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-            ctx.DrawRect(box, Pen.FromColor(IsEnabled ? Color.FromRgb(118, 118, 118) : Color.FromRgba(118, 118, 118, 153)));
+            var box = new Rect(
+                MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
+                MathF.Round(Geometry.Y, MidpointRounding.AwayFromZero),
+                13,
+                13);
             if (IsChecked)
             {
-                var fill = Color.TryParse("Highlight", out var highlight) ? highlight : Color.FromRgb(0, 120, 215);
-                if (!IsEnabled)
-                    fill = Color.FromRgba(fill.R, fill.G, fill.B, 153);
-                ctx.FillRect(box.Inflate(-2, -2), new SolidColorBrush(fill));
+                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(Color.FromRgb(0, 92, 200)));
                 ctx.DrawPath(PathGeometry.Create()
-                    .MoveTo(new Point(box.X + 4, box.Y + 9))
-                    .LineTo(new Point(box.X + 8, box.Y + 13))
-                    .LineTo(new Point(box.X + 15, box.Y + 5)),
-                    Pen.FromColor(Color.White, 2));
+                    .MoveTo(new Point(box.X + 2.5f, box.Y + 6))
+                    .LineTo(new Point(box.X + 5, box.Y + 8.5f))
+                    .LineTo(new Point(box.X + 10.5f, box.Y + 3)),
+                    Pen.FromColor(Color.White, 1.5f));
+            }
+            else
+            {
+                var border = !IsEnabled
+                    ? Color.FromRgb(209, 209, 209)
+                    : HasState(ElementState.Active)
+                        ? Color.FromRgb(141, 141, 141)
+                        : Color.FromRgb(79, 79, 79);
+                var fill = IsEnabled ? Color.White : Color.FromRgb(248, 248, 248);
+                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(border));
+                ctx.FillGeometry(new RoundedRectGeometry(box.Inflate(-1, -1), 1, 1), new SolidColorBrush(fill));
             }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,
@@ -202,6 +217,8 @@ public class Radio : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
     {
+        if (ControlDrawing.UsesWidgetAppearance(this) && string.IsNullOrEmpty(TextContent))
+            return new Size(13, 13);
         var text = ControlDrawing.MeasureText(this, TextContent, 14f);
         return new Size(26 + text.Width, Math.Max(24, text.Height));
     }
@@ -211,15 +228,29 @@ public class Radio : UIElement, ITextSelectable
     {
         if (ControlDrawing.UsesWidgetAppearance(this))
         {
-            var center = new Point(Geometry.X + 9, Geometry.Y + Geometry.Height / 2f);
-            ctx.FillGeometry(new EllipseGeometry(center, 9, 9), new SolidColorBrush(IsEnabled ? Color.White : Color.FromRgb(235, 235, 235)));
-            ctx.DrawGeometry(new EllipseGeometry(center, 9, 9), Pen.FromColor(IsEnabled ? Color.FromRgb(118, 118, 118) : Color.FromRgba(118, 118, 118, 153)));
+            var box = new Rect(
+                MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
+                MathF.Round(Geometry.Y, MidpointRounding.AwayFromZero),
+                13,
+                13);
+            var center = new Point(box.X + 6.5f, box.Y + 6.5f);
+            var border = IsChecked
+                ? Color.FromRgb(0, 117, 255)
+                : !IsEnabled
+                    ? Color.FromRgb(209, 209, 209)
+                    : HasState(ElementState.Active)
+                        ? Color.FromRgb(141, 141, 141)
+                        : Color.FromRgb(118, 118, 118);
+            var fill = IsEnabled ? Color.White : Color.FromRgb(248, 248, 248);
+            ctx.FillGeometry(new EllipseGeometry(center, 6.5f, 6.5f), new SolidColorBrush(border));
             if (IsChecked)
             {
-                var fill = Color.TryParse("Highlight", out var highlight) ? highlight : Color.FromRgb(0, 120, 215);
-                if (!IsEnabled)
-                    fill = Color.FromRgba(fill.R, fill.G, fill.B, 153);
-                ctx.FillGeometry(new EllipseGeometry(center, 5, 5), new SolidColorBrush(fill));
+                ctx.FillGeometry(new EllipseGeometry(center, 5.5f, 5.5f), new SolidColorBrush(fill));
+                ctx.FillGeometry(new EllipseGeometry(center, 3.5f, 3.5f), new SolidColorBrush(border));
+            }
+            else
+            {
+                ctx.FillGeometry(new EllipseGeometry(center, 5.5f, 5.5f), new SolidColorBrush(fill));
             }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,

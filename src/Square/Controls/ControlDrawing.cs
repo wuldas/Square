@@ -2,6 +2,7 @@ using System.Globalization;
 using Square.CSS.Properties;
 using System.Text;
 using Square.Graphics;
+using Square.Text.Glyph;
 using Square.UI;
 using FontManager = global::Square.Text.FontManager;
 
@@ -25,6 +26,9 @@ internal sealed class DomTextContent
 
 internal static class ControlDrawing
 {
+    private static readonly StbGlyphRasterizer FontFileRasterizer = new();
+    private static readonly object FontFileRasterizerSync = new();
+
     /// <summary>从元素 CSS 字体相关属性解析 <see cref="Font"/>（font-family/size/weight/style）。</summary>
     internal static Font ResolveFont(Element element, float defaultSize)
     {
@@ -64,6 +68,22 @@ internal static class ControlDrawing
         var lineHeight = GetStyledLineHeight(element, font.Size);
         layout.LineHeight = lineHeight / font.Size;
         return layout.Measure();
+    }
+
+    internal static float MeasureFontFileTextWidth(Element element, string text, float defaultSize)
+    {
+        var font = ResolveFont(element, defaultSize);
+        var width = 0f;
+        lock (FontFileRasterizerSync)
+        {
+            foreach (var rune in text.EnumerateRunes())
+            {
+                if (!rune.IsBmp || FontFileRasterizer.Rasterize(font, (char)rune.Value) is not { } glyph)
+                    return MeasureText(element, text, defaultSize).Width;
+                width += glyph.AdvanceX;
+            }
+        }
+        return width;
     }
 
     internal static Rect GetTextBounds(Element element, string text, float defaultSize, Point origin)

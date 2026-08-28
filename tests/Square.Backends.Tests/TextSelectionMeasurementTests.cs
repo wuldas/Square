@@ -87,9 +87,11 @@ public class TextSelectionMeasurementTests
 
         var rightmostBackground = -1;
         var rightmostForeground = -1;
-        for (var y = 0; y < bitmap.Height; y++)
+        var chromeInset = (int)MathF.Ceiling(4 * 1.5f);
+        for (var y = chromeInset; y < bitmap.Height - chromeInset; y++)
         {
-            for (var x = 0; x < bitmap.Width; x++)
+            // Exclude the control's focus border; this assertion concerns text ink.
+            for (var x = chromeInset; x < bitmap.Width - chromeInset; x++)
             {
                 var index = y * bitmap.Stride + x * 4;
                 var b = bitmap.Pixels[index];
@@ -101,7 +103,8 @@ public class TextSelectionMeasurementTests
         }
 
         Assert.True(rightmostBackground >= 0);
-        Assert.True(rightmostForeground <= rightmostBackground);
+        Assert.True(rightmostForeground <= rightmostBackground,
+            $"Foreground reached x={rightmostForeground}, selection background reached x={rightmostBackground}.");
     }
 
     [Fact]

@@ -6,6 +6,7 @@ using Square.Controls;
 using Square.Extensions.RichText;
 using Square.Graphics;
 using Square.Graphics.Svg;
+using Square.Hosting;
 using Square.UI.Svg;
 using Square.Rendering;
 using Square.Text.Glyph;
@@ -766,15 +767,17 @@ public class SoftwareRendererTests
         Render(button, activeContext);
         var active = activeContext.GetBitmap().GetPixel(8, 8);
 
-        Assert.Equal(normal[0], hover[0]);
-        Assert.Equal(normal[1], hover[1]);
-        Assert.Equal(normal[2], hover[2]);
-        Assert.Equal(normal[3], hover[3]);
-        Assert.True(interiorIsButtonFace(active),
-            "button:active keeps ButtonFace fill; Chrome UA only changes border-style to inset");
+        AssertPixel(normal, 239);
+        AssertPixel(hover, 229);
+        AssertPixel(active, 245);
 
-        static bool interiorIsButtonFace(ReadOnlySpan<byte> pixel) =>
-            pixel[2] > 200 && pixel[1] > 200 && pixel[0] > 200 && pixel[3] == 255;
+        static void AssertPixel(ReadOnlySpan<byte> pixel, byte expected)
+        {
+            Assert.Equal(expected, pixel[0]);
+            Assert.Equal(expected, pixel[1]);
+            Assert.Equal(expected, pixel[2]);
+            Assert.Equal(255, pixel[3]);
+        }
     }
 
     [Fact]
@@ -991,6 +994,130 @@ public class SoftwareRendererTests
         var backdrop = bitmap.GetPixel(5, 5);
         Assert.True(backdrop[0] < 200 && backdrop[1] < 200 && backdrop[2] < 200);
         Assert.Equal(255, bitmap.GetPixel(60, 50)[2]);
+    }
+
+    [Fact]
+    public void DialogDescendantsRenderComputedAutoAndAuthorNoneChrome()
+    {
+        var window = new AppWindow("Dialog chrome", 240, 160);
+        var document = Assert.IsType<UIDocument>(window.Document);
+        document.Ui.Geometry = new Rect(0, 0, 240, 160);
+        document.Body.Geometry = document.Ui.Geometry;
+        var dialog = new Dialog { Geometry = new Rect(0, 0, 180, 120) };
+        dialog.Style.Set("background", "#010203");
+        var autoInput = new Input { Geometry = new Rect(10, 12, 70, 24) };
+        var autoButton = new Button("Auto") { Geometry = new Rect(90, 12, 70, 24) };
+        var authorInput = new Input { Geometry = new Rect(10, 52, 70, 24) };
+        var authorButton = new Button("None") { Geometry = new Rect(90, 52, 70, 24) };
+        authorInput.SetProperty("class", "author-none");
+        authorButton.SetProperty("class", "author-none");
+        dialog.Children.Add(autoInput);
+        dialog.Children.Add(autoButton);
+        dialog.Children.Add(authorInput);
+        dialog.Children.Add(authorButton);
+        window.Load(dialog);
+        window.LoadGlobalCssText("""
+            .author-none {
+                appearance: none;
+                background: #123456;
+                border: 2px solid #abcdef;
+            }
+            """);
+        var registerScope = typeof(AppWindow).GetMethod(
+            "RegisterGlobalCssScope",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(registerScope);
+        registerScope!.Invoke(window, [document.Ui]);
+        document.Build();
+        CssStyleReconciler.ReapplyScopesToTree(document.Ui);
+
+        Assert.Equal("auto", autoInput.Style.Get("appearance"));
+        Assert.Equal("Field", autoInput.Style.Get("background-color"));
+        Assert.Equal("inset", autoInput.Style.Get("border-top-style"));
+        Assert.Equal("#767676", autoInput.Style.Get("border-top-color"));
+        Assert.Equal("auto", autoButton.Style.Get("appearance"));
+        Assert.Equal("ButtonFace", autoButton.Style.Get("background-color"));
+        Assert.Equal("ButtonBorder", autoButton.Style.Get("border-top-color"));
+        Assert.Equal("none", authorInput.Style.Get("appearance"));
+        Assert.Equal("#123456", authorInput.Style.Get("background"));
+        Assert.Equal("#abcdef", authorInput.Style.Get("border-top-color"));
+        Assert.Equal("none", authorButton.Style.Get("appearance"));
+
+        dialog.Open();
+        using var context = CreateContext(240, 160);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(document.Ui);
+        tree.Render(context);
+
+        var popupOffset = new Point(
+            (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
+            (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset);
+        AssertControlChrome(context.GetBitmap(), autoInput.Geometry, popupOffset, Color.White, expectAuthorBorder: false);
+        AssertControlChrome(context.GetBitmap(), autoButton.Geometry, popupOffset, Color.FromRgb(239, 239, 239), expectAuthorBorder: false);
+        AssertControlChrome(context.GetBitmap(), authorInput.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
+        AssertControlChrome(context.GetBitmap(), authorButton.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
+        CssStyleReconciler.UnregisterScopesForTree(document.Ui);
+    }
+
+    [Theory]
+    [InlineData("button-hover")]
+    [InlineData("button-active")]
+    [InlineData("button-focus")]
+    [InlineData("button-disabled")]
+    [InlineData("input-focus")]
+    [InlineData("input-disabled")]
+    public void DialogControlStateDirtyRenderMatchesFullFrame(string state)
+    {
+        var document = new UIDocument();
+        document.Ui.Geometry = new Rect(0, 0, 260, 170);
+        document.Body.Geometry = document.Ui.Geometry;
+        var dialog = new Dialog { Geometry = new Rect(0, 0, 190, 110) };
+        dialog.Style.Set("background", "#010203");
+        var button = new Button("State") { Geometry = new Rect(15, 15, 70, 28) };
+        var input = new Input { Geometry = new Rect(100, 15, 70, 28), Value = "Input" };
+        dialog.Children.Add(button);
+        dialog.Children.Add(input);
+        document.Body.Children.Add(dialog);
+        var engine = new CssEngine();
+        engine.ApplyStylesToTree(document.Ui);
+        dialog.Open();
+        button.Unfocus();
+        input.Unfocus();
+
+        using var context = CreateContext(260, 170);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(document.Ui);
+        tree.Render(context);
+
+        switch (state)
+        {
+            case "button-hover": button.SetState(ElementState.Hover, true); break;
+            case "button-active": button.SetState(ElementState.Active, true); break;
+            case "button-focus": button.Focus(); break;
+            case "button-disabled": button.IsDisabled = true; break;
+            case "input-focus": input.Focus(); break;
+            case "input-disabled": input.IsDisabled = true; break;
+        }
+        engine.ApplyStylesToTree(document.Ui);
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+        Assert.NotEmpty(dirty);
+        var union = UnionAll(dirty);
+        context.Clear(Color.White, union);
+        tree.Render(context, union);
+
+        using var expected = CreateContext(260, 170);
+        expected.Clear(Color.White);
+        tree.Render(expected);
+        AssertBitmapEqual(expected.GetBitmap(), context.GetBitmap());
+
+        var popupOffset = new Point(
+            (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
+            (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset);
+        AssertControlEdges(context.GetBitmap(), button.Geometry, popupOffset, expectAuthorBorder: false);
+        AssertControlEdges(context.GetBitmap(), input.Geometry, popupOffset, expectAuthorBorder: false);
     }
 
     [Fact]
@@ -1515,7 +1642,7 @@ public class SoftwareRendererTests
 
         tree.Render(context);
 
-        Assert.True(ContainsBgra(context.GetBitmap(), 215, 120, 0, 255));
+        Assert.True(ContainsBgra(context.GetBitmap(), 255, 117, 0, 255));
     }
 
     [Fact]
@@ -1727,6 +1854,58 @@ public class SoftwareRendererTests
         var pixel = bitmap.GetPixel(x, y);
         Assert.True(pixel[0] < 220 && pixel[1] < 220 && pixel[2] < 220,
             $"Expected border at ({x},{y}), got BGR=({pixel[0]},{pixel[1]},{pixel[2]})");
+    }
+
+    private static void AssertControlChrome(
+        Bitmap bitmap,
+        Rect geometry,
+        Point popupOffset,
+        Color expectedBackground,
+        bool expectAuthorBorder)
+    {
+        AssertControlEdges(bitmap, geometry, popupOffset, expectAuthorBorder);
+        var right = (int)(popupOffset.X + geometry.Right) - 1;
+        var top = (int)(popupOffset.Y + geometry.Y);
+        AssertPixel(bitmap, right - 8, top + 8, expectedBackground);
+    }
+
+    private static void AssertControlEdges(Bitmap bitmap, Rect geometry, Point popupOffset, bool expectAuthorBorder)
+    {
+        var left = (int)(popupOffset.X + geometry.X);
+        var top = (int)(popupOffset.Y + geometry.Y);
+        var right = (int)(popupOffset.X + geometry.Right) - 1;
+        var bottom = (int)(popupOffset.Y + geometry.Bottom) - 1;
+        var middleX = (left + right) / 2;
+        var middleY = (top + bottom) / 2;
+        var edges = new[]
+        {
+            Enumerable.Range(top, 4).Select(y => (middleX, y)),
+            Enumerable.Range(right - 3, 4).Select(x => (x, middleY)),
+            Enumerable.Range(bottom - 3, 4).Select(y => (middleX, y)),
+            Enumerable.Range(left, 4).Select(x => (x, middleY))
+        };
+        foreach (var edge in edges)
+            AssertBorderEdge(bitmap, edge, expectAuthorBorder);
+    }
+
+    private static void AssertBorderEdge(Bitmap bitmap, IEnumerable<(int X, int Y)> edge, bool expectAuthorBorder)
+    {
+        var samples = edge.Select(point => (point, Pixel: bitmap.GetPixel(point.X, point.Y).ToArray())).ToArray();
+        var found = expectAuthorBorder
+            ? samples.Any(sample => sample.Pixel[0] == 0xef && sample.Pixel[1] == 0xcd && sample.Pixel[2] == 0xab)
+            : samples.Any(sample => sample.Pixel[0] < 220 && sample.Pixel[1] < 220 && sample.Pixel[2] < 220);
+        Assert.True(found,
+            $"Expected border in [{string.Join(", ", samples.Select(sample => $"({sample.point.X},{sample.point.Y})=" +
+                $"{sample.Pixel[0]}/{sample.Pixel[1]}/{sample.Pixel[2]}"))}].");
+    }
+
+    private static void AssertPixel(Bitmap bitmap, int x, int y, Color expected)
+    {
+        var pixel = bitmap.GetPixel(x, y);
+        Assert.True(
+            pixel[0] == expected.B && pixel[1] == expected.G && pixel[2] == expected.R && pixel[3] == expected.A,
+            $"Expected BGRA=({expected.B},{expected.G},{expected.R},{expected.A}) at ({x},{y}), " +
+            $"got ({pixel[0]},{pixel[1]},{pixel[2]},{pixel[3]}).");
     }
 
     private static Rect UnionAll(IReadOnlyList<Rect> rects)

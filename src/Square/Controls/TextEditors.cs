@@ -794,6 +794,11 @@ public class Input : TextEditorBase
     /// <inheritdoc/>
     protected override bool IsMultiline => false;
 
+    /// <inheritdoc/>
+    protected override float TextPaddingX =>
+        ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
+        ControlDrawing.GetStyledFloat(this, "padding-left", 8);
+
     /// <summary>输入类型。</summary>
     public string Type
     {
@@ -827,7 +832,8 @@ public class Input : TextEditorBase
     }
 
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) => new(200, 36);
+    public override Size Measure(Size availableSize) =>
+        ControlDrawing.UsesWidgetAppearance(this) ? new Size(169, 15) : new Size(200, 36);
 
     private string FilterNumberInput(string text)
     {
@@ -875,5 +881,14 @@ public class TextArea : TextEditorBase
     /// <inheritdoc/>
     protected override bool IsMultiline => true;
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) => new(300, 88);
+    protected override float TextPaddingX =>
+        ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
+        ControlDrawing.GetStyledFloat(this, "padding-left", 8);
+    /// <inheritdoc/>
+    protected override float TextPaddingY =>
+        ControlDrawing.GetStyledFloat(this, "border-top-width", 0) +
+        ControlDrawing.GetStyledFloat(this, "padding-top", 8);
+    /// <inheritdoc/>
+    public override Size Measure(Size availableSize) =>
+        ControlDrawing.UsesWidgetAppearance(this) ? new Size(155, 30) : new Size(300, 88);
 }
