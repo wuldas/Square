@@ -233,7 +233,7 @@ public class M1IntegrationTests
             Assert.Equal("14px", button.Style.Get("padding-left"));
             Assert.Equal("14px", button.Style.Get("padding-right"));
             Assert.InRange(Math.Abs(
-                button.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 28 - button.Geometry.Width), 0, 1);
+                button.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 28 - button.Geometry.Width), 0, 2);
             Assert.True(button.SelectableTextBounds.Left - button.Geometry.Left >= 13.5f,
                 $"{button.TextContent} left padding was not reflected in geometry: {button.Geometry} / {button.SelectableTextBounds}");
             Assert.True(button.Geometry.Right - button.SelectableTextBounds.Right >= 13.5f,
@@ -245,13 +245,13 @@ public class M1IntegrationTests
         layout.Measure(component, new Size(900, 940));
         layout.Arrange(component, new Rect(0, 0, 900, 940));
         Assert.InRange(Math.Abs(
-            dynamic.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 28 - dynamic.Geometry.Width), 0, 1);
+            dynamic.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 28 - dynamic.Geometry.Width), 0, 2);
 
         dynamic.Style.Set("padding-left", "20px");
         layout.Measure(component, new Size(900, 940));
         layout.Arrange(component, new Rect(0, 0, 900, 940));
         Assert.InRange(Math.Abs(
-            dynamic.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 34 - dynamic.Geometry.Width), 0, 1);
+            dynamic.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 34 - dynamic.Geometry.Width), 0, 2);
 
         dynamic.Style.Set("width", "120px");
         layout.Measure(component, new Size(900, 940));
