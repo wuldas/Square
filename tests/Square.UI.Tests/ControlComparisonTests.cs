@@ -2157,6 +2157,7 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    [Trait("Category", "ChromiumIntegration")]
     public async Task ChromiumFocusCaptureIsIndependentOfPriorHoverCase()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-browser-state-" + Guid.NewGuid());
