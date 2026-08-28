@@ -438,6 +438,61 @@ public class DocumentTests
     }
 
     [Fact]
+    public void DesktopApplicationBlurRefocusKeepsOnlyOldTargetFocused()
+    {
+        var window = new AppWindow("Focus");
+        var root = new View();
+        var oldInput = new Input();
+        var newInput = new Input();
+        root.Children.Add(oldInput);
+        root.Children.Add(newInput);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        SetPrivateField<UIElement>(application, "_focusedInput", oldInput);
+        SetPrivateField<ITextEditor>(application, "_focusedEditor", oldInput);
+        oldInput.Focus();
+        oldInput.AddEventListener("blur", oldInput.Focus);
+        var updateFocus = typeof(DesktopApplication).GetMethod(
+            "UpdateFocus", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(updateFocus);
+
+        updateFocus!.Invoke(application, [newInput, new Square.Graphics.Point(0, 0), false]);
+
+        Assert.True(oldInput.IsFocused);
+        Assert.False(newInput.IsFocused);
+        Assert.Same(oldInput, GetPrivateField<UIElement>(application, "_focusedInput"));
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
+    public void DesktopApplicationReattemptsFocusAfterTargetUnfocusesInFocusHandler()
+    {
+        var window = new AppWindow("Focus");
+        var input = new Input();
+        window.Load(input);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        var focusCalls = 0;
+        input.AddEventListener("focus", () =>
+        {
+            focusCalls++;
+            input.Unfocus();
+        });
+        var updateFocus = typeof(DesktopApplication).GetMethod(
+            "UpdateFocus", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(updateFocus);
+
+        updateFocus!.Invoke(application, [input, new Square.Graphics.Point(0, 0), false]);
+        updateFocus.Invoke(application, [input, new Square.Graphics.Point(0, 0), false]);
+
+        Assert.False(input.IsFocused);
+        Assert.Equal(2, focusCalls);
+        Assert.Null(GetPrivateField<UIElement>(application, "_focusedInput"));
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
     public void BodyHostsApplicationContent()
     {
         var doc = new UIDocument();

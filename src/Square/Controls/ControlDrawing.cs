@@ -26,6 +26,9 @@ internal sealed class DomTextContent
 
 internal static class ControlDrawing
 {
+    internal const float ButtonOpticalCenterYOffset = 1f;
+    internal const float SelectOpticalCenterYOffset = 1f;
+
     private static readonly StbGlyphRasterizer FontFileRasterizer = new();
     private static readonly object FontFileRasterizerSync = new();
 
@@ -93,6 +96,52 @@ internal static class ControlDrawing
         return new Rect(origin.X, origin.Y, size.Width, size.Height);
     }
 
+    internal static Rect MeasureTextInkBounds(Element element, string text, float defaultSize, Size maxSize)
+    {
+        if (string.IsNullOrEmpty(text)) return Rect.Empty;
+        var font = ResolveFont(element, defaultSize);
+        var lineHeight = GetStyledLineHeight(element, font.Size);
+        var layout = new TextLayout(text, font)
+        {
+            MaxSize = maxSize,
+            Alignment = ResolveTextAlignment(element),
+            Direction = ResolveTextDirection(element),
+            UnicodeBidi = ResolveUnicodeBidi(element),
+            WhiteSpace = ResolveWhiteSpace(element),
+            LetterSpacing = ResolveTextLength(element, "letter-spacing", font.Size),
+            WordSpacing = ResolveTextLength(element, "word-spacing", font.Size),
+            TextTransform = ResolveTextTransform(element),
+            TextIndent = ResolveTextLength(element, "text-indent", font.Size),
+            TextDecorationLines = ResolveTextDecorationLines(element),
+            LineHeight = lineHeight / font.Size
+        };
+        var result = Rect.Empty;
+        var hasInk = false;
+        var lines = layout.GetVisualLines();
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+        {
+            var x = layout.GetLineOriginX(0, lineIndex, lines[lineIndex].Width);
+            var lineTop = lineIndex * lineHeight;
+            foreach (var visualRune in lines[lineIndex].Runes)
+            {
+                var ink = TextMetrics.GetGlyphBoundsInLine(font, visualRune.Glyph, lineHeight).Offset(x, lineTop);
+                if (!ink.IsEmpty)
+                {
+                    result = hasInk ? Rect.Union(result, ink) : ink;
+                    hasInk = true;
+                }
+                x += visualRune.Advance;
+            }
+        }
+        foreach (var decoration in layout.GetDecorationRects(Point.Zero))
+        {
+            if (decoration.IsEmpty) continue;
+            result = hasInk ? Rect.Union(result, decoration) : decoration;
+            hasInk = true;
+        }
+        return hasInk ? result : Rect.Empty;
+    }
+
     internal static float MeasureRenderedTextWidth(string text, Font font, float letterSpacing = 0, float wordSpacing = 0)
     {
         if (string.IsNullOrEmpty(text)) return 0;
@@ -152,14 +201,19 @@ internal static class ControlDrawing
         context.DrawText(layout, position, new SolidColorBrush(color));
     }
 
-    private static TextAlignment ResolveTextAlignment(Element element)
-        => (element.Style.Get("text-align") ?? "").Trim().ToLowerInvariant() switch
+    internal static TextAlignment ResolveTextAlignment(Element element)
+    {
+        var isRtl = ResolveTextDirection(element) == BidiDirection.Rtl;
+        return (element.Style.Get("text-align") ?? "").Trim().ToLowerInvariant() switch
         {
             "center" => TextAlignment.Center,
             "right" => TextAlignment.Right,
             "justify" => TextAlignment.Justify,
+            "start" => isRtl ? TextAlignment.Right : TextAlignment.Left,
+            "end" => isRtl ? TextAlignment.Left : TextAlignment.Right,
             _ => TextAlignment.Left
         };
+    }
 
     internal static BidiDirection ResolveTextDirection(Element element) =>
         string.Equals(element.Style.Get("direction")?.Trim(), "rtl", StringComparison.OrdinalIgnoreCase)

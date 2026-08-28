@@ -166,6 +166,216 @@ public class EventModelTests
     }
 
     [Fact]
+    public void ListenActionDisposalNormalizesWhitespace()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler() => calls++;
+
+        var subscription = target.Listen(" click ", Handler);
+        subscription.Dispose();
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(0, calls);
+        Assert.Empty(target.RegisteredEventTypes);
+    }
+
+    [Fact]
+    public void ListenTypedDisposalNormalizesWhitespace()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler(KeyboardEvent _) => calls++;
+
+        var subscription = target.Listen<KeyboardEvent>(" keydown ", Handler);
+        subscription.Dispose();
+        target.DispatchEvent(StandardEvents.CreateKeyDown(13));
+
+        Assert.Equal(0, calls);
+        Assert.Empty(target.RegisteredEventTypes);
+    }
+
+    [Fact]
+    public void GenericEventListenDisposesItsAdapterRegistration()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler(Event _) => calls++;
+
+        var subscription = target.Listen<Event>("click", Handler);
+        subscription.Dispose();
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(0, calls);
+        Assert.Empty(target.RegisteredEventTypes);
+    }
+
+    [Fact]
+    public void OnceActionCanBeRegisteredAgainAfterAutomaticRemoval()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler() => calls++;
+
+        target.AddEventListener("click", Handler, new AddEventListenerOptions { Once = true });
+        target.DispatchEvent(StandardEvents.CreateClick());
+        target.AddEventListener("click", Handler);
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void SignaledActionCanBeRegisteredAgainAfterAutomaticRemoval()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler() => calls++;
+        using var cancellation = new CancellationTokenSource();
+
+        target.AddEventListener("click", Handler,
+            new AddEventListenerOptions { Signal = cancellation.Token });
+        cancellation.Cancel();
+        target.AddEventListener("click", Handler);
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void OnceListenerIsRemovedBeforeReentrantDispatch()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        target.AddEventListener("click", _ =>
+        {
+            calls++;
+            target.DispatchEvent(StandardEvents.CreateClick());
+        }, new AddEventListenerOptions { Once = true });
+
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void OnceActionCanReregisterInsideItsCallback()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler()
+        {
+            calls++;
+            if (calls == 1) target.AddEventListener("click", Handler);
+        }
+        target.AddEventListener("click", Handler, new AddEventListenerOptions { Once = true });
+
+        target.DispatchEvent(StandardEvents.CreateClick());
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void ThrowingOnceListenerRemainsRemoved()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        target.AddEventListener("click", _ =>
+        {
+            calls++;
+            throw new InvalidOperationException("boom");
+        }, new AddEventListenerOptions { Once = true });
+
+        Assert.Throws<InvalidOperationException>(() => target.DispatchEvent(StandardEvents.CreateClick()));
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void StaleListenSubscriptionDoesNotRemoveLaterRegistration()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler(Event _) => calls++;
+        var stale = target.Listen("click", Handler, new AddEventListenerOptions { Once = true });
+        target.DispatchEvent(StandardEvents.CreateClick());
+        target.AddEventListener("click", Handler);
+
+        stale.Dispose();
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void PreCancelledListenSubscriptionDoesNotRemoveLaterRegistration()
+    {
+        var target = new TestNode();
+        var calls = 0;
+        void Handler() => calls++;
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var stale = target.Listen("click", Handler,
+            new AddEventListenerOptions { Signal = cancellation.Token });
+        target.AddEventListener("click", Handler);
+
+        stale.Dispose();
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void PreCancelledDuplicateListenDoesNotOwnExistingRegistration()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var options = new AddEventListenerOptions { Signal = cancellation.Token };
+
+        var directTarget = new TestNode();
+        var directCalls = 0;
+        Action<Event> direct = _ => directCalls++;
+        directTarget.AddEventListener("click", direct);
+        directTarget.Listen(" CLICK ", direct, options).Dispose();
+        directTarget.DispatchEvent(StandardEvents.CreateClick());
+
+        var actionTarget = new TestNode();
+        var actionCalls = 0;
+        void ActionHandler() => actionCalls++;
+        actionTarget.AddEventListener("click", ActionHandler);
+        actionTarget.Listen(" click ", ActionHandler, options).Dispose();
+        actionTarget.DispatchEvent(StandardEvents.CreateClick());
+
+        var typedTarget = new TestNode();
+        var typedCalls = 0;
+        void TypedHandler(KeyboardEvent _) => typedCalls++;
+        typedTarget.AddEventListener<KeyboardEvent>("keydown", TypedHandler);
+        typedTarget.Listen<KeyboardEvent>(" KEYDOWN ", TypedHandler, options).Dispose();
+        typedTarget.DispatchEvent(StandardEvents.CreateKeyDown(13));
+
+        Assert.Equal(1, directCalls);
+        Assert.Equal(1, actionCalls);
+        Assert.Equal(1, typedCalls);
+    }
+
+    [Fact]
+    public void ValueEqualEventListenerObjectsRegisterIndependently()
+    {
+        var target = new TestNode();
+        var first = new ValueEqualListener();
+        var second = new ValueEqualListener();
+
+        target.AddEventListener("click", first);
+        target.AddEventListener("click", second);
+        target.DispatchEvent(StandardEvents.CreateClick());
+
+        Assert.Equal(1, first.Calls);
+        Assert.Equal(1, second.Calls);
+    }
+
+    [Fact]
     public void StandardEventsCreateUsesDefaultInit()
     {
         var click = StandardEvents.CreateClick();
@@ -208,5 +418,13 @@ public class EventModelTests
     {
         public TestNode? Parent { get; set; }
         protected override EventTarget? GetEventParent() => Parent;
+    }
+
+    private sealed class ValueEqualListener : IEventListener
+    {
+        public int Calls { get; private set; }
+        public void HandleEvent(Event e) => Calls++;
+        public override bool Equals(object? obj) => obj is ValueEqualListener;
+        public override int GetHashCode() => 1;
     }
 }

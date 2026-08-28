@@ -134,13 +134,14 @@
     return Paths.Length == pairCount ? NormalizePath(Paths[selected]) : "/tabs/" + selected;
   }
 
+
   private static string NormalizePath(string path) =>
     string.IsNullOrWhiteSpace(path) ? "/" : path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
 </script>
 <style>
   .tabs { display: flex; flex-direction: column; gap: 0; padding: 0; height: 850px; }
   .tab-list { display: flex; flex-direction: row; gap: 2px; padding: 0; height: 42px; background: #eef1f4; }
-  .tab-button { appearance: none; box-sizing: border-box; height: 42px; padding: 0 14px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: #eef1f4; color: #454b52; }
+  .tab-button { appearance: none; box-sizing: border-box; width: auto; height: 42px; padding: 0 14px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: #eef1f4; color: #454b52; }
   .tab-button:hover { background: #e4e8ed; color: #24313d; }
   .tab-button:active { background: #d8dee5; color: #17212b; }
   .tab-button.selected { background: #ffffff; color: #005ea6; border-bottom-color: #0078d4; }

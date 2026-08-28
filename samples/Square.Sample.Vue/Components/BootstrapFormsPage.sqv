@@ -27,7 +27,7 @@
           <CheckBox ref="RememberCheck" text="Remember me" :checked="RememberMe" @change="OnRememberChanged" />
         </View>
 
-        <Button class="btn-primary" @click="OnLogin">Sign in</Button>
+        <Button class="btn btn-primary" @click="OnLogin">Sign in</Button>
         <Text class="login-status" :text="LoginStatus" />
       </View>
 
@@ -58,7 +58,7 @@
           <Select ref="PlanSelect" class="form-select" :value="Plan" :options="PlanOptions" @change="OnPlanChanged" />
         </View>
 
-        <Button class="btn-secondary" @click="OnSave">Save changes</Button>
+        <Button class="btn btn-secondary" @click="OnSave">Save changes</Button>
         <Text class="form-summary" :text="Summary" />
       </View>
     </View>
@@ -133,11 +133,12 @@
   .form-column { display: flex; flex-direction: column; gap: 6px; flex-grow: 1; flex-basis: 0; min-width: 0; }
   .form-label { color: #212529; font-size: 14px; }
   .form-control { min-width: 0; height: 38px; color: #212529; line-height: 20px; border-radius: 6px; }
-  .form-select { min-width: 0; height: 38px; color: #212529; border-radius: 6px; }
+  .form-select { min-width: 0; height: 38px; color: #212529; line-height: 24px; padding: 6px 36px 6px 12px; border-radius: 6px; }
   .form-text { color: #6c757d; font-size: 12px; }
   .form-check-row { height: 28px; }
-  .btn-primary { background: #0d6efd; color: #ffffff; border-radius: 6px; }
-  .btn-secondary { background: #6c757d; color: #ffffff; border-radius: 6px; }
+  .btn { font-size: 16px; line-height: 24px; padding: 6px 12px; border: 1px solid transparent; border-radius: 6px; }
+  .btn-primary { background: #0d6efd; color: #ffffff; border-color: #0d6efd; }
+  .btn-secondary { background: #6c757d; color: #ffffff; border-color: #6c757d; }
   .alert-info { background: #cff4fc; padding: 10px; border-radius: 6px; }
   .alert-text { color: #055160; font-size: 14px; }
   .login-status { color: #198754; font-size: 14px; }

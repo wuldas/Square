@@ -896,10 +896,22 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (_focusedInput != focusTarget)
         {
-            _focusedInput?.Unfocus();
+            var previous = _focusedInput;
+            previous?.Unfocus();
+            if (previous?.IsFocused == true)
+            {
+                _focusedInput = previous;
+                _focusedEditor = previous as ITextEditor;
+                return;
+            }
             _focusedInput = focusTarget;
             _focusedEditor = focusTarget as ITextEditor;
-            _focusedInput?.Focus();
+            focusTarget?.Focus();
+            if (focusTarget?.IsFocused != true)
+            {
+                _focusedInput = null;
+                _focusedEditor = null;
+            }
         }
 
         if (hit is ITextEditor editor && hit is UIElement editorElement)
@@ -1392,42 +1404,67 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static TextSelectionPoint FindTextSelectionPoint(TextSelectionState selection, Element? hit, Point point)
     {
+        var visibleBounds = selection.Items.Select(GetVisibleTextBounds).ToArray();
         for (var current = hit; current != null; current = current.Parent)
         {
-            var direct = selection.Items.FindLastIndex(item =>
-                ReferenceEquals(item.Element, current) && GetVisualTextBounds(item).Contains(point));
+            var direct = -1;
+            for (var index = selection.Items.Count - 1; index >= 0; index--)
+                if (ReferenceEquals(selection.Items[index].Element, current) &&
+                    IsValidTextSelectionBounds(visibleBounds[index]) && visibleBounds[index].Contains(point))
+                {
+                    direct = index;
+                    break;
+                }
             if (direct >= 0) return CreateSelectionPoint(selection.Items[direct], direct, point);
         }
 
-        var containing = selection.Items
-            .Select((item, index) => (item, index))
-            .Select(pair => (pair.item, pair.index, bounds: GetVisualTextBounds(pair.item)))
-            .Where(pair => !pair.bounds.IsEmpty && pair.bounds.Contains(point))
+        var containing = visibleBounds
+            .Select((bounds, index) => (bounds, index))
+            .Where(pair => IsValidTextSelectionBounds(pair.bounds) && pair.bounds.Contains(point))
             .OrderBy(pair => pair.bounds.Width * pair.bounds.Height)
             .Select(pair => pair.index)
             .FirstOrDefault(-1);
         if (containing >= 0) return CreateSelectionPoint(selection.Items[containing], containing, point);
         if (selection.Items.Count == 0) return new TextSelectionPoint(-1, 0);
 
-        var bestIndex = -1;
-        var bestDistance = float.MaxValue;
-        for (var i = 0; i < selection.Items.Count; i++)
-        {
-            var bounds = GetVisualTextBounds(selection.Items[i]);
-            var dy = point.Y < bounds.Top ? bounds.Top - point.Y :
-                point.Y > bounds.Bottom ? point.Y - bounds.Bottom : 0;
-            var dx = point.X < bounds.Left ? bounds.Left - point.X :
-                point.X > bounds.Right ? point.X - bounds.Right : 0;
-            var distance = dx * dx + dy * dy;
-            if (distance >= bestDistance) continue;
-            bestDistance = distance;
-            bestIndex = i;
-        }
+        var bestIndex = FindNearestTextBoundsIndex(visibleBounds, point);
 
         return bestIndex < 0
             ? new TextSelectionPoint(-1, 0)
-            : CreateSelectionPoint(selection.Items[bestIndex], bestIndex, point);
+            : CreateSelectionPoint(selection.Items[bestIndex], bestIndex, ClampPoint(point, visibleBounds[bestIndex]));
     }
+
+    internal static int FindNearestTextBoundsIndex(IReadOnlyList<Rect> bounds, Point point)
+    {
+        var bestIndex = -1;
+        var bestVerticalDistance = float.MaxValue;
+        var bestHorizontalDistance = float.MaxValue;
+        for (var i = 0; i < bounds.Count; i++)
+        {
+            var itemBounds = bounds[i];
+            if (!IsValidTextSelectionBounds(itemBounds)) continue;
+            var dy = point.Y < itemBounds.Top ? itemBounds.Top - point.Y :
+                point.Y > itemBounds.Bottom ? point.Y - itemBounds.Bottom : 0;
+            var dx = point.X < itemBounds.Left ? itemBounds.Left - point.X :
+                point.X > itemBounds.Right ? point.X - itemBounds.Right : 0;
+            if (dy > bestVerticalDistance || dy == bestVerticalDistance && dx >= bestHorizontalDistance)
+                continue;
+            bestVerticalDistance = dy;
+            bestHorizontalDistance = dx;
+            bestIndex = i;
+        }
+        return bestIndex;
+    }
+
+    internal static bool IsValidTextSelectionBounds(Rect bounds) =>
+        !bounds.IsEmpty && float.IsFinite(bounds.X) && float.IsFinite(bounds.Y) &&
+        float.IsFinite(bounds.Width) && float.IsFinite(bounds.Height) &&
+        float.IsFinite(bounds.Left) && float.IsFinite(bounds.Top) &&
+        float.IsFinite(bounds.Right) && float.IsFinite(bounds.Bottom);
+
+    private static Point ClampPoint(Point point, Rect bounds) => new(
+        Math.Clamp(point.X, bounds.Left, bounds.Right),
+        Math.Clamp(point.Y, bounds.Top, bounds.Bottom));
 
     private static TextSelectionPoint CreateSelectionPoint(TextSelectionItem item, int index, Point point)
     {
@@ -1638,7 +1675,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             {
                 var character = characters[index];
                 if (character.EndOffset <= startOffset || character.StartOffset >= endOffset ||
-                    Math.Abs(character.Bounds.Y - lineY) > 0.01f || character.StartOffset != runEnd)
+                    character.Bounds.Y != lineY || character.StartOffset != runEnd)
                     break;
                 runEnd = character.EndOffset;
                 bounds = Rect.Union(bounds, Translate(character.SelectionBounds, visualOffset));
@@ -1655,6 +1692,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static Rect GetVisualTextBounds(TextSelectionItem item) =>
         Translate(item.Bounds, GetTextSelectionVisualOffset(item.Element));
+
+    private static Rect GetVisibleTextBounds(TextSelectionItem item) =>
+        GetVisibleTextSelectionBounds(item.Element, GetVisualTextBounds(item));
+
+    internal static Rect GetVisibleTextSelectionBounds(Element element, Rect visualBounds)
+    {
+        if (!IsValidTextSelectionBounds(visualBounds)) return Rect.Empty;
+        var clip = GetTextSelectionClip(element);
+        if (clip == null) return visualBounds;
+        var visible = Rect.Intersect(visualBounds, clip.Value);
+        return IsValidTextSelectionBounds(visible) ? visible : Rect.Empty;
+    }
 
     private static Point GetTextSelectionVisualOffset(Element element)
     {
@@ -1674,10 +1723,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         Rect? clip = null;
         for (var current = element.Parent; current != null; current = current.Parent)
         {
+            if (!current.ClipsOverflow()) continue;
             var currentClip = current.GetOverflowClipRect();
-            if (currentClip.IsEmpty) continue;
+            if (!IsValidTextSelectionBounds(currentClip)) return Rect.Empty;
             currentClip = Translate(currentClip, GetTextSelectionVisualOffset(current));
+            if (!IsValidTextSelectionBounds(currentClip)) return Rect.Empty;
             clip = clip == null ? currentClip : Rect.Intersect(clip.Value, currentClip);
+            if (!IsValidTextSelectionBounds(clip.Value)) return Rect.Empty;
         }
         return clip;
     }

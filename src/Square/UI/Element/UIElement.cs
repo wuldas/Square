@@ -14,6 +14,9 @@ public enum VerticalAlignment { Top, Center, Bottom, Stretch }
 /// </summary>
 public abstract class UIElement : Element
 {
+    private bool _isFocusing;
+    private bool _isUnfocusing;
+
     /// <summary>具名/默认插槽集合（组件组合用，Square 扩展）。</summary>
     public SlotCollection Slots { get; } = new();
 
@@ -115,11 +118,20 @@ public abstract class UIElement : Element
     /// </summary>
     public void Focus()
     {
-        if (!IsEnabled || IsFocused) return;
-        IsFocused = true;
-        SetState(ElementState.Focus, true);
-        DispatchEvent(StandardEvents.CreateFocus());
-        DispatchEvent(StandardEvents.CreateFocusIn());
+        if (!IsEnabled || IsFocused || _isFocusing) return;
+        _isFocusing = true;
+        try
+        {
+            OnBeforeFocus();
+            IsFocused = true;
+            SetState(ElementState.Focus, true);
+            DispatchEvent(StandardEvents.CreateFocus());
+            if (IsFocused) DispatchEvent(StandardEvents.CreateFocusIn());
+        }
+        finally
+        {
+            _isFocusing = false;
+        }
     }
 
     /// <summary>
@@ -127,11 +139,37 @@ public abstract class UIElement : Element
     /// </summary>
     public void Unfocus()
     {
-        if (!IsFocused) return;
+        if (!IsFocused || _isUnfocusing) return;
+        _isUnfocusing = true;
+        try
+        {
+            OnBeforeUnfocus();
+            if (!IsFocused) return;
+            IsFocused = false;
+            SetState(ElementState.Focus, false);
+            DispatchEvent(StandardEvents.CreateBlur());
+            if (!IsFocused) DispatchEvent(StandardEvents.CreateFocusOut());
+        }
+        finally
+        {
+            _isUnfocusing = false;
+        }
+    }
+
+    /// <summary>焦点事务开始、事件派发之前的控件准备钩子。</summary>
+    protected virtual void OnBeforeFocus() { }
+
+    /// <summary>失焦事务开始前的控件提交钩子。</summary>
+    protected virtual void OnBeforeUnfocus() { }
+
+    /// <inheritdoc />
+    protected override void OnDetachedCore()
+    {
         IsFocused = false;
         SetState(ElementState.Focus, false);
-        DispatchEvent(StandardEvents.CreateBlur());
-        DispatchEvent(StandardEvents.CreateFocusOut());
+        _isFocusing = false;
+        _isUnfocusing = false;
+        base.OnDetachedCore();
     }
 
     /// <inheritdoc />

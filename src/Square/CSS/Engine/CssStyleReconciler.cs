@@ -1,3 +1,4 @@
+using Square.CSS.Properties;
 using Square.UI;
 using Square.UI.ElementApi;
 
@@ -174,6 +175,7 @@ public static class CssStyleReconciler
                 scopes = Scopes.Where(scope => ReferenceEquals(FindTreeRoot(scope.Root), root)).ToArray();
             if (scopes.Length == 0) return;
 
+            var styleSnapshot = CaptureStyleSnapshot(root);
             IReadOnlyCollection<Element> pseudoElementChanges;
             using (Element.SuppressInvalidation())
             {
@@ -186,6 +188,7 @@ public static class CssStyleReconciler
                 }
                 pseudoElementChanges = CssEngine.FinalizePseudoElements(root);
             }
+            ApplyStyleDifferences(styleSnapshot);
             foreach (var changed in pseudoElementChanges)
                 changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
         }
@@ -284,9 +287,12 @@ public static class CssStyleReconciler
 
     private static StyleSnapshot CaptureStyleSnapshot(Element element)
     {
-        var properties = element.Style.GetAll();
+        var properties = CaptureEffectiveProperties(element);
+        var authorSpecified = properties.Keys
+            .Where(element.Style.IsAuthorSpecified)
+            .ToHashSet(StringComparer.Ordinal);
         var children = element.Children.Select(CaptureStyleSnapshot).ToArray();
-        return new StyleSnapshot(element, properties, children);
+        return new StyleSnapshot(element, properties, authorSpecified, children);
     }
 
     private static void ApplyStyleDifferences(StyleSnapshot snapshot)
@@ -294,14 +300,17 @@ public static class CssStyleReconciler
         foreach (var child in snapshot.Children)
             ApplyStyleDifferences(child);
 
-        var current = snapshot.Element.Style.GetAll()
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var current = CaptureEffectiveProperties(snapshot.Element);
+        var currentAuthorSpecified = current.Keys
+            .Where(snapshot.Element.Style.IsAuthorSpecified)
+            .ToHashSet(StringComparer.Ordinal);
         var invalidation = ElementInvalidation.None;
         foreach (var property in snapshot.Properties.Keys.Concat(current.Keys).Distinct(StringComparer.Ordinal))
         {
             snapshot.Properties.TryGetValue(property, out var previousValue);
             current.TryGetValue(property, out var currentValue);
-            if (!string.Equals(previousValue, currentValue, StringComparison.Ordinal))
+            if (!string.Equals(previousValue, currentValue, StringComparison.Ordinal) ||
+                snapshot.AuthorSpecified.Contains(property) != currentAuthorSpecified.Contains(property))
                 invalidation |= StyleInvalidation.ForProperty(property);
         }
 
@@ -309,9 +318,28 @@ public static class CssStyleReconciler
             snapshot.Element.Invalidate(invalidation);
     }
 
+    private static Dictionary<string, string> CaptureEffectiveProperties(Element element)
+    {
+        var properties = element.Style.GetAll()
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        foreach (var property in CssPropertyRegistry.InheritedPropertyNames)
+        {
+            var value = element.Style.Get(property);
+            if (value != null) properties[property] = value;
+        }
+        if (element.Parent != null)
+            foreach (var property in element.Parent.Style.GetAll().Keys.Where(key => key.StartsWith("--", StringComparison.Ordinal)))
+            {
+                var value = element.Style.Get(property);
+                if (value != null) properties[property] = value;
+            }
+        return properties;
+    }
+
     private sealed record StyleSnapshot(
         Element Element,
         IReadOnlyDictionary<string, string> Properties,
+        IReadOnlySet<string> AuthorSpecified,
         IReadOnlyList<StyleSnapshot> Children);
 
     private sealed class StyleScope

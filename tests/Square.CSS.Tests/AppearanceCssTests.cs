@@ -51,6 +51,370 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    public void InheritedAuthorValueDoesNotOverrideDirectUserAgentDeclaration()
+    {
+        var engine = new CssEngine();
+        var parent = new View();
+        parent.Style.CssText = "color: red; text-align: left;";
+        var button = new Button("Save");
+        parent.Children.Add(button);
+
+        engine.ApplyStylesToTree(parent);
+
+        Assert.Equal("ButtonText", button.Style.Get("color"));
+        Assert.Equal("center", button.Style.Get("text-align"));
+        Assert.False(button.Style.IsAuthorSpecified("color"));
+        Assert.False(button.Style.IsAuthorSpecified("text-align"));
+    }
+
+    [Fact]
+    public void InheritedAuthorFontKeepsDefaultSelectHorizontalInset()
+    {
+        var engine = new CssEngine();
+        var parent = new View();
+        parent.Style.Set("font-weight", "700");
+        var select = new Select
+        {
+            Geometry = new Rect(10, 20, 180, 38),
+            Options = ["Plan"],
+            Value = "Plan"
+        };
+        parent.Children.Add(select);
+
+        engine.ApplyStylesToTree(parent);
+
+        Assert.True(select.Style.IsAuthorSpecified("font-weight"));
+        Assert.Equal(14, select.SelectableTextBounds.X);
+        Assert.True(select.SelectableTextBounds.Y > 23);
+    }
+
+    [Fact]
+    public void SameValuedInlineAuthorPresenceInvalidatesSelectPaint()
+    {
+        var engine = new CssEngine();
+        var select = new Select
+        {
+            Geometry = new Rect(10, 20, 180, 38),
+            Options = ["Plan"],
+            Value = "Plan"
+        };
+        engine.ApplyStyles(select);
+        var untouched = select.SelectableTextBounds;
+        select.ClearPaintDirty();
+
+        select.Style.Set("border-radius", "0");
+
+        Assert.True(select.Style.IsAuthorSpecified("border-top-left-radius"));
+        Assert.True(select.IsPaintFullDirty);
+        Assert.Equal(untouched, select.SelectableTextBounds);
+
+        select.ClearPaintDirty();
+        select.Style.Remove("border-radius");
+
+        Assert.False(select.Style.IsAuthorSpecified("border-top-left-radius"));
+        Assert.True(select.IsPaintFullDirty);
+        Assert.Equal(untouched, select.SelectableTextBounds);
+    }
+
+    [Fact]
+    public void SameValuedRuleAuthorPresenceInvalidatesAfterStyleReplay()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".author { border-top-left-radius: 0; }").Tokenize()).Parse());
+        var select = new Select
+        {
+            Geometry = new Rect(10, 20, 180, 38),
+            Options = ["Plan"],
+            Value = "Plan"
+        };
+        try
+        {
+            engine.ApplyStylesToTree(select);
+            select.ClassList.Add("author");
+            select.ClearPaintDirty();
+
+            CssStyleReconciler.Flush();
+
+            Assert.True(select.Style.IsAuthorSpecified("border-top-left-radius"));
+            Assert.True(select.IsPaintFullDirty);
+
+            select.ClassList.Remove("author");
+            select.ClearPaintDirty();
+            CssStyleReconciler.Flush();
+
+            Assert.False(select.Style.IsAuthorSpecified("border-top-left-radius"));
+            Assert.True(select.IsPaintFullDirty);
+        }
+        finally
+        {
+            CssStyleReconciler.UnregisterScopesForTree(select);
+        }
+    }
+
+    [Fact]
+    public void SameValuedRuleAuthorPresenceInvalidatesDuringFullReapply()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".author { border-top-left-radius: 0; }").Tokenize()).Parse());
+        var select = new Select
+        {
+            Geometry = new Rect(10, 20, 180, 38),
+            Options = ["Plan"],
+            Value = "Plan"
+        };
+        try
+        {
+            engine.ApplyStylesToTree(select);
+            select.ClassList.Add("author");
+            select.ClearLayoutDirty();
+            select.ClearPaintDirty();
+
+            CssStyleReconciler.ReapplyScopesToTree(select);
+
+            Assert.True(select.Style.IsAuthorSpecified("border-top-left-radius"));
+            Assert.True(select.IsPaintFullDirty);
+        }
+        finally
+        {
+            CssStyleReconciler.UnregisterScopesForTree(select);
+        }
+    }
+
+    [Fact]
+    public void ImplicitInheritedAuthorProvenanceInvalidatesDescendantDuringFullReapply()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".author { direction: ltr; }").Tokenize()).Parse());
+        var root = new View();
+        var select = new Select
+        {
+            Geometry = new Rect(10, 20, 180, 38),
+            Options = ["Plan"],
+            Value = "Plan"
+        };
+        root.Children.Add(select);
+        try
+        {
+            engine.ApplyStylesToTree(root);
+            root.ClassList.Add("author");
+            root.ClearLayoutDirty();
+            root.ClearPaintDirty();
+            select.ClearLayoutDirty();
+            select.ClearPaintDirty();
+
+            CssStyleReconciler.ReapplyScopesToTree(root);
+
+            Assert.True(select.Style.IsAuthorSpecified("direction"));
+            Assert.True(select.IsLayoutDirty);
+        }
+        finally
+        {
+            CssStyleReconciler.UnregisterScopesForTree(root);
+        }
+    }
+
+    [Fact]
+    public void AuthorOriginOverridesMoreSpecificDisabledUserAgentRule()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".author { background: #0d6efd; border-color: #0d6efd; color: #ffffff; }").Tokenize()).Parse());
+        var button = new Button("Save") { IsDisabled = true };
+        button.ClassList.Add("author");
+
+        engine.ApplyStyles(button);
+
+        Assert.Equal("#0d6efd", button.Style.Get("background-color"));
+        Assert.Equal("#0d6efd", button.Style.Get("border-top-color"));
+        Assert.Equal("#ffffff", button.Style.Get("color"));
+    }
+
+    [Fact]
+    public void ButtonInkBoundsIncludeRenderedTextDecorations()
+    {
+        var button = new Button("ABC");
+        button.Style.CssText = "font: 14px Arial; line-height: 17px;";
+        var textSize = ControlDrawing.MeasureText(button, button.TextContent, 14f);
+        var plain = ControlDrawing.MeasureTextInkBounds(button, button.TextContent, 14f, textSize);
+
+        button.Style.Set("text-decoration", "underline");
+        var decorated = ControlDrawing.MeasureTextInkBounds(button, button.TextContent, 14f, textSize);
+
+        Assert.True(decorated.Bottom > plain.Bottom,
+            $"Expected underline below glyph ink {plain}, got {decorated}.");
+    }
+
+    [Fact]
+    public void ButtonInkBoundsUsePaintMaxSizeForNegativeIndentWrapping()
+    {
+        var button = new Button("ABCDEFGHIJKLMN");
+        button.Style.CssText = "font: 14px Arial; line-height: 17px; text-indent: -20px;";
+        var textSize = ControlDrawing.MeasureText(button, button.TextContent, 14f);
+
+        var bounded = ControlDrawing.MeasureTextInkBounds(button, button.TextContent, 14f, textSize);
+        var unbounded = ControlDrawing.MeasureTextInkBounds(
+            button, button.TextContent, 14f, new Size(float.MaxValue, float.MaxValue));
+
+        Assert.True(bounded.Height > unbounded.Height,
+            $"Expected bounded paint layout to wrap: bounded={bounded}, unbounded={unbounded}, size={textSize}.");
+    }
+
+    [Fact]
+    public void ButtonInkBoundsUseRenderedTextAlignmentOrigin()
+    {
+        var button = new Button("ABC\nA");
+        button.Style.CssText = "font: 14px Arial; line-height: 17px; text-align: right;";
+
+        var ink = ControlDrawing.MeasureTextInkBounds(button, button.TextContent, 14f, new Size(100, 40));
+
+        Assert.True(ink.Left > 50, $"Expected right-aligned ink in a 100px layout, got {ink}.");
+    }
+
+    [Fact]
+    public void ButtonSelectableBoundsMatchPaintRelayout()
+    {
+        var button = new Button("ABCDEFGHIJKLMN") { Geometry = new Rect(0, 0, 120, 60) };
+        button.Style.CssText =
+            "appearance: none; font: 14px Arial; line-height: 17px; text-indent: -20px;";
+        var maxSize = ControlDrawing.MeasureText(button, button.TextContent, 14f);
+        var paintedSize = ControlDrawing.MeasureText(button, button.TextContent, 14f, maxSize);
+
+        Assert.Equal(paintedSize.Height, button.SelectableTextBounds.Height);
+    }
+
+    [Fact]
+    public void PaintOnlyAuthorPresenceDoesNotChangeButtonIntrinsicMeasure()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save");
+        engine.ApplyStyles(button);
+        var untouched = button.Measure(new Size(200, 100));
+        button.ClearLayoutDirty();
+        button.ClearPaintDirty();
+
+        button.Style.Set("background-color", "ButtonFace");
+
+        Assert.Equal(untouched, button.Measure(new Size(200, 100)));
+        Assert.False(button.IsLayoutDirty);
+        Assert.True(button.IsPaintFullDirty);
+
+        button.ClearLayoutDirty();
+        button.ClearPaintDirty();
+        button.Style.Remove("background-color");
+
+        Assert.Equal(untouched, button.Measure(new Size(200, 100)));
+        Assert.False(button.IsLayoutDirty);
+        Assert.True(button.IsPaintFullDirty);
+    }
+
+    [Fact]
+    public void NonDefaultTextMetricChangesButtonMeasureWithLayoutInvalidation()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save");
+        engine.ApplyStyles(button);
+        var untouched = button.Measure(new Size(200, 100));
+        button.ClearLayoutDirty();
+        button.ClearPaintDirty();
+
+        button.Style.Set("line-height", "24px");
+
+        Assert.NotEqual(untouched, button.Measure(new Size(200, 100)));
+        Assert.True(button.IsLayoutDirty);
+
+        button.ClearLayoutDirty();
+        button.ClearPaintDirty();
+        button.Style.Remove("line-height");
+
+        Assert.Equal(untouched, button.Measure(new Size(200, 100)));
+        Assert.True(button.IsLayoutDirty);
+    }
+
+    [Theory]
+    [InlineData("font: 13.3333px Arial; font-weight: 400;")]
+    [InlineData("font: 13.333300px Arial;")]
+    [InlineData("font: 13.3333px \"Arial\";")]
+    [InlineData("font: 13.3333px Arial; text-indent: 0px;")]
+    [InlineData("font: 13.3333px Arial; letter-spacing: 0px;")]
+    [InlineData("font: 13.3333px Arial; word-spacing: 0px;")]
+    [InlineData("font: 13.333300px \"Arial\";")]
+    public void EquivalentChromiumMetricSpellingsPreserveButtonMeasure(string css)
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save");
+        engine.ApplyStyles(button);
+        button.Style.CssText = "font: 13.3333px Arial;";
+        var baseline = button.Measure(new Size(200, 100));
+
+        button.Style.CssText = css;
+
+        Assert.Equal(baseline, button.Measure(new Size(200, 100)));
+    }
+
+    [Fact]
+    public void AppearanceMutationInvalidatesButtonLayoutWhenMeasureChanges()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save");
+        engine.ApplyStyles(button);
+        var auto = button.Measure(new Size(200, 100));
+        button.ClearLayoutDirty();
+        button.ClearPaintDirty();
+
+        button.Style.Set("appearance", "none");
+
+        Assert.NotEqual(auto, button.Measure(new Size(200, 100)));
+        Assert.True(button.IsLayoutDirty);
+    }
+
+    [Fact]
+    public void AppearanceNoneButtonDoesNotUseAutoOpticalOffset()
+    {
+        var button = new Button("Save") { Geometry = new Rect(0, 0.5f, 120, 38) };
+        button.Style.CssText =
+            "appearance:none; font-size:16px; line-height:24px; padding:6px 12px; border:1px solid transparent;";
+        var paintMaxSize = ControlDrawing.MeasureText(button, button.TextContent, 14f);
+        var ink = ControlDrawing.MeasureTextInkBounds(button, button.TextContent, 14f, paintMaxSize);
+        var top = button.Geometry.Y + 1 + 6;
+        var bottom = button.Geometry.Bottom - 1 - 6;
+        var expectedY = (top + bottom) / 2f - (ink.Top + ink.Bottom) / 2f;
+
+        Assert.Equal(expectedY, button.SelectableTextBounds.Y);
+    }
+
+    [Theory]
+    [InlineData("ltr", "start", TextAlignment.Left)]
+    [InlineData("ltr", "end", TextAlignment.Right)]
+    [InlineData("rtl", "start", TextAlignment.Right)]
+    [InlineData("rtl", "end", TextAlignment.Left)]
+    public void ButtonLogicalTextAlignmentResolvesAgainstDirection(
+        string direction,
+        string alignment,
+        TextAlignment expected)
+    {
+        var button = new Button("Long line\nShort");
+        button.Style.CssText = $"direction: {direction}; text-align: {alignment};";
+
+        Assert.Equal(expected, ControlDrawing.ResolveTextAlignment(button));
+    }
+
+    [Fact]
+    public void AppearanceAutoButtonHonorsAuthorTextAlignment()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save") { Geometry = new Rect(0, 0, 180, 36) };
+        button.Style.CssText =
+            "width: 180px; height: 36px; padding: 0 10px; border: 0; text-align: left;";
+
+        engine.ApplyStyles(button);
+
+        Assert.InRange(button.SelectableTextBounds.X, 9, 12);
+    }
+
+    [Fact]
     public void AppearanceAutoPaintsChromiumRoundedButtonCornersOnSoftwareRenderer()
     {
         var engine = new CssEngine();

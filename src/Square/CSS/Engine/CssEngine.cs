@@ -11,8 +11,8 @@ namespace Square.CSS.Engine;
 /// <summary>CSS 引擎，负责加载样式表、解析变量与匹配选择器并将声明应用到元素树。</summary>
 public sealed class CssEngine
 {
-    private readonly List<CssRule> _rules = [];
-    private readonly List<CssStyleSheet> _styleSheets = [];
+    private readonly List<(CssRule Rule, CssCascadeOrigin Origin)> _rules = [];
+    private readonly List<(CssStyleSheet Sheet, CssCascadeOrigin Origin)> _styleSheets = [];
     private readonly List<CssFontFaceDescriptor> _fontFaceDescriptors = [];
     private readonly Dictionary<(CssFontFaceDescriptor Descriptor, string Path), FontFace> _fontFaces = [];
     private readonly Dictionary<string, KeyFramesRule> _keyFrames = new();
@@ -32,15 +32,18 @@ public sealed class CssEngine
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mediaType);
         MediaType = mediaType.Trim().ToLowerInvariant();
-        LoadStyleSheet(CssUserAgentStyles.Sheet);
+        LoadStyleSheet(CssUserAgentStyles.Sheet, CssCascadeOrigin.UserAgent);
     }
 
     /// <summary>加载样式表规则与关键帧。</summary>
     /// <param name="sheet">待加载的样式表。</param>
     public void LoadStyleSheet(CssStyleSheet sheet)
+        => LoadStyleSheet(sheet, CssCascadeOrigin.Author);
+
+    private void LoadStyleSheet(CssStyleSheet sheet, CssCascadeOrigin origin)
     {
         ArgumentNullException.ThrowIfNull(sheet);
-        _styleSheets.Add(sheet);
+        _styleSheets.Add((sheet, origin));
         foreach (var atRule in sheet.AtRules)
         {
             if (!string.Equals(atRule.Name, "font-face", StringComparison.OrdinalIgnoreCase)) continue;
@@ -91,12 +94,12 @@ public sealed class CssEngine
     {
         _rules.Clear();
         HasSiblingCombinators = false;
-        foreach (var sheet in _styleSheets)
+        foreach (var (sheet, origin) in _styleSheets)
         {
-            AddRules(sheet.Rules);
+            AddRules(sheet.Rules, origin);
             foreach (var mediaRule in sheet.MediaRules)
                 if (mediaRule.MediaTypes.Any(MatchesMediaType))
-                    AddRules(mediaRule.Rules);
+                    AddRules(mediaRule.Rules, origin);
         }
     }
 
@@ -109,11 +112,11 @@ public sealed class CssEngine
         return mediaType.Equals(MediaType, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void AddRules(IEnumerable<CssRule> rules)
+    private void AddRules(IEnumerable<CssRule> rules, CssCascadeOrigin origin)
     {
         foreach (var rule in rules)
         {
-            _rules.Add(rule);
+            _rules.Add((rule, origin));
             HasSiblingCombinators |= rule.Selector.Steps.Any(step =>
                 step.Combinator is Combinator.Adjacent or Combinator.GeneralSibling);
         }
@@ -350,18 +353,20 @@ public sealed class CssEngine
     public IReadOnlyList<CssInspectionRule> GetMatchedRules(Element element)
     {
         ArgumentNullException.ThrowIfNull(element);
-        var matched = new List<(CssRule Rule, CssSpecificity Specificity, int Order)>();
+        var matched = new List<(CssRule Rule, CssCascadeOrigin Origin, CssSpecificity Specificity, int Order)>();
         for (var index = 0; index < _rules.Count; index++)
         {
-            var rule = _rules[index];
+            var (rule, origin) = _rules[index];
             if (GetPseudoElement(rule.Selector) != null ||
                 !TryMatchSelector(rule.Selector, element, out var specificity))
                 continue;
-            matched.Add((rule, specificity, index));
+            matched.Add((rule, origin, specificity, index));
         }
 
         matched.Sort((left, right) =>
         {
+            var origin = left.Origin.CompareTo(right.Origin);
+            if (origin != 0) return origin;
             var specificity = left.Specificity.CompareTo(right.Specificity);
             return specificity != 0 ? specificity : left.Order.CompareTo(right.Order);
         });
@@ -439,22 +444,24 @@ public sealed class CssEngine
     {
         if (Element is CssGeneratedPseudoElement) return;
         ApplyInheritedProperties(Element);
-        var matched = new List<(CssRule rule, CssSpecificity specificity, int order, string? pseudoElement)>();
+        var matched = new List<(CssRule rule, CssCascadeOrigin origin, CssSpecificity specificity, int order, string? pseudoElement)>();
 
         for (var i = 0; i < _rules.Count; i++)
         {
-            var rule = _rules[i];
+            var (rule, origin) = _rules[i];
             if (TryMatchSelector(rule.Selector, Element, out var spec))
-                matched.Add((rule, spec, i, GetPseudoElement(rule.Selector)));
+                matched.Add((rule, origin, spec, i, GetPseudoElement(rule.Selector)));
         }
 
         matched.Sort((a, b) =>
         {
+            var origin = a.origin.CompareTo(b.origin);
+            if (origin != 0) return origin;
             var specificity = a.specificity.CompareTo(b.specificity);
             return specificity != 0 ? specificity : a.order.CompareTo(b.order);
         });
 
-        foreach (var (rule, specificity, _, pseudoElement) in matched)
+        foreach (var (rule, origin, specificity, _, pseudoElement) in matched)
         {
             if (pseudoElement is "before" or "after" or "marker" or "invalid") continue;
             var isSelectionRule = string.Equals(pseudoElement, "selection", StringComparison.OrdinalIgnoreCase) ||
@@ -463,7 +470,7 @@ public sealed class CssEngine
             {
                 var property = isSelectionRule ? MapSelectionProperty(decl.Property) : decl.Property;
                 if (property == null) continue;
-                ApplyDeclaration(Element, property, decl.Value, specificity, decl.Important);
+                ApplyDeclaration(Element, property, decl.Value, specificity, decl.Important, origin);
             }
         }
 
@@ -473,13 +480,14 @@ public sealed class CssEngine
         {
             if (pseudoElement == "marker" && !IsListItem(Element)) continue;
             CssGeneratedPseudoElement? generated = null;
-            foreach (var (rule, specificity, _, _) in matched.Where(match =>
+            foreach (var (rule, origin, specificity, _, _) in matched.Where(match =>
                          string.Equals(match.pseudoElement, pseudoElement, StringComparison.OrdinalIgnoreCase)))
             {
                 generated ??= EnsurePseudoElement(Element, pseudoElement);
                 ApplyInheritedProperties(generated);
                 foreach (var declaration in rule.Declarations)
-                    ApplyDeclaration(generated, declaration.Property, declaration.Value, specificity, declaration.Important);
+                    ApplyDeclaration(
+                        generated, declaration.Property, declaration.Value, specificity, declaration.Important, origin);
                 ApplyThemeVariables(generated);
             }
         }
@@ -560,12 +568,18 @@ public sealed class CssEngine
         {
             var inherited = Element.Parent.Style.Get(property);
             if (inherited != null)
-                Element.Style.SetCascaded(property, inherited, new CssSpecificity(-1, 0, 0), important: false);
+                Element.Style.SetCascaded(
+                    property, inherited, new CssSpecificity(-1, 0, 0), important: false,
+                    origin: CssCascadeOrigin.Inherited,
+                    authorSpecified: Element.Parent.Style.IsAuthorSpecified(property));
         }
 
         foreach (var pair in Element.Parent.Style.GetAll())
             if (pair.Key.StartsWith("--", StringComparison.Ordinal))
-                Element.Style.SetCascaded(pair.Key, pair.Value, new CssSpecificity(-1, 0, 0), important: false);
+                Element.Style.SetCascaded(
+                    pair.Key, pair.Value, new CssSpecificity(-1, 0, 0), important: false,
+                    origin: CssCascadeOrigin.Inherited,
+                    authorSpecified: Element.Parent.Style.IsAuthorSpecified(pair.Key));
     }
 
     private void ApplyThemeVariables(Element Element)
@@ -867,22 +881,24 @@ public sealed class CssEngine
         string property,
         string value,
         CssSpecificity specificity,
-        bool important)
+        bool important,
+        CssCascadeOrigin origin)
     {
         if (string.Equals(property, "animation", StringComparison.OrdinalIgnoreCase))
         {
-            ApplyAnimationShorthand(Element, value, specificity, important);
+            ApplyAnimationShorthand(Element, value, specificity, important, origin);
             return;
         }
 
-        Element.Style.SetCascaded(property, value, specificity, important);
+        Element.Style.SetCascaded(property, value, specificity, important, origin: origin);
     }
 
     private static void ApplyAnimationShorthand(
         Element Element,
         string value,
         CssSpecificity specificity,
-        bool important)
+        bool important,
+        CssCascadeOrigin origin)
     {
         var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) return;
@@ -933,12 +949,12 @@ public sealed class CssEngine
             if (name.Length == 0) name = part;
         }
 
-        if (name.Length > 0) Element.Style.SetCascaded("animation-name", name, specificity, important);
-        if (duration.Length > 0) Element.Style.SetCascaded("animation-duration", duration, specificity, important);
-        if (timingFunction.Length > 0) Element.Style.SetCascaded("animation-timing-function", timingFunction, specificity, important);
-        if (delay.Length > 0) Element.Style.SetCascaded("animation-delay", delay, specificity, important);
-        if (iterationCount.Length > 0) Element.Style.SetCascaded("animation-iteration-count", iterationCount, specificity, important);
-        if (direction.Length > 0) Element.Style.SetCascaded("animation-direction", direction, specificity, important);
+        if (name.Length > 0) Element.Style.SetCascaded("animation-name", name, specificity, important, origin: origin);
+        if (duration.Length > 0) Element.Style.SetCascaded("animation-duration", duration, specificity, important, origin: origin);
+        if (timingFunction.Length > 0) Element.Style.SetCascaded("animation-timing-function", timingFunction, specificity, important, origin: origin);
+        if (delay.Length > 0) Element.Style.SetCascaded("animation-delay", delay, specificity, important, origin: origin);
+        if (iterationCount.Length > 0) Element.Style.SetCascaded("animation-iteration-count", iterationCount, specificity, important, origin: origin);
+        if (direction.Length > 0) Element.Style.SetCascaded("animation-direction", direction, specificity, important, origin: origin);
     }
 
     private static bool IsTime(string value) =>

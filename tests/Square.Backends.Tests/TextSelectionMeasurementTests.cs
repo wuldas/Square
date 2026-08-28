@@ -132,6 +132,95 @@ public class TextSelectionMeasurementTests
     }
 
     [Fact]
+    public void HorizontalOverdragClampsToTheCurrentVisualLine()
+    {
+        var element = new Square.Controls.Text("abcDEF");
+        var characters = new[]
+        {
+            Character(0, 0, 0),
+            Character(1, 10, 0),
+            Character(2, 20, 0),
+            Character(3, 0, 20),
+            Character(4, 20, 20),
+            Character(5, 40, 20)
+        };
+        var fragment = new TextFragment(
+            element,
+            "abcDEF",
+            new Font("Arial", 14),
+            new Rect(0, 0, 50, 30),
+            characters);
+
+        Assert.Equal(3, fragment.HitTestOffset(new Point(1000, 5)));
+        Assert.Equal(6, fragment.HitTestOffset(new Point(1000, 25)));
+        Assert.Equal(0, fragment.HitTestOffset(new Point(-1000, 5)));
+
+        static TextCharacterFragment Character(int offset, float x, float y)
+        {
+            var bounds = new Rect(x, y, 10, 10);
+            return new TextCharacterFragment(offset, offset + 1, bounds, bounds);
+        }
+    }
+
+    [Fact]
+    public void FractionalVisualRowsRemainDistinctDuringOverdrag()
+    {
+        var element = new Square.Controls.Text("abcDEF");
+        var characters = new[]
+        {
+            Character(0, 0, 0),
+            Character(1, 10, 0),
+            Character(2, 20, 0),
+            Character(3, 0, 0.0005f),
+            Character(4, 20, 0.0005f),
+            Character(5, 40, 0.0005f)
+        };
+        var fragment = new TextFragment(
+            element,
+            "abcDEF",
+            new Font("Arial", 14),
+            new Rect(0, 0, 50, 10.0005f),
+            characters);
+
+        Assert.Equal(3, fragment.HitTestOffset(new Point(1000, 5)));
+
+        static TextCharacterFragment Character(int offset, float x, float y)
+        {
+            var bounds = new Rect(x, y, 10, 10);
+            return new TextCharacterFragment(offset, offset + 1, bounds, bounds);
+        }
+    }
+
+    [Fact]
+    public void FinalCombiningGraphemeTrailingHitSnapsToTextEnd()
+    {
+        const string text = "e\u0301";
+        var element = new Square.Controls.Text(text);
+        var baseBounds = new Rect(0, 0, 10, 10);
+        var combiningBounds = new Rect(10, 0, 0, 10);
+        var fragment = new TextFragment(
+            element,
+            text,
+            new Font("Arial", 14),
+            new Rect(0, 0, 10, 10),
+            [
+                new TextCharacterFragment(0, 1, baseBounds, baseBounds),
+                new TextCharacterFragment(1, 2, combiningBounds, combiningBounds)
+            ]);
+
+        Assert.Equal(text.Length, fragment.HitTestOffset(new Point(1000, 5)));
+
+        var backwardBounds = new Rect(10, 0, 10, 10);
+        var backwardFragment = new TextFragment(
+            element,
+            text,
+            new Font("Arial", 14),
+            backwardBounds,
+            [new TextCharacterFragment(1, 2, backwardBounds, backwardBounds)]);
+        Assert.Equal(0, backwardFragment.HitTestOffset(new Point(11, 5)));
+    }
+
+    [Fact]
     public void DisplayTextFragmentsUseVisualOrderAndPreserveLogicalOffsets()
     {
         var root = new View { Geometry = new Rect(0, 0, 300, 60) };

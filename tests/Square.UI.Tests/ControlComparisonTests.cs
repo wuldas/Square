@@ -1501,6 +1501,152 @@ public sealed class ControlComparisonTests
         }
     }
 
+    [Fact]
+    public async Task SoftwareButtonAutoPaintHonorsAuthorBackground()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-author-background-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Button,
+                        Element = "button",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [ControlState.Normal],
+                        AutoAuthorCss = "background: #0d6efd; color: #ffffff; border-radius: 6px;",
+                        Text = "Sign in"
+                    }
+                ]
+            };
+
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            Assert.Equal("#0d6efd", item.ComputedStyles["backgroundColor"]);
+            Assert.Equal("6px", item.ComputedStyles["borderRadius"]);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var sample = bitmap.GetPixel(
+                (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero) + 6,
+                (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height / 2f, MidpointRounding.AwayFromZero));
+
+            Assert.Equal(new SKColor(0x0d, 0x6e, 0xfd), sample);
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero) + 8;
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 9;
+            var textRows = new List<int>();
+            for (var y = top + 3; y <= bottom - 3; y++)
+                for (var x = left; x <= right; x++)
+                {
+                    var pixel = bitmap.GetPixel(x, y);
+                    if (pixel.Red > 180 && pixel.Green > 180 && pixel.Blue > 180)
+                        textRows.Add(y);
+                }
+
+            Assert.NotEmpty(textRows);
+            var inkCenter = (textRows.Min() + textRows.Max()) / 2f;
+            var buttonCenter = item.BorderBox.Y + item.BorderBox.Height / 2f;
+            Assert.InRange(inkCenter - buttonCenter, 0, 0.5f);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SoftwareMultilineAuthorButtonCentersAllRenderedTextInk()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-multiline-center-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Button,
+                        Element = "button",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [ControlState.Normal],
+                        AutoAuthorCss =
+                            "width: 120px; height: 60px; background: #0d6efd; color: #ffffff; " +
+                            "border: 0; border-radius: 6px; text-decoration: underline;",
+                        Text = "Top\nBottom"
+                    }
+                ]
+            };
+
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero) + 8;
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 9;
+            var textRows = new List<int>();
+            for (var y = top + 3; y <= bottom - 3; y++)
+                for (var x = left; x <= right; x++)
+                {
+                    var pixel = bitmap.GetPixel(x, y);
+                    if (pixel.Red > 180 && pixel.Green > 180 && pixel.Blue > 180)
+                        textRows.Add(y);
+                }
+
+            Assert.NotEmpty(textRows);
+            var inkCenter = (textRows.Min() + textRows.Max()) / 2f;
+            var buttonCenter = item.BorderBox.Y + item.BorderBox.Height / 2f;
+            Assert.InRange(inkCenter - buttonCenter, 0, 0.5f);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ControlKind.Input)]
+    [InlineData(ControlKind.TextArea)]
+    [InlineData(ControlKind.Select)]
+    public async Task SoftwareAutoFormControlPaintHonorsAuthorBorderNone(ControlKind kind)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-author-border-none-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = kind,
+                        Element = kind.ToString(),
+                        Appearances = [ControlAppearance.Auto],
+                        States = [ControlState.Normal],
+                        AutoAuthorCss =
+                            "width: 180px; height: 36px; background: #123456; " +
+                            "border: 0; border-radius: 0; color: #ffffff;",
+                        Value = "Value"
+                    }
+                ]
+            };
+
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var sample = bitmap.GetPixel(
+                (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero) + 6,
+                (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero));
+
+            Assert.Equal(new SKColor(0x12, 0x34, 0x56), sample);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(ControlState.Normal, 239, 118)]
     [InlineData(ControlState.Hover, 229, 79)]
@@ -1679,6 +1825,55 @@ public sealed class ControlComparisonTests
 
             AssertClose(item.BorderBox.X + expectedOffsetX, textX);
             AssertClose(item.BorderBox.Y + expectedOffsetY, textY);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SoftwareAuthorStyledSelectUsesBootstrapContentBox()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-select-bootstrap-content-" + Guid.NewGuid());
+        try
+        {
+            var manifest = new ControlComparisonManifest
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Select,
+                        Element = "select",
+                        Appearances = [ControlAppearance.Auto],
+                        States = [ControlState.Normal],
+                        AutoAuthorCss =
+                            "height: 38px; line-height: 24px; padding: 6px 36px 6px 12px; border-radius: 6px;",
+                        Value = "Plan"
+                    }
+                ]
+            };
+            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
+            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
+            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero);
+            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
+            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 24;
+            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
+            var ink = new List<(int X, int Y)>();
+            for (var y = top + 2; y < bottom - 1; y++)
+                for (var x = left + 2; x < right; x++)
+                {
+                    var pixel = bitmap.GetPixel(x, y);
+                    if (pixel.Red < 80 && pixel.Green < 80 && pixel.Blue < 80)
+                        ink.Add((x, y));
+                }
+
+            Assert.NotEmpty(ink);
+            Assert.InRange(ink.Min(point => point.X) - left, 12, 15);
+            var inkCenter = (ink.Min(point => point.Y) + ink.Max(point => point.Y)) / 2f;
+            var selectCenter = item.BorderBox.Y + item.BorderBox.Height / 2f;
+            Assert.InRange(inkCenter - selectCenter, 0, 0.5f);
         }
         finally
         {

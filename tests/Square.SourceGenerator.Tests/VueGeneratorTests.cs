@@ -217,7 +217,8 @@ public class VueGeneratorTests
         var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
 
         Assert.Contains(".BindProperty(\"TextContent\", Title);", generated);
-        Assert.Contains("AddEventListener", generated);
+        Assert.Contains("RegisterGeneratedResource", generated);
+        Assert.Contains(".Listen(", generated);
         Assert.Contains("\"click\"", generated);
         Assert.Contains("OnClick", generated);
     }
@@ -587,7 +588,7 @@ public class VueGeneratorTests
         var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
 
         Assert.Contains(".BindProperty(\"Value\", Password);", generated);
-        Assert.Contains(".AddEventListener(\"input\", e => Password.Value = ((Square.Controls.Input)e.Target!).Value);", generated);
+        Assert.Contains(".Listen(\"input\", e => Password.Value = ((Square.Controls.Input)e.Target!).Value)", generated);
     }
 
     [Fact]
@@ -596,21 +597,27 @@ public class VueGeneratorTests
         const string source = """
             <template>
               <View>
-                <Input v-model.trim.lazy="Name" />
+                <Input v-model.trim.lazy="Name" @change="OnNameChanged" />
                 <Input v-model.number="Age" />
               </View>
             </template>
             <script lang="csharp">
               public ObservableValue<string> Name = new("Ada");
               public ObservableValue<double> Age = new(12);
+              private void OnNameChanged() { }
             </script>
             """;
 
         var result = RunGenerator(new InMemoryAdditionalText("ModelModifiers.sqv", source));
         var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
 
-        Assert.Contains(".AddEventListener(\"change\", e => Name.Value = ((Square.Controls.Input)e.Target!).Value.Trim());", generated);
-        Assert.Contains(".AddEventListener(\"input\", e => Age.Value = double.Parse(((Square.Controls.Input)e.Target!).Value, System.Globalization.CultureInfo.InvariantCulture));", generated);
+        Assert.Contains(".Listen(\"change\", e => Name.Value = ((Square.Controls.Input)e.Target!).Value.Trim())", generated);
+        Assert.Contains(".Listen(\"input\", e => Age.Value = double.Parse(((Square.Controls.Input)e.Target!).Value, System.Globalization.CultureInfo.InvariantCulture))", generated);
+        AssertGeneratedBindingOrder(
+            generated,
+            ".BindProperty(\"Value\", Name);",
+            "Name.Value = ((Square.Controls.Input)e.Target!).Value.Trim()",
+            "Listen(\"change\", OnNameChanged)");
     }
 
     [Fact]
@@ -619,13 +626,15 @@ public class VueGeneratorTests
         const string source = """
             <template>
               <View>
-                <CheckBox v-model="RememberMe" />
-                <Select v-model="Plan" />
+                <CheckBox v-model="RememberMe" @change="OnRememberChanged" />
+                <Select @change="OnPlanChanged" v-model="Plan" />
               </View>
             </template>
             <script lang="csharp">
               public ObservableValue<bool> RememberMe = new(true);
               public ObservableValue<string> Plan = new("Pro");
+              private void OnRememberChanged() { }
+              private void OnPlanChanged() { }
             </script>
             """;
 
@@ -633,9 +642,19 @@ public class VueGeneratorTests
         var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
 
         Assert.Contains(".BindProperty(\"IsChecked\", RememberMe);", generated);
-        Assert.Contains(".AddEventListener(\"change\", e => RememberMe.Value = ((Square.Controls.CheckBox)e.Target!).IsChecked);", generated);
+        Assert.Contains(".Listen(\"change\", e => RememberMe.Value = ((Square.Controls.CheckBox)e.Target!).IsChecked)", generated);
         Assert.Contains(".BindProperty(\"Value\", Plan);", generated);
-        Assert.Contains(".AddEventListener(\"change\", e => Plan.Value = ((Square.Controls.Select)e.Target!).Value);", generated);
+        Assert.Contains(".Listen(\"change\", e => Plan.Value = ((Square.Controls.Select)e.Target!).Value)", generated);
+        AssertGeneratedBindingOrder(
+            generated,
+            ".BindProperty(\"IsChecked\", RememberMe);",
+            "RememberMe.Value = ((Square.Controls.CheckBox)e.Target!).IsChecked",
+            "Listen(\"change\", OnRememberChanged)");
+        AssertGeneratedBindingOrder(
+            generated,
+            ".BindProperty(\"Value\", Plan);",
+            "Plan.Value = ((Square.Controls.Select)e.Target!).Value",
+            "Listen(\"change\", OnPlanChanged)");
     }
 
     [Fact]
@@ -643,11 +662,19 @@ public class VueGeneratorTests
     {
         const string source = """
             <template>
-              <Input v-model="Password" @input="OnPasswordChanged" />
+              <View>
+                <Input v-model="Password" @input="OnPasswordChanged" />
+                <Input @input="OnNameChanged" v-model="Name" />
+                <NormalizingControl v-model="Custom" @change="OnCustomChanged" />
+              </View>
             </template>
             <script lang="csharp">
               public ObservableValue<string> Password = new("");
+              public ObservableValue<string> Name = new("");
+              public ObservableValue<string> Custom = new("");
               private void OnPasswordChanged() { }
+              private void OnNameChanged() { }
+              private void OnCustomChanged() { }
             </script>
             """;
 
@@ -655,8 +682,21 @@ public class VueGeneratorTests
         var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Id == "SQV0005");
-        Assert.Contains("Password.Value = ((Square.Controls.Input)e.Target!).Value", generated);
-        Assert.Contains("AddEventListener(\"input\", OnPasswordChanged);", generated);
+        AssertGeneratedBindingOrder(
+            generated,
+            ".BindProperty(\"Value\", Password);",
+            "Password.Value = ((Square.Controls.Input)e.Target!).Value",
+            "Listen(\"input\", OnPasswordChanged)");
+        AssertGeneratedBindingOrder(
+            generated,
+            ".BindProperty(\"Value\", Name);",
+            "Name.Value = ((Square.Controls.Input)e.Target!).Value",
+            "Listen(\"input\", OnNameChanged)");
+        AssertGeneratedBindingOrder(
+            generated,
+            ".BindProperty(\"Value\", Custom);",
+            "Custom.Value = ((NormalizingControl)e.Target!).Value",
+            "Listen(\"change\", OnCustomChanged)");
     }
 
     [Fact]
@@ -1093,6 +1133,21 @@ public class VueGeneratorTests
         Assert.Contains("\"Hello \"", generated);
         Assert.Contains("BindProperty(\"TextContent\", () =>", generated);
         Assert.Contains(", FirstName, LastName);", generated);
+    }
+
+    private static void AssertGeneratedBindingOrder(
+        string generated, string propertyBinding, string modelListener, string explicitListener)
+    {
+        var propertyIndex = generated.IndexOf(propertyBinding, StringComparison.Ordinal);
+        var modelIndex = generated.IndexOf(modelListener, StringComparison.Ordinal);
+        var explicitIndex = generated.IndexOf(explicitListener, StringComparison.Ordinal);
+        Assert.True(propertyIndex >= 0, "Missing property binding: " + propertyBinding);
+        Assert.True(modelIndex >= 0, "Missing model listener: " + modelListener);
+        Assert.True(explicitIndex >= 0, "Missing explicit listener: " + explicitListener);
+        Assert.True(propertyIndex < modelIndex,
+            $"Property binding must precede model listener: {propertyIndex} !< {modelIndex}");
+        Assert.True(modelIndex < explicitIndex,
+            $"Model listener must precede explicit listener: {modelIndex} !< {explicitIndex}");
     }
 
     private static GeneratorDriverRunResult RunGenerator(params AdditionalText[] files)

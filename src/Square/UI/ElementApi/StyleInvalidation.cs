@@ -17,7 +17,7 @@ internal static class StyleInvalidation
                 "border-right-color" or "border-bottom-color" or "border-left-color" or "border-style" or
                 "border-top-style" or "border-right-style" or "border-bottom-style" or "border-left-style" or
                 "border-radius" or "border-top-left-radius" or "border-top-right-radius" or
-                "border-bottom-right-radius" or "border-bottom-left-radius" or "appearance" or "caret-color" or "outline" or
+                "border-bottom-right-radius" or "border-bottom-left-radius" or "caret-color" or "outline" or
                 "outline-color" or "outline-style" or "outline-width" or "outline-offset" or
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
                 "opacity" or "selection-background" or "selection-color" => ElementInvalidation.Paint,
@@ -31,7 +31,7 @@ internal static class StyleInvalidation
     }
 
     private static bool IsLayoutProperty(string property) => property is
-        "display" or "width" or "height" or "min-width" or "min-height" or "max-width" or "max-height" or
+        "display" or "appearance" or "width" or "height" or "min-width" or "min-height" or "max-width" or "max-height" or
         "margin" or "margin-left" or "margin-top" or "margin-right" or "margin-bottom" or
         "padding" or "padding-left" or "padding-top" or "padding-right" or "padding-bottom" or
         "border" or "border-width" or "border-left-width" or "border-top-width" or "border-right-width" or "border-bottom-width" or

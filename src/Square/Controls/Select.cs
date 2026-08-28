@@ -9,6 +9,12 @@ namespace Square.Controls;
 /// <summary>下拉选择控件，类似 HTML <c>select</c>。</summary>
 public class Select : UIElement, IPopupElement, ITextSelectable
 {
+    private static readonly string[] AuthorVerticalTextProperties =
+    [
+        "height", "font", "font-family", "font-size", "font-weight", "font-style", "line-height",
+        "padding-top", "padding-bottom", "border-top-width", "border-bottom-width"
+    ];
+
     /// <inheritdoc/>
     public bool IsLayoutOverlay => false;
     /// <summary>当前选中的值。</summary>
@@ -72,9 +78,33 @@ public class Select : UIElement, IPopupElement, ITextSelectable
         ctx.DrawPath(arrow, Pen.FromColor(IsEnabled ? Color.Black : Color.FromRgb(109, 109, 109)));
     }
 
-    private Point GetTextOrigin() => ControlDrawing.UsesWidgetAppearance(this)
-        ? new Point(Geometry.X + 4, Geometry.Y + 3)
-        : new Point(Geometry.X + 8, Geometry.Y + 8);
+    private Point GetTextOrigin()
+    {
+        if (!ControlDrawing.UsesWidgetAppearance(this))
+            return new Point(Geometry.X + 8, Geometry.Y + 8);
+        var hasHorizontalOverride = Style.IsAuthorSpecified("padding-left") ||
+                                    Style.IsAuthorSpecified("border-left-width");
+        var hasVerticalOverride = AuthorVerticalTextProperties.Any(Style.IsAuthorSpecified);
+        if (!hasHorizontalOverride && !hasVerticalOverride)
+            return new Point(Geometry.X + 4, Geometry.Y + 3);
+
+        var x = hasHorizontalOverride
+            ? Geometry.X + ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
+              ControlDrawing.GetStyledFloat(this, "padding-left", 0)
+            : Geometry.X + 4;
+        if (!hasVerticalOverride) return new Point(x, Geometry.Y + 3);
+
+        var top = Geometry.Y + ControlDrawing.GetStyledFloat(this, "border-top-width", 0) +
+            ControlDrawing.GetStyledFloat(this, "padding-top", 0);
+        var bottom = Geometry.Bottom - ControlDrawing.GetStyledFloat(this, "border-bottom-width", 0) -
+            ControlDrawing.GetStyledFloat(this, "padding-bottom", 0);
+        var value = string.IsNullOrEmpty(Value) ? Placeholder : Value;
+        var textSize = ControlDrawing.MeasureText(this, value, 14f);
+        var y = top + (Math.Max(0, bottom - top) - textSize.Height) / 2f;
+        if (ControlDrawing.MeasureTextInkBounds(this, value, 14f, textSize) is { IsEmpty: false } ink)
+            y = (top + bottom) / 2f - (ink.Top + ink.Bottom) / 2f + ControlDrawing.SelectOpticalCenterYOffset;
+        return new Point(x, y);
+    }
 
     /// <inheritdoc/>
     public void PaintPopup(IRenderContext ctx)
@@ -369,6 +399,7 @@ public class Popup : View, IPopupElement
         context.PushClip(Geometry);
         var background = ControlDrawing.GetStyledColor(this, "background", Color.White);
         ControlDrawing.DrawStyledBackground(context, this, background);
+        CssBoxPainter.PaintBorder(context, this);
         foreach (var child in Children.OrderBy(child => child.ZIndex))
             PaintPopupSubtree(context, child);
         context.PopClip();

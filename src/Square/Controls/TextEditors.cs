@@ -82,6 +82,9 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private readonly List<EditorSnapshot> _redoHistory = [];
     private bool _updatingValue;
     private string _knownValue = "";
+    private string _changeBaseline = "";
+    private bool _hasChangeBaseline;
+    private bool _hasUserEditSinceFocus;
 
     protected abstract bool IsMultiline { get; }
     protected virtual bool CanEditText => true;
@@ -454,6 +457,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         try
         {
             Value = value;
+            if (_hasChangeBaseline) _hasUserEditSinceFocus = true;
         }
         finally
         {
@@ -803,6 +807,46 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         _caretOpacity = 0f;
         _caretBlinkAnimation = null;
         InvalidatePaint();
+    }
+
+    private void BeginChangeSession()
+    {
+        _changeBaseline = Value;
+        _hasChangeBaseline = true;
+        _hasUserEditSinceFocus = false;
+    }
+
+    private void CommitChangeSession()
+    {
+        var changed = _hasChangeBaseline && _hasUserEditSinceFocus &&
+            !string.Equals(Value, _changeBaseline, StringComparison.Ordinal);
+        _changeBaseline = Value;
+        _hasChangeBaseline = false;
+        _hasUserEditSinceFocus = false;
+        if (changed) DispatchEvent(StandardEvents.CreateChange());
+    }
+
+    /// <inheritdoc />
+    protected override void OnBeforeUnfocus()
+    {
+        CommitChangeSession();
+        base.OnBeforeUnfocus();
+    }
+
+    /// <inheritdoc />
+    protected override void OnBeforeFocus()
+    {
+        BeginChangeSession();
+        base.OnBeforeFocus();
+    }
+
+    /// <inheritdoc />
+    protected override void OnDetachedCore()
+    {
+        _changeBaseline = Value;
+        _hasChangeBaseline = false;
+        _hasUserEditSinceFocus = false;
+        base.OnDetachedCore();
     }
 
     private readonly record struct LineRange(int Start, int Length)

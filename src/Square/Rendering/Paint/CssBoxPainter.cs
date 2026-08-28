@@ -8,6 +8,24 @@ namespace Square.Rendering.Paint;
 
 internal static class CssBoxPainter
 {
+    private static readonly string[] AuthorBoxProperties =
+    [
+        "background", "background-color", "box-shadow",
+        "border", "border-width", "border-color", "border-style",
+        "border-top", "border-top-width", "border-top-color", "border-top-style",
+        "border-right", "border-right-width", "border-right-color", "border-right-style",
+        "border-bottom", "border-bottom-width", "border-bottom-color", "border-bottom-style",
+        "border-left", "border-left-width", "border-left-color", "border-left-style",
+        "border-radius", "border-top-left-radius", "border-top-right-radius",
+        "border-bottom-right-radius", "border-bottom-left-radius"
+    ];
+
+    private static readonly string[] AuthorBorderProperties =
+        AuthorBoxProperties.Where(property => property.StartsWith("border", StringComparison.Ordinal)).ToArray();
+
+    private static readonly string[] AuthorOutlineProperties =
+        ["outline", "outline-width", "outline-color", "outline-style", "outline-offset"];
+
     internal enum BorderStyle
     {
         None,
@@ -28,7 +46,7 @@ internal static class CssBoxPainter
         }
 
         var geometry = element.Geometry;
-        if (element is Button button && ControlDrawing.UsesWidgetAppearance(button))
+        if (element is Button button && UsesDefaultButtonWidgetPaint(button))
         {
             PaintButtonWidget(context, button, geometry);
             return;
@@ -60,18 +78,19 @@ internal static class CssBoxPainter
     public static void PaintAfterContent(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
-        if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
-        if (element is Input input && ControlDrawing.UsesWidgetAppearance(input))
+        if (element is Button button && UsesDefaultButtonWidgetPaint(button)) return;
+        if (element is Input input && ControlDrawing.UsesWidgetAppearance(input) && !HasAuthorBorderStyle(input))
         {
             PaintInputWidgetBorder(context, input, input.Geometry);
             return;
         }
-        if (element is TextArea textArea && ControlDrawing.UsesWidgetAppearance(textArea))
+        if (element is TextArea textArea && ControlDrawing.UsesWidgetAppearance(textArea) && !HasAuthorBorderStyle(textArea))
         {
             PaintTextAreaWidgetBorder(context, textArea, textArea.Geometry);
             return;
         }
-        if (element is Select select && select.IsEnabled && ControlDrawing.UsesWidgetAppearance(select))
+        if (element is Select select && select.IsEnabled && ControlDrawing.UsesWidgetAppearance(select) &&
+            !HasAuthorBorderStyle(select))
         {
             PaintSelectWidgetBorder(context, select, select.Geometry);
             return;
@@ -91,7 +110,8 @@ internal static class CssBoxPainter
     public static void PaintAfterChildren(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
-        if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
+        if (element is Button button && UsesDefaultButtonWidgetPaint(button) &&
+            !HasAuthorOutlineStyle(button)) return;
         if (element is CheckBox checkBox && ControlDrawing.UsesWidgetAppearance(checkBox)) return;
         if (element is Radio radio && ControlDrawing.UsesWidgetAppearance(radio)) return;
         if (element is Input input && UsesDefaultWidgetFocusBorder(input))
@@ -123,6 +143,18 @@ internal static class CssBoxPainter
             string.Equals(element.Style.Get("outline-color"), "Highlight", StringComparison.OrdinalIgnoreCase) &&
             (!TryParseSignedLength(element.Style.Get("outline-offset"), out var offset) || offset == 0);
     }
+
+    private static bool HasAuthorBoxStyle(Element element) =>
+        AuthorBoxProperties.Any(element.Style.IsAuthorSpecified);
+
+    internal static bool UsesDefaultButtonWidgetPaint(Button button) =>
+        ControlDrawing.UsesWidgetAppearance(button) && !HasAuthorBoxStyle(button);
+
+    private static bool HasAuthorBorderStyle(Element element) =>
+        AuthorBorderProperties.Any(element.Style.IsAuthorSpecified);
+
+    private static bool HasAuthorOutlineStyle(Element element) =>
+        AuthorOutlineProperties.Any(element.Style.IsAuthorSpecified);
 
     private static void PaintButtonWidget(IRenderContext context, Button button, Rect geometry)
     {
@@ -229,6 +261,9 @@ internal static class CssBoxPainter
             if (!fragment.Bounds.IsEmpty && fragment.Color.A > 0)
                 context.FillRect(fragment.Bounds, new SolidColorBrush(fragment.Color));
     }
+
+    internal static void PaintBorder(IRenderContext context, Element element) =>
+        PaintBorder(context, element, element.Style.GetAll());
 
     private static void PaintBorder(IRenderContext context, Element element, IReadOnlyDictionary<string, string> declarations)
     {

@@ -975,6 +975,34 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void PopupPaintsAuthorBorderInTopLevelLayer()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 120, 100) };
+        var anchor = new Button { Geometry = new Rect(50, 10, 30, 20) };
+        var popup = new Popup
+        {
+            Geometry = new Rect(0, 0, 40, 30),
+            Anchor = anchor,
+            VerticalOffset = 2
+        };
+        popup.Style.CssText = "background: #ffffff; border: 2px solid #123456; border-radius: 0;";
+        root.Children.Add(anchor);
+        root.Children.Add(popup);
+        popup.Open();
+        using var context = CreateContext(120, 100);
+        context.Clear(Color.Transparent);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        tree.Render(context);
+
+        var pixel = context.GetBitmap().GetPixel(50, 40);
+        Assert.Equal(0x12, pixel[2]);
+        Assert.Equal(0x34, pixel[1]);
+        Assert.Equal(0x56, pixel[0]);
+    }
+
+    [Fact]
     public void ModalDialogRendersBackdropAndCenteredContent()
     {
         var document = new UIDocument();

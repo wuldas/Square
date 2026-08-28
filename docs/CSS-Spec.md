@@ -66,12 +66,12 @@ CSS 是框架的重要组成部分，与 `.sqx` 的 `<style>` 段和 `style`/`cl
 - `element.Style.Set(...)` 视为 inline style，优先级高于所有样式表规则。
 - 插槽内容保留调用方样式规则；进入子组件视觉树不会重置已计算 specificity。
 
-- 级联顺序：`!important` > 内联 `style` > ID > 类/属性/伪类 > 类型
+- 普通级联顺序：内联 `style` > 作者 origin > UA origin；同一 origin 内再按 ID > 类/属性/伪类 > 类型
 - Specificity 计算：`(id_count, class_count, type_count)`
 - 同 specificity 时，后定义胜出
 - Variables（`--x`）参与级联
 
-当前实现中 `!important` 已解析为 declaration 标记，并按高于普通 specificity 的优先级应用。内联样式仍通过 `Style.Set(...)` 保持高优先级。
+当前实现中 `!important` 已解析为 declaration 标记，并按高于普通声明的优先级应用。内联样式仍通过 `Style.Set(...)` 保持高优先级。当前仅区分 UA 与作者 origin，不含 user origin、layer、revert，也未实现标准 CSS 的 important origin 反转顺序。
 
 ---
 

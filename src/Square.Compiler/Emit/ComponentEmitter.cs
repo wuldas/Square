@@ -274,7 +274,13 @@ namespace Square.Compiler.Emit
                 ", \"" + Escape(element.TagName) + "\", \"" + Escape(_doc.Name) + "\", sourcePath: \"" +
                 Escape(_doc.SourcePath) + "\"));");
 
-            foreach (var attribute in element.Attributes)
+            // Initialize properties before events, then let v-model write back before user handlers.
+            // Property hooks may emit events, so model listeners must not exist during initialization.
+            foreach (var attribute in element.Attributes.Where(attribute => !IsEventAttribute(attribute)))
+                EmitAttribute(variableName, attribute, indent, localNames);
+            foreach (var attribute in element.Attributes.Where(attribute => attribute.IsModelEvent))
+                EmitAttribute(variableName, attribute, indent, localNames);
+            foreach (var attribute in element.Attributes.Where(attribute => IsEventAttribute(attribute) && !attribute.IsModelEvent))
                 EmitAttribute(variableName, attribute, indent, localNames);
 
             if (usesSlots)
@@ -286,6 +292,11 @@ namespace Square.Compiler.Emit
 
             return variableName;
         }
+
+        private static bool IsEventAttribute(SqxAttribute attribute) =>
+            attribute.IsModelEvent || attribute.IsDynamicEvent ||
+            attribute.Name == "__sqv_on_object" ||
+            attribute.IsExpression && attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase);
 
         private void EmitAttribute(string variableName, SqxAttribute attribute, string indent, IReadOnlyList<string> localNames)
         {
@@ -335,7 +346,8 @@ namespace Square.Compiler.Emit
                 {
                     var eventName = attribute.Name.Substring(2).ToLowerInvariant();
                     EmitSourceMappedLine(indent, attribute.Line,
-                        variableName + ".AddEventListener(\"" + eventName + "\", " + attribute.RawValue + ");");
+                        variableName + ".RegisterGeneratedResource(" + variableName + ".Listen(\"" +
+                        eventName + "\", " + attribute.RawValue + "));");
                 }
                 else
                 {

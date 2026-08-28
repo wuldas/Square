@@ -18,6 +18,7 @@ using Square.UI;
 using Xunit;
 using VueMain = Square.Sample.Vue.Components.Main;
 using VueTabs = Square.Sample.Vue.Components.Tabs;
+using BootstrapFormsPage = Square.Sample.Vue.Components.BootstrapFormsPage;
 
 namespace Square.UI.Tests;
 
@@ -105,6 +106,85 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void GeneratedBootstrapButtonsReceiveAuthorBackgroundAndRadius()
+    {
+        var component = new BootstrapFormsPage();
+
+        component.BuildElementTree();
+
+        var primary = Assert.Single(component.QueryAll<Button>(), button => button.TextContent == "Sign in");
+        var secondary = Assert.Single(component.QueryAll<Button>(), button => button.TextContent == "Save changes");
+        Assert.Equal("#0d6efd", primary.Style.Get("background-color"));
+        Assert.Equal("#6c757d", secondary.Style.Get("background-color"));
+        Assert.Equal("6px", primary.Style.Get("border-radius"));
+        Assert.Equal("6px", secondary.Style.Get("border-radius"));
+    }
+
+    [Fact]
+    public void GeneratedBootstrapPasswordHandlerObservesCurrentModelValue()
+    {
+        var component = new BootstrapFormsPage();
+        component.BuildElementTree();
+        var password = Assert.Single(component.QueryAll<Input>(), input => input.Type == "password");
+        var email = Assert.Single(component.QueryAll<Input>(), input => input.Placeholder == "name@example.com");
+
+        email.HandleTextInput("x");
+        Assert.Equal("Email: demo@square.devx", component.LoginStatus.Value);
+
+        password.HandleTextInput("x");
+
+        Assert.Equal("square123x", password.Value);
+        Assert.Equal("square123x", component.Password.Value);
+        Assert.Equal("Password: square123x", component.PasswordPreview.Value);
+        Assert.Equal("Password: square123x", component.LoginStatus.Value);
+    }
+
+    [Fact]
+    public void GeneratedBootstrapButtonsUseBootstrapBaseBox()
+    {
+        var component = new BootstrapFormsPage();
+        component.BuildElementTree();
+        var primary = Assert.Single(component.QueryAll<Button>(), button => button.TextContent == "Sign in");
+        var secondary = Assert.Single(component.QueryAll<Button>(), button => button.TextContent == "Save changes");
+        var layout = new LayoutEngine();
+
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+
+        Assert.Equal(38, primary.Geometry.Height);
+        Assert.Equal(38, secondary.Geometry.Height);
+        Assert.True(primary.ClassList.Contains("btn"));
+        Assert.True(secondary.ClassList.Contains("btn"));
+        Assert.Equal("16px", primary.Style.Get("font-size"));
+        Assert.Equal("24px", primary.Style.Get("line-height"));
+        Assert.Equal("6px", primary.Style.Get("padding-top"));
+        Assert.Equal("6px", primary.Style.Get("padding-bottom"));
+        Assert.Equal("12px", primary.Style.Get("padding-left"));
+        Assert.Equal("12px", primary.Style.Get("padding-right"));
+        Assert.Equal("1px", primary.Style.Get("border-top-width"));
+        Assert.Equal("solid", primary.Style.Get("border-top-style"));
+    }
+
+    [Fact]
+    public void GeneratedBootstrapSelectUsesBootstrapContentBox()
+    {
+        var component = new BootstrapFormsPage();
+        component.BuildElementTree();
+        var select = Assert.Single(component.QueryAll<Select>());
+        var layout = new LayoutEngine();
+
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+
+        Assert.Equal(38, select.Geometry.Height);
+        Assert.Equal("24px", select.Style.Get("line-height"));
+        Assert.Equal("6px", select.Style.Get("padding-top"));
+        Assert.Equal("6px", select.Style.Get("padding-bottom"));
+        Assert.Equal("12px", select.Style.Get("padding-left"));
+        Assert.Equal("36px", select.Style.Get("padding-right"));
+    }
+
+    [Fact]
     public void GeneratedSqxTabHeadersOverrideNativeButtonAppearance()
     {
         var component = new Main();
@@ -132,6 +212,53 @@ public class M1IntegrationTests
         component.BuildElementTree();
 
         AssertTabHeadersOverrideNativeButtonAppearance(component);
+    }
+
+    [Fact]
+    public void GeneratedSqvTabHeaderPaddingExpandsIntrinsicWidth()
+    {
+        var component = new VueMain();
+        component.BuildElementTree();
+        ((IComponentLifecycle)component).OnAttached();
+        CssStyleReconciler.Flush();
+        var layout = new LayoutEngine();
+
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+
+        var buttons = GetTabHeaderButtons(component);
+        foreach (var button in buttons)
+        {
+            Assert.Equal("auto", button.Style.Get("width"));
+            Assert.Equal("14px", button.Style.Get("padding-left"));
+            Assert.Equal("14px", button.Style.Get("padding-right"));
+            Assert.Equal(
+                button.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 28,
+                button.Geometry.Width,
+                1);
+            Assert.True(button.SelectableTextBounds.Left - button.Geometry.Left >= 13.5f,
+                $"{button.TextContent} left padding was not reflected in geometry: {button.Geometry} / {button.SelectableTextBounds}");
+            Assert.True(button.Geometry.Right - button.SelectableTextBounds.Right >= 13.5f,
+                $"{button.TextContent} right padding was not reflected in geometry: {button.Geometry} / {button.SelectableTextBounds}");
+        }
+
+        var dynamic = buttons[0];
+        dynamic.TextContent = "Longer tab label";
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+        Assert.Equal(dynamic.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 28, dynamic.Geometry.Width, 1);
+
+        dynamic.Style.Set("padding-left", "20px");
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+        Assert.Equal(dynamic.Measure(new Size(float.MaxValue, float.MaxValue)).Width + 34, dynamic.Geometry.Width, 1);
+
+        dynamic.Style.Set("width", "120px");
+        layout.Measure(component, new Size(900, 940));
+        layout.Arrange(component, new Rect(0, 0, 900, 940));
+        Assert.Equal(120, dynamic.Geometry.Width);
+
+        ((IComponentLifecycle)component).OnDetached();
     }
 
     [Fact]
@@ -164,8 +291,12 @@ public class M1IntegrationTests
         CssStyleReconciler.Flush();
         var buttons = GetTabHeaderButtons(component);
         var layout = new LayoutEngine();
-        layout.Measure(component, new Size(900, 940));
-        layout.Arrange(component, new Rect(0, 0, 900, 940));
+        void Relayout()
+        {
+            layout.Measure(component, new Size(900, 940));
+            layout.Arrange(component, new Rect(0, 0, 900, 940));
+        }
+        Relayout();
         var selected = buttons[0];
         var resting = buttons[1];
         var restingBounds = resting.Geometry;
@@ -176,18 +307,22 @@ public class M1IntegrationTests
 
         resting.SetState(ElementState.Hover, true);
         CssStyleReconciler.Flush();
+        Relayout();
         Assert.Equal("#e4e8ed", resting.Style.Get("background"));
         Assert.Equal(restingBounds, resting.Geometry);
 
         resting.SetState(ElementState.Hover, false);
         resting.SetState(ElementState.Active, true);
         CssStyleReconciler.Flush();
+        Relayout();
         Assert.Equal("#d8dee5", resting.Style.Get("background"));
+        Assert.Equal("transparent", resting.Style.Get("border-bottom-color"));
         Assert.Equal(restingBounds, resting.Geometry);
 
         resting.SetState(ElementState.Active, false);
         resting.Focus();
         CssStyleReconciler.Flush();
+        Relayout();
         Assert.Equal("2px solid #005ea6", resting.Style.Get("outline"));
         Assert.Equal("-2px", resting.Style.Get("outline-offset"));
         Assert.Equal(restingBounds, resting.Geometry);
@@ -195,11 +330,13 @@ public class M1IntegrationTests
         resting.Unfocus();
         resting.SetState(ElementState.Disabled, true);
         CssStyleReconciler.Flush();
+        Relayout();
         Assert.Equal("#9aa1a9", resting.Style.Get("color"));
         Assert.Equal(restingBounds, resting.Geometry);
 
         selected.SetState(ElementState.Hover, true);
         CssStyleReconciler.Flush();
+        Relayout();
         Assert.Equal("#ffffff", selected.Style.Get("background"));
         Assert.Equal("#005ea6", selected.Style.Get("border-bottom-color"));
     }
@@ -426,6 +563,124 @@ public class M1IntegrationTests
 
         Assert.Equal("中文日本語", input.Value);
         Assert.Equal("中文\n日本語", textArea.Value);
+    }
+
+    [Fact]
+    public void TextEditorsDispatchOneChangeOnBlurOnlyAfterUserEdit()
+    {
+        TextEditorBase[] editors = [new Input { Value = "seed" }, new TextArea { Value = "seed" }];
+        foreach (var editor in editors)
+        {
+            var changes = 0;
+            var observed = "";
+            editor.AddEventListener("change", () =>
+            {
+                changes++;
+                observed = editor.Value;
+            });
+
+            editor.Focus();
+            editor.HandleTextInput("x");
+            Assert.Equal(0, changes);
+
+            editor.Unfocus();
+            Assert.Equal(1, changes);
+            Assert.Equal("seedx", observed);
+
+            editor.Unfocus();
+            editor.Focus();
+            editor.Unfocus();
+            Assert.Equal(1, changes);
+        }
+    }
+
+    [Fact]
+    public void CaptureFocusEditParticipatesInChangeSession()
+    {
+        var input = new Input { Value = "seed" };
+        var changes = 0;
+        input.AddEventListener("focus", () => input.HandleTextInput("x"), useCapture: true);
+        input.AddEventListener("change", () => changes++);
+
+        input.Focus();
+        input.Unfocus();
+
+        Assert.Equal("seedx", input.Value);
+        Assert.Equal(1, changes);
+    }
+
+    [Fact]
+    public void FocusReentrancyDoesNotEmitContradictoryFocusInOrFocusOut()
+    {
+        var input = new Input();
+        var events = new List<string>();
+        input.AddEventListener("focus", () =>
+        {
+            events.Add("focus");
+            input.Unfocus();
+        });
+        input.AddEventListener("blur", () => events.Add("blur"));
+        input.AddEventListener("focusin", () => events.Add("focusin"));
+        input.AddEventListener("focusout", () => events.Add("focusout"));
+
+        input.Focus();
+
+        Assert.False(input.IsFocused);
+        Assert.Equal(["focus", "blur", "focusout"], events);
+    }
+
+    [Fact]
+    public void ChangeHandlerFocusDoesNotInterruptUnfocusTransaction()
+    {
+        var input = new Input { Value = "seed" };
+        var events = new List<string>();
+        input.AddEventListener("change", () =>
+        {
+            events.Add("change");
+            input.Focus();
+        });
+        input.AddEventListener("blur", () => events.Add("blur"));
+        input.AddEventListener("focusout", () => events.Add("focusout"));
+        input.Focus();
+        events.Clear();
+        input.HandleTextInput("x");
+
+        input.Unfocus();
+
+        Assert.False(input.IsFocused);
+        Assert.Equal(["change", "blur", "focusout"], events);
+    }
+
+    [Fact]
+    public void TextEditorDetachClearsFocusAndAbandonsPendingChange()
+    {
+        var input = new Input { Value = "seed" };
+        var changes = 0;
+        input.AddEventListener("change", () => changes++);
+        ((IComponentLifecycle)input).OnAttached();
+        input.Focus();
+        input.HandleTextInput("x");
+
+        ((IComponentLifecycle)input).OnDetached();
+        ((IComponentLifecycle)input).OnAttached();
+
+        Assert.False(input.IsFocused);
+        input.Focus();
+        input.Unfocus();
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
+    public void DiscardGeneratedBootstrapSubtreeRemovesVModelListener()
+    {
+        var component = new BootstrapFormsPage();
+        component.BuildElementTree();
+        var password = Assert.Single(component.QueryAll<Input>(), input => input.Type == "password");
+
+        component.DiscardGeneratedSubtree();
+        password.HandleTextInput("x");
+
+        Assert.Equal("square123", component.Password.Value);
     }
 
     [Fact]

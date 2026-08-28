@@ -14,37 +14,46 @@ public sealed record TextFragment(Element Element, string Text, Font Font, Rect 
     {
         if (Characters.Count == 0) return 0;
 
-        for (var i = 0; i < Characters.Count; i++)
+        var lines = Characters
+            .GroupBy(character => character.Bounds.Y)
+            .Select(group => new
+            {
+                Characters = group.ToArray(),
+                Top = group.Min(character => character.SelectionBounds.Top),
+                Bottom = group.Max(character => character.SelectionBounds.Bottom)
+            })
+            .ToArray();
+        var nearestLine = lines[0];
+        var nearestLineDistance = float.MaxValue;
+        var nearestLineCenterDistance = float.MaxValue;
+        foreach (var line in lines)
         {
-            var character = Characters[i];
-            if (!character.Bounds.Contains(point)) continue;
-            var midpoint = character.Bounds.X + character.Bounds.Width / 2f;
-            var leadingOffset = character.Direction == BidiDirection.Rtl
-                ? character.EndOffset
-                : character.StartOffset;
-            var trailingOffset = character.Direction == BidiDirection.Rtl
-                ? character.StartOffset
-                : character.EndOffset;
-            return SnapToTextElementBoundary(
-                point.X < midpoint ? leadingOffset : trailingOffset,
-                forward: point.X >= midpoint);
+            var distance = point.Y < line.Top ? line.Top - point.Y :
+                point.Y > line.Bottom ? point.Y - line.Bottom : 0;
+            var centerDistance = Math.Abs(point.Y - (line.Top + line.Bottom) / 2f);
+            if (distance > nearestLineDistance ||
+                distance == nearestLineDistance && centerDistance >= nearestLineCenterDistance)
+                continue;
+            nearestLine = line;
+            nearestLineDistance = distance;
+            nearestLineCenterDistance = centerDistance;
         }
 
         var nearest = 0;
         var nearestForward = false;
         var nearestDistance = float.MaxValue;
-        for (var i = 0; i < Characters.Count; i++)
+        for (var i = 0; i < nearestLine.Characters.Length; i++)
         {
-            var bounds = Characters[i].Bounds;
-            var dx = point.X < bounds.Left ? bounds.Left - point.X : point.X > bounds.Right ? point.X - bounds.Right : 0;
-            var dy = point.Y < bounds.Top ? bounds.Top - point.Y : point.Y > bounds.Bottom ? point.Y - bounds.Bottom : 0;
-            var distance = dx * dx + dy * dy;
+            var character = nearestLine.Characters[i];
+            var bounds = character.Bounds;
+            var distance = point.X < bounds.Left ? bounds.Left - point.X :
+                point.X > bounds.Right ? point.X - bounds.Right : 0;
             if (distance >= nearestDistance) continue;
             nearestDistance = distance;
             nearestForward = point.X > bounds.X + bounds.Width / 2f;
-            nearest = Characters[i].Direction == BidiDirection.Rtl
-                ? nearestForward ? Characters[i].StartOffset : Characters[i].EndOffset
-                : nearestForward ? Characters[i].EndOffset : Characters[i].StartOffset;
+            nearest = character.Direction == BidiDirection.Rtl
+                ? nearestForward ? character.StartOffset : character.EndOffset
+                : nearestForward ? character.EndOffset : character.StartOffset;
         }
         return SnapToTextElementBoundary(nearest, nearestForward);
     }
@@ -55,7 +64,8 @@ public sealed record TextFragment(Element Element, string Text, Font Font, Rect 
         var index = Array.BinarySearch(_textElementStarts, offset);
         if (index >= 0) return offset;
         index = ~index;
-        return forward && index < _textElementStarts.Length ? _textElementStarts[index] : _textElementStarts[index - 1];
+        if (forward) return index < _textElementStarts.Length ? _textElementStarts[index] : Text.Length;
+        return _textElementStarts[index - 1];
     }
 }
 

@@ -366,6 +366,128 @@ public sealed class SkiaBackendTests
     }
 
     [Fact]
+    public void AppearanceAutoHonorsAuthorWidgetBoxStyles()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 190, 80) };
+        var button = new Button("Save") { Geometry = new Rect(2, 2, 180, 32) };
+        var input = new Input { Geometry = new Rect(2, 42, 180, 32), Value = "Value" };
+        button.ClassList.Add("author-button");
+        input.ClassList.Add("author-input");
+        root.Children.Add(button);
+        root.Children.Add(input);
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            .author-button { background: #0d6efd; border-radius: 6px; color: #ffffff; }
+            .author-input { background: #123456; border: 0; border-radius: 0; color: #ffffff; }
+            """).Tokenize()).Parse());
+        engine.ApplyStylesToTree(root);
+
+        using var context = CreateContext(190, 80);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(context);
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+
+        AssertPixel(bitmap, 8, 18, 0x0d, 0x6e, 0xfd, 255);
+        AssertPixel(bitmap, 8, 42, 0x12, 0x34, 0x56, 255);
+        var textRows = new List<int>();
+        for (var y = 5; y <= 31; y++)
+            for (var x = 10; x < 174; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel[2] > 180 && pixel[1] > 180 && pixel[0] > 180)
+                    textRows.Add(y);
+            }
+        Assert.NotEmpty(textRows);
+        var inkCenter = (textRows.Min() + textRows.Max()) / 2f;
+        Assert.InRange(inkCenter - button.Geometry.Center.Y, 0, 0.5f);
+    }
+
+    [Fact]
+    public void BootstrapButtonsDoNotRenderTextAboveCenterOnSkia()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 190, 130) };
+        var primary = new Button("Sign in") { Geometry = new Rect(2, 3, 180, 38) };
+        var secondary = new Button("Save changes") { Geometry = new Rect(2, 46, 180, 38) };
+        var fractional = new Button("Fractional") { Geometry = new Rect(2, 88.5f, 180, 38) };
+        primary.ClassList.Add("bootstrap-button");
+        secondary.ClassList.Add("bootstrap-button");
+        fractional.ClassList.Add("bootstrap-button");
+        root.Children.Add(primary);
+        root.Children.Add(secondary);
+        root.Children.Add(fractional);
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".bootstrap-button { appearance:auto; font-size:16px; line-height:24px; padding:6px 12px; " +
+            "border:1px solid #0d6efd; border-radius:6px; background:#0d6efd; color:#ffffff; }").Tokenize()).Parse());
+        engine.ApplyStylesToTree(root);
+
+        using var context = CreateContext(190, 130);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(context);
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+
+        AssertTextNotAboveCenter(primary);
+        AssertTextNotAboveCenter(secondary);
+        AssertTextNotAboveCenter(fractional);
+
+        void AssertTextNotAboveCenter(Button button)
+        {
+            var rows = new List<int>();
+            for (var y = (int)button.Geometry.Y + 2; y < (int)button.Geometry.Bottom - 2; y++)
+                for (var x = (int)button.Geometry.X + 8; x < (int)button.Geometry.Right - 8; x++)
+                {
+                    var pixel = bitmap.GetPixel(x, y);
+                    if (pixel[2] > 180 && pixel[1] > 180 && pixel[0] > 180)
+                        rows.Add(y);
+                }
+            Assert.NotEmpty(rows);
+            var inkCenter = (rows.Min() + rows.Max()) / 2f;
+            Assert.InRange(inkCenter - button.Geometry.Center.Y, 0, 0.5f);
+        }
+    }
+
+    [Fact]
+    public void AuthorStyledSelectUsesContentBoxOnSkia()
+    {
+        var select = new Select
+        {
+            Geometry = new Rect(2, 2, 180, 38),
+            Options = ["Plan"],
+            Value = "Plan"
+        };
+        select.ClassList.Add("author-select");
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            ".author-select { appearance: auto; height: 38px; line-height: 24px; " +
+            "padding: 6px 36px 6px 12px; border: 1px solid #767676; border-radius: 6px; }").Tokenize()).Parse());
+        engine.ApplyStyles(select);
+
+        using var context = CreateContext(190, 44);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(select);
+        tree.Render(context);
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var ink = new List<(int X, int Y)>();
+        for (var y = 4; y < 38; y++)
+            for (var x = 4; x < 158; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel[2] < 80 && pixel[1] < 80 && pixel[0] < 80)
+                    ink.Add((x, y));
+            }
+
+        Assert.NotEmpty(ink);
+        Assert.InRange(ink.Min(point => point.X) - (int)select.Geometry.X, 12, 15);
+        var inkCenter = (ink.Min(point => point.Y) + ink.Max(point => point.Y)) / 2f;
+        Assert.InRange(inkCenter - select.Geometry.Center.Y, 0, 0.5f);
+    }
+
+    [Fact]
     public void DialogDescendantsPaintAutoAndAuthorChromeOnSkia()
     {
         var document = new UIDocument();

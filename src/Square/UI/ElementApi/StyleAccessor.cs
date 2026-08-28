@@ -89,7 +89,7 @@ public sealed class StyleAccessor
         if (_inlineStyles != null && assignments.All(assignment =>
                 _inlineStyles.TryGetValue(assignment.Property, out var current) &&
                 current.Value == assignment.Value && current.Important == important)) return;
-        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => Get(assignment.Property),
+        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => CaptureStyleState(assignment.Property),
             StringComparer.Ordinal);
         _inlineStyles ??= [];
         foreach (var assignment in assignments)
@@ -98,7 +98,7 @@ public sealed class StyleAccessor
             RemoveComputedStyle(assignment.Property);
         }
         foreach (var assignment in assignments)
-            InvalidateIfEffectiveValueChanged(assignment.Property, previous[assignment.Property]);
+            InvalidateIfEffectiveStyleChanged(assignment.Property, previous[assignment.Property]);
     }
 
     /// <summary>读取内联声明值；未设置返回空字符串。</summary>
@@ -123,13 +123,13 @@ public sealed class StyleAccessor
         property = NormalizePropertyName(property);
         if (_inlineStyles == null || !_inlineStyles.TryGetValue(property, out var entry)) return "";
         var properties = GetDeclarationProperties(property).Where(_inlineStyles.ContainsKey).ToArray();
-        var previous = properties.ToDictionary(name => name, Get, StringComparer.Ordinal);
+        var previous = properties.ToDictionary(name => name, CaptureStyleState, StringComparer.Ordinal);
         foreach (var name in properties)
         {
             _inlineStyles.Remove(name);
             RemoveComputedStyle(name);
         }
-        foreach (var name in properties) InvalidateIfEffectiveValueChanged(name, previous[name]);
+        foreach (var name in properties) InvalidateIfEffectiveStyleChanged(name, previous[name]);
         return entry.Value ?? "";
     }
 
@@ -140,12 +140,12 @@ public sealed class StyleAccessor
     public bool SetAnimated(string property, string value)
     {
         property = NormalizePropertyName(property);
-        var previous = Get(property);
+        var previous = CaptureStyleState(property);
         _animatedStyles ??= [];
         if (_animatedStyles.TryGetValue(property, out var current) && current == value) return false;
         _animatedStyles[property] = value;
         RemoveComputedStyle(property);
-        InvalidateIfEffectiveValueChanged(property, previous);
+        InvalidateIfEffectiveStyleChanged(property, previous);
         return true;
     }
 
@@ -153,10 +153,10 @@ public sealed class StyleAccessor
     {
         property = NormalizePropertyName(property);
         if (_animatedStyles == null || !_animatedStyles.ContainsKey(property)) return;
-        var previous = Get(property);
+        var previous = CaptureStyleState(property);
         _animatedStyles.Remove(property);
         RemoveComputedStyle(property);
-        InvalidateIfEffectiveValueChanged(property, previous);
+        InvalidateIfEffectiveStyleChanged(property, previous);
     }
 
     /// <summary>兼容旧调用的级联写入。</summary>
@@ -164,19 +164,19 @@ public sealed class StyleAccessor
         SetCascaded(property, value, CssSpecificity.FromLegacy(specificity), important: false, persistent: true);
 
     internal bool SetCascaded(string property, string value, CssSpecificity specificity, bool important,
-        bool persistent = false)
+        bool persistent = false, CssCascadeOrigin origin = CssCascadeOrigin.Author, bool? authorSpecified = null)
     {
         property = NormalizePropertyName(property);
         value = value.Trim();
         if (!TryGetAssignments(property, value, out var assignments)) return false;
         _cascadedStyles ??= [];
-        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => Get(assignment.Property),
+        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => CaptureStyleState(assignment.Property),
             StringComparer.Ordinal);
         var changed = new List<string>(assignments.Length);
         foreach (var assignment in assignments)
         {
-            var candidate = new CascadedStyleEntry(assignment.Value, specificity, important, persistent,
-                Interlocked.Increment(ref _cascadeSequence));
+            var candidate = new CascadedStyleEntry(assignment.Value, specificity, important, persistent, origin,
+                authorSpecified ?? origin == CssCascadeOrigin.Author, Interlocked.Increment(ref _cascadeSequence));
             if (_cascadedStyles.TryGetValue(assignment.Property, out var current) && current.ComparePriority(candidate) > 0)
                 continue;
             if (_cascadedStyles.TryGetValue(assignment.Property, out current) && current.SameValueAndPriority(candidate))
@@ -185,7 +185,7 @@ public sealed class StyleAccessor
             changed.Add(assignment.Property);
         }
         foreach (var name in changed) RemoveComputedStyle(name);
-        foreach (var name in changed) InvalidateIfEffectiveValueChanged(name, previous[name]);
+        foreach (var name in changed) InvalidateIfEffectiveStyleChanged(name, previous[name]);
         return changed.Count > 0;
     }
 
@@ -250,11 +250,11 @@ public sealed class StyleAccessor
     {
         if (_inlineStyles == null || _inlineStyles.Count == 0) return;
         var properties = _inlineStyles.Keys.ToArray();
-        var previous = properties.ToDictionary(property => property, Get, StringComparer.Ordinal);
+        var previous = properties.ToDictionary(property => property, CaptureStyleState, StringComparer.Ordinal);
         _inlineStyles.Clear();
         foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
-            InvalidateIfEffectiveValueChanged(property, previous[property]);
+            InvalidateIfEffectiveStyleChanged(property, previous[property]);
     }
 
     /// <summary>清除全部非内联级联候选。</summary>
@@ -266,11 +266,11 @@ public sealed class StyleAccessor
             .Select(pair => pair.Key)
             .ToArray();
         if (properties.Length == 0) return;
-        var previous = properties.ToDictionary(property => property, Get, StringComparer.Ordinal);
+        var previous = properties.ToDictionary(property => property, CaptureStyleState, StringComparer.Ordinal);
         foreach (var property in properties) _cascadedStyles.Remove(property);
         foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
-            InvalidateIfEffectiveValueChanged(property, previous[property]);
+            InvalidateIfEffectiveStyleChanged(property, previous[property]);
     }
 
     /// <summary>返回最终应用样式快照。</summary>
@@ -287,6 +287,51 @@ public sealed class StyleAccessor
             if (value != null) result[key] = value;
         }
         return result;
+    }
+
+    internal bool IsAuthorSpecified(string property)
+    {
+        property = NormalizePropertyName(property);
+        if (TryGetRawAuthorSpecified(property, out var authorSpecified)) return authorSpecified;
+        return (CssPropertyRegistry.IsInherited(property) || property.StartsWith("--", StringComparison.Ordinal)) &&
+               _owner.Parent?.Style.IsAuthorSpecified(property) == true;
+    }
+
+    private bool TryGetRawAuthorSpecified(string property, out bool authorSpecified)
+    {
+        var inline = default(InlineStyleEntry);
+        var cascaded = default(CascadedStyleEntry);
+        _inlineStyles?.TryGetValue(property, out inline);
+        _cascadedStyles?.TryGetValue(property, out cascaded);
+        var animated = _animatedStyles?.ContainsKey(property) == true;
+
+        if (inline.Important)
+        {
+            authorSpecified = true;
+            return true;
+        }
+        if (cascaded.Important)
+        {
+            authorSpecified = cascaded.AuthorSpecified;
+            return true;
+        }
+        if (animated)
+        {
+            authorSpecified = true;
+            return true;
+        }
+        if (inline.Value != null)
+        {
+            authorSpecified = true;
+            return true;
+        }
+        if (cascaded.Value != null)
+        {
+            authorSpecified = cascaded.AuthorSpecified;
+            return true;
+        }
+        authorSpecified = false;
+        return false;
     }
 
     private string? GetRaw(string property)
@@ -329,10 +374,15 @@ public sealed class StyleAccessor
         }
     }
 
-    private void InvalidateIfEffectiveValueChanged(string property, string? previous)
+    private StyleState CaptureStyleState(string property) =>
+        new(Get(property), IsAuthorSpecified(property));
+
+    private void InvalidateIfEffectiveStyleChanged(string property, StyleState previous)
     {
         var current = Get(property);
-        if (string.Equals(previous, current, StringComparison.Ordinal)) return;
+        var currentAuthorSpecified = IsAuthorSpecified(property);
+        if (string.Equals(previous.Value, current, StringComparison.Ordinal) &&
+            previous.AuthorSpecified == currentAuthorSpecified) return;
         if (property.StartsWith("--", StringComparison.Ordinal))
             ClearComputedStylesRecursive();
         else
@@ -552,19 +602,33 @@ public sealed class StyleAccessor
         CssSpecificity Specificity,
         bool Important,
         bool Persistent,
+        CssCascadeOrigin Origin,
+        bool AuthorSpecified,
         long Sequence)
     {
         public int ComparePriority(CascadedStyleEntry other)
         {
             var important = Important.CompareTo(other.Important);
             if (important != 0) return important;
+            var origin = Origin.CompareTo(other.Origin);
+            if (origin != 0) return origin;
             var specificity = Specificity.CompareTo(other.Specificity);
             return specificity != 0 ? specificity : Sequence.CompareTo(other.Sequence);
         }
 
         public bool SameValueAndPriority(CascadedStyleEntry other) =>
-            Value == other.Value && Important == other.Important && Specificity == other.Specificity;
+            Value == other.Value && Important == other.Important && Origin == other.Origin &&
+            AuthorSpecified == other.AuthorSpecified && Specificity == other.Specificity;
     }
+
+    private readonly record struct StyleState(string? Value, bool AuthorSpecified);
+}
+
+internal enum CssCascadeOrigin
+{
+    Inherited,
+    UserAgent,
+    Author
 }
 
 internal readonly record struct CssSpecificity(int Ids, int Classes, int Types) : IComparable<CssSpecificity>

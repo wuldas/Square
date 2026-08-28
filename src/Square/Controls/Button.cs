@@ -1,5 +1,6 @@
 using Square.Events;
 using Square.Graphics;
+using Square.Rendering.Paint;
 using Square.UI;
 
 namespace Square.Controls;
@@ -7,6 +8,12 @@ namespace Square.Controls;
 /// <summary>按钮控件，类似 HTML <c>button</c>。</summary>
 public class Button : UIElement, ITextSelectable
 {
+    private static readonly string[] AuthorTextMetricProperties =
+    [
+        "font-family", "font-size", "font-weight", "font-style", "line-height",
+        "letter-spacing", "word-spacing", "text-indent", "text-transform", "white-space"
+    ];
+
     private readonly DomTextContent _domText;
 
     /// <summary>按钮文本内容。</summary>
@@ -43,12 +50,9 @@ public class Button : UIElement, ITextSelectable
     {
         get
         {
-            var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-            return new Rect(
-                Geometry.X + (Geometry.Width - textSize.Width) / 2f,
-                Geometry.Y + (Geometry.Height - textSize.Height) / 2f,
-                textSize.Width,
-                textSize.Height);
+            var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f);
+            var layoutSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize);
+            return GetTextBounds(layoutSize, paintMaxSize);
         }
     }
 
@@ -58,7 +62,7 @@ public class Button : UIElement, ITextSelectable
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
         if (Style.Get("appearance") == null)
             return new Size(textSize.Width + 32, Math.Max(36, textSize.Height + 12));
-        return ControlDrawing.UsesWidgetAppearance(this)
+        return UsesDefaultWidgetTextMetrics()
             ? new Size(MathF.Round(ControlDrawing.MeasureFontFileTextWidth(this, TextContent, 14f)), 15)
             : textSize;
     }
@@ -70,11 +74,10 @@ public class Button : UIElement, ITextSelectable
             this,
             "color",
             IsEnabled ? Color.Black : Color.FromRgb(235, 235, 235));
-        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        var widgetOffset = ControlDrawing.UsesWidgetAppearance(this) ? 1f : 0f;
-        var textPosition = new Point(
-            Geometry.X + (Geometry.Width - textSize.Width) / 2f,
-            Geometry.Y + (Geometry.Height - textSize.Height) / 2f + widgetOffset);
+        var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f);
+        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize);
+        var textBounds = GetTextBounds(textSize, paintMaxSize);
+        var textPosition = new Point(textBounds.X, textBounds.Y);
         ControlDrawing.DrawText(
             ctx,
             this,
@@ -82,7 +85,7 @@ public class Button : UIElement, ITextSelectable
             textPosition,
             foreground,
             14f,
-            maxSize: textSize);
+            maxSize: paintMaxSize);
     }
 
     /// <inheritdoc/>
@@ -99,6 +102,70 @@ public class Button : UIElement, ITextSelectable
             Style.Set("background-color", ToCssColor(Background));
         else if (name == nameof(Foreground))
             Style.Set("color", ToCssColor(Foreground));
+    }
+
+    private Rect GetTextBounds(Size textSize, Size paintMaxSize)
+    {
+        var left = Geometry.X + ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
+            ControlDrawing.GetStyledFloat(this, "padding-left", 0);
+        var right = Geometry.Right - ControlDrawing.GetStyledFloat(this, "border-right-width", 0) -
+            ControlDrawing.GetStyledFloat(this, "padding-right", 0);
+        var top = Geometry.Y + ControlDrawing.GetStyledFloat(this, "border-top-width", 0) +
+            ControlDrawing.GetStyledFloat(this, "padding-top", 0);
+        var bottom = Geometry.Bottom - ControlDrawing.GetStyledFloat(this, "border-bottom-width", 0) -
+            ControlDrawing.GetStyledFloat(this, "padding-bottom", 0);
+        var availableWidth = Math.Max(0, right - left);
+        var direction = (Style.Get("direction") ?? "ltr").Trim();
+        var alignment = (Style.Get("text-align") ?? "center").Trim().ToLowerInvariant();
+        var x = alignment switch
+        {
+            "left" => left,
+            "right" => right - textSize.Width,
+            "start" => direction.Equals("rtl", StringComparison.OrdinalIgnoreCase)
+                ? right - textSize.Width
+                : left,
+            "end" => direction.Equals("rtl", StringComparison.OrdinalIgnoreCase)
+                ? left
+                : right - textSize.Width,
+            _ => left + (availableWidth - textSize.Width) / 2f
+        };
+        var y = top + (Math.Max(0, bottom - top) - textSize.Height) / 2f;
+        if (CssBoxPainter.UsesDefaultButtonWidgetPaint(this))
+            y += 1f;
+        else if (ControlDrawing.MeasureTextInkBounds(this, TextContent, 14f, paintMaxSize) is { IsEmpty: false } ink)
+        {
+            y = (top + bottom) / 2f - (ink.Top + ink.Bottom) / 2f;
+            if (ControlDrawing.UsesWidgetAppearance(this))
+                y += ControlDrawing.ButtonOpticalCenterYOffset;
+        }
+        return new Rect(x, y,
+            textSize.Width, textSize.Height);
+    }
+
+    private bool UsesDefaultWidgetTextMetrics() =>
+        ControlDrawing.UsesWidgetAppearance(this) &&
+        AuthorTextMetricProperties
+            .Where(Style.IsAuthorSpecified)
+            .All(IsDefaultWidgetTextMetric);
+
+    private bool IsDefaultWidgetTextMetric(string property)
+    {
+        var value = (Style.Get(property) ?? "").Trim();
+        var font = ControlDrawing.ResolveFont(this, 14f);
+        return property switch
+        {
+            "font-family" => Font.ParseFamilyList(value).FirstOrDefault()?.Equals("Arial", StringComparison.OrdinalIgnoreCase) == true,
+            "font-size" => Math.Abs(font.Size - 13.3333f) <= 0.001f,
+            "font-weight" => Font.ParseWeight(value) == FontWeight.Normal,
+            "font-style" => Font.ParseStyle(value) == FontStyle.Normal,
+            "line-height" => Math.Abs(ControlDrawing.GetStyledLineHeight(this, font.Size) -
+                                      font.Size * TextLayout.DefaultLineHeight) <= 0.001f,
+            "letter-spacing" or "word-spacing" or "text-indent" =>
+                Math.Abs(ControlDrawing.ResolveTextLength(this, property, font.Size)) <= 0.001f,
+            "text-transform" => ControlDrawing.ResolveTextTransform(this) == TextTransformMode.None,
+            "white-space" => ControlDrawing.ResolveWhiteSpace(this) == TextWhiteSpaceMode.Normal,
+            _ => false
+        };
     }
 
     private static string ToCssColor(Color color) =>

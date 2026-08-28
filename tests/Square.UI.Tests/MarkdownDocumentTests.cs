@@ -384,6 +384,41 @@ public class MarkdownDocumentTests
     }
 
     [Fact]
+    public void MarkdownHorizontalOverdragKeepsNearestVisualRow()
+    {
+        var bounds = new[]
+        {
+            new Rect(0, 0, 20, 10),
+            new Rect(30, 0, 20, 10),
+            new Rect(0, 20, 100, 10)
+        };
+
+        Assert.Equal(1, Square.Hosting.DesktopApplication.FindNearestTextBoundsIndex(bounds, new Point(1000, 5)));
+        Assert.Equal(0, Square.Hosting.DesktopApplication.FindNearestTextBoundsIndex(bounds, new Point(-1000, 5)));
+        Assert.Equal(2, Square.Hosting.DesktopApplication.FindNearestTextBoundsIndex(bounds, new Point(1000, 25)));
+
+        var fractional = new[]
+        {
+            new Rect(0, 0, 20, 10),
+            new Rect(0, 10.0005f, 100, 10)
+        };
+        Assert.Equal(0,
+            Square.Hosting.DesktopApplication.FindNearestTextBoundsIndex(fractional, new Point(1000, 10.0002f)));
+
+        Assert.Equal(1, Square.Hosting.DesktopApplication.FindNearestTextBoundsIndex(
+            [Rect.Empty, new Rect(0, 0, 20, 10)], new Point(-1000, 5)));
+        Assert.Equal(-1, Square.Hosting.DesktopApplication.FindNearestTextBoundsIndex(
+            [Rect.Empty, new Rect(float.NaN, 0, 20, 10)], new Point(0, 0)));
+        Assert.False(Square.Hosting.DesktopApplication.IsValidTextSelectionBounds(Rect.Empty));
+        Assert.False(Square.Hosting.DesktopApplication.IsValidTextSelectionBounds(
+            new Rect(0, 0, float.PositiveInfinity, 10)));
+        Assert.False(Square.Hosting.DesktopApplication.IsValidTextSelectionBounds(
+            new Rect(float.MaxValue, 0, float.MaxValue, 10)));
+        Assert.True(Square.Hosting.DesktopApplication.IsValidTextSelectionBounds(
+            new Rect(0, 0, 20, 10)));
+    }
+
+    [Fact]
     public void ScrolledCodeSelectionUsesTheVisibleOverflowClip()
     {
         var scroll = new ScrollViewer { Geometry = new Rect(0, 100, 600, 300) };
@@ -405,6 +440,36 @@ public class MarkdownDocumentTests
 
         Assert.Equal(new Rect(20, 120, 560, 60), clip);
         Assert.True(clip.Contains(new Point(36, 136)));
+        Assert.Equal(
+            new Rect(36, 120, 160, 10),
+            Square.Hosting.DesktopApplication.GetVisibleTextSelectionBounds(
+                text, new Rect(36, 110, 160, 20)));
+        Assert.True(Square.Hosting.DesktopApplication.GetVisibleTextSelectionBounds(
+            text, new Rect(36, 80, 160, 20)).IsEmpty);
+        Assert.True(Square.Hosting.DesktopApplication.GetVisibleTextSelectionBounds(
+            text, new Rect(36, 110, float.PositiveInfinity, 20)).IsEmpty);
+    }
+
+    [Fact]
+    public void EmptyOrNonFiniteOverflowClipHidesTextSelection()
+    {
+        static Square.Controls.Text AddText(View owner)
+        {
+            owner.Style.Set("overflow", "hidden");
+            var text = new Square.Controls.Text("hidden") { Geometry = new Rect(0, 0, 5, 5) };
+            owner.Children.Add(text);
+            return text;
+        }
+
+        var zeroWidth = new View { Geometry = new Rect(0, 0, 0, 10) };
+        var zeroWidthText = AddText(zeroWidth);
+        var infiniteWidth = new View { Geometry = new Rect(0, 0, float.PositiveInfinity, 10) };
+        var infiniteWidthText = AddText(infiniteWidth);
+
+        Assert.True(Square.Hosting.DesktopApplication.GetVisibleTextSelectionBounds(
+            zeroWidthText, new Rect(0, 0, 5, 5)).IsEmpty);
+        Assert.True(Square.Hosting.DesktopApplication.GetVisibleTextSelectionBounds(
+            infiniteWidthText, new Rect(0, 0, 5, 5)).IsEmpty);
     }
 
     [Fact]
