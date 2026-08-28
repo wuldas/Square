@@ -150,10 +150,38 @@ public sealed record ControlArtifactPaths(string Metrics, string Screenshot)
     }
 }
 
+public static class ControlArtifactIdentity
+{
+    public static string ComputeFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    public static string ComputeBuildFingerprint()
+    {
+        var components = new[]
+        {
+            typeof(ControlArtifactIdentity).Assembly,
+            typeof(Square.UI.Element).Assembly,
+            typeof(Square.Backends.RenderBackendFactory).Assembly,
+            typeof(Square.Backends.Skia.SkiaBackendFactory).Assembly,
+            typeof(Square.Backends.Vulkan.VulkanBackendFactory).Assembly
+        };
+        var identity = string.Join('\n', components
+            .DistinctBy(assembly => assembly.FullName)
+            .OrderBy(assembly => assembly.GetName().Name, StringComparer.Ordinal)
+            .Select(assembly => $"{assembly.GetName().Name}:{ComputeFileSha256(assembly.Location)}"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
+    }
+}
+
 public sealed class ControlGeometryReport
 {
     public required string Renderer { get; init; }
     public string ManifestFingerprint { get; init; } = "";
+    public string BuildFingerprint { get; init; } = "";
+    public string CaptureSession { get; init; } = "";
     public string Version { get; init; } = "unknown";
     public DateTimeOffset CapturedAt { get; init; } = DateTimeOffset.UtcNow;
     public required List<ControlGeometryCaseResult> Cases { get; init; }
@@ -172,6 +200,7 @@ public sealed class ControlGeometryCaseResult
     public ControlEdges Border { get; init; }
     public Dictionary<string, string> ComputedStyles { get; init; } = [];
     public string Screenshot { get; init; } = "";
+    public string ScreenshotSha256 { get; init; } = "";
     public string[] Failures { get; init; } = [];
 }
 
@@ -217,6 +246,7 @@ public static class ControlGeometryComparer
                 Border = actual.Border,
                 ComputedStyles = actual.ComputedStyles,
                 Screenshot = actual.Screenshot,
+                ScreenshotSha256 = actual.ScreenshotSha256,
                 Failures = failures.ToArray()
             });
         }
@@ -224,6 +254,8 @@ public static class ControlGeometryComparer
         {
             Renderer = square.Renderer,
             ManifestFingerprint = square.ManifestFingerprint,
+            BuildFingerprint = square.BuildFingerprint,
+            CaptureSession = square.CaptureSession,
             Version = square.Version,
             CapturedAt = square.CapturedAt,
             Cases = cases
@@ -266,6 +298,19 @@ public static class ControlGeometryGate
         if (missingRenderers.Length != 0)
             throw new InvalidOperationException(
                 $"Geometry gate is missing blocking renderers: {string.Join(", ", missingRenderers)}.");
+        if (artifactRoot != null)
+        {
+            var sessions = materialized.Select(report => report.CaptureSession)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (sessions.Length != 1 || string.IsNullOrWhiteSpace(sessions[0]))
+                throw new InvalidOperationException("Geometry reports do not share one valid capture session.");
+            var earliest = materialized.Min(report => report.CapturedAt);
+            var latest = materialized.Max(report => report.CapturedAt);
+            if (earliest == default || latest - earliest > TimeSpan.FromMinutes(10) ||
+                latest > DateTimeOffset.UtcNow.AddMinutes(1))
+                throw new InvalidOperationException("Geometry reports have invalid or inconsistent capture timestamps.");
+        }
         var required = requiredCaseIds.ToArray();
         if (required.Length == 0)
             throw new InvalidOperationException("Visual comparison requires at least one manifest case.");
@@ -278,6 +323,12 @@ public static class ControlGeometryGate
             if (!string.Equals(report.ManifestFingerprint, manifestFingerprint, StringComparison.Ordinal))
                 throw new InvalidOperationException(
                     $"{report.Renderer} geometry manifest fingerprint is stale or mismatched.");
+            if (artifactRoot != null && !string.Equals(
+                    report.BuildFingerprint,
+                    ControlArtifactIdentity.ComputeBuildFingerprint(),
+                    StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"{report.Renderer} geometry build fingerprint is stale or mismatched.");
             var actual = report.Cases.Select(item => item.Id).ToArray();
             if (actual.Distinct(StringComparer.Ordinal).Count() != actual.Length)
                 throw new InvalidOperationException($"{report.Renderer} geometry contains duplicate case IDs.");
@@ -289,12 +340,20 @@ public static class ControlGeometryGate
                     $"Missing: {string.Join(", ", missing)}; Extra: {string.Join(", ", extra)}");
             if (artifactRoot != null)
             {
-                var missingScreenshot = report.Cases.FirstOrDefault(item =>
-                    string.IsNullOrWhiteSpace(item.Screenshot) ||
-                    !File.Exists(Path.Combine(artifactRoot, ArtifactDirectory(report.Renderer), item.Screenshot)));
-                if (missingScreenshot != null)
-                    throw new InvalidOperationException(
-                        $"{report.Renderer} geometry screenshot is missing for '{missingScreenshot.Id}'.");
+                foreach (var item in report.Cases)
+                {
+                    var screenshotPath = Path.Combine(artifactRoot, ArtifactDirectory(report.Renderer), item.Screenshot);
+                    if (string.IsNullOrWhiteSpace(item.Screenshot) || !File.Exists(screenshotPath))
+                        throw new InvalidOperationException(
+                            $"{report.Renderer} geometry screenshot is missing for '{item.Id}'.");
+                    if (string.IsNullOrWhiteSpace(item.ScreenshotSha256))
+                        throw new InvalidOperationException(
+                            $"{report.Renderer} geometry screenshot hash is missing for '{item.Id}'.");
+                    var actualHash = ControlArtifactIdentity.ComputeFileSha256(screenshotPath);
+                    if (!string.Equals(item.ScreenshotSha256, actualHash, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException(
+                            $"{report.Renderer} geometry screenshot hash is stale or mismatched for '{item.Id}'.");
+                }
             }
         }
         var failed = materialized.SelectMany(report => report.Cases

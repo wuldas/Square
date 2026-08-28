@@ -23,7 +23,7 @@ Select 的原生下拉 popup/open 状态无法由 headless Chromium 稳定捕获
 
 几何门比较相对固定容器的 border-box `x/y/width/height`，并在 `geometry.json` 中保留四边 used border、padding 与 content-box 诊断。每个坐标或尺寸的阻塞容差为 `0.5 CSS px`。
 
-视觉门按控件区域比较 border、corner/radius、background、text/placeholder/caret、select arrow、checkbox check 与 radio dot，不要求不同光栅器逐像素 RGBA 相等。下表依次列出最小 mask IoU、最大平均颜色差、最大高差异像素比例、最大圆角平均差和最大圆角高差异比例：
+视觉门按控件区域比较 border、corner/radius、background、text/placeholder/caret、select arrow、checkbox check 与 radio dot，不要求不同光栅器逐像素 RGBA 相等。颜色差使用白底合成后的 RGB 三通道平均绝对差，不能把等亮度但不同色相误判为一致。下表依次列出最小 mask IoU、最大平均颜色差、最大高差异像素比例、最大圆角平均差和最大圆角高差异比例：
 
 | 控件 | Mask IoU ≥ | Mean delta ≤ | High-delta ratio ≤ | Corner mean ≤ | Corner high ratio ≤ |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -51,9 +51,9 @@ pwsh tools/Square.FontComparison/bin/Release/net10.0/playwright.ps1 install chro
 dotnet run --project tools/Square.FontComparison/Square.FontComparison.csproj -c Release --no-build -p:SquareTargetPlatform=Win32 -- compare-controls --backends Software,Skia --output artifacts/control-comparison
 ```
 
-需要定位阶段问题时可显式追加 `--phase geometry` 或 `--phase visual`；单独运行 visual 要求相同输出目录已存在通过且 fingerprint 匹配的完整几何结果。
+需要定位阶段问题时可显式追加 `--phase geometry` 或 `--phase visual`；单独运行 visual 要求相同输出目录已存在通过且 manifest、当前工具/核心/后端二进制 build fingerprint 匹配的完整几何结果。Chromium 与各 Square 后端报告还必须属于同一个 capture session，捕获时间处于同一有效窗口。
 
-输出目录包含 Chromium、Software、Skia 的 `geometry.json` 与逐用例 PNG、`geometry-matrix.md`、区域 diff PNG、`visual.json` 和离线 `report.html`。`artifacts/` 已被 Git 忽略。对同一提交和环境重复执行同一命令应得到相同的门禁结论；报告中的绝对生成时间不参与比较。
+输出目录包含 Chromium、Software、Skia 的 `geometry.json` 与逐用例 PNG、`geometry-matrix.md`、区域 diff PNG、`visual.json` 和离线 `report.html`。每张截图的 SHA-256 写入对应报告，视觉阶段会重新计算并拒绝缺失、替换或跨 run 混用的产物。`artifacts/` 已被 Git 忽略。对同一提交和环境重复执行同一命令应得到相同的门禁结论；绝对时间不参与像素指标，但会用于验证同一 capture session 的时序一致性。
 
 ## CI
 

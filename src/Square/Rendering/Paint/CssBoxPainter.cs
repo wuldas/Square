@@ -73,7 +73,7 @@ internal static class CssBoxPainter
         }
         if (element is Select select && select.IsEnabled && ControlDrawing.UsesWidgetAppearance(select))
         {
-            PaintSelectWidgetBorder(context, select.Geometry);
+            PaintSelectWidgetBorder(context, select, select.Geometry);
             return;
         }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
@@ -94,17 +94,17 @@ internal static class CssBoxPainter
         if (element is Button button && ControlDrawing.UsesWidgetAppearance(button)) return;
         if (element is CheckBox checkBox && ControlDrawing.UsesWidgetAppearance(checkBox)) return;
         if (element is Radio radio && ControlDrawing.UsesWidgetAppearance(radio)) return;
-        if (element is Input input && input.HasState(ElementState.Focus))
+        if (element is Input input && UsesDefaultWidgetFocusBorder(input))
         {
             PaintInputFocusBorder(context, input.Geometry);
             return;
         }
-        if (element is TextArea textArea && textArea.HasState(ElementState.Focus))
+        if (element is TextArea textArea && UsesDefaultWidgetFocusBorder(textArea))
         {
             PaintInputFocusBorder(context, textArea.Geometry);
             return;
         }
-        if (element is Select select && select.HasState(ElementState.Focus))
+        if (element is Select select && UsesDefaultWidgetFocusBorder(select))
         {
             PaintInputFocusBorder(context, select.Geometry);
             return;
@@ -114,13 +114,22 @@ internal static class CssBoxPainter
         PaintOutline(context, element, element.Style.GetAll());
     }
 
+    private static bool UsesDefaultWidgetFocusBorder(UIElement element)
+    {
+        if (!element.HasState(ElementState.Focus)) return false;
+        return TryParseLength(element.Style.Get("outline-width"), out var width) && width == 1 &&
+            TryParseStyle(element.Style.Get("outline-style"), out var style) && style == BorderStyle.Solid &&
+            string.Equals(element.Style.Get("outline-color"), "Highlight", StringComparison.OrdinalIgnoreCase) &&
+            (!TryParseSignedLength(element.Style.Get("outline-offset"), out var offset) || offset == 0);
+    }
+
     private static void PaintButtonWidget(IRenderContext context, Button button, Rect geometry)
     {
         var (fill, border) = !button.IsEnabled
             ? (Color.FromRgb(238, 238, 238), Color.FromRgb(208, 208, 208))
             : button.HasState(ElementState.Active)
                 ? (Color.FromRgb(245, 245, 245), Color.FromRgb(141, 141, 141))
-                : button.HasState(ElementState.Hover) || button.HasState(ElementState.Focus)
+                : button.HasState(ElementState.Hover)
                     ? (Color.FromRgb(229, 229, 229), Color.FromRgb(79, 79, 79))
                     : (Color.FromRgb(239, 239, 239), Color.FromRgb(118, 118, 118));
         if (button.Properties.HasValue(nameof(Button.Background)))
@@ -149,11 +158,14 @@ internal static class CssBoxPainter
         var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
         var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
         var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
-        var topLeft = new SolidColorBrush(input.IsEnabled
+        var enabledBorder = input.HasState(ElementState.Hover)
             ? Color.FromRgb(79, 79, 79)
+            : Color.FromRgb(118, 118, 118);
+        var topLeft = new SolidColorBrush(input.IsEnabled
+            ? enabledBorder
             : Color.FromRgb(212, 212, 212));
         var bottomRight = new SolidColorBrush(input.IsEnabled
-            ? Color.FromRgb(79, 79, 79)
+            ? enabledBorder
             : Color.FromRgb(208, 208, 208));
         context.FillRect(new Rect(left + 1, top, right - left - 1, 1), topLeft);
         context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), topLeft);
@@ -183,7 +195,9 @@ internal static class CssBoxPainter
         var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
         var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
         var brush = new SolidColorBrush(textArea.IsEnabled
-            ? Color.FromRgb(79, 79, 79)
+            ? textArea.HasState(ElementState.Hover)
+                ? Color.FromRgb(79, 79, 79)
+                : Color.FromRgb(118, 118, 118)
             : Color.FromRgb(212, 212, 212));
         context.FillRect(new Rect(left, top, right - left + 1, 1), brush);
         context.FillRect(new Rect(left, bottom, right - left + 1, 1), brush);
@@ -191,13 +205,15 @@ internal static class CssBoxPainter
         context.FillRect(new Rect(right, top + 1, 1, bottom - top - 1), brush);
     }
 
-    private static void PaintSelectWidgetBorder(IRenderContext context, Rect geometry)
+    private static void PaintSelectWidgetBorder(IRenderContext context, Select select, Rect geometry)
     {
         var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
         var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
         var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
         var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
-        var brush = new SolidColorBrush(Color.FromRgb(79, 79, 79));
+        var brush = new SolidColorBrush(select.HasState(ElementState.Hover)
+            ? Color.FromRgb(79, 79, 79)
+            : Color.FromRgb(118, 118, 118));
         context.FillRect(new Rect(left, top, right - left + 1, 1), brush);
         context.FillRect(new Rect(left, bottom, right - left + 1, 1), brush);
         context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), brush);
@@ -295,11 +311,32 @@ internal static class CssBoxPainter
         var outer = box.Inflate(offset + width, offset + width);
         var inner = box.Inflate(offset, offset);
         var brush = new SolidColorBrush(outline.Color);
+        if (TryGetRoundedGeometry(element, box, out var rounded))
+        {
+            var expansion = offset + width / 2f;
+            var strokeBox = box.Inflate(expansion, expansion);
+            if (strokeBox.Width <= 0 || strokeBox.Height <= 0) return;
+            var outlineGeometry = new RoundedRectGeometry(
+                strokeBox,
+                ExpandCorner(rounded.TopLeft, expansion),
+                ExpandCorner(rounded.TopRight, expansion),
+                ExpandCorner(rounded.BottomRight, expansion),
+                ExpandCorner(rounded.BottomLeft, expansion));
+            if (outlineGeometry.IsUniform)
+                context.DrawGeometry(outlineGeometry, Pen.FromColor(outline.Color, width));
+            else
+                context.DrawPath(outlineGeometry.ToPath(), Pen.FromColor(outline.Color, width));
+            return;
+        }
         context.FillRect(new Rect(outer.X, outer.Y, outer.Width, width), brush);
         context.FillRect(new Rect(outer.X, outer.Bottom - width, outer.Width, width), brush);
         context.FillRect(new Rect(outer.X, inner.Y, width, inner.Height), brush);
         context.FillRect(new Rect(outer.Right - width, inner.Y, width, inner.Height), brush);
     }
+
+    private static CornerRadius ExpandCorner(CornerRadius radius, float expansion) => new(
+        Math.Max(0, radius.X + expansion),
+        Math.Max(0, radius.Y + expansion));
 
     private static bool TryGetBackgroundColor(
         Element element,

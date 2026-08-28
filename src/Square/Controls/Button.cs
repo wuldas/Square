@@ -151,7 +151,7 @@ public class CheckBox : UIElement, ITextSelectable
                 13);
             if (IsChecked)
             {
-                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(Color.FromRgb(0, 92, 200)));
+                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(Color.FromRgb(0, 117, 255)));
                 ctx.DrawPath(PathGeometry.Create()
                     .MoveTo(new Point(box.X + 2.5f, box.Y + 6))
                     .LineTo(new Point(box.X + 5, box.Y + 8.5f))

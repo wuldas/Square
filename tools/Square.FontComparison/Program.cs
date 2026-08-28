@@ -121,8 +121,10 @@ internal static class Program
             ?? throw new ArgumentException("capture-controls-square requires --manifest."));
         var output = Path.GetFullPath(GetOption(args, "--output")
             ?? throw new ArgumentException("capture-controls-square requires --output."));
+        var captureSession = GetOption(args, "--capture-session")
+            ?? throw new ArgumentException("capture-controls-square requires --capture-session.");
         var manifest = await ControlReportIO.LoadManifestAsync(manifestPath);
-        await ControlSquareCapture.CaptureAsync(backend, manifest, output);
+        await ControlSquareCapture.CaptureAsync(backend, manifest, output, captureSession);
         return 0;
     }
 

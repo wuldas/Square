@@ -11,7 +11,8 @@ internal static class ControlBrowserCapture
 
     public static async Task<ControlGeometryReport> CaptureAsync(
         ControlComparisonManifest manifest,
-        string outputDirectory)
+        string outputDirectory,
+        string? captureSession = null)
     {
         Directory.CreateDirectory(Path.Combine(outputDirectory, "cases"));
         using var playwright = await Playwright.CreateAsync();
@@ -33,6 +34,7 @@ internal static class ControlBrowserCapture
         var captures = new List<ControlGeometryCaseResult>();
         foreach (var item in manifest.ExpandCases())
         {
+            await ResetStateAsync(page);
             await ConfigureCaseAsync(page, item);
             var locator = page.Locator("#case");
             var heldActive = await ApplyStateAsync(page, locator, item.State);
@@ -87,7 +89,8 @@ internal static class ControlBrowserCapture
                 Padding = geometry.Padding,
                 Border = geometry.Border,
                 ComputedStyles = geometry.ComputedStyles,
-                Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/')
+                Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/'),
+                ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(paths.Screenshot)
             });
         }
 
@@ -95,12 +98,21 @@ internal static class ControlBrowserCapture
         {
             Renderer = "Chromium",
             ManifestFingerprint = manifest.ComputeFingerprint(),
+            BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
+            CaptureSession = captureSession ?? Guid.NewGuid().ToString("N"),
             Version = browser.Version,
             CapturedAt = DateTimeOffset.UtcNow,
             Cases = captures
         };
         await ControlReportIO.WriteAsync(Path.Combine(outputDirectory, "geometry.json"), report);
         return report;
+    }
+
+    private static async Task ResetStateAsync(IPage page)
+    {
+        await page.Mouse.UpAsync();
+        await page.Mouse.MoveAsync(0, 0);
+        await page.EvaluateAsync("document.activeElement instanceof HTMLElement && document.activeElement.blur()");
     }
 
     private static async Task ConfigureCaseAsync(IPage page, ControlComparisonCase item)

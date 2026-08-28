@@ -58,12 +58,13 @@ internal static class ControlComparisonRunner
         var manifest = await ControlReportIO.LoadManifestAsync(manifestPath);
         var cases = manifest.ExpandCases();
         if (cases.Count == 0) throw new InvalidOperationException("Control manifest contains no cases.");
-        var chromium = await ControlBrowserCapture.CaptureAsync(manifest, Path.Combine(output, "chrome"));
+        var captureSession = Guid.NewGuid().ToString("N");
+        var chromium = await ControlBrowserCapture.CaptureAsync(manifest, Path.Combine(output, "chrome"), captureSession);
         var reports = new List<ControlGeometryReport> { chromium };
         var failed = 0;
         foreach (var backend in backends)
         {
-            await RunSquareChildAsync(backend, manifestPath, Path.Combine(output, backend.ToLowerInvariant()));
+            await RunSquareChildAsync(backend, manifestPath, Path.Combine(output, backend.ToLowerInvariant()), captureSession);
             var path = Path.Combine(output, backend.ToLowerInvariant(), "geometry.json");
             var captured = await ControlReportIO.ReadAsync(path);
             var compared = ControlGeometryComparer.Compare(chromium, captured);
@@ -136,7 +137,10 @@ internal static class ControlComparisonRunner
                         chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox, chromiumCase.State,
                         ControlVisualThresholds.Input, chromiumCase.Id, backend),
                     ControlKind.TextArea => ControlVisualComparer.CompareTextArea(
-                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox, chromiumCase.State,
+                        chromiumPath, squarePath, diffPath,
+                        chromiumCase.BorderBox, squareCase.BorderBox,
+                        chromiumCase.ContentBox, squareCase.ContentBox,
+                        chromiumCase.State,
                         ControlVisualThresholds.TextArea, chromiumCase.Id, backend),
                     ControlKind.Select => ControlVisualComparer.CompareSelect(
                         chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox,
@@ -208,7 +212,7 @@ internal static class ControlComparisonRunner
         return failed == 0 ? 0 : 1;
     }
 
-    private static async Task RunSquareChildAsync(string backend, string manifestPath, string output)
+    private static async Task RunSquareChildAsync(string backend, string manifestPath, string output, string captureSession)
     {
         var processPath = Environment.ProcessPath ?? "dotnet";
         var startInfo = new ProcessStartInfo { FileName = processPath, UseShellExecute = false };
@@ -221,6 +225,8 @@ internal static class ControlComparisonRunner
         startInfo.ArgumentList.Add(manifestPath);
         startInfo.ArgumentList.Add("--output");
         startInfo.ArgumentList.Add(output);
+        startInfo.ArgumentList.Add("--capture-session");
+        startInfo.ArgumentList.Add(captureSession);
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Unable to start Square {backend} control capture process.");
         await process.WaitForExitAsync();

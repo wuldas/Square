@@ -484,6 +484,206 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    public async Task VisualPhaseRejectsTamperedScreenshotHash()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-hash-" + Guid.NewGuid());
+        try
+        {
+            var screenshot = Path.Combine(artifactRoot, "software", "cases", "button-auto-normal.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+            var expectedBytes = new byte[] { 1 };
+            File.WriteAllBytes(screenshot, [2]);
+            var expectedHash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(expectedBytes)).ToLowerInvariant();
+            var reportPath = Path.Combine(artifactRoot, "software", "geometry.json");
+            await File.WriteAllTextAsync(reportPath, $$"""
+                {
+                  "renderer": "Software",
+                  "manifestFingerprint": "manifest-a",
+                  "buildFingerprint": "{{ControlArtifactIdentity.ComputeBuildFingerprint()}}",
+                  "captureSession": "session-a",
+                  "capturedAt": "{{DateTimeOffset.UtcNow:O}}",
+                  "cases": [
+                    {
+                      "id": "button-auto-normal",
+                      "passed": true,
+                      "screenshot": "cases/button-auto-normal.png",
+                      "screenshotSha256": "{{expectedHash}}"
+                    }
+                  ]
+                }
+                """);
+            var report = await ControlReportIO.ReadAsync(reportPath);
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    [report],
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot));
+
+            Assert.Contains("screenshot", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("hash", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VisualPhaseRejectsStaleBuildFingerprint()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-build-" + Guid.NewGuid());
+        try
+        {
+            var screenshot = Path.Combine(artifactRoot, "software", "cases", "button-auto-normal.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+            File.WriteAllBytes(screenshot, [1]);
+            var screenshotHash = ControlArtifactIdentity.ComputeFileSha256(screenshot);
+            var reportPath = Path.Combine(artifactRoot, "software", "geometry.json");
+            await File.WriteAllTextAsync(reportPath, $$"""
+                {
+                  "renderer": "Software",
+                  "manifestFingerprint": "manifest-a",
+                  "buildFingerprint": "stale-build",
+                  "captureSession": "session-a",
+                  "capturedAt": "{{DateTimeOffset.UtcNow:O}}",
+                  "cases": [
+                    {
+                      "id": "button-auto-normal",
+                      "passed": true,
+                      "screenshot": "cases/button-auto-normal.png",
+                      "screenshotSha256": "{{screenshotHash}}"
+                    }
+                  ]
+                }
+                """);
+            var report = await ControlReportIO.ReadAsync(reportPath);
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    [report],
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot));
+
+            Assert.Contains("build fingerprint", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VisualPhaseRejectsMixedCaptureSessions()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-session-" + Guid.NewGuid());
+        try
+        {
+            async Task<ControlGeometryReport> WriteReport(string renderer, string directory, string session)
+            {
+                var screenshot = Path.Combine(artifactRoot, directory, "cases", "button-auto-normal.png");
+                Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+                File.WriteAllBytes(screenshot, [1]);
+                var reportPath = Path.Combine(artifactRoot, directory, "geometry.json");
+                await File.WriteAllTextAsync(reportPath, $$"""
+                    {
+                      "renderer": "{{renderer}}",
+                      "manifestFingerprint": "manifest-a",
+                      "buildFingerprint": "{{ControlArtifactIdentity.ComputeBuildFingerprint()}}",
+                      "captureSession": "{{session}}",
+                      "capturedAt": "{{DateTimeOffset.UtcNow:O}}",
+                      "cases": [
+                        {
+                          "id": "button-auto-normal",
+                          "passed": true,
+                          "screenshot": "cases/button-auto-normal.png",
+                          "screenshotSha256": "{{ControlArtifactIdentity.ComputeFileSha256(screenshot)}}"
+                        }
+                      ]
+                    }
+                    """);
+                return await ControlReportIO.ReadAsync(reportPath);
+            }
+
+            var reports = new[]
+            {
+                await WriteReport("Software", "software", "session-a"),
+                await WriteReport("Skia", "skia", "session-b")
+            };
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    reports,
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot,
+                    ["Software", "Skia"]));
+
+            Assert.Contains("capture session", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VisualPhaseRejectsCaptureSessionWithInconsistentTimestamps()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-time-" + Guid.NewGuid());
+        try
+        {
+            async Task<ControlGeometryReport> WriteReport(string renderer, string directory, DateTimeOffset capturedAt)
+            {
+                var screenshot = Path.Combine(artifactRoot, directory, "cases", "button-auto-normal.png");
+                Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+                File.WriteAllBytes(screenshot, [1]);
+                var reportPath = Path.Combine(artifactRoot, directory, "geometry.json");
+                await File.WriteAllTextAsync(reportPath, $$"""
+                    {
+                      "renderer": "{{renderer}}",
+                      "manifestFingerprint": "manifest-a",
+                      "buildFingerprint": "{{ControlArtifactIdentity.ComputeBuildFingerprint()}}",
+                      "captureSession": "session-a",
+                      "capturedAt": "{{capturedAt:O}}",
+                      "cases": [
+                        {
+                          "id": "button-auto-normal",
+                          "passed": true,
+                          "screenshot": "cases/button-auto-normal.png",
+                          "screenshotSha256": "{{ControlArtifactIdentity.ComputeFileSha256(screenshot)}}"
+                        }
+                      ]
+                    }
+                    """);
+                return await ControlReportIO.ReadAsync(reportPath);
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var reports = new[]
+            {
+                await WriteReport("Software", "software", now),
+                await WriteReport("Skia", "skia", now.AddMinutes(-15))
+            };
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    reports,
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot,
+                    ["Software", "Skia"]));
+
+            Assert.Contains("capture timestamp", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void VisualPhaseRejectsDuplicateManifestCaseIds()
     {
         var report = Geometry("Software", 10, 20, 100, 36, "square.png");
@@ -545,18 +745,20 @@ public sealed class ControlComparisonTests
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-gate-" + Guid.NewGuid());
         try
         {
-            var reports = new[]
-            {
-                Geometry("Chromium", 10, 20, 100, 36, "cases/button-auto-normal.png"),
-                Geometry("Software", 10, 20, 100, 36, "cases/button-auto-normal.png"),
-                Geometry("Skia", 10, 20, 100, 36, "cases/button-auto-normal.png")
-            };
             foreach (var directory in new[] { "chrome", "software", "skia" })
             {
                 var screenshot = Path.Combine(artifactRoot, directory, "cases", "button-auto-normal.png");
                 Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
                 File.WriteAllBytes(screenshot, [1]);
             }
+            var screenshotHash = ControlArtifactIdentity.ComputeFileSha256(
+                Path.Combine(artifactRoot, "chrome", "cases", "button-auto-normal.png"));
+            var reports = new[]
+            {
+                Geometry("Chromium", 10, 20, 100, 36, "cases/button-auto-normal.png", screenshotHash),
+                Geometry("Software", 10, 20, 100, 36, "cases/button-auto-normal.png", screenshotHash),
+                Geometry("Skia", 10, 20, 100, 36, "cases/button-auto-normal.png", screenshotHash)
+            };
 
             ControlGeometryGate.EnsureVisualAllowed(
                 reports,
@@ -595,6 +797,35 @@ public sealed class ControlComparisonTests
             Assert.Contains(result.Regions, region => region.Name == "text" && !region.Passed);
             Assert.All(result.Regions.Where(region => region.Name != "text"), region => Assert.True(region.Passed));
             Assert.True(File.Exists(diff));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ButtonVisualComparisonRejectsEqualLuminanceDifferentHue()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-hue-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            WriteButtonFixture(chromium, SKColors.Black, fillColor: new SKColor(255, 0, 0));
+            WriteButtonFixture(square, SKColors.Black, fillColor: new SKColor(0, 130, 0));
+
+            var result = ControlVisualComparer.CompareButton(
+                chromium,
+                square,
+                Path.Combine(artifactRoot, "diff.png"),
+                new ControlRect(10, 10, 40, 20),
+                ControlVisualThresholds.Button);
+
+            var background = Assert.Single(result.Regions, region => region.Name == "background");
+            Assert.False(background.Passed);
+            Assert.True(background.MeanColorDelta > 0);
         }
         finally
         {
@@ -1018,7 +1249,7 @@ public sealed class ControlComparisonTests
     [InlineData(ControlState.Normal, 239, 118)]
     [InlineData(ControlState.Hover, 229, 79)]
     [InlineData(ControlState.Active, 245, 141)]
-    [InlineData(ControlState.Focus, 229, 79)]
+    [InlineData(ControlState.Focus, 239, 118)]
     [InlineData(ControlState.Disabled, 238, 208)]
     public async Task SoftwareButtonAutoStatesUseChromiumWidgetColors(
         ControlState state,
@@ -1067,12 +1298,12 @@ public sealed class ControlComparisonTests
     }
 
     [Theory]
-    [InlineData(ControlAppearance.Auto, ControlState.Normal, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal, 118)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover, 79)]
     [InlineData(ControlAppearance.Auto, ControlState.Focus, 16)]
     [InlineData(ControlAppearance.Auto, ControlState.Disabled, 212)]
-    [InlineData(ControlAppearance.Auto, ControlState.Value, 79)]
-    [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Value, 118)]
+    [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 118)]
     [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
     public async Task SoftwareInputStatesUseChromiumOuterBorder(
         ControlAppearance appearance,
@@ -1239,7 +1470,7 @@ public sealed class ControlComparisonTests
     }
 
     [Theory]
-    [InlineData(ControlAppearance.Auto, ControlState.Normal, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal, 118)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover, 79)]
     [InlineData(ControlAppearance.Auto, ControlState.Focus, 16)]
     [InlineData(ControlAppearance.Auto, ControlState.Disabled, 222)]
@@ -1335,12 +1566,12 @@ public sealed class ControlComparisonTests
     }
 
     [Theory]
-    [InlineData(ControlAppearance.Auto, ControlState.Normal, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Normal, 118)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover, 79)]
     [InlineData(ControlAppearance.Auto, ControlState.Focus, 16)]
     [InlineData(ControlAppearance.Auto, ControlState.Disabled, 212)]
-    [InlineData(ControlAppearance.Auto, ControlState.Value, 79)]
-    [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 79)]
+    [InlineData(ControlAppearance.Auto, ControlState.Value, 118)]
+    [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 118)]
     [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
     public async Task SoftwareTextAreaStatesUseChromiumOuterBorder(
         ControlAppearance appearance,
@@ -1418,7 +1649,55 @@ public sealed class ControlComparisonTests
             var caretY = float.Parse(caret[1].Split(' ')[0]);
 
             Assert.True(caretX > item.ContentBox.X + 30, $"Expected end-of-line caret, got {caretX}.");
-            Assert.True(caretY > item.ContentBox.Y + 10, $"Expected second-line caret, got {caretY}.");
+            Assert.InRange(
+                caretY,
+                item.ContentBox.Y + item.ContentBox.Height / 2f,
+                item.ContentBox.Y + item.ContentBox.Height - 1);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChromiumFocusCaptureIsIndependentOfPriorHoverCase()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-browser-state-" + Guid.NewGuid());
+        try
+        {
+            static ControlComparisonManifest Create(params ControlState[] states) => new()
+            {
+                Controls =
+                [
+                    new ControlDefinition
+                    {
+                        Kind = ControlKind.Button,
+                        Element = "button",
+                        Appearances = [ControlAppearance.Auto],
+                        States = states.ToList(),
+                        AutoAuthorCss = ControlComparisonManifest.ButtonAppearanceAutoCss,
+                        Text = "Control"
+                    }
+                ]
+            };
+
+            var focusDirectory = Path.Combine(artifactRoot, "focus", "chrome");
+            var orderedDirectory = Path.Combine(artifactRoot, "ordered", "chrome");
+            var focusOnly = await ControlBrowserCapture.CaptureAsync(Create(ControlState.Focus), focusDirectory);
+            var ordered = await ControlBrowserCapture.CaptureAsync(
+                Create(ControlState.Hover, ControlState.Focus),
+                orderedDirectory);
+
+            var focusOnlyPath = Path.Combine(focusDirectory,
+                Assert.Single(focusOnly.Cases).Screenshot.Replace('/', Path.DirectorySeparatorChar));
+            var orderedFocusPath = Path.Combine(orderedDirectory,
+                Assert.Single(ordered.Cases, item => item.State == ControlState.Focus).Screenshot.Replace('/', Path.DirectorySeparatorChar));
+            var orderedHoverPath = Path.Combine(orderedDirectory,
+                Assert.Single(ordered.Cases, item => item.State == ControlState.Hover).Screenshot.Replace('/', Path.DirectorySeparatorChar));
+
+            Assert.Equal(File.ReadAllBytes(focusOnlyPath), File.ReadAllBytes(orderedFocusPath));
+            Assert.NotEqual(File.ReadAllBytes(orderedHoverPath), File.ReadAllBytes(orderedFocusPath));
         }
         finally
         {
@@ -1441,10 +1720,13 @@ public sealed class ControlComparisonTests
     }
 
     private static ControlGeometryReport Geometry(
-        string renderer, float x, float y, float width, float height, string screenshot) => new()
+        string renderer, float x, float y, float width, float height, string screenshot,
+        string screenshotSha256 = "") => new()
         {
             Renderer = renderer,
             ManifestFingerprint = "manifest-a",
+            BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
+            CaptureSession = "session-a",
             Cases =
             [
                 new ControlGeometryCaseResult
@@ -1453,7 +1735,8 @@ public sealed class ControlComparisonTests
                     Passed = true,
                     BorderBox = new ControlRect(x, y, width, height),
                     ContentBox = new ControlRect(x, y, width, height),
-                    Screenshot = screenshot
+                    Screenshot = screenshot,
+                    ScreenshotSha256 = screenshotSha256
                 }
             ]
         };
@@ -1462,12 +1745,13 @@ public sealed class ControlComparisonTests
         string path,
         SKColor textColor,
         SKColor? outsideColor = null,
-        bool sparseText = false)
+        bool sparseText = false,
+        SKColor? fillColor = null)
     {
         using var bitmap = new SKBitmap(60, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
         bitmap.Erase(SKColors.White);
         using var canvas = new SKCanvas(bitmap);
-        using var fill = new SKPaint { Color = new SKColor(232, 238, 244) };
+        using var fill = new SKPaint { Color = fillColor ?? new SKColor(232, 238, 244) };
         using var border = new SKPaint { Color = new SKColor(52, 86, 120), Style = SKPaintStyle.Stroke, StrokeWidth = 2 };
         using var text = new SKPaint { Color = textColor };
         canvas.DrawRoundRect(new SKRect(10, 10, 50, 30), 4, 4, fill);

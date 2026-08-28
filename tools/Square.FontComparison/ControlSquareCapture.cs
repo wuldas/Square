@@ -18,7 +18,8 @@ public static class ControlSquareCapture
     public static async Task<ControlGeometryReport> CaptureAsync(
         string backend,
         ControlComparisonManifest manifest,
-        string outputDirectory)
+        string outputDirectory,
+        string? captureSession = null)
     {
         Directory.CreateDirectory(Path.Combine(outputDirectory, "cases"));
         var factory = CreateFactory(backend);
@@ -39,6 +40,8 @@ public static class ControlSquareCapture
         {
             Renderer = CanonicalRenderer(backend),
             ManifestFingerprint = manifest.ComputeFingerprint(),
+            BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
+            CaptureSession = captureSession ?? Guid.NewGuid().ToString("N"),
             Version = typeof(LayoutEngine).Assembly.GetName().Version?.ToString() ?? "unknown",
             CapturedAt = DateTimeOffset.UtcNow,
             Cases = captures
@@ -121,7 +124,8 @@ public static class ControlSquareCapture
                 ["textFamily"] = textFragments.Count == 0 ? "" : textFragments[0].Font.Family,
                 ["caretBounds"] = control is TextEditorBase editor ? editor.CaretRect.ToString() : ""
             },
-            Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/')
+            Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/'),
+            ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(screenshotPath)
         };
     }
 
@@ -142,7 +146,7 @@ public static class ControlSquareCapture
         if (state == ControlState.Hover) control.SetState(ElementState.Hover, true);
         if (state == ControlState.Focus)
         {
-            control.SetState(ElementState.Focus, true);
+            control.Focus();
             if (control is TextArea textArea) textArea.HandleKey(35, control: true);
         }
         if (state == ControlState.Active) control.SetState(ElementState.Active, true);

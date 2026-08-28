@@ -304,13 +304,13 @@ public sealed class AppearanceCssTests
                 var pixel = bitmap.GetPixel(x, y);
                 if (pixel[2] == 0 && pixel[1] == 120 && pixel[0] == 212)
                     foundFluentBlue = true;
-                if (pixel[2] == 0 && pixel[1] == 92 && pixel[0] == 200)
+                if (pixel[2] == 0 && pixel[1] == 117 && pixel[0] == 255)
                     foundChromiumBlue = true;
             }
         }
 
         Assert.False(foundFluentBlue, "checked CheckBox must not paint Fluent #0078d4");
-        Assert.True(foundChromiumBlue, "checked CheckBox should use the captured Chromium #005cc8 fill");
+        Assert.True(foundChromiumBlue, "checked CheckBox should use the captured Chromium #0075ff fill");
     }
 
     [Fact]

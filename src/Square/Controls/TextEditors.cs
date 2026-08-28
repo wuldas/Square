@@ -71,6 +71,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private int _selectionAnchor;
     private bool _isDragging;
     private float _horizontalScroll;
+    private float _verticalScroll;
     private float? _preferredX;
     private float _caretOpacity = 1f;
     private float _caretBlinkTarget;
@@ -615,7 +616,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             GetFirstLineTop(lineHeight));
 
     private float GetFirstLineTop(float lineHeight) => IsMultiline
-        ? Geometry.Y + TextPaddingY
+        ? Geometry.Y + TextPaddingY - _verticalScroll
         : Geometry.Y + Math.Max(1, (Geometry.Height - lineHeight) / 2f);
 
     private (float Top, float Height) GetVisualLineBox(float fontSize, float lineHeight, int lineIndex)
@@ -636,6 +637,28 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         if (IsMultiline)
         {
             _horizontalScroll = 0;
+            if (!IsFocused)
+            {
+                _verticalScroll = 0;
+                return;
+            }
+            if (Geometry.Width <= 0 || Geometry.Height <= 0)
+            {
+                _verticalScroll = 0;
+                return;
+            }
+            var fontSize = GetFontSize();
+            var lineHeight = GetLineHeight(fontSize);
+            var lines = GetLines(DisplayValue);
+            var lineIndex = FindLineIndex(lines, _caretIndex);
+            var visualLineBox = GetVisualLineBox(fontSize, lineHeight, lineIndex);
+            var unscrolledTop = visualLineBox.Top + _verticalScroll;
+            var viewportTop = Geometry.Y + 1;
+            var viewportBottom = Geometry.Bottom - 1;
+            var targetScroll = Math.Max(0, unscrolledTop + visualLineBox.Height - viewportBottom);
+            if (unscrolledTop - targetScroll < viewportTop)
+                targetScroll = Math.Max(0, unscrolledTop - viewportTop);
+            _verticalScroll = targetScroll;
             return;
         }
         var width = MeasureRange(DisplayValue, 0, _caretIndex);

@@ -1204,6 +1204,41 @@ public class SoftwareRendererTests
         Assert.Equal(0x12, pixel[2]);
     }
 
+    [Theory]
+    [InlineData("Input")]
+    [InlineData("TextArea")]
+    [InlineData("Select")]
+    public void FocusedAppearanceNoneControlHonorsAuthorRoundedOutline(string kind)
+    {
+        UIElement control = kind switch
+        {
+            "Input" => new Input(),
+            "TextArea" => new TextArea(),
+            "Select" => new Select(),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        control.Geometry = new Rect(12, 12, 80, 32);
+        control.Style.CssText =
+            "appearance: none; background-color: #ffffff; border: 1px solid #345678; " +
+            "border-radius: 8px; outline: 2px solid #ff0000; outline-offset: 2px;";
+        control.Focus();
+        var context = CreateContext(110, 60);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(control);
+
+        tree.Render(context);
+
+        var side = context.GetBitmap().GetPixel(8, 28);
+        Assert.Equal(0, side[0]);
+        Assert.Equal(0, side[1]);
+        Assert.Equal(255, side[2]);
+        var corner = context.GetBitmap().GetPixel(8, 8);
+        Assert.Equal(255, corner[0]);
+        Assert.Equal(255, corner[1]);
+        Assert.Equal(255, corner[2]);
+    }
+
     [Fact]
     public void RetainedRendererDrawsFocusedTextCarets()
     {

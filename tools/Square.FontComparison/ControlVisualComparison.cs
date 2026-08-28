@@ -127,6 +127,24 @@ public static class ControlVisualComparer
         ControlVisualThresholds thresholds,
         string id = "textarea",
         string renderer = "Square")
+        => CompareTextArea(
+            chromiumPath, squarePath, diffPath,
+            chromiumBorderBox, squareBorderBox,
+            Inset(chromiumBorderBox, 1), Inset(squareBorderBox, 1),
+            state, thresholds, id, renderer);
+
+    public static ControlVisualCaseResult CompareTextArea(
+        string chromiumPath,
+        string squarePath,
+        string diffPath,
+        ControlRect chromiumBorderBox,
+        ControlRect squareBorderBox,
+        ControlRect chromiumContentBox,
+        ControlRect squareContentBox,
+        ControlState state,
+        ControlVisualThresholds thresholds,
+        string id = "textarea",
+        string renderer = "Square")
     {
         using var chromium = SKBitmap.Decode(chromiumPath)
             ?? throw new InvalidOperationException($"Unable to decode '{chromiumPath}'.");
@@ -141,7 +159,11 @@ public static class ControlVisualComparer
             throw new InvalidOperationException($"TextArea border boxes have different pixel sizes: {box.Width}x{box.Height} and {squareBox.Width}x{squareBox.Height}.");
         var squareOffsetX = squareBox.Left - box.Left;
         var squareOffsetY = squareBox.Top - box.Top;
-        var regions = CreateTextAreaRegions(box, state)
+        var contentBox = PixelBox.Create(chromiumContentBox, chromium.Width, chromium.Height);
+        var squareContent = PixelBox.Create(squareContentBox, square.Width, square.Height);
+        if (contentBox.Width != squareContent.Width || contentBox.Height != squareContent.Height)
+            throw new InvalidOperationException($"TextArea content boxes have different pixel sizes: {contentBox.Width}x{contentBox.Height} and {squareContent.Width}x{squareContent.Height}.");
+        var regions = CreateTextAreaRegions(box, contentBox, state)
             .Select(region => CompareRegion(chromium, square, region, thresholds, squareOffsetX, squareOffsetY))
             .ToList();
         WriteDiff(chromium, square, diffPath, box, squareOffsetX, squareOffsetY);
@@ -328,14 +350,14 @@ public static class ControlVisualComparer
         ];
     }
 
-    private static IReadOnlyList<PixelRegion> CreateTextAreaRegions(PixelBox box, ControlState state)
+    private static IReadOnlyList<PixelRegion> CreateTextAreaRegions(PixelBox box, PixelBox contentBox, ControlState state)
     {
         const int border = 1;
         const int corner = 2;
-        var contentLeft = box.Left + border;
-        var contentRight = box.Right - border;
+        var contentLeft = contentBox.Left;
+        var contentRight = contentBox.Right;
         var textRight = contentLeft + Math.Max(1, (contentRight - contentLeft) / 2);
-        var middle = box.Top + box.Height / 2;
+        var middle = contentBox.Top + contentBox.Height / 2;
         var caretLeft = state == ControlState.Focus ? textRight + 1 : contentLeft;
         var caretRight = state == ControlState.Focus ? Math.Min(caretLeft + 5, contentRight) : contentLeft;
         var backgroundLeft = state == ControlState.Focus ? caretRight : textRight;
@@ -348,10 +370,10 @@ public static class ControlVisualComparer
                 (x < box.Left + border || x >= box.Right - border || y < box.Top + border || y >= box.Bottom - border) &&
                 !((x < box.Left + corner || x >= box.Right - corner) &&
                   (y < box.Top + corner || y >= box.Bottom - corner))),
-            new("text-line-1", (x, y) => x >= contentLeft && x < textRight && y >= box.Top + border && y < middle),
-            new("text-line-2", (x, y) => x >= contentLeft && x < textRight && y >= middle && y < box.Bottom - border),
-            new("caret", (x, y) => x >= caretLeft && x < caretRight && y >= box.Top + border && y < box.Bottom - border),
-            new("background", (x, y) => x >= backgroundLeft && x < contentRight && y >= box.Top + border && y < box.Bottom - border)
+            new("text-line-1", (x, y) => x >= contentLeft && x < textRight && y >= contentBox.Top && y < middle),
+            new("text-line-2", (x, y) => x >= contentLeft && x < textRight && y >= middle && y < contentBox.Bottom),
+            new("caret", (x, y) => x >= caretLeft && x < caretRight && y >= contentBox.Top && y < contentBox.Bottom),
+            new("background", (x, y) => x >= backgroundLeft && x < contentRight && y >= contentBox.Top && y < contentBox.Bottom)
         ];
     }
 
@@ -433,6 +455,12 @@ public static class ControlVisualComparer
         var dy = y + 0.5f - centerY;
         return dx * dx + dy * dy;
     }
+
+    private static ControlRect Inset(ControlRect rect, float inset) => new(
+        rect.X + inset,
+        rect.Y + inset,
+        Math.Max(0, rect.Width - inset * 2),
+        Math.Max(0, rect.Height - inset * 2));
 
     private static bool Inside(PixelBox box, int x, int y) =>
         x >= box.Left && x < box.Right && y >= box.Top && y < box.Bottom;
@@ -599,10 +627,21 @@ public static class ControlVisualComparer
         data.SaveTo(stream);
     }
 
-    private static int ColorDelta(SKColor left, SKColor right) => Math.Abs(Luminance(left) - Luminance(right));
+    private static int ColorDelta(SKColor left, SKColor right)
+    {
+        var (leftRed, leftGreen, leftBlue) = CompositeOverWhite(left);
+        var (rightRed, rightGreen, rightBlue) = CompositeOverWhite(right);
+        return (Math.Abs(leftRed - rightRed) + Math.Abs(leftGreen - rightGreen) + Math.Abs(leftBlue - rightBlue) + 1) / 3;
+    }
 
-    private static int Luminance(SKColor color) =>
-        (color.Red * 299 + color.Green * 587 + color.Blue * 114) / 1000;
+    private static (int Red, int Green, int Blue) CompositeOverWhite(SKColor color)
+    {
+        var inverseAlpha = 255 - color.Alpha;
+        return (
+            (color.Red * color.Alpha + 255 * inverseAlpha + 127) / 255,
+            (color.Green * color.Alpha + 255 * inverseAlpha + 127) / 255,
+            (color.Blue * color.Alpha + 255 * inverseAlpha + 127) / 255);
+    }
 
     private sealed record PixelRegion(string Name, Func<int, int, bool> Contains);
 
