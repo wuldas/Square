@@ -273,6 +273,45 @@ public sealed class AppearanceCssTests
         Assert.Equal(0, indicator[0]);
     }
 
+    [Theory]
+    [InlineData("CheckBox")]
+    [InlineData("Radio")]
+    public void AppearanceAutoChoiceIndicatorIsVerticallyCenteredWithText(string kind)
+    {
+        UIElement control = kind switch
+        {
+            "CheckBox" => new CheckBox { TextContent = "Choice", IsChecked = true },
+            "Radio" => new Radio { TextContent = "Choice", IsChecked = true },
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        control.Geometry = new Rect(4, 4, 140, 24);
+        control.Style.Set("appearance", "auto");
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(160, 36)
+        });
+        context.Clear(Color.White);
+
+        control.Paint(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var indicatorRows = new List<int>();
+        for (var y = 0; y < 32; y++)
+        for (var x = 4; x < 18; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel[2] == 0 && pixel[1] == 117 && pixel[0] == 255)
+                indicatorRows.Add(y);
+        }
+        Assert.NotEmpty(indicatorRows);
+        var indicatorCenter = (indicatorRows.Min() + indicatorRows.Max() + 1) / 2f;
+        var textBounds = kind == "CheckBox"
+            ? ((CheckBox)control).SelectableTextBounds
+            : ((Radio)control).SelectableTextBounds;
+        var textCenter = textBounds.Y + textBounds.Height / 2f;
+        Assert.InRange(Math.Abs(indicatorCenter - textCenter), 0, 1);
+    }
+
     [Fact]
     public void AppearanceAutoCheckBoxUsesCapturedChromiumCheckedFill()
     {

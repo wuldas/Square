@@ -146,7 +146,7 @@ public class CheckBox : UIElement, ITextSelectable
         {
             var box = new Rect(
                 MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
-                MathF.Round(Geometry.Y, MidpointRounding.AwayFromZero),
+                MathF.Round(Geometry.Y + (Geometry.Height - 13) / 2f, MidpointRounding.AwayFromZero),
                 13,
                 13);
             if (IsChecked)
@@ -230,7 +230,7 @@ public class Radio : UIElement, ITextSelectable
         {
             var box = new Rect(
                 MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
-                MathF.Round(Geometry.Y, MidpointRounding.AwayFromZero),
+                MathF.Round(Geometry.Y + (Geometry.Height - 13) / 2f, MidpointRounding.AwayFromZero),
                 13,
                 13);
             var center = new Point(box.X + 6.5f, box.Y + 6.5f);
