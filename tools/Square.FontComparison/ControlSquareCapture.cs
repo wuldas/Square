@@ -21,7 +21,8 @@ public static class ControlSquareCapture
         string outputDirectory,
         string? captureSession = null)
     {
-        Directory.CreateDirectory(Path.Combine(outputDirectory, "cases"));
+        var renderer = CanonicalRenderer(backend);
+        ControlArtifactIdentity.EnsureCaptureDirectory(outputDirectory, renderer);
         var factory = CreateFactory(backend);
         if (backend.Equals("Skia", StringComparison.OrdinalIgnoreCase))
         {
@@ -81,7 +82,9 @@ public static class ControlSquareCapture
         var textFragments = displayTree.CollectTextFragments(control);
         displayTree.Render(context);
         using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
-        var screenshotPath = Path.Combine(outputDirectory, "cases", item.Id + ".png");
+        var screenshotRelative = Path.Combine("cases", item.Id + ".png").Replace('\\', '/');
+        var screenshotPath = ControlArtifactIdentity.ResolveCaptureScreenshotPath(
+            outputDirectory, CanonicalRenderer(backend), item.Id, screenshotRelative);
         BitmapPngEncoder.Save(bitmap, screenshotPath);
 
         var border = ReadEdges(control, "border", "width");
@@ -124,7 +127,7 @@ public static class ControlSquareCapture
                 ["textFamily"] = textFragments.Count == 0 ? "" : textFragments[0].Font.Family,
                 ["caretBounds"] = control is TextEditorBase editor ? editor.CaretRect.ToString() : ""
             },
-            Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/'),
+            Screenshot = screenshotRelative,
             ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(screenshotPath)
         };
     }

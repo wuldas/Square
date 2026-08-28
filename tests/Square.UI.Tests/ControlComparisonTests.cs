@@ -27,6 +27,34 @@ public sealed class ControlComparisonTests
         Assert.Equal(["geometry", "visual"], phases);
     }
 
+    [Fact]
+    public async Task ControlComparisonRejectsBackendTraversalBeforeCreatingOutput()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "square-backend-root-" + Guid.NewGuid());
+        var outside = Path.Combine(Path.GetTempPath(), "square-backend-outside-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(root);
+            var manifestPath = Path.Combine(root, "manifest.json");
+            await File.WriteAllTextAsync(
+                manifestPath,
+                System.Text.Json.JsonSerializer.Serialize(
+                    ControlComparisonManifest.CreateSmoke(), ControlReportIO.JsonOptions));
+            var backend = Path.GetRelativePath(root, outside);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                ControlComparisonRunner.RunAsync("geometry", manifestPath, root, [backend]));
+
+            Assert.Contains("renderer", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Directory.Exists(outside));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (Directory.Exists(outside)) Directory.Delete(outside, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(ControlAppearance.Auto, ControlState.Normal)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover)]
@@ -349,17 +377,22 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
-    public void AppearanceNoneUsesOneAuthorCssPayloadForBothRenderers()
+    public void AppearanceNoneUsesSharedAuthorCssWithFocusOnlyOutline()
     {
-        var manifest = ControlComparisonManifest.CreateSmoke();
-        var item = Assert.Single(manifest.ExpandCases(), item =>
-            item.Kind == ControlKind.Input && item.Appearance == ControlAppearance.None);
+        var manifest = ControlComparisonManifest.CreateDefault();
+        var normal = Assert.Single(manifest.ExpandCases(), item =>
+            item.Kind == ControlKind.Input && item.Appearance == ControlAppearance.None &&
+            item.State == ControlState.Normal);
+        var focus = Assert.Single(manifest.ExpandCases(), item =>
+            item.Kind == ControlKind.Input && item.Appearance == ControlAppearance.None &&
+            item.State == ControlState.Focus);
 
-        Assert.NotEmpty(item.AuthorCss);
-        Assert.Contains("margin: 0", item.AuthorCss);
-        Assert.Equal(manifest.AppearanceNoneAuthorCss, item.AuthorCss);
-        Assert.Equal(item.ChromiumAuthorCss, item.SquareAuthorCss);
-        Assert.Equal(item.AuthorCss, item.ChromiumAuthorCss);
+        Assert.NotEmpty(normal.AuthorCss);
+        Assert.Contains("margin: 0", normal.AuthorCss);
+        Assert.Equal(manifest.AppearanceNoneAuthorCss, normal.AuthorCss);
+        Assert.DoesNotContain("outline:", normal.AuthorCss, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("outline: 1px solid Highlight", focus.AuthorCss, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(focus.ChromiumAuthorCss, focus.SquareAuthorCss);
     }
 
     [Fact]
@@ -481,6 +514,145 @@ public sealed class ControlComparisonTests
 
         Assert.Contains("screenshot", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("button-auto-normal", exception.Message);
+    }
+
+    [Fact]
+    public void VisualPhaseRejectsScreenshotPathTraversal()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-path-" + Guid.NewGuid());
+        var outsidePath = Path.Combine(Path.GetTempPath(), "square-control-outside-" + Guid.NewGuid() + ".png");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(artifactRoot, "software"));
+            File.WriteAllBytes(outsidePath, [1]);
+            var report = new ControlGeometryReport
+            {
+                Renderer = "Software",
+                ManifestFingerprint = "manifest-a",
+                BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
+                CaptureSession = "session-a",
+                CapturedAt = DateTimeOffset.UtcNow,
+                Cases =
+                [
+                    new ControlGeometryCaseResult
+                    {
+                        Id = "button-auto-normal",
+                        Passed = true,
+                        Screenshot = Path.GetRelativePath(
+                            Path.Combine(artifactRoot, "software"), outsidePath),
+                        ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(outsidePath)
+                    }
+                ]
+            };
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    [report],
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot));
+
+            Assert.Contains("path", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+            if (File.Exists(outsidePath)) File.Delete(outsidePath);
+        }
+    }
+
+    [Fact]
+    public void VisualPhaseRejectsRendererPathTraversal()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-renderer-root-" + Guid.NewGuid());
+        var outsideRoot = Path.Combine(Path.GetTempPath(), "square-control-renderer-outside-" + Guid.NewGuid());
+        try
+        {
+            var screenshot = Path.Combine(outsideRoot, "cases", "button-auto-normal.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+            File.WriteAllBytes(screenshot, [1]);
+            var report = new ControlGeometryReport
+            {
+                Renderer = Path.GetRelativePath(artifactRoot, outsideRoot),
+                ManifestFingerprint = "manifest-a",
+                BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
+                CaptureSession = "session-a",
+                CapturedAt = DateTimeOffset.UtcNow,
+                Cases =
+                [
+                    new ControlGeometryCaseResult
+                    {
+                        Id = "button-auto-normal",
+                        Passed = true,
+                        Screenshot = "cases/button-auto-normal.png",
+                        ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(screenshot)
+                    }
+                ]
+            };
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    [report],
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot));
+
+            Assert.Contains("renderer", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+            if (Directory.Exists(outsideRoot)) Directory.Delete(outsideRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void VisualPhaseRejectsReparsePointInCasesDirectory()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-reparse-root-" + Guid.NewGuid());
+        var outsideRoot = Path.Combine(Path.GetTempPath(), "square-control-reparse-outside-" + Guid.NewGuid());
+        var casesLink = Path.Combine(artifactRoot, "software", "cases");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(artifactRoot, "software"));
+            Directory.CreateDirectory(outsideRoot);
+            CreateDirectoryLink(casesLink, outsideRoot);
+            var screenshot = Path.Combine(outsideRoot, "button-auto-normal.png");
+            File.WriteAllBytes(screenshot, [1]);
+            var report = new ControlGeometryReport
+            {
+                Renderer = "Software",
+                ManifestFingerprint = "manifest-a",
+                BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
+                CaptureSession = "session-a",
+                CapturedAt = DateTimeOffset.UtcNow,
+                Cases =
+                [
+                    new ControlGeometryCaseResult
+                    {
+                        Id = "button-auto-normal",
+                        Passed = true,
+                        Screenshot = "cases/button-auto-normal.png",
+                        ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(screenshot)
+                    }
+                ]
+            };
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    [report],
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot));
+
+            Assert.Contains("reparse", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(casesLink)) Directory.Delete(casesLink);
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+            if (Directory.Exists(outsideRoot)) Directory.Delete(outsideRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -674,6 +846,55 @@ public sealed class ControlComparisonTests
                     "manifest-a",
                     artifactRoot,
                     ["Software", "Skia"]));
+
+            Assert.Contains("capture timestamp", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("stale")]
+    public async Task VisualPhaseRejectsMissingOrStaleCaptureTimestamp(string mode)
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-control-freshness-" + Guid.NewGuid());
+        try
+        {
+            var screenshot = Path.Combine(artifactRoot, "software", "cases", "button-auto-normal.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);
+            File.WriteAllBytes(screenshot, [1]);
+            var capturedAtProperty = mode == "stale"
+                ? $"\"capturedAt\": \"{DateTimeOffset.UtcNow.AddMinutes(-30):O}\","
+                : "";
+            var reportPath = Path.Combine(artifactRoot, "software", "geometry.json");
+            await File.WriteAllTextAsync(reportPath, $$"""
+                {
+                  "renderer": "Software",
+                  "manifestFingerprint": "manifest-a",
+                  "buildFingerprint": "{{ControlArtifactIdentity.ComputeBuildFingerprint()}}",
+                  "captureSession": "session-a",
+                  {{capturedAtProperty}}
+                  "cases": [
+                    {
+                      "id": "button-auto-normal",
+                      "passed": true,
+                      "screenshot": "cases/button-auto-normal.png",
+                      "screenshotSha256": "{{ControlArtifactIdentity.ComputeFileSha256(screenshot)}}"
+                    }
+                  ]
+                }
+                """);
+            var report = await ControlReportIO.ReadAsync(reportPath);
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                ControlGeometryGate.EnsureVisualAllowed(
+                    [report],
+                    ["button-auto-normal"],
+                    "manifest-a",
+                    artifactRoot));
 
             Assert.Contains("capture timestamp", exception.Message, StringComparison.OrdinalIgnoreCase);
         }
@@ -978,6 +1199,41 @@ public sealed class ControlComparisonTests
             Assert.False(result.Passed);
             Assert.False(Assert.Single(result.Regions, region => region.Name == "text-line-2").Passed);
             Assert.All(result.Regions.Where(region => region.Name != "text-line-2"), region => Assert.True(region.Passed));
+        }
+        finally
+        {
+            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TextAreaVisualComparisonUsesContentBoxOffsetForContentRegions()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-textarea-offset-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var chromium = Path.Combine(artifactRoot, "chromium.png");
+            var square = Path.Combine(artifactRoot, "square.png");
+            var diff = Path.Combine(artifactRoot, "diff.png");
+            WriteOffsetTextAreaFixture(chromium, borderLeft: 10, textLeft: 17);
+            WriteOffsetTextAreaFixture(square, borderLeft: 11, textLeft: 16);
+
+            var result = ControlVisualComparer.CompareTextArea(
+                chromium,
+                square,
+                diff,
+                new ControlRect(10.49f, 8, 40, 24),
+                new ControlRect(10.51f, 8, 40, 24),
+                new ControlRect(14.51f, 10, 30, 20),
+                new ControlRect(14.49f, 10, 30, 20),
+                ControlState.Normal,
+                ControlVisualThresholds.TextArea);
+
+            Assert.True(result.Passed,
+                string.Join(" | ", result.Regions.SelectMany(region => region.Failures)));
+            using var diffBitmap = SKBitmap.Decode(diff);
+            Assert.Equal(0, diffBitmap.GetPixel(17, 13).Red);
         }
         finally
         {
@@ -1304,7 +1560,7 @@ public sealed class ControlComparisonTests
     [InlineData(ControlAppearance.Auto, ControlState.Disabled, 212)]
     [InlineData(ControlAppearance.Auto, ControlState.Value, 118)]
     [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 118)]
-    [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
+    [InlineData(ControlAppearance.None, ControlState.Focus, 52)]
     public async Task SoftwareInputStatesUseChromiumOuterBorder(
         ControlAppearance appearance,
         ControlState state,
@@ -1474,7 +1730,7 @@ public sealed class ControlComparisonTests
     [InlineData(ControlAppearance.Auto, ControlState.Hover, 79)]
     [InlineData(ControlAppearance.Auto, ControlState.Focus, 16)]
     [InlineData(ControlAppearance.Auto, ControlState.Disabled, 222)]
-    [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
+    [InlineData(ControlAppearance.None, ControlState.Focus, 52)]
     public async Task SoftwareSelectStatesUseChromiumOuterBorder(
         ControlAppearance appearance,
         ControlState state,
@@ -1572,7 +1828,7 @@ public sealed class ControlComparisonTests
     [InlineData(ControlAppearance.Auto, ControlState.Disabled, 212)]
     [InlineData(ControlAppearance.Auto, ControlState.Value, 118)]
     [InlineData(ControlAppearance.Auto, ControlState.Placeholder, 118)]
-    [InlineData(ControlAppearance.None, ControlState.Focus, 16)]
+    [InlineData(ControlAppearance.None, ControlState.Focus, 52)]
     public async Task SoftwareTextAreaStatesUseChromiumOuterBorder(
         ControlAppearance appearance,
         ControlState state,
@@ -1661,6 +1917,51 @@ public sealed class ControlComparisonTests
     }
 
     [Fact]
+    public void TextAreaCaretDoesNotJumpWhenMovingToAnAlreadyVisiblePreviousLine()
+    {
+        var area = new TextArea
+        {
+            Geometry = new Rect(0, 0, 200, 60),
+            Value = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9"
+        };
+        area.Style.CssText =
+            "appearance: none; border: 1px solid #767676; padding: 2px; " +
+            "font: 14px Arial; line-height: 17px;";
+        area.Focus();
+        area.HandleKey(35, control: true);
+        var lastLineCaret = area.CaretRect;
+
+        area.HandleKey(38);
+        var previousLineCaret = area.CaretRect;
+
+        Assert.True(previousLineCaret.Y < lastLineCaret.Y,
+            $"Expected previous visible line above y={lastLineCaret.Y}, got y={previousLineCaret.Y}.");
+        Assert.True(previousLineCaret.Bottom <= area.Geometry.Bottom);
+    }
+
+    [Fact]
+    public void TextAreaOversizedLineCaretVisibilityIsIdempotent()
+    {
+        var area = new TextArea
+        {
+            Geometry = new Rect(0, 0, 200, 60),
+            Value = "Oversized"
+        };
+        area.Style.CssText =
+            "appearance: none; border: 1px solid #767676; padding: 2px; " +
+            "font: 14px Arial; line-height: 100px;";
+        area.Focus();
+        area.HandleKey(35, control: true);
+
+        var first = area.CaretRect;
+        var second = area.CaretRect;
+        var third = area.CaretRect;
+
+        Assert.Equal(first.Y, second.Y);
+        Assert.Equal(second.Y, third.Y);
+    }
+
+    [Fact]
     public async Task ChromiumFocusCaptureIsIndependentOfPriorHoverCase()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), "square-browser-state-" + Guid.NewGuid());
@@ -1719,6 +2020,34 @@ public sealed class ControlComparisonTests
         Assert.Equal(item.AuthorCss, payload.authorCss);
     }
 
+    private static void CreateDirectoryLink(string linkPath, string targetPath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return;
+        }
+
+        var startInfo = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("mklink");
+        startInfo.ArgumentList.Add("/J");
+        startInfo.ArgumentList.Add(linkPath);
+        startInfo.ArgumentList.Add(targetPath);
+        using var process = System.Diagnostics.Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Unable to start mklink.");
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"mklink failed: {process.StandardError.ReadToEnd()} {process.StandardOutput.ReadToEnd()}");
+    }
+
     private static ControlGeometryReport Geometry(
         string renderer, float x, float y, float width, float height, string screenshot,
         string screenshotSha256 = "") => new()
@@ -1727,6 +2056,7 @@ public sealed class ControlComparisonTests
             ManifestFingerprint = "manifest-a",
             BuildFingerprint = ControlArtifactIdentity.ComputeBuildFingerprint(),
             CaptureSession = "session-a",
+            CapturedAt = DateTimeOffset.UtcNow,
             Cases =
             [
                 new ControlGeometryCaseResult
@@ -1799,6 +2129,24 @@ public sealed class ControlComparisonTests
         canvas.DrawRect(new SKRect(14, 13, 22, 16), ink);
         if (drawSecondLine) canvas.DrawRect(new SKRect(14, 21, 22, 24), ink);
         if (drawCaret) canvas.DrawRect(new SKRect(32, 12, 33, 25), ink);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+    }
+
+    private static void WriteOffsetTextAreaFixture(string path, int borderLeft, int textLeft)
+    {
+        using var bitmap = new SKBitmap(80, 40, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        bitmap.Erase(SKColors.White);
+        using var canvas = new SKCanvas(bitmap);
+        using var fill = new SKPaint { Color = new SKColor(250, 250, 250) };
+        using var border = new SKPaint { Color = new SKColor(118, 118, 118), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
+        using var ink = new SKPaint { Color = new SKColor(32, 32, 32) };
+        canvas.DrawRect(new SKRect(borderLeft, 8, borderLeft + 40, 32), fill);
+        canvas.DrawRect(new SKRect(borderLeft + 0.5f, 8.5f, borderLeft + 39.5f, 31.5f), border);
+        canvas.DrawRect(new SKRect(textLeft, 12, textLeft + 1, 16), ink);
+        canvas.DrawRect(new SKRect(textLeft, 22, textLeft + 1, 26), ink);
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var stream = File.Create(path);

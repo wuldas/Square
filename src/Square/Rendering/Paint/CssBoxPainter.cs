@@ -116,7 +116,8 @@ internal static class CssBoxPainter
 
     private static bool UsesDefaultWidgetFocusBorder(UIElement element)
     {
-        if (!element.HasState(ElementState.Focus)) return false;
+        if (!element.HasState(ElementState.Focus) ||
+            TryGetRoundedGeometry(element, element.Geometry, out _)) return false;
         return TryParseLength(element.Style.Get("outline-width"), out var width) && width == 1 &&
             TryParseStyle(element.Style.Get("outline-style"), out var style) && style == BorderStyle.Solid &&
             string.Equals(element.Style.Get("outline-color"), "Highlight", StringComparison.OrdinalIgnoreCase) &&

@@ -1240,6 +1240,34 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void FocusedInputWithAuthorRadiusUsesRoundedUaOutline()
+    {
+        var input = new Input { Geometry = new Rect(12, 12, 80, 32) };
+        input.Style.Set("border-radius", "8px");
+        input.Focus();
+        new CssEngine().ApplyStyles(input);
+        Assert.True(Color.TryParse("Highlight", out var highlight));
+        var context = CreateContext(110, 60);
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(input);
+
+        tree.Render(context);
+
+        var highlightPixels = new List<Point>();
+        for (var y = 8; y < 48; y++)
+        for (var x = 8; x < 100; x++)
+        {
+            var pixel = context.GetBitmap().GetPixel(x, y);
+            if (pixel[2] == highlight.R && pixel[1] == highlight.G && pixel[0] == highlight.B)
+                highlightPixels.Add(new Point(x, y));
+        }
+        Assert.NotEmpty(highlightPixels);
+        Assert.Contains(highlightPixels, point => point.X <= 12 && point.Y is > 18 and < 38);
+        Assert.DoesNotContain(highlightPixels, point => point.X <= 12 && point.Y <= 12);
+    }
+
+    [Fact]
     public void RetainedRendererDrawsFocusedTextCarets()
     {
         var controls = new UIElement[] { new Input(), new TextArea() };

@@ -14,7 +14,7 @@ internal static class ControlBrowserCapture
         string outputDirectory,
         string? captureSession = null)
     {
-        Directory.CreateDirectory(Path.Combine(outputDirectory, "cases"));
+        ControlArtifactIdentity.EnsureCaptureDirectory(outputDirectory, "Chromium");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
         var context = await browser.NewContextAsync(new BrowserNewContextOptions
@@ -38,10 +38,12 @@ internal static class ControlBrowserCapture
             await ConfigureCaseAsync(page, item);
             var locator = page.Locator("#case");
             var heldActive = await ApplyStateAsync(page, locator, item.State);
-            var paths = ControlArtifactPaths.For(Path.GetDirectoryName(outputDirectory)!, "chrome", item.Id);
+            var screenshotRelative = Path.Combine("cases", item.Id + ".png").Replace('\\', '/');
+            var screenshotPath = ControlArtifactIdentity.ResolveCaptureScreenshotPath(
+                outputDirectory, "Chromium", item.Id, screenshotRelative);
             await page.Locator("#container").ScreenshotAsync(new LocatorScreenshotOptions
             {
-                Path = paths.Screenshot,
+                Path = screenshotPath,
                 Animations = ScreenshotAnimations.Disabled,
                 Caret = ScreenshotCaret.Initial,
                 Scale = ScreenshotScale.Css
@@ -89,8 +91,8 @@ internal static class ControlBrowserCapture
                 Padding = geometry.Padding,
                 Border = geometry.Border,
                 ComputedStyles = geometry.ComputedStyles,
-                Screenshot = Path.Combine("cases", item.Id + ".png").Replace('\\', '/'),
-                ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(paths.Screenshot)
+                Screenshot = screenshotRelative,
+                ScreenshotSha256 = ControlArtifactIdentity.ComputeFileSha256(screenshotPath)
             });
         }
 

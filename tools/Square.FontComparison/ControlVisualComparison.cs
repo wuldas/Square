@@ -163,10 +163,17 @@ public static class ControlVisualComparer
         var squareContent = PixelBox.Create(squareContentBox, square.Width, square.Height);
         if (contentBox.Width != squareContent.Width || contentBox.Height != squareContent.Height)
             throw new InvalidOperationException($"TextArea content boxes have different pixel sizes: {contentBox.Width}x{contentBox.Height} and {squareContent.Width}x{squareContent.Height}.");
-        var regions = CreateTextAreaRegions(box, contentBox, state)
-            .Select(region => CompareRegion(chromium, square, region, thresholds, squareOffsetX, squareOffsetY))
+        var contentOffsetX = squareContent.Left - contentBox.Left;
+        var contentOffsetY = squareContent.Top - contentBox.Top;
+        var regionDefinitions = CreateTextAreaRegions(box, contentBox, state);
+        var regions = regionDefinitions
+            .Select(region => region.Name is "corner" or "border"
+                ? CompareRegion(chromium, square, region, thresholds, squareOffsetX, squareOffsetY)
+                : CompareRegion(chromium, square, region, thresholds, contentOffsetX, contentOffsetY))
             .ToList();
-        WriteDiff(chromium, square, diffPath, box, squareOffsetX, squareOffsetY);
+        WriteDiff(
+            chromium, square, diffPath, box, regionDefinitions,
+            squareOffsetX, squareOffsetY, contentOffsetX, contentOffsetY);
         return new ControlVisualCaseResult
         {
             Id = id,
@@ -609,6 +616,20 @@ public static class ControlVisualComparer
         PixelBox box,
         int squareOffsetX = 0,
         int squareOffsetY = 0)
+        => WriteDiff(
+            chromium, square, path, box, null,
+            squareOffsetX, squareOffsetY, squareOffsetX, squareOffsetY);
+
+    private static void WriteDiff(
+        SKBitmap chromium,
+        SKBitmap square,
+        string path,
+        PixelBox box,
+        IReadOnlyList<PixelRegion>? regions,
+        int borderOffsetX,
+        int borderOffsetY,
+        int contentOffsetX,
+        int contentOffsetY)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         using var diff = new SKBitmap(chromium.Width, chromium.Height, SKColorType.Bgra8888, SKAlphaType.Opaque);
@@ -617,7 +638,11 @@ public static class ControlVisualComparer
         {
             for (var x = box.Left; x < box.Right; x++)
             {
-                var delta = ColorDelta(chromium.GetPixel(x, y), square.GetPixel(x + squareOffsetX, y + squareOffsetY));
+                var region = regions?.FirstOrDefault(candidate => candidate.Contains(x, y));
+                var useContentOffset = region != null && region.Name is not ("corner" or "border");
+                var offsetX = useContentOffset ? contentOffsetX : borderOffsetX;
+                var offsetY = useContentOffset ? contentOffsetY : borderOffsetY;
+                var delta = ColorDelta(chromium.GetPixel(x, y), square.GetPixel(x + offsetX, y + offsetY));
                 diff.SetPixel(x, y, new SKColor((byte)Math.Clamp(delta * 3, 0, 255), 30, (byte)Math.Clamp(80 + delta, 0, 255)));
             }
         }

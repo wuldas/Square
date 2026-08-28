@@ -652,13 +652,15 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             var lines = GetLines(DisplayValue);
             var lineIndex = FindLineIndex(lines, _caretIndex);
             var visualLineBox = GetVisualLineBox(fontSize, lineHeight, lineIndex);
-            var unscrolledTop = visualLineBox.Top + _verticalScroll;
             var viewportTop = Geometry.Y + 1;
             var viewportBottom = Geometry.Bottom - 1;
-            var targetScroll = Math.Max(0, unscrolledTop + visualLineBox.Height - viewportBottom);
-            if (unscrolledTop - targetScroll < viewportTop)
-                targetScroll = Math.Max(0, unscrolledTop - viewportTop);
-            _verticalScroll = targetScroll;
+            var viewportHeight = Math.Max(0, viewportBottom - viewportTop);
+            if (visualLineBox.Height >= viewportHeight)
+                _verticalScroll = Math.Max(0, _verticalScroll + visualLineBox.Top - viewportTop);
+            else if (visualLineBox.Top < viewportTop)
+                _verticalScroll = Math.Max(0, _verticalScroll - (viewportTop - visualLineBox.Top));
+            else if (visualLineBox.Top + visualLineBox.Height > viewportBottom)
+                _verticalScroll += visualLineBox.Top + visualLineBox.Height - viewportBottom;
             return;
         }
         var width = MeasureRange(DisplayValue, 0, _caretIndex);

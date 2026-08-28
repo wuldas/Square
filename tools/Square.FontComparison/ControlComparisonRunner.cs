@@ -38,6 +38,7 @@ internal static class ControlComparisonRunner
 {
     public static async Task<int> RunAsync(string phase, string manifestPath, string output, string[] backends)
     {
+        backends = backends.Select(ControlArtifactIdentity.CanonicalBackend).ToArray();
         if (phase.Equals("all", StringComparison.OrdinalIgnoreCase))
             return await RunCompleteAsync(currentPhase => RunAsync(currentPhase, manifestPath, output, backends));
         if (phase.Equals("geometry", StringComparison.OrdinalIgnoreCase))
@@ -125,8 +126,10 @@ internal static class ControlComparisonRunner
             {
                 var squareCase = squareReport.Cases.Single(item => item.Id == chromiumCase.Id);
                 var diffRelative = Path.Combine("diff", backend.ToLowerInvariant(), chromiumCase.Id + ".png");
-                var chromiumPath = Path.Combine(output, "chrome", chromiumCase.Screenshot.Replace('/', Path.DirectorySeparatorChar));
-                var squarePath = Path.Combine(output, backend.ToLowerInvariant(), squareCase.Screenshot.Replace('/', Path.DirectorySeparatorChar));
+                var chromiumPath = ControlArtifactIdentity.ResolveScreenshotPath(
+                    output, "Chromium", chromiumCase.Id, chromiumCase.Screenshot);
+                var squarePath = ControlArtifactIdentity.ResolveScreenshotPath(
+                    output, backend, squareCase.Id, squareCase.Screenshot);
                 var diffPath = Path.Combine(output, diffRelative);
                 comparisons.Add(chromiumCase.Kind switch
                 {

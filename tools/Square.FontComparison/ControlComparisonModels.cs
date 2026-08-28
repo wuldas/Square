@@ -21,6 +21,8 @@ public sealed class ControlComparisonManifest
         "appearance: none; box-sizing: border-box; margin: 0; width: 180px; height: 36px; " +
         "padding: 6px 10px; border: 2px solid #345678; border-radius: 4px; " +
         "background: #e8eef4; color: #102030; font: 14px Arial;";
+    public const string AppearanceNoneFocusCss =
+        " outline: 1px solid Highlight; outline-offset: 0;";
 
     public string AppearanceNoneAuthorCss { get; init; } = AppearanceNoneCss;
     public required List<ControlDefinition> Controls { get; init; }
@@ -57,7 +59,9 @@ public sealed class ControlComparisonManifest
                 Text = control.Text,
                 Value = control.Value,
                 Placeholder = control.Placeholder,
-                AuthorCss = appearance == ControlAppearance.None ? AppearanceNoneAuthorCss : control.AutoAuthorCss
+                AuthorCss = appearance == ControlAppearance.None
+                    ? AppearanceNoneAuthorCss + (state == ControlState.Focus ? AppearanceNoneFocusCss : "")
+                    : control.AutoAuthorCss
             })))
         .ToArray();
 
@@ -174,6 +178,100 @@ public static class ControlArtifactIdentity
             .Select(assembly => $"{assembly.GetName().Name}:{ComputeFileSha256(assembly.Location)}"));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
     }
+
+    public static string ResolveScreenshotPath(
+        string artifactRoot,
+        string renderer,
+        string caseId,
+        string screenshot)
+    {
+        if (string.IsNullOrWhiteSpace(screenshot) || Path.IsPathRooted(screenshot) ||
+            caseId.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
+            throw new InvalidOperationException($"{renderer} geometry screenshot path is invalid for '{caseId}'.");
+        var normalized = screenshot.Replace('\\', '/');
+        var expected = $"cases/{caseId}.png";
+        if (!string.Equals(normalized, expected, StringComparison.Ordinal))
+            throw new InvalidOperationException($"{renderer} geometry screenshot path is invalid for '{caseId}'.");
+
+        var rendererRoot = Path.GetFullPath(Path.Combine(artifactRoot, ArtifactDirectory(renderer)));
+        var casesRoot = Path.GetFullPath(Path.Combine(rendererRoot, "cases"));
+        var fullPath = Path.GetFullPath(Path.Combine(rendererRoot, screenshot));
+        RejectReparsePoint(Path.GetFullPath(artifactRoot), renderer, caseId);
+        RejectReparsePoint(rendererRoot, renderer, caseId);
+        RejectReparsePoint(casesRoot, renderer, caseId);
+        RejectReparsePoint(fullPath, renderer, caseId);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.GetDirectoryName(fullPath), casesRoot, comparison) ||
+            !string.Equals(Path.GetFileName(fullPath), caseId + ".png", comparison))
+            throw new InvalidOperationException($"{renderer} geometry screenshot path escapes its cases directory for '{caseId}'.");
+        return fullPath;
+    }
+
+    public static string ResolveCaptureScreenshotPath(
+        string outputDirectory,
+        string renderer,
+        string caseId,
+        string screenshot)
+    {
+        if (string.IsNullOrWhiteSpace(screenshot) || Path.IsPathRooted(screenshot) ||
+            !string.Equals(screenshot.Replace('\\', '/'), $"cases/{caseId}.png", StringComparison.Ordinal))
+            throw new InvalidOperationException($"{renderer} geometry screenshot path is invalid for '{caseId}'.");
+        var rendererRoot = Path.GetFullPath(outputDirectory);
+        var root = Path.GetDirectoryName(rendererRoot)
+            ?? throw new InvalidOperationException($"{renderer} output directory has no artifact root.");
+        var casesRoot = Path.GetFullPath(Path.Combine(rendererRoot, "cases"));
+        var fullPath = Path.GetFullPath(Path.Combine(rendererRoot, screenshot));
+        RejectReparsePoint(root, renderer, "capture root");
+        RejectReparsePoint(rendererRoot, renderer, caseId);
+        RejectReparsePoint(casesRoot, renderer, caseId);
+        RejectReparsePoint(fullPath, renderer, caseId);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.GetDirectoryName(fullPath), casesRoot, comparison))
+            throw new InvalidOperationException($"{renderer} geometry screenshot path escapes its cases directory for '{caseId}'.");
+        return fullPath;
+    }
+
+    public static void EnsureCaptureDirectory(string outputDirectory, string renderer)
+    {
+        var rendererRoot = Path.GetFullPath(outputDirectory);
+        var root = Path.GetDirectoryName(rendererRoot)
+            ?? throw new InvalidOperationException($"{renderer} output directory has no artifact root.");
+        var casesRoot = Path.GetFullPath(Path.Combine(rendererRoot, "cases"));
+        RejectReparsePoint(root, renderer, "capture root");
+        Directory.CreateDirectory(root);
+        RejectReparsePoint(root, renderer, "capture root");
+        RejectReparsePoint(rendererRoot, renderer, "capture root");
+        Directory.CreateDirectory(rendererRoot);
+        RejectReparsePoint(rendererRoot, renderer, "capture root");
+        RejectReparsePoint(casesRoot, renderer, "capture root");
+        Directory.CreateDirectory(casesRoot);
+        RejectReparsePoint(casesRoot, renderer, "capture root");
+    }
+
+    private static void RejectReparsePoint(string path, string renderer, string caseId)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path)) return;
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException(
+                $"{renderer} geometry screenshot path contains a reparse point for '{caseId}'.");
+    }
+
+    public static string ArtifactDirectory(string renderer) => renderer.ToLowerInvariant() switch
+    {
+        "chromium" => "chrome",
+        "software" => "software",
+        "skia" => "skia",
+        "vulkan" => "vulkan",
+        _ => throw new InvalidOperationException($"Unsupported control comparison renderer '{renderer}'.")
+    };
+
+    public static string CanonicalBackend(string backend) => backend.ToLowerInvariant() switch
+    {
+        "software" => "Software",
+        "skia" => "Skia",
+        "vulkan" => "Vulkan",
+        _ => throw new InvalidOperationException($"Unsupported control comparison renderer '{backend}'.")
+    };
 }
 
 public sealed class ControlGeometryReport
@@ -183,7 +281,7 @@ public sealed class ControlGeometryReport
     public string BuildFingerprint { get; init; } = "";
     public string CaptureSession { get; init; } = "";
     public string Version { get; init; } = "unknown";
-    public DateTimeOffset CapturedAt { get; init; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset CapturedAt { get; init; }
     public required List<ControlGeometryCaseResult> Cases { get; init; }
 }
 
@@ -307,8 +405,9 @@ public static class ControlGeometryGate
                 throw new InvalidOperationException("Geometry reports do not share one valid capture session.");
             var earliest = materialized.Min(report => report.CapturedAt);
             var latest = materialized.Max(report => report.CapturedAt);
+            var now = DateTimeOffset.UtcNow;
             if (earliest == default || latest - earliest > TimeSpan.FromMinutes(10) ||
-                latest > DateTimeOffset.UtcNow.AddMinutes(1))
+                earliest < now.AddMinutes(-10) || latest > now.AddMinutes(1))
                 throw new InvalidOperationException("Geometry reports have invalid or inconsistent capture timestamps.");
         }
         var required = requiredCaseIds.ToArray();
@@ -342,7 +441,8 @@ public static class ControlGeometryGate
             {
                 foreach (var item in report.Cases)
                 {
-                    var screenshotPath = Path.Combine(artifactRoot, ArtifactDirectory(report.Renderer), item.Screenshot);
+                    var screenshotPath = ControlArtifactIdentity.ResolveScreenshotPath(
+                        artifactRoot, report.Renderer, item.Id, item.Screenshot);
                     if (string.IsNullOrWhiteSpace(item.Screenshot) || !File.Exists(screenshotPath))
                         throw new InvalidOperationException(
                             $"{report.Renderer} geometry screenshot is missing for '{item.Id}'.");
@@ -364,10 +464,6 @@ public static class ControlGeometryGate
             throw new InvalidOperationException("Visual comparison requires a passing geometry gate. Failed: " + string.Join(", ", failed));
     }
 
-    private static string ArtifactDirectory(string renderer) =>
-        renderer.Equals("Chromium", StringComparison.OrdinalIgnoreCase)
-            ? "chrome"
-            : renderer.ToLowerInvariant();
 }
 
 public static class ControlGeometryMatrix

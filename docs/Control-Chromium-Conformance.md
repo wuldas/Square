@@ -13,7 +13,7 @@
 | CheckBox | unchecked、checked、hover、active、focus、disabled |
 | Radio | unchecked、checked、hover、active、focus、disabled |
 
-完整 manifest 共 66 个用例，位于 `tools/Square.FontComparison/Cases/ControlComparisonCases.json`。`appearance:auto` 使用 Chromium 的真实语义控件；`appearance:none` 在 Chromium 与 Square 注入 manifest 中同一段显式作者 CSS，避免依赖隐含 UA 默认值。
+完整 manifest 共 66 个用例，位于 `tools/Square.FontComparison/Cases/ControlComparisonCases.json`。`appearance:auto` 使用 Chromium 的真实语义控件；`appearance:none` 在 Chromium 与 Square 注入 manifest 中同一段显式作者 CSS，只有 focus case 额外追加相同的圆角 outline，避免普通状态永久显示焦点环，也避免两端分别落入不同的隐含 UA 焦点绘制路径。
 
 Select 的原生下拉 popup/open 状态无法由 headless Chromium 稳定捕获，因此明确标记为不支持，不计为通过，也不伪造截图。当前阻塞后端为 Software 与 Skia。Vulkan 只在具备真实 Win32 readback 证据时报告，不以共享绘制命令路径代替像素通过结论。
 
@@ -51,9 +51,9 @@ pwsh tools/Square.FontComparison/bin/Release/net10.0/playwright.ps1 install chro
 dotnet run --project tools/Square.FontComparison/Square.FontComparison.csproj -c Release --no-build -p:SquareTargetPlatform=Win32 -- compare-controls --backends Software,Skia --output artifacts/control-comparison
 ```
 
-需要定位阶段问题时可显式追加 `--phase geometry` 或 `--phase visual`；单独运行 visual 要求相同输出目录已存在通过且 manifest、当前工具/核心/后端二进制 build fingerprint 匹配的完整几何结果。Chromium 与各 Square 后端报告还必须属于同一个 capture session，捕获时间处于同一有效窗口。
+需要定位阶段问题时可显式追加 `--phase geometry` 或 `--phase visual`；单独运行 visual 要求相同输出目录已存在通过且 manifest、当前工具/核心/后端二进制 build fingerprint 匹配的完整几何结果。Chromium 与各 Square 后端报告还必须属于同一个 capture session，报告必须显式携带捕获时间、彼此跨度不超过 10 分钟且最早报告距当前不超过 10 分钟。
 
-输出目录包含 Chromium、Software、Skia 的 `geometry.json` 与逐用例 PNG、`geometry-matrix.md`、区域 diff PNG、`visual.json` 和离线 `report.html`。每张截图的 SHA-256 写入对应报告，视觉阶段会重新计算并拒绝缺失、替换或跨 run 混用的产物。`artifacts/` 已被 Git 忽略。对同一提交和环境重复执行同一命令应得到相同的门禁结论；绝对时间不参与像素指标，但会用于验证同一 capture session 的时序一致性。
+输出目录包含 Chromium、Software、Skia 的 `geometry.json` 与逐用例 PNG、`geometry-matrix.md`、区域 diff PNG、`visual.json` 和离线 `report.html`。backend 参数在路径构造前限制为 Software/Skia/Vulkan；截图路径只接受规范的 `cases/<case-id>.png`，并验证 artifactRoot、renderer、cases 与截图文件都不是 reparse point，且解析后仍位于对应 renderer 的 `cases` 目录。每张截图的 SHA-256 写入对应报告，视觉阶段会重新计算并拒绝路径越界、缺失、替换或跨 run 混用的产物。`artifacts/` 已被 Git 忽略。对同一提交和环境重复执行同一命令应得到相同的门禁结论；绝对时间不参与像素指标，但会用于验证同一 capture session 的新鲜度和时序一致性。
 
 ## CI
 
