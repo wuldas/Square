@@ -245,7 +245,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 |---|---|---|
 | `:hover` | 🟢 | 基于 `ElementState.Hover`。 |
 | `:focus` | 🟢 | 基于 `ElementState.Focus`。 |
-| `:focus-visible` | 🟡 | 当前等同 `:focus`（键盘/指针焦点未分流）。 |
+| `:focus-visible` | 🟡 | 基于 `ElementState.FocusVisible`；键盘/程序焦点匹配，鼠标点击获得的焦点不匹配。 |
 | `:active` | 🟢 | 基于 `ElementState.Active`。 |
 | `:disabled` | 🟢 | 基于 `ElementState.Disabled`。 |
 | `:checked` | 🟢 | 基于 `ElementState.Checked`。 |
@@ -509,7 +509,7 @@ Button {
 | `user-select` | 🟡 | text、none；向祖先查找。 |
 | `caret-color` | 🟡 | 文本编辑器，有限颜色值。 |
 | `selection-background(-color)`、`selection-color` | 🟡 | 文本编辑器内部属性。 |
-| `appearance` | 🟡 子集 | `none`（initial）、`auto`。UA 对齐 Chrome `html.css` 浅色表单控件：`Button` 为 `ButtonFace` + `2px outset ButtonBorder`，`:active` 切 `inset`，`:active:disabled` 保持 `outset`，`:disabled` 用半透明灰；`Input` 为 `Field` + `2px inset #767676`；`TextArea`/`Select` 为 `Field` + `1px solid #767676`。`:disabled` 再把 Input/TextArea 边框改成半透明灰，Select 用 `opacity: 0.7` + `GrayText`。`:focus-visible` 画 `1px solid Highlight` 轮廓（当前等同 `:focus`）；Input/Button/Select/TextArea 的 `outline-offset` 为 `0`，CheckBox/Radio 为 `2px`。占位文本用 Chrome `#757575`。无作者 box 覆盖时保留校准过的默认 widget 路径；作者 `background`、border、`border-radius`、`box-shadow`、outline 与 Button `text-align` 覆盖 UA，并由 Software/Skia/Vulkan 共享盒绘制路径消费。`none` 不自动清掉 UA 边框/背景，作者需覆盖。不支持 `button`/`checkbox` 等控件关键字、AppearanceBase、暗色 `light-dark()`。 |
+| `appearance` | 🟡 子集 | `none`（initial）、`auto`。UA 对齐 Chrome `html.css` 浅色表单控件：`Button` 为 `ButtonFace` + `2px outset ButtonBorder`，`:active` 切 `inset`，`:active:disabled` 保持 `outset`，`:disabled` 用半透明灰；`Input` 为 `Field` + `2px inset #767676`；`TextArea`/`Select` 为 `Field` + `1px solid #767676`。`:disabled` 再把 Input/TextArea 边框改成半透明灰，Select 用 `opacity: 0.7` + `GrayText`。`:focus-visible` 画 `1px solid Highlight` 轮廓；键盘/程序焦点匹配，鼠标点击获得的焦点不匹配；Input/Button/Select/TextArea 的 `outline-offset` 为 `0`，CheckBox/Radio 为 `2px`。占位文本用 Chrome `#757575`。无作者 box 覆盖时保留校准过的默认 widget 路径；作者 `background`、border、`border-radius`、`box-shadow`、outline 与 Button `text-align` 覆盖 UA，并由 Software/Skia/Vulkan 共享盒绘制路径消费。`none` 不自动清掉 UA 边框/背景，作者需覆盖。不支持 `button`/`checkbox` 等控件关键字、AppearanceBase、暗色 `light-dark()`。 |
 | `scrollbar-width` | ⚪ Native / HTML passthrough | Native Square 没有通用滚动条 UI，不消费该属性；静态 HTML 导出保留声明，由浏览器解释。 |
 | `accent-color`、`resize` | ⚪ Native | Native 未实现；静态 HTML 导出保留声明，由浏览器解释。 |
 | `pointer-events`、`touch-action` | ⚪ | 未实现。 |

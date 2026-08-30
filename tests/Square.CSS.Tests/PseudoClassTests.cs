@@ -115,6 +115,25 @@ public class PseudoClassTests
     }
 
     [Fact]
+    public void FocusVisibleOnlyMatchesKeyboardOrProgrammaticFocus()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Button:focus-visible { outline: 2px solid red; }").Tokenize()).Parse());
+        var button = new Square.Controls.Button();
+        engine.ApplyStylesToTree(button);
+
+        button.Focus(focusVisible: false);
+        CssStyleReconciler.Flush();
+        Assert.Null(button.Style.Get("outline-style"));
+
+        button.Focus();
+        CssStyleReconciler.Flush();
+        Assert.Equal("solid", button.Style.Get("outline-style"));
+        Assert.Equal("red", button.Style.Get("outline-color"));
+    }
+
+    [Fact]
     public void PaintOnlyHoverDoesNotInvalidateLayout()
     {
         var sheet = new CssParser(new CssTokenizer("Button:hover { background: blue; }").Tokenize()).Parse();

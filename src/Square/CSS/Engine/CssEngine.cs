@@ -767,7 +767,7 @@ public sealed class CssEngine
         {
             "hover" => Element.HasState(ElementState.Hover),
             "focus" => Element.HasState(ElementState.Focus),
-            "focus-visible" => Element.HasState(ElementState.Focus),
+            "focus-visible" => Element.HasState(ElementState.FocusVisible),
             "active" => Element.HasState(ElementState.Active),
             "disabled" => Element.HasState(ElementState.Disabled),
             "checked" => Element.HasState(ElementState.Checked),

@@ -21,7 +21,9 @@ public enum ElementState : byte
     /// <summary>空内容（:empty 等）。</summary>
     Empty = 32,
     /// <summary>弹出内容已打开（:open）。</summary>
-    Open = 64
+    Open = 64,
+    /// <summary>键盘可见焦点（:focus-visible）。</summary>
+    FocusVisible = 128
 }
 
 /// <summary><see cref="ElementState"/> 扩展方法。</summary>

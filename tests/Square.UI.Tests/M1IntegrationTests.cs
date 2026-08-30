@@ -215,6 +215,41 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void GeneratedSqxActiveTabHeadersOverrideUserAgentBorderInDocumentScope()
+    {
+        var window = new AppWindow("Tabs", 900, 940);
+        var component = new Main();
+        window.Load(component);
+        var document = Assert.IsType<UIDocument>(window.Document);
+        var registerScope = typeof(AppWindow).GetMethod(
+            "RegisterGlobalCssScope",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(registerScope);
+
+        try
+        {
+            registerScope!.Invoke(window, [document.Ui]);
+            document.Build();
+            CssStyleReconciler.ReapplyScopesToTree(document.Ui);
+
+            var button = GetTabHeaderButtons(component)[1];
+            button.Focus(focusVisible: false);
+            button.SetState(ElementState.Active, true);
+            CssStyleReconciler.Flush(document.Ui);
+
+            Assert.Null(button.Style.Get("outline-style"));
+            Assert.Equal("none", button.Style.Get("border-top-style"));
+            Assert.Equal("none", button.Style.Get("border-right-style"));
+            Assert.Equal("solid", button.Style.Get("border-bottom-style"));
+            Assert.Equal("none", button.Style.Get("border-left-style"));
+        }
+        finally
+        {
+            CssStyleReconciler.UnregisterScopesForTree(document.Ui);
+        }
+    }
+
+    [Fact]
     public void GeneratedSqvTabHeaderPaddingExpandsIntrinsicWidth()
     {
         var component = new VueMain();
@@ -316,6 +351,10 @@ public class M1IntegrationTests
         CssStyleReconciler.Flush();
         Relayout();
         Assert.Equal("#d8dee5", resting.Style.Get("background"));
+        Assert.Equal("none", resting.Style.Get("border-top-style"));
+        Assert.Equal("none", resting.Style.Get("border-right-style"));
+        Assert.Equal("solid", resting.Style.Get("border-bottom-style"));
+        Assert.Equal("none", resting.Style.Get("border-left-style"));
         Assert.Equal("transparent", resting.Style.Get("border-bottom-color"));
         Assert.Equal(restingBounds, resting.Geometry);
 

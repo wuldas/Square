@@ -906,7 +906,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             }
             _focusedInput = focusTarget;
             _focusedEditor = focusTarget as ITextEditor;
-            focusTarget?.Focus();
+            focusTarget?.Focus(focusVisible: false);
             if (focusTarget?.IsFocused != true)
             {
                 _focusedInput = null;

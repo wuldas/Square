@@ -117,14 +117,24 @@ public abstract class UIElement : Element
     /// 获取焦点：派发不冒泡的 <c>focus</c> 与冒泡的 <c>focusin</c>（对齐 DOM 焦点事件）。
     /// </summary>
     public void Focus()
+        => Focus(focusVisible: true);
+
+    internal void Focus(bool focusVisible)
     {
-        if (!IsEnabled || IsFocused || _isFocusing) return;
+        if (!IsEnabled || _isFocusing) return;
+        if (IsFocused)
+        {
+            SetState(ElementState.FocusVisible, focusVisible);
+            return;
+        }
+
         _isFocusing = true;
         try
         {
             OnBeforeFocus();
             IsFocused = true;
             SetState(ElementState.Focus, true);
+            SetState(ElementState.FocusVisible, focusVisible);
             DispatchEvent(StandardEvents.CreateFocus());
             if (IsFocused) DispatchEvent(StandardEvents.CreateFocusIn());
         }
@@ -147,6 +157,7 @@ public abstract class UIElement : Element
             if (!IsFocused) return;
             IsFocused = false;
             SetState(ElementState.Focus, false);
+            SetState(ElementState.FocusVisible, false);
             DispatchEvent(StandardEvents.CreateBlur());
             if (!IsFocused) DispatchEvent(StandardEvents.CreateFocusOut());
         }
@@ -167,6 +178,7 @@ public abstract class UIElement : Element
     {
         IsFocused = false;
         SetState(ElementState.Focus, false);
+        SetState(ElementState.FocusVisible, false);
         _isFocusing = false;
         _isUnfocusing = false;
         base.OnDetachedCore();
