@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
@@ -30,6 +31,8 @@ public static class TemplateFoldingService
             CollectSqvElements(document.Syntax.Template.SqvSyntax.Roots, text, ranges);
         if (document?.Syntax?.Style?.Css != null)
             CollectStyleRanges(document.Syntax.Style.Css, text, ranges);
+        if (document?.Syntax?.Script?.CSharp != null)
+            CollectScriptRanges(document.Syntax.Script.CSharp, text, ranges);
 
         return ranges
             .Where(range => range.EndLine > range.StartLine)
@@ -74,6 +77,23 @@ public static class TemplateFoldingService
 
         void AddRange(SquareSourceRange range)
         {
+            ranges.Add(new TemplateFoldingRange(
+                LineOf(text, range.Offset),
+                LineOf(text, Math.Max(range.Offset, range.End - 1)),
+                "region"));
+        }
+    }
+
+    private static void CollectScriptRanges(
+        CSharpScriptSyntax script,
+        string text,
+        List<TemplateFoldingRange> ranges)
+    {
+        foreach (var block in script.Members
+                     .SelectMany(member => member.DescendantNodesAndSelf().OfType<BlockSyntax>()))
+        {
+            var range = script.SourceMap.ToDocumentRange(block.Span);
+            if (range.Length == 0) continue;
             ranges.Add(new TemplateFoldingRange(
                 LineOf(text, range.Offset),
                 LineOf(text, Math.Max(range.Offset, range.End - 1)),

@@ -46,4 +46,29 @@ public sealed class TemplateSemanticTokensTests
 
         Assert.True(found);
     }
+
+    [Fact]
+    public void EncodesCSharpPropertiesMethodsLocalsAndAttributes()
+    {
+        const string source = """
+            <template><View /></template>
+            <script>
+            [Prop(Required = true)]
+            private string Title { get; set; } = "Square";
+            private void Save(Event e)
+            {
+                var count = 1;
+            }
+            </script>
+            """;
+
+        var data = TemplateSemanticTokens.Encode(source, "ScriptTokens.sqx");
+        var types = data.Where((_, index) => index % 5 == 3).ToArray();
+
+        Assert.Contains(2, types);
+        Assert.Contains(5, types);
+        Assert.Contains(6, types);
+        Assert.Contains(7, types);
+        Assert.Contains(8, types);
+    }
 }

@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
@@ -6,7 +7,7 @@ public static class TemplateSemanticTokens
 {
     public static readonly string[] TokenTypes =
     {
-        "class", "type", "property", "event", "keyword", "function"
+        "class", "type", "property", "event", "keyword", "function", "variable", "parameter", "decorator"
     };
 
     public static readonly string[] TokenModifiers =
@@ -19,18 +20,24 @@ public static class TemplateSemanticTokens
     private const int Property = 2;
     private const int Event = 3;
     private const int Keyword = 4;
+    private const int Function = 5;
+    private const int Variable = 6;
+    private const int Parameter = 7;
+    private const int Decorator = 8;
 
     public static IReadOnlyList<int> Encode(string text, string sourcePath)
     {
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
-        var template = result.ParsedSqxDocument?.Syntax?.Template;
-        if (template == null) return Array.Empty<int>();
+        var document = result.ParsedSqxDocument?.Syntax;
+        if (document == null) return Array.Empty<int>();
 
         var tokens = new List<(int Offset, int Length, int Type, int Modifiers)>();
-        if (template.SqvSyntax != null)
-            CollectSqv(template.SqvSyntax.Roots, tokens);
-        else if (template.SqxSyntax != null)
-            CollectSqx(template.SqxSyntax.Roots, tokens);
+        if (document.Template?.SqvSyntax != null)
+            CollectSqv(document.Template.SqvSyntax.Roots, tokens);
+        else if (document.Template?.SqxSyntax != null)
+            CollectSqx(document.Template.SqxSyntax.Roots, tokens);
+        if (document.Script?.CSharp != null)
+            CollectScript(document.Script.CSharp, tokens);
         tokens.Sort((left, right) => left.Offset.CompareTo(right.Offset));
         return Encode(text, tokens);
     }
@@ -84,6 +91,39 @@ public static class TemplateSemanticTokens
         var modifiers = descriptor.IsBuiltIn || IsControlFlow(tagName) ? 2 : 0;
         if (IsControlFlow(tagName)) type = Type;
         Add(tokens, offset, tagName.Length, type, modifiers);
+    }
+
+    private static void CollectScript(
+        CSharpScriptSyntax script,
+        List<(int Offset, int Length, int Type, int Modifiers)> tokens)
+    {
+        foreach (var field in script.Members.OfType<FieldDeclarationSyntax>())
+            foreach (var variable in field.Declaration.Variables)
+                AddMapped(variable.Identifier.Span, Variable, 1);
+        foreach (var property in script.Members.OfType<PropertyDeclarationSyntax>())
+            AddMapped(property.Identifier.Span, Property, 1);
+        foreach (var method in script.Members.OfType<MethodDeclarationSyntax>())
+        {
+            AddMapped(method.Identifier.Span, Function, 1);
+            foreach (var parameter in method.ParameterList.Parameters)
+                AddMapped(parameter.Identifier.Span, Parameter, 1);
+            foreach (var variable in method.DescendantNodes().OfType<VariableDeclaratorSyntax>())
+                AddMapped(variable.Identifier.Span, Variable, 1);
+            foreach (var statement in method.DescendantNodes().OfType<ForEachStatementSyntax>())
+                AddMapped(statement.Identifier.Span, Variable, 1);
+        }
+        foreach (var attribute in script.Root.DescendantNodes().OfType<AttributeSyntax>())
+        {
+            AddMapped(attribute.Name.Span, Decorator, 0);
+            foreach (var argument in attribute.ArgumentList?.Arguments ?? default)
+                if (argument.NameEquals != null) AddMapped(argument.NameEquals.Name.Span, Property, 0);
+        }
+
+        void AddMapped(Microsoft.CodeAnalysis.Text.TextSpan span, int type, int modifiers)
+        {
+            var range = script.SourceMap.ToDocumentRange(span);
+            Add(tokens, range.Offset, range.Length, type, modifiers);
+        }
     }
 
     private static void Add(

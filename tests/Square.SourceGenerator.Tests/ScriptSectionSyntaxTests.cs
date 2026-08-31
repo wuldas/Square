@@ -167,6 +167,37 @@ public sealed class ScriptSectionSyntaxTests
         Assert.Single(document.Syntax.Script.CSharp.Members);
     }
 
+    [Fact]
+    public void SyntaxTreeServiceReusesUnchangedDocumentAndInvalidatesChangedText()
+    {
+        const string path = "Cached.sqx";
+        const string source = "<template><View /></template><script>private int Count;</script>";
+
+        var first = SquareDocumentService.ParseSyntaxTree(source, path);
+        var second = SquareDocumentService.ParseSyntaxTree(source, path);
+        var changed = SquareDocumentService.ParseSyntaxTree(
+            "<template><View /></template><script>private int Other;</script>",
+            path);
+
+        Assert.Same(first, second);
+        Assert.NotSame(second, changed);
+        Assert.Contains("Other", changed.SourceText.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StrictDocumentParseSeedsTheLanguageServiceSyntaxCache()
+    {
+        const string path = "Seeded.sqx";
+        const string source = "<template><View /></template><script>private int Count;</script>";
+
+        _ = SquareDocumentService.Parse(source, path);
+        var first = SquareDocumentService.ParseSyntaxTree(source, path);
+        var second = SquareDocumentService.ParseSyntaxTree(source, path);
+
+        Assert.Same(first, second);
+        Assert.True(first.IsSuccess);
+    }
+
     [Theory]
     [InlineData("sqx", "SQX0001")]
     [InlineData("sqv", "SQV0001")]

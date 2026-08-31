@@ -26,7 +26,13 @@ public enum TemplateCompletionKind
     CssSelector,
     CssPseudoClass,
     CssPseudoElement,
-    CssAtRule
+    CssAtRule,
+    ScriptGeneral,
+    ScriptMember,
+    ScriptNamespace,
+    ScriptType,
+    ScriptAttribute,
+    ScriptAttributeArgument
 }
 
 public sealed class TemplateCompletionContext
@@ -65,7 +71,8 @@ public sealed class TemplateCompletionContext
         IReadOnlyCollection<string> existingAttributes,
         string attributeName,
         IReadOnlyCollection<string> localNames,
-        bool hasFollowingDelimiter = false)
+        bool hasFollowingDelimiter = false,
+        int position = -1)
     {
         Kind = kind;
         Prefix = prefix ?? string.Empty;
@@ -75,6 +82,7 @@ public sealed class TemplateCompletionContext
         AttributeName = attributeName ?? string.Empty;
         LocalNames = localNames ?? throw new ArgumentNullException(nameof(localNames));
         HasFollowingDelimiter = hasFollowingDelimiter;
+        Position = position;
     }
 
     public TemplateCompletionKind Kind { get; }
@@ -85,6 +93,7 @@ public sealed class TemplateCompletionContext
     public string AttributeName { get; }
     public IReadOnlyCollection<string> LocalNames { get; }
     public bool HasFollowingDelimiter { get; }
+    public int Position { get; }
 }
 
 public sealed class TemplateCompletionItem
@@ -118,6 +127,9 @@ public static class TemplateCompletionService
         var isSqv = sourcePath != null && sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
         var document = result.ParsedSqxDocument;
+        var scriptContext = CSharpScriptCompletionService.GetContext(text, offset, sourcePath);
+        if (scriptContext.Kind != CSharpScriptCompletionKind.None)
+            return FromScriptContext(scriptContext, isSqv);
         var cssContext = CssCompletionService.GetContext(text, offset, sourcePath);
         if (cssContext.Kind != CssCompletionKind.None)
             return FromCssContext(cssContext, isSqv);
@@ -242,6 +254,15 @@ public static class TemplateCompletionService
         {
             return CssCompletionService.GetItems(ToCssContext(context), text, inferredSourcePath);
         }
+        if (context.Kind is TemplateCompletionKind.ScriptGeneral or
+            TemplateCompletionKind.ScriptMember or
+            TemplateCompletionKind.ScriptNamespace or
+            TemplateCompletionKind.ScriptType or
+            TemplateCompletionKind.ScriptAttribute or
+            TemplateCompletionKind.ScriptAttributeArgument)
+        {
+            return CSharpScriptCompletionService.GetItems(ToScriptContext(context), text, inferredSourcePath);
+        }
         if (context.Kind == TemplateCompletionKind.EventHandler)
             return GetEventHandlerItems(
                 text,
@@ -357,6 +378,44 @@ public static class TemplateCompletionService
             },
             context.Prefix,
             context.AttributeName);
+
+    private static TemplateCompletionContext FromScriptContext(
+        CSharpScriptCompletionContext context,
+        bool isSqv) =>
+        new(
+            context.Kind switch
+            {
+                CSharpScriptCompletionKind.General => TemplateCompletionKind.ScriptGeneral,
+                CSharpScriptCompletionKind.Member => TemplateCompletionKind.ScriptMember,
+                CSharpScriptCompletionKind.Namespace => TemplateCompletionKind.ScriptNamespace,
+                CSharpScriptCompletionKind.Type => TemplateCompletionKind.ScriptType,
+                CSharpScriptCompletionKind.Attribute => TemplateCompletionKind.ScriptAttribute,
+                CSharpScriptCompletionKind.AttributeArgument => TemplateCompletionKind.ScriptAttributeArgument,
+                _ => TemplateCompletionKind.None
+            },
+            context.Prefix,
+            string.Empty,
+            isSqv,
+            Array.Empty<string>(),
+            context.Receiver,
+            Array.Empty<string>(),
+            position: context.Position);
+
+    private static CSharpScriptCompletionContext ToScriptContext(TemplateCompletionContext context) =>
+        new(
+            context.Kind switch
+            {
+                TemplateCompletionKind.ScriptGeneral => CSharpScriptCompletionKind.General,
+                TemplateCompletionKind.ScriptMember => CSharpScriptCompletionKind.Member,
+                TemplateCompletionKind.ScriptNamespace => CSharpScriptCompletionKind.Namespace,
+                TemplateCompletionKind.ScriptType => CSharpScriptCompletionKind.Type,
+                TemplateCompletionKind.ScriptAttribute => CSharpScriptCompletionKind.Attribute,
+                TemplateCompletionKind.ScriptAttributeArgument => CSharpScriptCompletionKind.AttributeArgument,
+                _ => CSharpScriptCompletionKind.None
+            },
+            context.Prefix,
+            context.AttributeName,
+            context.Position);
 
     private static IReadOnlyList<TemplateCompletionItem> GetEventHandlerItems(
         string text,

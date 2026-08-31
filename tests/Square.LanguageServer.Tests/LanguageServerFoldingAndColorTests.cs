@@ -51,6 +51,44 @@ public sealed class LanguageServerFoldingAndColorTests
         Assert.Equal(0, process.ExitCode);
     }
 
+    [Fact]
+    public async Task FoldingIncludesCSharpFunctionBodies()
+    {
+        using var process = StartServer();
+        await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+
+        const string text = "<template><View /></template>\n<script>\nprivate void Save()\n{\n    if (true)\n    {\n        return;\n    }\n}\n</script>";
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new
+            {
+                textDocument = new
+                {
+                    uri = "file:///C:/Square/ScriptFold.sqx",
+                    languageId = "sqx",
+                    version = 1,
+                    text
+                }
+            }
+        }));
+        _ = await Read(process.StandardOutput);
+
+        await Write(process, """{"jsonrpc":"2.0","id":2,"method":"textDocument/foldingRange","params":{"textDocument":{"uri":"file:///C:/Square/ScriptFold.sqx"}}}""");
+        var folding = await Read(process.StandardOutput);
+        Assert.Contains("\"startLine\":3,\"endLine\":8", folding, StringComparison.Ordinal);
+        Assert.Contains("\"startLine\":5,\"endLine\":7", folding, StringComparison.Ordinal);
+
+        await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, process.ExitCode);
+    }
+
     private static Process StartServer()
     {
         var project = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Square.LanguageServer", "Square.LanguageServer.csproj"));

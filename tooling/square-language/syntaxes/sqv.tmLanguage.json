@@ -59,6 +59,32 @@
           "end": "(?=</script)",
           "contentName": "source.cs",
           "patterns": [
+            {
+              "match": "(\\[\\s*)((?:Prop|SlotContract|SqxDirective|SqxDirectiveAssembly|Obsolete|AttributeUsage)(?:Attribute)?)\\b",
+              "captures": {
+                "1": { "name": "punctuation.definition.attribute.begin.cs" },
+                "2": { "name": "support.type.attribute.cs" }
+              }
+            },
+            {
+              "match": "(\\[\\s*)([A-Za-z_][A-Za-z0-9_.]*(?:Attribute)?)(?=\\s*(?:\\(|\\]|,))",
+              "captures": {
+                "1": { "name": "punctuation.definition.attribute.begin.cs" },
+                "2": { "name": "entity.name.type.attribute.cs" }
+              }
+            },
+            {
+              "name": "entity.other.attribute-name.cs",
+              "match": "\\b(?:Required|Default|Aliases|ParentTag|AllowedChildTags|SkipStandaloneEmit|Pattern|RuntimeTypeName|FieldPrefix|PrimaryAttribute|AllowMultiple|Inherited)\\b(?=\\s*=)"
+            },
+            {
+              "name": "punctuation.section.block.begin.cs",
+              "match": "\\{"
+            },
+            {
+              "name": "punctuation.section.block.end.cs",
+              "match": "\\}"
+            },
             { "include": "source.cs" }
           ]
         }

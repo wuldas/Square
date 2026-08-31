@@ -6,10 +6,14 @@ namespace Square.LanguageServer;
 
 public sealed class LanguageServerHost
 {
+    private const int DiagnosticDelayMilliseconds = 120;
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly DocumentStore _documents = new();
     private readonly WorkspaceComponentIndex _componentIndex = new();
+    private readonly object _diagnosticGate = new();
+    private readonly Dictionary<string, CancellationTokenSource> _pendingDiagnostics = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _outputGate = new(1, 1);
     private bool _shutdownRequested;
 
     public LanguageServerHost(Stream input, Stream output)
@@ -44,7 +48,7 @@ public sealed class LanguageServerHost
                             completionProvider = new
                             {
                                 triggerCharacters = new[]
-                                    { "<", "/", "@", ":", "#", "v", "-", ".", " ", "{", "\"", ";" }
+                                    { "<", "/", "@", ":", "#", "v", "-", ".", " ", "{", "\"", ";", "[" }
                             },
                             hoverProvider = true,
                             documentSymbolProvider = true,
@@ -66,6 +70,7 @@ public sealed class LanguageServerHost
                     break;
                 case "shutdown" when hasId:
                     _shutdownRequested = true;
+                    CancelAllPendingDiagnostics();
                     await WriteResponseAsync(id, null, cancellationToken);
                     break;
                 case "textDocument/didOpen":
@@ -74,7 +79,7 @@ public sealed class LanguageServerHost
                     break;
                 case "textDocument/didChange":
                     HandleDidChange(root, cancellationToken);
-                    await PublishDiagnosticsAsync(root, cancellationToken);
+                    ScheduleDiagnostics(root, cancellationToken);
                     break;
                 case "textDocument/didClose":
                     HandleDidClose(root, cancellationToken);
@@ -155,8 +160,11 @@ public sealed class LanguageServerHost
     {
         var uri = root.GetProperty("params").GetProperty("textDocument").GetProperty("uri").GetString();
         if (uri == null || !_documents.TryGet(uri, out var document) || document == null) return;
-        _componentIndex.Close(GetSourcePath(uri), cancellationToken);
+        var sourcePath = GetSourcePath(uri);
+        CancelPendingDiagnostics(uri);
+        _componentIndex.Close(sourcePath, cancellationToken);
         _documents.Close(uri);
+        SquareDocumentService.InvalidateSyntaxTree(sourcePath);
     }
 
     private async Task PublishDiagnosticsAsync(JsonElement root, CancellationToken cancellationToken)
@@ -184,6 +192,65 @@ public sealed class LanguageServerHost
         }).ToArray();
 
         await WriteNotificationAsync("textDocument/publishDiagnostics", new { uri, version = document.Version, diagnostics }, cancellationToken);
+    }
+
+    private void ScheduleDiagnostics(JsonElement root, CancellationToken cancellationToken)
+    {
+        var snapshot = root.Clone();
+        var uri = snapshot.GetProperty("params").GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_diagnosticGate)
+        {
+            if (_pendingDiagnostics.TryGetValue(uri, out var previous))
+            {
+                previous.Cancel();
+            }
+            _pendingDiagnostics[uri] = source;
+        }
+        _ = PublishDiagnosticsAfterDelayAsync(snapshot, uri, source);
+    }
+
+    private async Task PublishDiagnosticsAfterDelayAsync(
+        JsonElement root,
+        string uri,
+        CancellationTokenSource source)
+    {
+        try
+        {
+            await Task.Delay(DiagnosticDelayMilliseconds, source.Token);
+            await PublishDiagnosticsAsync(root, source.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            lock (_diagnosticGate)
+            {
+                if (_pendingDiagnostics.TryGetValue(uri, out var current) && ReferenceEquals(current, source))
+                    _pendingDiagnostics.Remove(uri);
+            }
+            source.Dispose();
+        }
+    }
+
+    private void CancelPendingDiagnostics(string uri)
+    {
+        lock (_diagnosticGate)
+        {
+            if (!_pendingDiagnostics.TryGetValue(uri, out var source)) return;
+            _pendingDiagnostics.Remove(uri);
+            source.Cancel();
+        }
+    }
+
+    private void CancelAllPendingDiagnostics()
+    {
+        lock (_diagnosticGate)
+        {
+            foreach (var source in _pendingDiagnostics.Values) source.Cancel();
+            _pendingDiagnostics.Clear();
+        }
     }
 
     private async Task PublishEmptyDiagnosticsAsync(JsonElement root, CancellationToken cancellationToken)
@@ -366,6 +433,23 @@ public sealed class LanguageServerHost
         var token = GetTokenAt(document.Text, offset, out var tokenStart, out var tokenEnd);
         if (token.Length == 0) return null;
 
+        var scriptDetail = CSharpScriptCompletionService.GetHoverDetail(
+            document.Text,
+            offset,
+            GetSourcePath(uri));
+        if (!string.IsNullOrEmpty(scriptDetail))
+        {
+            return new
+            {
+                contents = new { kind = "markdown", value = "```csharp\n" + scriptDetail + "\n```" },
+                range = new
+                {
+                    start = ToPosition(document.Text, tokenStart),
+                    end = ToPosition(document.Text, tokenEnd)
+                }
+            };
+        }
+
         var context = tokenStart > 0 ? document.Text[tokenStart - 1] : '\0';
         string? markdown;
         if (context == '@')
@@ -452,7 +536,7 @@ public sealed class LanguageServerHost
         {
             ["name"] = symbol.Name,
             ["detail"] = symbol.Detail,
-            ["kind"] = 19,
+            ["kind"] = symbol.Kind,
             ["range"] = ToRange(document.Text, symbol.Range.Offset, symbol.Range.End),
             ["selectionRange"] = ToRange(
                 document.Text,
@@ -636,9 +720,17 @@ public sealed class LanguageServerHost
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(message);
         var header = Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n");
-        await _output.WriteAsync(header, cancellationToken);
-        await _output.WriteAsync(payload, cancellationToken);
-        await _output.FlushAsync(cancellationToken);
+        await _outputGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _output.WriteAsync(header, cancellationToken);
+            await _output.WriteAsync(payload, cancellationToken);
+            await _output.FlushAsync(cancellationToken);
+        }
+        finally
+        {
+            _outputGate.Release();
+        }
     }
 
     private async Task<string?> ReadAsciiLineAsync(CancellationToken cancellationToken)

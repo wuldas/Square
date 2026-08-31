@@ -44,4 +44,12 @@ internal sealed class RoslynSourceMap
 
         return new SquareSourceRange(_documentContentOffset + _bodyRelativeStart, 0);
     }
+
+    public int ToSyntheticOffset(int documentOffset)
+    {
+        var relative = Math.Max(0, documentOffset - _documentContentOffset);
+        if (relative < _usingLength) return relative;
+        var bodyOffset = Math.Min(_bodyLength, Math.Max(0, relative - _bodyRelativeStart));
+        return _syntheticBodyStart + bodyOffset;
+    }
 }

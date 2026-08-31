@@ -90,6 +90,10 @@ const closingScript = sqxEmbedded.filter(token => token.text === 'script');
 assert.ok(closingScript.length >= 2, 'Opening and closing script tags should both be scoped');
 assert.ok(closingScript.every(token => token.scopes.includes('entity.name.tag.section.sqx')));
 assert.ok(sqxEmbedded.some(token => token.text === '</' && token.scopes.includes('punctuation.definition.tag.begin.sqx')));
+assert.ok(sqxEmbedded.some(token => token.text === '{' && token.scopes.includes('punctuation.section.block.begin.cs')));
+assert.ok(sqxEmbedded.some(token => token.text === '}' && token.scopes.includes('punctuation.section.block.end.cs')));
+assert.ok(scopesFor(sqxEmbedded, 'Prop').includes('support.type.attribute.cs'));
+assert.ok(scopesFor(sqxEmbedded, 'Required').includes('entity.other.attribute-name.cs'));
 
 const sqxCss = await tokenize('source.sqx', fixture('embedded-css.sqx'));
 const cssTokens = sqxCss.filter(token => token.text.includes('8px'));

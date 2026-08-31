@@ -2,5 +2,14 @@
   <Text text={Items.Select(item => new { item.Name, Count = item.Values.Count }).First().Name} />
 </template>
 <script lang="csharp">
+  [Prop(Required = true)]
+  private ObservableValue<string> Title { get; } = new("");
   private readonly List<Item> Items = [];
+  private void Save()
+  {
+    if (Items.Count > 0)
+    {
+      Items.Clear();
+    }
+  }
 </script>

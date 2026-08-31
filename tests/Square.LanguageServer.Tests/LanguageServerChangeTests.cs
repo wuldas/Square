@@ -34,6 +34,34 @@ public sealed class LanguageServerChangeTests
         Assert.Equal(0, process.ExitCode);
     }
 
+    [Fact]
+    public async Task RapidChangesPublishOnlyTheLatestDiagnosticsVersion()
+    {
+        using var process = StartServer();
+        const string uri = "file:///C:/Square/Rapid.sqx";
+        await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Rapid.sqx","languageId":"sqx","version":1,"text":"<template><View /></template>"}}}""");
+        _ = await Read(process.StandardOutput);
+
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Rapid.sqx","version":2},"contentChanges":[{"text":"<template><View>"}]}}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Rapid.sqx","version":3},"contentChanges":[{"text":"<template><View /></template>"}]}}""");
+
+        var message = await Read(process.StandardOutput);
+        using var json = JsonDocument.Parse(message);
+        var parameters = json.RootElement.GetProperty("params");
+        Assert.Equal(uri, parameters.GetProperty("uri").GetString());
+        Assert.Equal(3, parameters.GetProperty("version").GetInt32());
+        Assert.Empty(parameters.GetProperty("diagnostics").EnumerateArray());
+
+        await Write(process, """{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, process.ExitCode);
+    }
+
     private static Process StartServer()
     {
         var project = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Square.LanguageServer", "Square.LanguageServer.csproj"));

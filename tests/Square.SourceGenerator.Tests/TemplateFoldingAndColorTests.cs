@@ -89,4 +89,26 @@ public sealed class TemplateFoldingAndColorTests
         Assert.Contains(ranges, range => range.StartLine == 2 && range.EndLine == 6);
         Assert.Contains(ranges, range => range.StartLine == 3 && range.EndLine == 5);
     }
+
+    [Fact]
+    public void FoldsCSharpMethodAndNestedBlocksFromScriptAst()
+    {
+        const string source = """
+            <template><View /></template>
+            <script>
+            private void Save()
+            {
+                if (true)
+                {
+                    return;
+                }
+            }
+            </script>
+            """;
+
+        var ranges = TemplateFoldingService.GetRanges(source, "ScriptFold.sqx");
+
+        Assert.Contains(ranges, range => range.StartLine == 3 && range.EndLine == 8);
+        Assert.Contains(ranges, range => range.StartLine == 5 && range.EndLine == 7);
+    }
 }

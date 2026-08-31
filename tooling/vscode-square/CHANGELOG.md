@@ -7,6 +7,10 @@
 - Fold nested template tags and expose CSS color decorations through the Language Server.
 - Keep `</script>` and `</style>` highlighted instead of swallowing them as C#/CSS.
 - Complete Square CSS properties, property-specific values, selectors, pseudo selectors, variables, and at-rules.
+- Complete C# namespaces, types, script members, locals, template refs, and common Square members inside `<script>`.
+- Highlight C# block braces and fold method/nested block bodies inside `<script>`.
+- Highlight Square C# attributes, complete attribute names/named arguments, and reuse parsed syntax trees across LSP requests.
+- Debounce diagnostics during rapid edits and serialize concurrent LSP output writes.
 
 ## 0.2.0
 
