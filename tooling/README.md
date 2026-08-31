@@ -52,4 +52,4 @@ Output: `tooling/rider-square/build/distributions/square-language-support-rider-
 
 ## Current boundary
 
-This phase includes file recognition, TextMate highlighting, embedded C#/CSS scopes, brackets, folding, and snippets where supported by the host. The shared Language Server adds diagnostics plus syntax-tree completion, hover, symbols, definition navigation, and semantic tokens.
+This phase includes file recognition, TextMate highlighting, embedded C#/CSS scopes, brackets, folding, and snippets where supported by the host. The shared Language Server adds diagnostics plus syntax-tree template/CSS completion, hover, symbols, definition navigation, and semantic tokens.

@@ -21,4 +21,4 @@ Configuration:
 - `square.languageServer.path`: override the server executable, for example `dotnet`
 - `square.languageServer.args`: arguments passed to the configured executable
 
-When `square.languageServer.path` is empty, the extension starts the bundled server DLL. Completion uses the shared Square syntax tree: tags, control-flow directives, attributes, events, Vue directives, and CSS class names. Hover, folding, CSS color decorations, document symbols, definition navigation, and semantic tokens are also provided.
+When `square.languageServer.path` is empty, the extension starts the bundled server DLL. Completion uses the shared Square syntax tree: tags, control-flow directives, attributes, events, Vue directives, and CSS class names. Inside `<style>`, completion covers Square CSS properties, property-specific values, built-in control selectors, template class/ID selectors, pseudo selectors, custom properties, and supported at-rules. Hover, folding, CSS color decorations, document symbols, definition navigation, and semantic tokens are also provided.

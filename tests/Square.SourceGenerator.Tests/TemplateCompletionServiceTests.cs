@@ -6,6 +6,115 @@ namespace Square.Compiler.Tests;
 public sealed class TemplateCompletionServiceTests
 {
     [Fact]
+    public void CssDeclarationCompletesSupportedProperties()
+    {
+        const string source = "<template><View /></template><style>.page { flex-di }</style>";
+        var offset = source.IndexOf("flex-di", StringComparison.Ordinal) + "flex-di".Length;
+
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+        var items = TemplateCompletionService.GetItems(context, source);
+
+        Assert.Equal(TemplateCompletionKind.CssProperty, context.Kind);
+        Assert.Equal("flex-di", context.Prefix);
+        Assert.Contains(items, item => item.Label == "flex-direction" && item.Kind == 10);
+        Assert.DoesNotContain(items, item => item.Label == "display");
+    }
+
+    [Fact]
+    public void CssDeclarationValueCompletesValuesForCurrentProperty()
+    {
+        const string source = "<template><View /></template><style>.page { display: fl }</style>";
+        var offset = source.IndexOf("fl }", StringComparison.Ordinal) + "fl".Length;
+
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+        var items = TemplateCompletionService.GetItems(context, source);
+
+        Assert.Equal(TemplateCompletionKind.CssValue, context.Kind);
+        Assert.Equal("display", context.AttributeName);
+        Assert.Contains(items, item => item.Label == "flex");
+        Assert.DoesNotContain(items, item => item.Label == "column");
+    }
+
+    [Fact]
+    public void CssSelectorCompletesTemplateClassAndBuiltInControl()
+    {
+        const string source = "<template><View class=\"panel\" /></template><style>.pa</style>";
+        var offset = source.IndexOf(".pa", StringComparison.Ordinal) + ".pa".Length;
+
+        var items = TemplateCompletionService.GetItems(source, offset, "Editing.sqx");
+
+        Assert.Contains(items, item => item.Label == ".panel");
+        Assert.DoesNotContain(items, item => item.Label == "Button");
+    }
+
+    [Fact]
+    public void CssTypeSelectorCompletesBuiltInControls()
+    {
+        const string source = "<template><View /></template><style>But</style>";
+        var offset = source.IndexOf("</style>", StringComparison.Ordinal);
+
+        var items = TemplateCompletionService.GetItems(source, offset, "Editing.sqx");
+
+        Assert.Contains(items, item => item.Label == "Button");
+        Assert.DoesNotContain(items, item => item.Label == "View");
+    }
+
+    [Fact]
+    public void CssSelectorInsideMediaRuleIsNotTreatedAsAProperty()
+    {
+        const string source = "<template><View class=\"panel\" /></template><style>@media screen { .pa }</style>";
+        var offset = source.IndexOf(".pa", StringComparison.Ordinal) + ".pa".Length;
+
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+        var items = TemplateCompletionService.GetItems(context, source);
+
+        Assert.Equal(TemplateCompletionKind.CssSelector, context.Kind);
+        Assert.Contains(items, item => item.Label == ".panel");
+    }
+
+    [Fact]
+    public void CssAtRuleCompletionIncludesSupportedRuntimeRules()
+    {
+        const string source = "<template><View /></template><style>@key</style>";
+        var offset = source.IndexOf("</style>", StringComparison.Ordinal);
+
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+        var items = TemplateCompletionService.GetItems(context, source);
+
+        Assert.Equal(TemplateCompletionKind.CssAtRule, context.Kind);
+        Assert.Contains(items, item => item.Label == "@keyframes");
+        Assert.DoesNotContain(items, item => item.Label == "@supports");
+    }
+
+    [Theory]
+    [InlineData("<template><View /></template><style>Button:hov</style>", "hover", TemplateCompletionKind.CssPseudoClass)]
+    [InlineData("<template><View /></template><style>Text::be</style>", "before", TemplateCompletionKind.CssPseudoElement)]
+    public void CssSelectorCompletesSupportedPseudoSelectors(
+        string source,
+        string expected,
+        TemplateCompletionKind expectedKind)
+    {
+        var offset = source.IndexOf("</style>", StringComparison.Ordinal);
+
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+        var items = TemplateCompletionService.GetItems(context, source);
+
+        Assert.Equal(expectedKind, context.Kind);
+        Assert.Contains(items, item => item.Label == expected);
+    }
+
+    [Fact]
+    public void CssValueCompletesCustomPropertiesThroughVar()
+    {
+        const string source = "<template><View /></template><style>:root { --accent: #fff; } .page { color: var(--ac }</style>";
+        var offset = source.IndexOf("--ac }", StringComparison.Ordinal) + "--ac".Length;
+
+        var items = TemplateCompletionService.GetItems(source, offset, "Editing.sqx");
+
+        Assert.Contains(items, item => item.Label == "var(--accent)");
+    }
+
+    [Fact]
     public void IncompleteTagUsesSyntaxTreeForControlFlowCompletion()
     {
         const string source = "<template><Sh";

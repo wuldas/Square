@@ -44,7 +44,7 @@ public sealed class LanguageServerHost
                             completionProvider = new
                             {
                                 triggerCharacters = new[]
-                                    { "<", "/", "@", ":", "#", "v", "-", ".", " ", "{", "\"" }
+                                    { "<", "/", "@", ":", "#", "v", "-", ".", " ", "{", "\"", ";" }
                             },
                             hoverProvider = true,
                             documentSymbolProvider = true,

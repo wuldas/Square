@@ -47,6 +47,7 @@ public sealed class LanguageServerLifecycleTests
             Assert.Contains("/", triggers);
             Assert.Contains("#", triggers);
             Assert.Contains("-", triggers);
+            Assert.Contains(";", triggers);
         }
 
         await WriteMessageAsync(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");

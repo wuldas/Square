@@ -6,6 +6,7 @@
 - Added semantic tokens for built-in controls, directives, and events.
 - Fold nested template tags and expose CSS color decorations through the Language Server.
 - Keep `</script>` and `</style>` highlighted instead of swallowing them as C#/CSS.
+- Complete Square CSS properties, property-specific values, selectors, pseudo selectors, variables, and at-rules.
 
 ## 0.2.0
 

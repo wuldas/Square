@@ -20,7 +20,13 @@ public enum TemplateCompletionKind
     Binding,
     Slot,
     Directive,
-    CssClass
+    CssClass,
+    CssProperty,
+    CssValue,
+    CssSelector,
+    CssPseudoClass,
+    CssPseudoElement,
+    CssAtRule
 }
 
 public sealed class TemplateCompletionContext
@@ -112,6 +118,9 @@ public static class TemplateCompletionService
         var isSqv = sourcePath != null && sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
         var document = result.ParsedSqxDocument;
+        var cssContext = CssCompletionService.GetContext(text, offset, sourcePath);
+        if (cssContext.Kind != CssCompletionKind.None)
+            return FromCssContext(cssContext, isSqv);
         var template = document?.Syntax?.Template;
         if (template != null &&
             (offset < template.ContentRange.Offset || offset > template.ContentRange.End))
@@ -224,6 +233,15 @@ public static class TemplateCompletionService
     {
         if (context == null) return Array.Empty<TemplateCompletionItem>();
         var inferredSourcePath = context.IsSqv ? "Completion.sqv" : "Completion.sqx";
+        if (context.Kind is TemplateCompletionKind.CssProperty or
+            TemplateCompletionKind.CssValue or
+            TemplateCompletionKind.CssSelector or
+            TemplateCompletionKind.CssPseudoClass or
+            TemplateCompletionKind.CssPseudoElement or
+            TemplateCompletionKind.CssAtRule)
+        {
+            return CssCompletionService.GetItems(ToCssContext(context), text, inferredSourcePath);
+        }
         if (context.Kind == TemplateCompletionKind.EventHandler)
             return GetEventHandlerItems(
                 text,
@@ -305,6 +323,40 @@ public static class TemplateCompletionService
             .Select(map)
             .ToArray();
     }
+
+    private static TemplateCompletionContext FromCssContext(CssCompletionContext context, bool isSqv) =>
+        new(
+            context.Kind switch
+            {
+                CssCompletionKind.Property => TemplateCompletionKind.CssProperty,
+                CssCompletionKind.Value => TemplateCompletionKind.CssValue,
+                CssCompletionKind.Selector => TemplateCompletionKind.CssSelector,
+                CssCompletionKind.PseudoClass => TemplateCompletionKind.CssPseudoClass,
+                CssCompletionKind.PseudoElement => TemplateCompletionKind.CssPseudoElement,
+                CssCompletionKind.AtRule => TemplateCompletionKind.CssAtRule,
+                _ => TemplateCompletionKind.None
+            },
+            context.Prefix,
+            string.Empty,
+            isSqv,
+            Array.Empty<string>(),
+            context.PropertyName,
+            Array.Empty<string>());
+
+    private static CssCompletionContext ToCssContext(TemplateCompletionContext context) =>
+        new(
+            context.Kind switch
+            {
+                TemplateCompletionKind.CssProperty => CssCompletionKind.Property,
+                TemplateCompletionKind.CssValue => CssCompletionKind.Value,
+                TemplateCompletionKind.CssSelector => CssCompletionKind.Selector,
+                TemplateCompletionKind.CssPseudoClass => CssCompletionKind.PseudoClass,
+                TemplateCompletionKind.CssPseudoElement => CssCompletionKind.PseudoElement,
+                TemplateCompletionKind.CssAtRule => CssCompletionKind.AtRule,
+                _ => CssCompletionKind.None
+            },
+            context.Prefix,
+            context.AttributeName);
 
     private static IReadOnlyList<TemplateCompletionItem> GetEventHandlerItems(
         string text,
