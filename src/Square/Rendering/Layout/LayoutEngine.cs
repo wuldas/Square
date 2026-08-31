@@ -457,7 +457,8 @@ public sealed partial class LayoutEngine
 
     private static void ApplyIntrinsicRowItemSize(Element element, YogaNode node)
     {
-        if (!element.HasCustomMeasure || element.Style.Get("width") != null || element.Parent == null) return;
+        if (!element.HasCustomMeasure || element is Square.Controls.Button ||
+            element.Style.Get("width") != null || element.Parent == null) return;
         if (!string.Equals(element.Parent.Style.Get("flex-direction")?.Trim(), "row", StringComparison.OrdinalIgnoreCase)) return;
         foreach (var child in element.Children)
         {

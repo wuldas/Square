@@ -1,3 +1,4 @@
+using System.Text;
 using Square.Events;
 using Square.Graphics;
 using Square.Rendering.Paint;
@@ -50,8 +51,9 @@ public class Button : UIElement, ITextSelectable
     {
         get
         {
-            var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-            var layoutSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize);
+            var letterSpacing = GetDefaultWidgetLetterSpacing();
+            var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
+            var layoutSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize, letterSpacing);
             return GetTextBounds(layoutSize, paintMaxSize);
         }
     }
@@ -74,8 +76,9 @@ public class Button : UIElement, ITextSelectable
             this,
             "color",
             IsEnabled ? Color.Black : Color.FromRgb(235, 235, 235));
-        var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize);
+        var letterSpacing = GetDefaultWidgetLetterSpacing();
+        var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
+        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize, letterSpacing);
         var textBounds = GetTextBounds(textSize, paintMaxSize);
         var textPosition = new Point(textBounds.X, textBounds.Y);
         ControlDrawing.DrawText(
@@ -85,7 +88,8 @@ public class Button : UIElement, ITextSelectable
             textPosition,
             foreground,
             14f,
-            maxSize: paintMaxSize);
+            maxSize: paintMaxSize,
+            additionalLetterSpacing: letterSpacing);
     }
 
     /// <inheritdoc/>
@@ -131,8 +135,9 @@ public class Button : UIElement, ITextSelectable
         };
         var y = top + (Math.Max(0, bottom - top) - textSize.Height) / 2f;
         if (CssBoxPainter.UsesDefaultButtonWidgetPaint(this))
-            y += 1f;
-        else if (ControlDrawing.MeasureTextInkBounds(this, TextContent, 14f, paintMaxSize) is { IsEmpty: false } ink)
+            y -= 0.5f;
+        else if (
+            ControlDrawing.MeasureTextInkBounds(this, TextContent, 14f, paintMaxSize) is { IsEmpty: false } ink)
         {
             y = (top + bottom) / 2f - (ink.Top + ink.Bottom) / 2f;
             if (ControlDrawing.UsesWidgetAppearance(this))
@@ -147,6 +152,16 @@ public class Button : UIElement, ITextSelectable
         AuthorTextMetricProperties
             .Where(Style.IsAuthorSpecified)
             .All(IsDefaultWidgetTextMetric);
+
+    private float GetDefaultWidgetLetterSpacing()
+    {
+        if (!UsesDefaultWidgetTextMetrics()) return 0;
+        var runeCount = TextContent.EnumerateRunes().Count(rune => rune.Value != '\n');
+        if (runeCount == 0) return 0;
+        var layoutWidth = ControlDrawing.MeasureText(this, TextContent, 14f).Width;
+        var widgetWidth = MathF.Round(ControlDrawing.MeasureFontFileTextWidth(this, TextContent, 14f));
+        return (widgetWidth - layoutWidth) / runeCount;
+    }
 
     private bool IsDefaultWidgetTextMetric(string property)
     {

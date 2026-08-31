@@ -103,6 +103,31 @@ public sealed class ControlComparisonTests
         AssertClose(expected.Height, button.Geometry.Height);
     }
 
+    [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
+    public void ButtonAutoGeometryIncludesUserAgentBoxInExplicitRowFlex()
+    {
+        var root = new View
+        {
+            Style =
+            {
+                CssText = "display: flex; flex-direction: row; align-items: flex-start; " +
+                    "box-sizing: border-box; width: 320px; height: 160px;"
+            }
+        };
+        var button = new Button("Control");
+        button.Style.CssText = ControlComparisonManifest.ButtonAppearanceAutoCss;
+        root.Children.Add(button);
+
+        new CssEngine().ApplyStylesToTree(root);
+        new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
+
+        AssertClose(58.984375f, button.Geometry.Width);
+        AssertClose(21, button.Geometry.Height);
+        Assert.Equal("6px", button.Style.Get("padding-left"));
+        Assert.Equal("6px", button.Style.Get("padding-right"));
+    }
+
     [Theory]
     [InlineData(ControlAppearance.Auto, ControlState.Normal)]
     [InlineData(ControlAppearance.Auto, ControlState.Hover)]
@@ -1523,6 +1548,31 @@ public sealed class ControlComparisonTests
         {
             if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
         }
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
+    public void DefaultButtonTextUsesChromiumWidgetAdvance()
+    {
+        var root = new View
+        {
+            Style =
+            {
+                CssText = "display: flex; flex-direction: row; align-items: flex-start; " +
+                    "box-sizing: border-box; width: 320px; height: 160px;"
+            }
+        };
+        var button = new Button("Clear Cache");
+        button.Style.CssText = ControlComparisonManifest.ButtonAppearanceAutoCss;
+        root.Children.Add(button);
+
+        new CssEngine().ApplyStylesToTree(root);
+        new LayoutEngine().MeasureAndArrange(root, new Size(320, 160));
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        var fragment = Assert.Single(tree.CollectTextFragments(button));
+        AssertClose(button.Geometry.Width - 16, fragment.Bounds.Width);
     }
 
     [Fact]

@@ -51,7 +51,8 @@ internal static class ControlDrawing
             defaultSize);
     }
 
-    internal static Size MeasureText(Element element, string text, float defaultSize, Size? maxSize = null)
+    internal static Size MeasureText(
+        Element element, string text, float defaultSize, Size? maxSize = null, float additionalLetterSpacing = 0)
     {
         var font = ResolveFont(element, defaultSize);
         var whiteSpace = ResolveWhiteSpace(element);
@@ -62,7 +63,7 @@ internal static class ControlDrawing
             Direction = ResolveTextDirection(element),
             UnicodeBidi = ResolveUnicodeBidi(element),
             WhiteSpace = whiteSpace,
-            LetterSpacing = ResolveTextLength(element, "letter-spacing", font.Size),
+            LetterSpacing = ResolveTextLength(element, "letter-spacing", font.Size) + additionalLetterSpacing,
             WordSpacing = ResolveTextLength(element, "word-spacing", font.Size),
             TextTransform = ResolveTextTransform(element),
             TextIndent = ResolveTextLength(element, "text-indent", font.Size),
@@ -176,7 +177,7 @@ internal static class ControlDrawing
         IRenderContext context, Element element, string text, Point position, Color defaultColor, float defaultSize,
         float? lineHeight = null, bool useStyledColor = true, Size? maxSize = null,
         BidiDirection? direction = null, BidiTextMode? unicodeBidi = null,
-        TextWrappingOptions? wrappingOptions = null)
+        TextWrappingOptions? wrappingOptions = null, float additionalLetterSpacing = 0)
     {
         if (string.IsNullOrEmpty(text)) return;
         var font = ResolveFont(element, defaultSize);
@@ -189,7 +190,8 @@ internal static class ControlDrawing
             Direction = direction ?? ResolveTextDirection(element),
             UnicodeBidi = unicodeBidi ?? ResolveUnicodeBidi(element),
             WhiteSpace = wrappingOptions?.WhiteSpace ?? whiteSpace,
-            LetterSpacing = wrappingOptions?.LetterSpacing ?? ResolveTextLength(element, "letter-spacing", font.Size),
+            LetterSpacing = (wrappingOptions?.LetterSpacing ?? ResolveTextLength(element, "letter-spacing", font.Size)) +
+                additionalLetterSpacing,
             WordSpacing = wrappingOptions?.WordSpacing ?? ResolveTextLength(element, "word-spacing", font.Size),
             TextTransform = wrappingOptions?.TextTransform ?? ResolveTextTransform(element),
             TextIndent = wrappingOptions?.TextIndent ?? ResolveTextLength(element, "text-indent", font.Size),

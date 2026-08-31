@@ -51,6 +51,17 @@ public static class ControlVisualComparer
         ControlRect borderBox,
         ControlVisualThresholds thresholds,
         string id = "button",
+        string renderer = "Square") =>
+        CompareButton(chromiumPath, squarePath, diffPath, borderBox, borderBox, thresholds, id, renderer);
+
+    public static ControlVisualCaseResult CompareButton(
+        string chromiumPath,
+        string squarePath,
+        string diffPath,
+        ControlRect chromiumBorderBox,
+        ControlRect squareBorderBox,
+        ControlVisualThresholds thresholds,
+        string id = "button",
         string renderer = "Square")
     {
         using var chromium = SKBitmap.Decode(chromiumPath)
@@ -60,11 +71,13 @@ public static class ControlVisualComparer
         if (chromium.Width != square.Width || chromium.Height != square.Height)
             throw new InvalidOperationException($"Button screenshots have different sizes: {chromium.Width}x{chromium.Height} and {square.Width}x{square.Height}.");
 
-        var box = PixelBox.Create(borderBox, chromium.Width, chromium.Height);
+        var box = PixelBox.Create(chromiumBorderBox, chromium.Width, chromium.Height);
+        var squareBox = PixelBox.Create(squareBorderBox, square.Width, square.Height);
+        using var alignedSquare = AlignBorderBox(square, squareBox, box);
         var regions = CreateButtonRegions(box)
-            .Select(region => CompareRegion(chromium, square, region, thresholds))
+            .Select(region => CompareRegion(chromium, alignedSquare, region, thresholds))
             .ToList();
-        WriteDiff(chromium, square, diffPath, box);
+        WriteDiff(chromium, alignedSquare, diffPath, box);
         return new ControlVisualCaseResult
         {
             Id = id,
@@ -75,6 +88,27 @@ public static class ControlVisualComparer
             DiffScreenshot = diffPath,
             Regions = regions
         };
+    }
+
+    private static SKBitmap AlignBorderBox(SKBitmap source, PixelBox sourceBox, PixelBox targetBox)
+    {
+        using var sourceCopy = source.Copy();
+        var aligned = new SKBitmap(source.Width, source.Height, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        aligned.Erase(SKColors.White);
+        for (var y = targetBox.Top; y < targetBox.Bottom; y++)
+        {
+            var sourceY = sourceBox.Top + Math.Clamp(
+                (int)MathF.Floor((y - targetBox.Top + 0.5f) * sourceBox.Height / targetBox.Height),
+                0, sourceBox.Height - 1);
+            for (var x = targetBox.Left; x < targetBox.Right; x++)
+            {
+                var sourceX = sourceBox.Left + Math.Clamp(
+                    (int)MathF.Floor((x - targetBox.Left + 0.5f) * sourceBox.Width / targetBox.Width),
+                    0, sourceBox.Width - 1);
+                aligned.SetPixel(x, y, sourceCopy.GetPixel(sourceX, sourceY));
+            }
+        }
+        return aligned;
     }
 
     public static ControlVisualCaseResult CompareInput(

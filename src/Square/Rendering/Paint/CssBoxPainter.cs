@@ -167,23 +167,43 @@ internal static class CssBoxPainter
                     : (Color.FromRgb(239, 239, 239), Color.FromRgb(118, 118, 118));
         if (button.Properties.HasValue(nameof(Button.Background)))
             fill = button.Background;
-        var outer = new Rect(geometry.X + 1.5f, geometry.Y + 1.5f, geometry.Width - 2f, geometry.Height - 2f);
-        context.FillGeometry(new RoundedRectGeometry(outer, 3, 3), new SolidColorBrush(border));
-        var inner = new Rect(outer.X + 1, outer.Y + 1, outer.Width - 2, outer.Height - 2);
-        context.FillGeometry(new RoundedRectGeometry(inner, 2, 2), new SolidColorBrush(fill));
-        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
-        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
+        var left = MathF.Ceiling(geometry.X);
+        var top = MathF.Ceiling(geometry.Y);
         var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
         var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        if (right < left || bottom < top) return;
+
         var fillBrush = new SolidColorBrush(fill);
-        context.FillRect(new Rect(left + 2, top + 4, right - left - 3, bottom - top - 5), fillBrush);
-        context.FillRect(new Rect(left + 4, top + 2, right - left - 6, bottom - top - 2), fillBrush);
+        context.FillRect(new Rect(left + 1, top + 1,
+            Math.Max(0, right - left - 1), Math.Max(0, bottom - top - 1)), fillBrush);
+
         var borderBrush = new SolidColorBrush(border);
-        context.FillRect(new Rect(left + 4, top + 1, right - left - 6, 1), borderBrush);
-        context.FillRect(new Rect(left + 4, bottom + 1, right - left - 6, 1), borderBrush);
-        context.FillRect(new Rect(left + 1, top + 4, 1, bottom - top - 6), borderBrush);
-        context.FillRect(new Rect(right, top + 4, 1, bottom - top - 6), borderBrush);
+        context.FillRect(new Rect(left + 2, top, Math.Max(0, right - left - 3), 1), borderBrush);
+        context.FillRect(new Rect(left + 2, bottom, Math.Max(0, right - left - 3), 1), borderBrush);
+        context.FillRect(new Rect(left, top + 2, 1, Math.Max(0, bottom - top - 3)), borderBrush);
+        context.FillRect(new Rect(right, top + 2, 1, Math.Max(0, bottom - top - 3)), borderBrush);
+
+        var weakBorderBrush = new SolidColorBrush(WithAlpha(border, 32));
+        var shoulderBorderBrush = new SolidColorBrush(WithAlpha(border, 192));
+        var innerCornerBrush = new SolidColorBrush(WithAlpha(border, 106));
+        PaintButtonCorners(context, left, top, right, bottom, weakBorderBrush, 0, 0);
+        PaintButtonCorners(context, left, top, right, bottom, shoulderBorderBrush, 1, 0);
+        PaintButtonCorners(context, left, top, right, bottom, shoulderBorderBrush, 0, 1);
+        PaintButtonCorners(context, left, top, right, bottom, innerCornerBrush, 1, 1);
     }
+
+    private static void PaintButtonCorners(
+        IRenderContext context, float left, float top, float right, float bottom,
+        SolidColorBrush brush, float insetX, float insetY)
+    {
+        context.FillRect(new Rect(left + insetX, top + insetY, 1, 1), brush);
+        context.FillRect(new Rect(right - insetX, top + insetY, 1, 1), brush);
+        context.FillRect(new Rect(left + insetX, bottom - insetY, 1, 1), brush);
+        context.FillRect(new Rect(right - insetX, bottom - insetY, 1, 1), brush);
+    }
+
+    private static Color WithAlpha(Color color, byte alpha) =>
+        new(color.R, color.G, color.B, (byte)(color.A * alpha / 255));
 
     private static void PaintInputWidgetBorder(IRenderContext context, Input input, Rect geometry)
     {

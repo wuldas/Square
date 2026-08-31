@@ -134,7 +134,7 @@ internal static class ControlComparisonRunner
                 comparisons.Add(chromiumCase.Kind switch
                 {
                     ControlKind.Button => ControlVisualComparer.CompareButton(
-                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox,
+                        chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox,
                         ControlVisualThresholds.Button, chromiumCase.Id, backend),
                     ControlKind.Input => ControlVisualComparer.CompareInput(
                         chromiumPath, squarePath, diffPath, chromiumCase.BorderBox, squareCase.BorderBox, chromiumCase.State,
