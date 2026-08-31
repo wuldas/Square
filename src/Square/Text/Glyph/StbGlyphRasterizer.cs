@@ -425,7 +425,9 @@ internal sealed class FontCollection
                 var matchedPreferred = remaining.FirstOrDefault(pref =>
                     normalizedFamily == Normalize(pref) || normalizedFamily == Normalize(pref) + "r");
                 matchedPreferred ??= remaining.FirstOrDefault(pref =>
-                    pref.StartsWith(family + " ", StringComparison.OrdinalIgnoreCase));
+                    !pref.Equals("Arial", StringComparison.OrdinalIgnoreCase) &&
+                    (family.Contains(pref, StringComparison.OrdinalIgnoreCase) ||
+                     pref.Contains(family, StringComparison.OrdinalIgnoreCase)));
                 if (matchedPreferred == null) continue;
 
                 var normFamily = Normalize(matchedPreferred);
