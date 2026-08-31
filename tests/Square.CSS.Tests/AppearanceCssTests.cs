@@ -746,6 +746,63 @@ public sealed class AppearanceCssTests
         Assert.InRange(Math.Abs(indicatorCenter - textCenter), 0, 1);
     }
 
+    [Theory]
+    [InlineData("CheckBox")]
+    [InlineData("Radio")]
+    public void AppearanceAutoChoiceLabelUsesChromiumGap(string kind)
+    {
+        UIElement control = kind switch
+        {
+            "CheckBox" => new CheckBox { TextContent = "Choice" },
+            "Radio" => new Radio { TextContent = "Choice" },
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        control.Geometry = new Rect(4, 4, 80, 24);
+        control.Style.Set("appearance", "auto");
+
+        var textBounds = kind == "CheckBox"
+            ? ((CheckBox)control).SelectableTextBounds
+            : ((Radio)control).SelectableTextBounds;
+
+        Assert.Equal(3, textBounds.X - (control.Geometry.X + 13));
+    }
+
+    [Fact]
+    public void AppearanceAutoSelectTextIsVerticallyCenteredLikeChromium()
+    {
+        var engine = new CssEngine();
+        var select = new Select
+        {
+            Geometry = new Rect(4, 4, 56, 19),
+            Options = ["Value"],
+            Value = "Value"
+        };
+        engine.ApplyStyles(select);
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(64, 28)
+        });
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(select);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var rows = new List<int>();
+        for (var y = 5; y < 22; y++)
+        for (var x = 8; x < 42; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel[2] < 80 && pixel[1] < 80 && pixel[0] < 80)
+                rows.Add(y);
+        }
+
+        Assert.NotEmpty(rows);
+        var inkCenter = (rows.Min() + rows.Max()) / 2f;
+        Assert.InRange(Math.Abs(inkCenter - select.Geometry.Center.Y), 0, 0.5f);
+    }
+
     [Fact]
     public void AppearanceAutoCheckBoxUsesCapturedChromiumCheckedFill()
     {

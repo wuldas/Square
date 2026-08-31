@@ -210,7 +210,7 @@ public class CheckBox : UIElement, ITextSelectable
         this,
         TextContent,
         14f,
-        new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f));
+        new Point(Geometry.X + GetLabelOffset(), Geometry.Y + (Geometry.Height - 17) / 2f));
 
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
@@ -218,7 +218,7 @@ public class CheckBox : UIElement, ITextSelectable
         if (ControlDrawing.UsesWidgetAppearance(this) && string.IsNullOrEmpty(TextContent))
             return new Size(13, 13);
         var text = ControlDrawing.MeasureText(this, TextContent, 14f);
-        return new Size(26 + text.Width, Math.Max(24, text.Height));
+        return new Size(GetLabelOffset() + text.Width, Math.Max(24, text.Height));
     }
 
     /// <inheritdoc/>
@@ -253,7 +253,7 @@ public class CheckBox : UIElement, ITextSelectable
             }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,
-            new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
+            new Point(Geometry.X + GetLabelOffset(), Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
     }
 
     /// <inheritdoc/>
@@ -262,6 +262,8 @@ public class CheckBox : UIElement, ITextSelectable
         base.OnPropertyChanged(name);
         if (name == nameof(IsChecked)) SetState(ElementState.Checked, IsChecked);
     }
+
+    private float GetLabelOffset() => ControlDrawing.UsesWidgetAppearance(this) ? 16f : 26f;
 
     private void ToggleFromInput()
     {
@@ -294,7 +296,7 @@ public class Radio : UIElement, ITextSelectable
         this,
         TextContent,
         14f,
-        new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f));
+        new Point(Geometry.X + GetLabelOffset(), Geometry.Y + (Geometry.Height - 17) / 2f));
 
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
@@ -302,7 +304,7 @@ public class Radio : UIElement, ITextSelectable
         if (ControlDrawing.UsesWidgetAppearance(this) && string.IsNullOrEmpty(TextContent))
             return new Size(13, 13);
         var text = ControlDrawing.MeasureText(this, TextContent, 14f);
-        return new Size(26 + text.Width, Math.Max(24, text.Height));
+        return new Size(GetLabelOffset() + text.Width, Math.Max(24, text.Height));
     }
 
     /// <inheritdoc/>
@@ -336,7 +338,7 @@ public class Radio : UIElement, ITextSelectable
             }
         }
         ControlDrawing.DrawText(ctx, this, TextContent,
-            new Point(Geometry.X + 26, Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
+            new Point(Geometry.X + GetLabelOffset(), Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
     }
 
     /// <inheritdoc/>
@@ -345,6 +347,8 @@ public class Radio : UIElement, ITextSelectable
         base.OnPropertyChanged(name);
         if (name == nameof(IsChecked)) SetState(ElementState.Checked, IsChecked);
     }
+
+    private float GetLabelOffset() => ControlDrawing.UsesWidgetAppearance(this) ? 16f : 26f;
 
     private void SelectFromInput()
     {

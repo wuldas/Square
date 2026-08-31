@@ -148,6 +148,87 @@ public sealed class ChromeUserAgentFormControlTests
         Assert.Equal(16, border[0]);
     }
 
+    [Theory]
+    [InlineData("Input")]
+    [InlineData("TextArea")]
+    [InlineData("Select")]
+    public void UserAgentFormControlUsesOnePixelRoundedOuterBorder(string kind)
+    {
+        var control = CreateFormControl(kind);
+        control.Geometry = new Rect(8, 8, 80, 24);
+        new CssEngine().ApplyStyles(control);
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(100, 40)
+        });
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(control);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var corner = bitmap.GetPixel(8, 8);
+        var shoulder = bitmap.GetPixel(9, 8);
+        var innerCorner = bitmap.GetPixel(9, 9);
+        var top = bitmap.GetPixel(20, 8);
+        var inner = bitmap.GetPixel(20, 9);
+        Assert.False(corner[2] == 118 && corner[1] == 118 && corner[0] == 118);
+        Assert.True(corner[2] > shoulder[2]);
+        Assert.True(shoulder[2] < innerCorner[2]);
+        Assert.False(corner.SequenceEqual(shoulder));
+        Assert.False(shoulder.SequenceEqual(innerCorner));
+        for (var y = 0; y < 3; y++)
+        for (var x = 0; x < 3; x++)
+        {
+            var topLeft = bitmap.GetPixel(8 + x, 8 + y);
+            Assert.True(topLeft.SequenceEqual(bitmap.GetPixel(87 - x, 8 + y)));
+            Assert.True(topLeft.SequenceEqual(bitmap.GetPixel(8 + x, 31 - y)));
+            Assert.True(topLeft.SequenceEqual(bitmap.GetPixel(87 - x, 31 - y)));
+        }
+        Assert.Equal(118, top[2]);
+        Assert.Equal(118, top[1]);
+        Assert.Equal(118, top[0]);
+        Assert.True(inner[2] > 240 && inner[1] > 240 && inner[0] > 240);
+    }
+
+    [Theory]
+    [InlineData("Input")]
+    [InlineData("TextArea")]
+    [InlineData("Select")]
+    public void UserAgentFormControlMouseFocusUsesTwoPixelInnerBorder(string kind)
+    {
+        var control = CreateFormControl(kind);
+        control.Geometry = new Rect(8, 8, 80, 24);
+        control.SetState(ElementState.Focus, true);
+        new CssEngine().ApplyStyles(control);
+        Assert.False(control.HasState(ElementState.FocusVisible));
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(100, 40)
+        });
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(control);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        for (var y = 8; y <= 9; y++)
+        {
+            var top = bitmap.GetPixel(20, y);
+            Assert.Equal(16, top[2]);
+            Assert.Equal(16, top[1]);
+            Assert.Equal(16, top[0]);
+        }
+        Assert.True(bitmap.GetPixel(9, 9)[2] < 80);
+        Assert.True(bitmap.GetPixel(10, 9)[2] < 80);
+        Assert.True(bitmap.GetPixel(9, 10)[2] < 80);
+        Assert.InRange(bitmap.GetPixel(10, 10)[2], 150, 230);
+        var inner = bitmap.GetPixel(20, 10);
+        Assert.True(inner[2] > 240 && inner[1] > 240 && inner[0] > 240);
+    }
+
     [Fact]
     public void UserAgentDisabledActiveButtonKeepsOutsetBorder()
     {
@@ -158,6 +239,14 @@ public sealed class ChromeUserAgentFormControlTests
 
         Assert.Equal("outset", button.Style.Get("border-top-style"));
     }
+
+    private static UIElement CreateFormControl(string kind) => kind switch
+    {
+        "Input" => new Input(),
+        "TextArea" => new TextArea(),
+        "Select" => new Select { Options = ["Value"], Value = "Value" },
+        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+    };
 
     [Fact]
     public void UserAgentFocusVisibleMatchesChromeOffsets()

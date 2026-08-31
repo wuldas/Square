@@ -89,7 +89,7 @@ internal static class CssBoxPainter
             PaintTextAreaWidgetBorder(context, textArea, textArea.Geometry);
             return;
         }
-        if (element is Select select && select.IsEnabled && ControlDrawing.UsesWidgetAppearance(select) &&
+        if (element is Select select && ControlDrawing.UsesWidgetAppearance(select) &&
             !HasAuthorBorderStyle(select))
         {
             PaintSelectWidgetBorder(context, select, select.Geometry);
@@ -116,17 +116,14 @@ internal static class CssBoxPainter
         if (element is Radio radio && ControlDrawing.UsesWidgetAppearance(radio)) return;
         if (element is Input input && UsesDefaultWidgetFocusBorder(input))
         {
-            PaintInputFocusBorder(context, input.Geometry);
             return;
         }
         if (element is TextArea textArea && UsesDefaultWidgetFocusBorder(textArea))
         {
-            PaintInputFocusBorder(context, textArea.Geometry);
             return;
         }
         if (element is Select select && UsesDefaultWidgetFocusBorder(select))
         {
-            PaintInputFocusBorder(context, select.Geometry);
             return;
         }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
@@ -136,12 +133,10 @@ internal static class CssBoxPainter
 
     private static bool UsesDefaultWidgetFocusBorder(UIElement element)
     {
-        if (!element.HasState(ElementState.Focus) ||
-            TryGetRoundedGeometry(element, element.Geometry, out _)) return false;
-        return TryParseLength(element.Style.Get("outline-width"), out var width) && width == 1 &&
-            TryParseStyle(element.Style.Get("outline-style"), out var style) && style == BorderStyle.Solid &&
-            string.Equals(element.Style.Get("outline-color"), "Highlight", StringComparison.OrdinalIgnoreCase) &&
-            (!TryParseSignedLength(element.Style.Get("outline-offset"), out var offset) || offset == 0);
+        return element.HasState(ElementState.Focus) &&
+            ControlDrawing.UsesWidgetAppearance(element) &&
+            !HasAuthorBorderStyle(element) &&
+            !HasAuthorOutlineStyle(element);
     }
 
     private static bool HasAuthorBoxStyle(Element element) =>
@@ -207,70 +202,113 @@ internal static class CssBoxPainter
 
     private static void PaintInputWidgetBorder(IRenderContext context, Input input, Rect geometry)
     {
-        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
-        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
-        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
-        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        if (UsesDefaultWidgetFocusBorder(input))
+        {
+            PaintInputFocusBorder(context, geometry);
+            return;
+        }
         var enabledBorder = input.HasState(ElementState.Hover)
             ? Color.FromRgb(79, 79, 79)
             : Color.FromRgb(118, 118, 118);
-        var topLeft = new SolidColorBrush(input.IsEnabled
+        var border = input.IsEnabled
             ? enabledBorder
-            : Color.FromRgb(212, 212, 212));
-        var bottomRight = new SolidColorBrush(input.IsEnabled
-            ? enabledBorder
-            : Color.FromRgb(208, 208, 208));
-        context.FillRect(new Rect(left + 1, top, right - left - 1, 1), topLeft);
-        context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), topLeft);
-        context.FillRect(new Rect(left + 1, bottom, right - left - 1, 1), bottomRight);
-        context.FillRect(new Rect(right, top + 1, 1, bottom - top - 1), bottomRight);
+            : Color.FromRgb(212, 212, 212);
+        PaintSmoothFormControlBorder(context, geometry, border, 1);
     }
 
     private static void PaintInputFocusBorder(IRenderContext context, Rect geometry)
     {
-        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
-        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
-        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
-        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
-        var brush = new SolidColorBrush(Color.FromRgb(16, 16, 16));
-        context.FillRect(new Rect(left + 2, top, right - left - 3, 1), brush);
-        context.FillRect(new Rect(left + 1, top + 1, right - left - 1, 1), brush);
-        context.FillRect(new Rect(left, top + 2, 2, bottom - top - 3), brush);
-        context.FillRect(new Rect(right - 1, top + 2, 2, bottom - top - 3), brush);
-        context.FillRect(new Rect(left + 1, bottom - 1, right - left - 1, 1), brush);
-        context.FillRect(new Rect(left + 2, bottom, right - left - 3, 1), brush);
+        PaintSmoothFormControlBorder(context, geometry, Color.FromRgb(16, 16, 16), 2);
     }
 
     private static void PaintTextAreaWidgetBorder(IRenderContext context, TextArea textArea, Rect geometry)
     {
-        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
-        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
-        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
-        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
-        var brush = new SolidColorBrush(textArea.IsEnabled
+        if (UsesDefaultWidgetFocusBorder(textArea))
+        {
+            PaintInputFocusBorder(context, geometry);
+            return;
+        }
+        var border = textArea.IsEnabled
             ? textArea.HasState(ElementState.Hover)
                 ? Color.FromRgb(79, 79, 79)
                 : Color.FromRgb(118, 118, 118)
-            : Color.FromRgb(212, 212, 212));
-        context.FillRect(new Rect(left, top, right - left + 1, 1), brush);
-        context.FillRect(new Rect(left, bottom, right - left + 1, 1), brush);
-        context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), brush);
-        context.FillRect(new Rect(right, top + 1, 1, bottom - top - 1), brush);
+            : Color.FromRgb(212, 212, 212);
+        PaintSmoothFormControlBorder(context, geometry, border, 1);
     }
 
     private static void PaintSelectWidgetBorder(IRenderContext context, Select select, Rect geometry)
     {
-        var left = MathF.Round(geometry.X, MidpointRounding.AwayFromZero);
-        var top = MathF.Round(geometry.Y, MidpointRounding.AwayFromZero);
+        if (UsesDefaultWidgetFocusBorder(select))
+        {
+            PaintInputFocusBorder(context, geometry);
+            return;
+        }
+        var border = !select.IsEnabled
+            ? Color.FromRgb(212, 212, 212)
+            : select.HasState(ElementState.Hover)
+                ? Color.FromRgb(79, 79, 79)
+                : Color.FromRgb(118, 118, 118);
+        PaintSmoothFormControlBorder(context, geometry, border, 1);
+    }
+
+    private static void PaintSmoothFormControlBorder(
+        IRenderContext context, Rect geometry, Color color, int thickness)
+    {
+        var left = MathF.Ceiling(geometry.X);
+        var top = MathF.Ceiling(geometry.Y);
         var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
         var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
-        var brush = new SolidColorBrush(select.HasState(ElementState.Hover)
-            ? Color.FromRgb(79, 79, 79)
-            : Color.FromRgb(118, 118, 118));
-        context.FillRect(new Rect(left, top, right - left + 1, 1), brush);
-        context.FillRect(new Rect(left, bottom, right - left + 1, 1), brush);
-        context.FillRect(new Rect(left, top + 1, 1, bottom - top - 1), brush);
-        context.FillRect(new Rect(right, top + 1, 1, bottom - top - 1), brush);
+        if (thickness == 2)
+            PaintSmoothTwoPixelFrame(context, left, top, right, bottom, color);
+        else
+            PaintSmoothOnePixelFrame(context, left, top, right, bottom, color);
+    }
+
+    private static void PaintSmoothOnePixelFrame(
+        IRenderContext context, float left, float top, float right, float bottom, Color color)
+    {
+        if (right < left || bottom < top) return;
+        var brush = new SolidColorBrush(color);
+        context.FillRect(new Rect(left + 2, top, Math.Max(0, right - left - 3), 1), brush);
+        context.FillRect(new Rect(left + 2, bottom, Math.Max(0, right - left - 3), 1), brush);
+        context.FillRect(new Rect(left, top + 2, 1, Math.Max(0, bottom - top - 3)), brush);
+        context.FillRect(new Rect(right, top + 2, 1, Math.Max(0, bottom - top - 3)), brush);
+
+        var weakBrush = new SolidColorBrush(WithAlpha(color, 32));
+        var shoulderBrush = new SolidColorBrush(WithAlpha(color, 192));
+        var innerBrush = new SolidColorBrush(WithAlpha(color, 106));
+        PaintButtonCorners(context, left, top, right, bottom, weakBrush, 0, 0);
+        PaintButtonCorners(context, left, top, right, bottom, shoulderBrush, 1, 0);
+        PaintButtonCorners(context, left, top, right, bottom, shoulderBrush, 0, 1);
+        PaintButtonCorners(context, left, top, right, bottom, innerBrush, 1, 1);
+    }
+
+    private static void PaintSmoothTwoPixelFrame(
+        IRenderContext context, float left, float top, float right, float bottom, Color color)
+    {
+        if (right < left || bottom < top) return;
+        var brush = new SolidColorBrush(color);
+        context.FillRect(new Rect(left + 3, top, Math.Max(0, right - left - 5), 1), brush);
+        context.FillRect(new Rect(left + 1, top + 1, Math.Max(0, right - left - 1), 1), brush);
+        context.FillRect(new Rect(left + 1, bottom - 1, Math.Max(0, right - left - 1), 1), brush);
+        context.FillRect(new Rect(left + 3, bottom, Math.Max(0, right - left - 5), 1), brush);
+        context.FillRect(new Rect(left, top + 3, 1, Math.Max(0, bottom - top - 5)), brush);
+        context.FillRect(new Rect(left + 1, top + 1, 1, Math.Max(0, bottom - top - 1)), brush);
+        context.FillRect(new Rect(right - 1, top + 1, 1, Math.Max(0, bottom - top - 1)), brush);
+        context.FillRect(new Rect(right, top + 3, 1, Math.Max(0, bottom - top - 5)), brush);
+
+        PaintButtonCorners(context, left, top, right, bottom,
+            new SolidColorBrush(WithAlpha(color, 24)), 0, 0);
+        PaintButtonCorners(context, left, top, right, bottom,
+            new SolidColorBrush(WithAlpha(color, 166)), 1, 0);
+        PaintButtonCorners(context, left, top, right, bottom,
+            new SolidColorBrush(WithAlpha(color, 166)), 0, 1);
+        PaintButtonCorners(context, left, top, right, bottom,
+            new SolidColorBrush(WithAlpha(color, 236)), 2, 0);
+        PaintButtonCorners(context, left, top, right, bottom,
+            new SolidColorBrush(WithAlpha(color, 236)), 0, 2);
+        PaintButtonCorners(context, left, top, right, bottom,
+            new SolidColorBrush(WithAlpha(color, 63)), 2, 2);
     }
 
     private static void PaintCollapsedBorderFragments(

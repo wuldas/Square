@@ -73,8 +73,8 @@ public class Select : UIElement, IPopupElement, ITextSelectable
 
         var arrowY = Geometry.Y + Geometry.Height / 2f;
         var arrow = IsOpen
-            ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 12, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 8, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 4, arrowY + 2.5f))
-            : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 12, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 8, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 4, arrowY - 2.5f));
+            ? PathGeometry.Create().MoveTo(new Point(Geometry.Right - 13, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 9, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 5, arrowY + 2.5f))
+            : PathGeometry.Create().MoveTo(new Point(Geometry.Right - 13, arrowY - 2.5f)).LineTo(new Point(Geometry.Right - 9, arrowY + 2.5f)).LineTo(new Point(Geometry.Right - 5, arrowY - 2.5f));
         ctx.DrawPath(arrow, Pen.FromColor(IsEnabled ? Color.Black : Color.FromRgb(109, 109, 109)));
     }
 
@@ -86,13 +86,13 @@ public class Select : UIElement, IPopupElement, ITextSelectable
                                     Style.IsAuthorSpecified("border-left-width");
         var hasVerticalOverride = AuthorVerticalTextProperties.Any(Style.IsAuthorSpecified);
         if (!hasHorizontalOverride && !hasVerticalOverride)
-            return new Point(Geometry.X + 4, Geometry.Y + 3);
+            return new Point(Geometry.X + 4, Geometry.Y + 2);
 
         var x = hasHorizontalOverride
             ? Geometry.X + ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
               ControlDrawing.GetStyledFloat(this, "padding-left", 0)
             : Geometry.X + 4;
-        if (!hasVerticalOverride) return new Point(x, Geometry.Y + 3);
+        if (!hasVerticalOverride) return new Point(x, Geometry.Y + 2);
 
         var top = Geometry.Y + ControlDrawing.GetStyledFloat(this, "border-top-width", 0) +
             ControlDrawing.GetStyledFloat(this, "padding-top", 0);

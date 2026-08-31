@@ -1812,12 +1812,12 @@ public sealed class ControlComparisonTests
             var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 1;
             var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
             var edge = new List<byte>();
-            for (var x = left; x <= right; x++)
+            for (var x = left + 3; x <= right - 3; x++)
             {
                 edge.Add(bitmap.GetPixel(x, top).Red);
                 edge.Add(bitmap.GetPixel(x, bottom).Red);
             }
-            for (var y = top + 1; y < bottom; y++)
+            for (var y = top + 3; y <= bottom - 3; y++)
             {
                 edge.Add(bitmap.GetPixel(left, y).Red);
                 edge.Add(bitmap.GetPixel(right, y).Red);
@@ -1958,7 +1958,7 @@ public sealed class ControlComparisonTests
     }
 
     [Theory]
-    [InlineData(ControlAppearance.Auto, 4, 3)]
+    [InlineData(ControlAppearance.Auto, 4, 2)]
     [InlineData(ControlAppearance.None, 8, 8)]
     public async Task SoftwareSelectTextUsesChromiumContentOffset(
         ControlAppearance appearance,
@@ -2031,12 +2031,12 @@ public sealed class ControlComparisonTests
             var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 1;
             var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
             var edge = new List<byte>();
-            for (var x = left; x <= right; x++)
+            for (var x = left + 3; x <= right - 3; x++)
             {
                 edge.Add(bitmap.GetPixel(x, top).Red);
                 edge.Add(bitmap.GetPixel(x, bottom).Red);
             }
-            for (var y = top + 1; y < bottom; y++)
+            for (var y = top + 3; y <= bottom - 3; y++)
             {
                 edge.Add(bitmap.GetPixel(left, y).Red);
                 edge.Add(bitmap.GetPixel(right, y).Red);
