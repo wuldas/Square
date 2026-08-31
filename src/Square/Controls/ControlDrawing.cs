@@ -97,7 +97,8 @@ internal static class ControlDrawing
         return new Rect(origin.X, origin.Y, size.Width, size.Height);
     }
 
-    internal static Rect MeasureTextInkBounds(Element element, string text, float defaultSize, Size maxSize)
+    internal static Rect MeasureTextInkBounds(
+        Element element, string text, float defaultSize, Size maxSize, float additionalLetterSpacing = 0)
     {
         if (string.IsNullOrEmpty(text)) return Rect.Empty;
         var font = ResolveFont(element, defaultSize);
@@ -109,7 +110,7 @@ internal static class ControlDrawing
             Direction = ResolveTextDirection(element),
             UnicodeBidi = ResolveUnicodeBidi(element),
             WhiteSpace = ResolveWhiteSpace(element),
-            LetterSpacing = ResolveTextLength(element, "letter-spacing", font.Size),
+            LetterSpacing = ResolveTextLength(element, "letter-spacing", font.Size) + additionalLetterSpacing,
             WordSpacing = ResolveTextLength(element, "word-spacing", font.Size),
             TextTransform = ResolveTextTransform(element),
             TextIndent = ResolveTextLength(element, "text-indent", font.Size),

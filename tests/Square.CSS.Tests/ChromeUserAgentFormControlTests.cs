@@ -271,6 +271,7 @@ public sealed class ChromeUserAgentFormControlTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public void UserAgentPlaceholderColorMatchesChrome()
     {
         var engine = new CssEngine();

@@ -421,17 +421,11 @@ internal sealed class FontCollection
                 var family = GuessFamilyFromName(nameKey);
                 if (family == null) continue;
 
-                string? matchedPreferred = null;
-                foreach (var pref in remaining)
-                {
-                    if (family.Contains(pref, StringComparison.OrdinalIgnoreCase)
-                        || pref.Contains(family, StringComparison.OrdinalIgnoreCase)
-                        || Normalize(family) == Normalize(pref))
-                    {
-                        matchedPreferred = pref;
-                        break;
-                    }
-                }
+                var normalizedFamily = Normalize(family);
+                var matchedPreferred = remaining.FirstOrDefault(pref =>
+                    normalizedFamily == Normalize(pref) || normalizedFamily == Normalize(pref) + "r");
+                matchedPreferred ??= remaining.FirstOrDefault(pref =>
+                    pref.StartsWith(family + " ", StringComparison.OrdinalIgnoreCase));
                 if (matchedPreferred == null) continue;
 
                 var normFamily = Normalize(matchedPreferred);

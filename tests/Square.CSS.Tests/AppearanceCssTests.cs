@@ -519,6 +519,7 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public void AppearanceAutoAlignsButtonTextLikeChromiumAtIntegerCoordinates()
     {
         var engine = new CssEngine();
@@ -768,6 +769,7 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsRenderingMetrics")]
     public void AppearanceAutoSelectTextIsVerticallyCenteredLikeChromium()
     {
         var engine = new CssEngine();

@@ -54,7 +54,7 @@ public class Button : UIElement, ITextSelectable
             var letterSpacing = GetDefaultWidgetLetterSpacing();
             var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
             var layoutSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize, letterSpacing);
-            return GetTextBounds(layoutSize, paintMaxSize);
+            return GetTextBounds(layoutSize, paintMaxSize, letterSpacing);
         }
     }
 
@@ -79,7 +79,7 @@ public class Button : UIElement, ITextSelectable
         var letterSpacing = GetDefaultWidgetLetterSpacing();
         var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize, letterSpacing);
-        var textBounds = GetTextBounds(textSize, paintMaxSize);
+        var textBounds = GetTextBounds(textSize, paintMaxSize, letterSpacing);
         var textPosition = new Point(textBounds.X, textBounds.Y);
         ControlDrawing.DrawText(
             ctx,
@@ -108,7 +108,7 @@ public class Button : UIElement, ITextSelectable
             Style.Set("color", ToCssColor(Foreground));
     }
 
-    private Rect GetTextBounds(Size textSize, Size paintMaxSize)
+    private Rect GetTextBounds(Size textSize, Size paintMaxSize, float letterSpacing)
     {
         var left = Geometry.X + ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
             ControlDrawing.GetStyledFloat(this, "padding-left", 0);
@@ -137,7 +137,8 @@ public class Button : UIElement, ITextSelectable
         if (CssBoxPainter.UsesDefaultButtonWidgetPaint(this))
             y -= 0.5f;
         else if (
-            ControlDrawing.MeasureTextInkBounds(this, TextContent, 14f, paintMaxSize) is { IsEmpty: false } ink)
+            ControlDrawing.MeasureTextInkBounds(this, TextContent, 14f, paintMaxSize, letterSpacing) is
+                { IsEmpty: false } ink)
         {
             y = (top + bottom) / 2f - (ink.Top + ink.Bottom) / 2f;
             if (ControlDrawing.UsesWidgetAppearance(this))
