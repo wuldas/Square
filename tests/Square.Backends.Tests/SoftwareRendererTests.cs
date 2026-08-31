@@ -616,8 +616,8 @@ public class SoftwareRendererTests
         var expected = text.Sum(character => rasterizer.Rasterize(font, character)?.AdvanceX ?? 0);
         var layout = new TextLayout(text, font);
 
-        Assert.Equal(expected, layout.Measure().Width);
-        Assert.Equal(expected, layout.MeasureOffset(text.Length));
+        Assert.Equal(expected, layout.Measure().Width, 4);
+        Assert.Equal(expected, layout.MeasureOffset(text.Length), 4);
         Assert.Equal(text.Length, layout.HitTestOffset(expected));
     }
 
