@@ -632,9 +632,9 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         return (MathF.Round(lineTop + (lineHeight - visualHeight) / 2f), visualHeight);
     }
 
-    private float GetFontSize() => ControlDrawing.GetStyledFloat(this, "font-size", DefaultFontSize);
+    private protected float GetFontSize() => ControlDrawing.GetStyledFloat(this, "font-size", DefaultFontSize);
 
-    private float GetLineHeight(float fontSize) => ControlDrawing.GetStyledLineHeight(this, fontSize);
+    private protected float GetLineHeight(float fontSize) => ControlDrawing.GetStyledLineHeight(this, fontSize);
 
     private void EnsureCaretVisible()
     {
@@ -860,6 +860,11 @@ public abstract class TextEditorBase : UIElement, ITextEditor
 /// <summary>单行输入框，支持 <c>text</c>、<c>password</c>、<c>number</c> 类型。</summary>
 public class Input : TextEditorBase
 {
+    private static readonly string[] AuthorVerticalTextProperties =
+    [
+        "font", "font-family", "font-size", "font-weight", "font-style", "line-height"
+    ];
+
     /// <inheritdoc/>
     protected override bool IsMultiline => false;
 
@@ -901,8 +906,16 @@ public class Input : TextEditorBase
     }
 
     /// <inheritdoc/>
-    public override Size Measure(Size availableSize) =>
-        ControlDrawing.UsesWidgetAppearance(this) ? new Size(169, 15) : new Size(200, 36);
+    public override Size Measure(Size availableSize)
+    {
+        var defaultSize = ControlDrawing.UsesWidgetAppearance(this) ? new Size(169, 15) : new Size(200, 36);
+        if (!AuthorVerticalTextProperties.Any(Style.IsAuthorSpecified)) return defaultSize;
+
+        var fontSize = GetFontSize();
+        var fontHeight = TextMetrics.GetFontMetrics(ControlDrawing.ResolveFont(this, fontSize)).Height;
+        var height = MathF.Ceiling(Math.Max(defaultSize.Height, Math.Max(GetLineHeight(fontSize), fontHeight)));
+        return new Size(defaultSize.Width, height);
+    }
 
     private string FilterNumberInput(string text)
     {

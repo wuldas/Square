@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.CSS.Engine;
 using Square.Graphics;
 using Square.Rendering;
 using Xunit;
@@ -105,6 +106,45 @@ public class FlexSizingTests
 
         Assert.InRange(text.Geometry.Width - unconstrained.Width, 0, 1);
         Assert.Equal(unconstrained.Height, text.Geometry.Height, 3);
+    }
+
+    [Theory]
+    [InlineData("auto")]
+    [InlineData("none")]
+    public void InputAutoHeightGrowsWithFontMetrics(string appearance)
+    {
+        var root = new View();
+        root.Style.CssText = "display: flex; flex-direction: column;";
+        var input = new Input { Placeholder = "KeepAlive note" };
+        input.Style.Set("appearance", appearance);
+        root.Children.Add(input);
+        var styles = new CssEngine();
+        styles.ApplyStylesToTree(root);
+
+        Layout(root, new Size(300, 100));
+        var defaultHeight = input.Geometry.Height;
+
+        input.Style.Set("font-size", "48px");
+        Layout(root, new Size(300, 100));
+
+        Assert.True(defaultHeight >= 21);
+        Assert.True(input.Geometry.Height > defaultHeight);
+        Assert.True(input.Geometry.Height >= 62);
+    }
+
+    [Fact]
+    public void ExplicitInputHeightOverridesFontBasedIntrinsicHeight()
+    {
+        var root = new View();
+        root.Style.CssText = "display: flex; flex-direction: column;";
+        var input = new Input();
+        input.Style.CssText = "height: 30px; font-size: 28px;";
+        root.Children.Add(input);
+        new CssEngine().ApplyStylesToTree(root);
+
+        Layout(root, new Size(300, 100));
+
+        Assert.Equal(30, input.Geometry.Height);
     }
 
     [Theory]

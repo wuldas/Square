@@ -44,6 +44,8 @@ internal static class CssUserAgentStyles
         Input {
             appearance: auto;
             cursor: text;
+            font-family: Arial;
+            font-size: 13.3333px;
             padding: 1px 2px;
             border: 2px inset #767676;
             background-color: Field;
