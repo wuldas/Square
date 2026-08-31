@@ -66,6 +66,7 @@ public sealed class FontManager
 - 按 family、物理字号、weight、style 和字符码点建立键
 - Software Backend 缓存 glyph coverage，DPI 变化或 RenderContext 释放时清理上下文缓存
 - Vulkan Backend 使用独立 atlas 元数据缓存；coverage 上传 GPU 后不在 `SystemGlyphRasterizer` 中长期缓存
+- Direct2D Backend 将物理字号 coverage 缓存为 target-dependent A8 opacity mask；DPI 变化或 target 重建时释放
 - 缓存边界和跨子系统共享仍在演进，当前不是全局 LRU
 
 ### 4.2 Glyph 信息
@@ -184,7 +185,9 @@ public sealed class TextLayout
 - `IRenderContext.DrawText(TextLayout, Point, Brush)`
 - Software Backend：读取灰度 coverage，并直接混合到整数物理像素
 - Vulkan Backend：将 coverage 上传为白色 RGB、coverage alpha 的 atlas 区域；glyph 周围使用透明白 padding，避免线性过滤产生暗边
-- Software 与 Vulkan 都按逻辑 glyph advance 累计字符位置，再将每个 glyph 落点映射到物理像素；避免高 DPI 下逐字符整数 advance 的累计漂移
+- Direct2D Backend：将 coverage 上传为 A8 bitmap，并通过 `FillOpacityMask` 使用当前文本 brush 着色
+- Software、Vulkan 与 Direct2D 都按逻辑 glyph advance 累计字符位置，再按物理字号 coverage 绘制；避免高 DPI 下逐字符整数 advance 的累计漂移
+- Direct2D 普通平移文本按物理像素对齐 glyph 原点与 baseline，避免 A8 mask 最后一行被小数像素边界削弱；非轴对齐变换保留浮点定位
 - Vulkan 普通 DPI 文本保持物理像素对齐的 glyph 原点和 bearing，使 atlas texel 与 framebuffer pixel 保持一对一映射
 - Vulkan 旋转、斜切或额外缩放文本保留浮点 quad 与线性过滤，以支持任意变换
 
@@ -192,7 +195,7 @@ public sealed class TextLayout
 
 ## 12. 字体清晰度约束
 
-系统 glyph rasterizer 在 Windows 使用 GDI `GGO_GRAY8_BITMAP` 生成 0 到 64 的灰度 coverage，并归一化到 0 到 255。Software 与 Square Vulkan 后端共享这份物理字号栅格化结果。
+系统 glyph rasterizer 在 Windows 使用 GDI `GGO_GRAY8_BITMAP` 生成 0 到 64 的灰度 coverage，并归一化到 0 到 255。Software、Vulkan 与 Direct2D 后端共享这份物理字号栅格化结果。
 
 已经抗锯齿的 coverage 不应在一对一显示时再次落在半像素位置，否则线性采样会把相邻 coverage 再平均一次，使笔画变软。为保持 Software/Vulkan 一致：
 

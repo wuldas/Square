@@ -96,12 +96,12 @@ private void OnClick()
 Software
 Skia
 Vulkan
+Direct2D
 ```
 
 未来允许增加：
 
 ```
-Direct2D
 Metal
 OpenGL
 WebGPU
@@ -571,10 +571,10 @@ Backend 为可插拔模块。
 
 - Skia
 - Vulkan
+- Direct2D（Windows HWND，全帧首版）
 
 未来：
 
-- Direct2D
 - Metal
 
 Backend 不影响框架核心。
@@ -618,6 +618,7 @@ Square.Compiler
 Square.Platform.Win32
 Square.Platform.X11
 Square.Backends.Vulkan
+Square.Backends.Direct2D
 Square.Extensions
 Square.DevTools
 ```

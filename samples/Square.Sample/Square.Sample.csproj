@@ -11,12 +11,15 @@
     <SquareSampleUseVulkan Condition="'$(SquareSampleUseVulkan)' == ''">false</SquareSampleUseVulkan>
     <SquareSampleUseSkia Condition="'$(SquareSampleUseSkia)' == '' and '$(SquareSamplePublishAot)' != 'true'">true</SquareSampleUseSkia>
     <SquareSampleUseSkia Condition="'$(SquareSampleUseSkia)' == ''">false</SquareSampleUseSkia>
+    <SquareSampleUseDirect2D Condition="'$(SquareSampleUseDirect2D)' == '' and '$(SquareTargetPlatform)' == 'Win32' and '$(SquareSamplePublishAot)' != 'true'">true</SquareSampleUseDirect2D>
+    <SquareSampleUseDirect2D Condition="'$(SquareSampleUseDirect2D)' == ''">false</SquareSampleUseDirect2D>
     <SquareSampleUseDevTools Condition="'$(SquareSampleUseDevTools)' == '' and '$(SquareSamplePublishAot)' != 'true'">true</SquareSampleUseDevTools>
     <SquareSampleUseDevTools Condition="'$(SquareSampleUseDevTools)' == ''">false</SquareSampleUseDevTools>
     <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>
     <OptimizationPreference>Size</OptimizationPreference>
     <DefineConstants Condition="'$(SquareSampleUseVulkan)' == 'true'">$(DefineConstants);SQUARE_SAMPLE_VULKAN</DefineConstants>
     <DefineConstants Condition="'$(SquareSampleUseSkia)' == 'true'">$(DefineConstants);SQUARE_SAMPLE_SKIA</DefineConstants>
+    <DefineConstants Condition="'$(SquareSampleUseDirect2D)' == 'true' and '$(SquareTargetPlatform)' == 'Win32'">$(DefineConstants);SQUARE_SAMPLE_DIRECT2D</DefineConstants>
     <DefineConstants Condition="'$(SquareSampleUseDevTools)' == 'true'">$(DefineConstants);SQUARE_SAMPLE_DEVTOOLS</DefineConstants>
   </PropertyGroup>
 
@@ -28,6 +31,7 @@
     <ProjectReference Include="..\..\src\Square.Platform.MacOS\Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
     <ProjectReference Include="..\..\src\Square.Backends.Vulkan\Square.Backends.Vulkan.csproj" Condition="'$(SquareSampleUseVulkan)' == 'true'" />
     <ProjectReference Include="..\..\src\Square.Backends.Skia\Square.Backends.Skia.csproj" Condition="'$(SquareSampleUseSkia)' == 'true'" />
+    <ProjectReference Include="..\..\src\Square.Backends.Direct2D\Square.Backends.Direct2D.csproj" Condition="'$(SquareSampleUseDirect2D)' == 'true' and '$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square.DevTools\Square.DevTools.csproj" Condition="'$(SquareSampleUseDevTools)' == 'true'" />
     <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>

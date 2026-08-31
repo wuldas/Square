@@ -67,7 +67,18 @@ cd MyApp
 | `OutputItemType="Analyzer"` | Source Generator 作为分析器引用，不输出程序集 |
 | `AdditionalFiles Include="**\*.sqv"` | 将 `.sqv` 文件注册为 Source Generator 输入 |
 
-`Square` 包含桌面运行时、控件、CSS、路由、布局和软件渲染。窗口宿主由 `Square.Platform.Win32` 或 `Square.Platform.X11` 提供；Vulkan、Extensions 与 DevTools 仍按需单独引用。
+`Square` 包含桌面运行时、控件、CSS、路由、布局和软件渲染。窗口宿主由 `Square.Platform.Win32` 或 `Square.Platform.X11` 提供；Skia、Vulkan、Windows-only Direct2D、Extensions 与 DevTools 按需单独引用。
+
+Windows 应用引用 `Square.Backends.Direct2D` 后，可在运行前显式选择 Direct2D：
+
+```csharp
+using Square.Backends.Direct2D;
+
+window.UseDirect2DBackend();
+new DesktopApplication(window).Run();
+```
+
+Direct2D 首版使用 `ID2D1HwndRenderTarget` 直接绘制 Win32 窗口，支持当前 `IRenderContext` 的几何、渐变、描边、clip、group opacity、bitmap 和文本 coverage。它只声明全帧渲染；`CaptureRendererBitmapAsync()` 暂时使用 Software DisplayTree 重放，而真实 D2D 验证使用窗口截图。
 
 ### 2.3 编写入口
 
@@ -710,9 +721,9 @@ dotnet publish samples/Square.Sample/Square.Sample.csproj \
   --self-contained true
 ```
 
-Square 以 NativeAOT 兼容为设计约束：不使用 `Reflection.Emit`、`dynamic` 或运行时程序集发现。P/Invoke 使用源生成或显式静态入口。CI 在 Win32、X11 和 macOS runner 上发布 Software AOT 示例，启动原生可执行文件并执行像素截图回归；Vulkan 与 DevTools 也提供 AOT 路径，但组合场景仍属于实验性验证范围。Vulkan 后端通过显式系统库加载器加载 `vulkan-1.dll` 或 `libvulkan.so`，shader 使用构建期生成的内嵌 SPIR-V；DevTools 使用 `HttpListener`、显式路由和手写 JSON 输出。
+Square 以 NativeAOT 兼容为设计约束：不使用 `Reflection.Emit`、`dynamic` 或运行时程序集发现。P/Invoke 使用源生成或显式静态入口。CI 在 Win32、X11 和 macOS runner 上发布 Software AOT 示例，启动原生可执行文件并执行像素截图回归；Vulkan、Direct2D 与 DevTools 也提供 AOT 路径，但组合场景仍属于实验性验证范围。Direct2D 使用 AOT-safe DirectNAot COM wrapper；Vulkan 后端通过显式系统库加载器加载 `vulkan-1.dll` 或 `libvulkan.so`，shader 使用构建期生成的内嵌 SPIR-V；DevTools 使用 `HttpListener`、显式路由和手写 JSON 输出。
 
-主示例的 AOT 发布默认不引用 Vulkan 和 DevTools。需要 Vulkan AOT 时增加 `-p:SquareSampleUseVulkan=true`，需要 DevTools 时增加 `-p:SquareSampleUseDevTools=true`；不传对应属性时，相关项目及其依赖不会进入发布产物。
+主示例的 AOT 发布默认不引用 Vulkan、Direct2D 和 DevTools。需要 Vulkan AOT 时增加 `-p:SquareSampleUseVulkan=true`，Windows Direct2D 增加 `-p:SquareSampleUseDirect2D=true`，需要 DevTools 时增加 `-p:SquareSampleUseDevTools=true`；不传对应属性时，相关项目及其依赖不会进入发布产物。
 
 ---
 

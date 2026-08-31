@@ -224,6 +224,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         host.KeyEvent += HandleKey;
         host.TextInput += HandleTextInput;
         host.Tick += HandleTick;
+        host.RenderRequested += RequestRender;
     }
 
     private void HandleFrameRequest(Event e)

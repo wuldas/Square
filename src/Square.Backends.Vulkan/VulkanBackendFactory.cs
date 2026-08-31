@@ -13,7 +13,7 @@ public sealed class VulkanBackendFactory : IRenderBackendFactory
     {
         ArgumentNullException.ThrowIfNull(info);
         if (info.NativeTarget is null)
-            throw new VulkanException("Vulkan backend requires a platform NativeTarget (Win32VulkanRenderTarget or X11VulkanRenderTarget).");
+            throw new VulkanException("Vulkan backend requires a platform NativeTarget (Win32RenderTarget or X11VulkanRenderTarget).");
 
         return new VulkanRenderContext(info);
     }

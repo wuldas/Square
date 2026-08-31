@@ -1798,6 +1798,7 @@ public interface IPlatformHost
     event Action<int, KeyAction>? KeyEvent;
     event Action<string>? TextInput;
     event Action? Tick;
+    event Action? RenderRequested;
 
     void Show();
     void Close();
@@ -1818,6 +1819,7 @@ public interface IPlatformHost
 | `KeyEvent` | `(keyCode, action)` 键盘事件 |
 | `TextInput` | `(text)` 文本输入（IME） |
 | `Tick` | 平台消息循环空闲回调 |
+| `RenderRequested` | 平台曝光或原生后端 target 重建后请求应用重新提交完整画面 |
 | `PumpEvents()` | 阻塞消息循环，直到窗口关闭 |
 | `SetTextInputRect` | 设置 IME 候选框位置 |
 
@@ -2458,6 +2460,7 @@ public enum VerticalAlignment { Top, Center, Bottom, Stretch }
 | 注册器 | 方法 | 条件 |
 |---|---|---|
 | `BackendRegistration` | `RegisterDefaults()` | `BACKEND_SOFTWARE` 等编译常量 |
+| `Direct2DRegistration` | `Register()` / `UseDirect2DBackend()` | Windows 应用引用 `Square.Backends.Direct2D` 后显式调用 |
 | `PlatformRegistry` | `Register(new Win32PlatformFactory())` 或 `Register(new X11PlatformFactory())` | 应用在 `Run()` 前显式调用 |
 | `ExtensionRegistration` | `RegisterDefaults()` | 手动调用（引用 `Square.Extensions` 后） |
 | `MarkdownRegistration` | `RegisterDefaults()` | 手动调用（引用 `Square.Extensions.Markdown` 后） |
@@ -2503,6 +2506,7 @@ private void OnClick(Event e) { }
 | `Square.Platform` | `IPlatformHost`, `IPlatformFactory`, `IPlatformScreenshotProvider`, `PlatformHostCreateInfo`, `PlatformRegistry`, `PlatformScreenshot` |
 | `Square.Platform.Win32` | `Win32PlatformFactory` |
 | `Square.Platform.X11` | `X11PlatformFactory` |
+| `Square.Backends.Direct2D` | `Direct2DBackendFactory`, `Direct2DRegistration`, `UseDirect2DBackend` |
 | `Square.Extensions.Routing` | `Router`, `RouterView`, `RouterLink`, `RouteLocation`, `RouteDefinition`, `INavigationHistory` |
 | `Square.Controls.Animation` | `Animation<T>`, `Clock`, `Easing` |
 | `Square.Extensions.Markdown` | `MarkdownViewer` |

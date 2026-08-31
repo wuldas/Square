@@ -59,8 +59,11 @@ internal static class Win32WindowScreenshot
                 return false;
 
             previousObject = Win32Api.SelectObject(memoryDc, hbitmap);
-            var printed = Win32Api.PrintWindow(hwnd, memoryDc, Win32Api.PW_RENDERFULLCONTENT);
-            if (!printed && !Win32Api.BitBlt(memoryDc, 0, 0, width, height, windowDc, 0, 0, Win32Api.SRCCOPY))
+            // PrintWindow can report success for a Direct2D HWND while returning an
+            // uncomposited blank client area. Prefer the visible window surface and use
+            // PrintWindow only when the screen copy is unavailable.
+            var copied = Win32Api.BitBlt(memoryDc, 0, 0, width, height, windowDc, 0, 0, Win32Api.SRCCOPY);
+            if (!copied && !Win32Api.PrintWindow(hwnd, memoryDc, Win32Api.PW_RENDERFULLCONTENT))
                 return false;
 
             var info = new Win32Api.BITMAPINFO

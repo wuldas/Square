@@ -5,6 +5,9 @@ using Square.Backends.Vulkan;
 #if SQUARE_SAMPLE_SKIA
 using Square.Backends.Skia;
 #endif
+#if SQUARE_SAMPLE_DIRECT2D
+using Square.Backends.Direct2D;
+#endif
 using Square.Graphics;
 using Square.Graphics.Codecs;
 using Square.Hosting;
@@ -70,6 +73,13 @@ public static class Program
             window.UseSkiaBackend();
 #else
             throw new NotSupportedException("This build does not include Skia. Build with -p:SquareSampleUseSkia=true to enable it.");
+#endif
+        else if (string.Equals(backend, "Direct2D", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(backend, "D2D", StringComparison.OrdinalIgnoreCase))
+#if SQUARE_SAMPLE_DIRECT2D
+            window.UseDirect2DBackend();
+#else
+            throw new NotSupportedException("This build does not include Direct2D. Build for Win32 with -p:SquareSampleUseDirect2D=true to enable it.");
 #endif
         ConfigureRendering(window, args);
         ConfigureDebugOverlayToggle(window);

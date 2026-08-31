@@ -87,6 +87,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
     public event Action<int, KeyAction>? KeyEvent;
     public event Action<string>? TextInput;
     public event Action? Tick;
+    public event Action? RenderRequested;
     public event Action<AppWindowState>? StateChanged;
     public event Action? Closed;
 
@@ -307,7 +308,8 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
             DpiScale = _dpiScale,
             SoftwareSurface = _softwareSurface,
             PresentFrame = _softwareSurface == null ? PresentFrame : null,
-            NativeTarget = new Win32VulkanRenderTarget(_hwnd, Win32Api.GetModuleHandle(null))
+            NativeTarget = new Win32RenderTarget(_hwnd, Win32Api.GetModuleHandle(null)),
+            RequestRender = () => RenderRequested?.Invoke()
         });
         return _renderContext;
     }
@@ -703,6 +705,10 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
                     {
                         host.PresentFrame(host._lastFrame, null);
                     }
+                    else
+                    {
+                        host.RenderRequested?.Invoke();
+                    }
                 }
                 finally
                 {
@@ -974,6 +980,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
         KeyEvent = null;
         TextInput = null;
         Tick = null;
+        RenderRequested = null;
         StateChanged = null;
         Closed = null;
         if (_hwnd != IntPtr.Zero)

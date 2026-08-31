@@ -15,6 +15,7 @@
   <Project Path="src/Square.Hosting.Web/Square.Hosting.Web.csproj" />
   <Project Path="src/Square.Backends.Vulkan/Square.Backends.Vulkan.csproj" />
   <Project Path="src/Square.Backends.Skia/Square.Backends.Skia.csproj" />
+  <Project Path="src/Square.Backends.Direct2D/Square.Backends.Direct2D.csproj" />
   <Folder Name="/Samples/">
     <Project Path="samples/Square.Sample.CodeEditor/Square.Sample.CodeEditor.csproj" />
     <Project Path="samples/Square.Sample.WebView/Square.Sample.WebView.csproj" />
@@ -29,6 +30,7 @@
     <Project Path="tests/Square.Backends.Tests/Square.Backends.Tests.csproj" />
     <Project Path="tests/Square.Backends.Vulkan.Tests/Square.Backends.Vulkan.Tests.csproj" />
     <Project Path="tests/Square.Backends.Skia.Tests/Square.Backends.Skia.Tests.csproj" />
+    <Project Path="tests/Square.Backends.Direct2D.Tests/Square.Backends.Direct2D.Tests.csproj" />
     <Project Path="tests/Square.CSS.Tests/Square.CSS.Tests.csproj" />
     <Project Path="tests/Square.DevTools.Tests/Square.DevTools.Tests.csproj" />
     <Project Path="tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj" />

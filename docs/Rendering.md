@@ -2,7 +2,7 @@
 
 > Document Revision: 0.6
 > 配套：`Architecture.md`、`Graphics.md`、`Layout.md`
-> `PushLayer` / `PopLayer` 在 Software 与 Skia 后端使用 `bounds` 对应的离屏表面实现 group opacity/compositing；Software 后端会复用有界 layer buffer。其他后端可按自身能力实现同一接口语义。
+> `PushLayer` / `PopLayer` 在 Software 与 Skia 后端使用离屏表面、在 Direct2D 后端使用原生 layer，实现 group opacity/compositing；Software 后端会复用有界 layer buffer。其他后端可按自身能力实现同一接口语义。
 
 ---
 
@@ -29,7 +29,7 @@ Display Tree (DrawCommand 列表)
   ↓ (Square.Graphics)
 IRenderContext
   ↓ (Square.Backends)
-Backend (Software / Skia / Vulkan / ...)
+Backend (Software / Skia / Vulkan / Direct2D / ...)
 ```
 
 Skia 后端位于独立的 `Square.Backends.Skia` 包，首版使用 CPU raster surface，并通过宿主已有的
@@ -40,6 +40,14 @@ BGRA 帧回调呈现。应用可调用 `window.UseSkiaBackend()` 选择它。该
 注册 Skia 后端后，`TextMetrics` 会以 `SKFont.Metrics` 和 Skia glyph bounds 作为字体度量基准。
 `TextLayout`、字符 fragment、选择区、光标、RichText 和 DrawCommand dirty bounds 共用该度量；
 CSS `line-height` 仍控制行进距离，Skia font bounds 用于计算行盒内 baseline 与实际墨迹范围。
+
+Direct2D 后端位于独立的 `Square.Backends.Direct2D` 包，仅支持 Windows/Win32。首版使用
+`ID2D1HwndRenderTarget` 直接绘制窗口，并复用现有 `TextMetrics`、`TextLayout` 和系统 glyph coverage，
+不引入 DirectWrite 布局差异。它支持 transform、矩形/几何 clip、几何/渐变/描边、group opacity、
+bitmap 与 `ContentVersion` 更新、resize/DPI 和 `D2DERR_RECREATE_TARGET` 重建；当前只声明全帧渲染，
+也不提供真实 framebuffer readback。普通平移下 glyph 原点和 baseline 会对齐到物理像素，避免
+`FillOpacityMask` 把 coverage 最后一行分配到相邻像素而使 descender 底边变淡；旋转、斜切和缩放
+仍保留浮点坐标。
 
 ---
 
@@ -211,7 +219,8 @@ Square Framework - Overlay: Off
 IRenderContext (抽象)
   ├── SoftwareBackend   (纯 C# CPU 渲染)
   ├── SkiaBackend       (SkiaSharp CPU 渲染)
-  └── VulkanBackend     (Silk.NET 原生 Vulkan)
+  ├── VulkanBackend     (Silk.NET 原生 Vulkan)
+  └── Direct2DBackend   (DirectNAot HWND RenderTarget)
 ```
 
 - 同一 `IRenderContext` 接口
@@ -281,6 +290,27 @@ Shader 源码位于 `src/Square.Backends.Vulkan/Shaders/`，修改后运行以�
 ```bash
 dotnet run --project tools/ShaderGen
 ```
+
+### 7.2 原生 Direct2D 后端
+
+Windows 应用引用 `Square.Backends.Direct2D` 后调用：
+
+```csharp
+window.UseDirect2DBackend();
+```
+
+主示例启用：
+
+```powershell
+dotnet run --project samples/Square.Sample/Square.Sample.csproj `
+  -p:SquareTargetPlatform=Win32 `
+  -p:SquareSampleUseDirect2D=true `
+  -- --backend Direct2D
+```
+
+NativeAOT 发布时显式加入 `-p:SquareSampleUseDirect2D=true`。Direct2D HWND target 不实现
+`IRenderBitmapSource`；`CaptureRendererBitmapAsync()` 因此使用 Software 重放，不能作为 Direct2D
+像素正确性的证据。真实后端测试使用 `SQUARE_RUN_REAL_DIRECT2D_CONFORMANCE=1` 开启 Win32 窗口抓图。
 
 ---
 

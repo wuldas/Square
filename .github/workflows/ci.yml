@@ -65,6 +65,12 @@ jobs:
       - name: Test
         run: dotnet test Square.slnx --configuration Release --no-build --no-restore -p:SquareTargetPlatform=${{ matrix.platform }} --filter "${{ matrix.test-filter }}"
 
+      - name: Real Direct2D HWND conformance
+        if: runner.os == 'Windows'
+        run: dotnet test tests/Square.Backends.Conformance.Tests/Square.Backends.Conformance.Tests.csproj --configuration Release --no-build --no-restore -p:SquareTargetPlatform=Win32 --filter "Category=RealDirect2D"
+        env:
+          SQUARE_RUN_REAL_DIRECT2D_CONFORMANCE: 1
+
       - name: Restore font conformance tool
         if: runner.os == 'Windows'
         run: dotnet restore tools/Square.FontComparison/Square.FontComparison.csproj -p:SquareTargetPlatform=Win32
@@ -118,6 +124,19 @@ jobs:
           $process = Start-Process -FilePath ".\artifacts\nativeaot\${{ matrix.executable }}" -ArgumentList "--circle-regression", "--verify-circle-regression", "--screenshot", "artifacts/screenshots/win32.png" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "NativeAOT sample exited with code $($process.ExitCode)." }
           if (-not (Test-Path -LiteralPath "artifacts/screenshots/win32.png") -or (Get-Item -LiteralPath "artifacts/screenshots/win32.png").Length -eq 0) { throw "Screenshot was not created." }
+
+      - name: Direct2D NativeAOT publish
+        if: runner.os == 'Windows'
+        run: dotnet publish samples/Square.Sample/Square.Sample.csproj --configuration Release --runtime win-x64 --self-contained true -p:SquareTargetPlatform=Win32 -p:SquareSamplePublishAot=true -p:SquareSampleUseDirect2D=true -o artifacts/nativeaot-direct2d
+
+      - name: Direct2D NativeAOT startup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $process = Start-Process -FilePath ".\artifacts\nativeaot-direct2d\Square.Sample.exe" -ArgumentList "--backend", "Direct2D", "--screenshot", "artifacts/screenshots/direct2d-aot.png" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Direct2D NativeAOT sample exited with code $($process.ExitCode)." }
+          if (-not (Test-Path -LiteralPath "artifacts/screenshots/direct2d-aot.png") -or (Get-Item -LiteralPath "artifacts/screenshots/direct2d-aot.png").Length -eq 0) { throw "Direct2D NativeAOT screenshot was not created." }
 
       - name: NativeAOT startup and screenshot regression (X11)
         if: runner.os == 'Linux'

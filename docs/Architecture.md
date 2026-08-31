@@ -44,7 +44,7 @@ Layout Engine  (Square.Rendering, CSS 盒/flex/grid)
  IRenderContext  (Square.Graphics 抽象)
       │
       ▼
- Backend  (Square.Backends: Software / Skia / Vulkan)
+ Backend  (Square.Backends: Software / Skia / Vulkan / Direct2D)
 ```
 
 - **非 Immediate Mode**：保留 Element Tree + Display Tree，支持脏区增量重绘。
@@ -75,7 +75,7 @@ Layout Engine  (Square.Rendering, CSS 盒/flex/grid)
 | `Square.Extensions` | 可选扩展 | RichText、Routing 与文件弹窗；由应用显式注册，不被核心反向依赖 |
 | `Square.Extensions.Markdown` | Markdown 扩展 | Markdig 文档模型与 TextMate 代码块高亮；通过 `MarkdownRegistration` 注册 |
 | `Square.Extensions.CodeEditor` | 代码编辑扩展 | PieceTable、视口绘制、多光标、折叠与 TextMate 高亮；通过 `CodeEditorRegistration` 注册 |
-| `Square.Backends` | 渲染后端 | 纯 C# Software Renderer、Skia、Vulkan |
+| `Square.Backends` | 渲染后端 | 纯 C# Software Renderer、Skia、Vulkan、Windows Direct2D |
 | `Square.Hosting` | 桌面应用宿主 | `DesktopApplication(UIDocument)`：窗口、输入、焦点、帧调度、布局与 DisplayTree 提交 |
 | `Square.Native.Html` | 静态语义 HTML | Element/NativeUiNode → browser semantic HTML + inline final CSS；不依赖桌面平台 |
 | `Square.Hosting.Web` | ASP.NET Core Web Server 宿主 | 每请求组件工厂、HTML response 和请求级资源释放；可与桌面平台注册共存 |

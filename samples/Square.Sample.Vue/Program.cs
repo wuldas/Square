@@ -4,6 +4,9 @@ using Square.Platform;
 using Square.Sample.Vue.Components;
 using Square.UI;
 using Square.Backends.Vulkan;
+#if SQUARE_SAMPLE_DIRECT2D
+using Square.Backends.Direct2D;
+#endif
 using Square.Extensions.Routing;
 using Square.DevTools;
 namespace Square.Sample.Vue;
@@ -36,6 +39,13 @@ public static class Program
         var backend = GetOption(args, "--backend") ?? Environment.GetEnvironmentVariable("SQUARE_RENDER_BACKEND");
         if (string.Equals(backend, "Vulkan", StringComparison.OrdinalIgnoreCase))
             window.UseVulkanBackend();
+        else if (string.Equals(backend, "Direct2D", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(backend, "D2D", StringComparison.OrdinalIgnoreCase))
+#if SQUARE_SAMPLE_DIRECT2D
+            window.UseDirect2DBackend();
+#else
+            throw new NotSupportedException("Direct2D is available only in the Win32 build.");
+#endif
         ConfigureRendering(window, args);
         SampleSignals.Initialize(app.Dispatcher);
         if (HasOption(args, "--devtools"))

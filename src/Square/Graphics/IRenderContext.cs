@@ -23,6 +23,8 @@ public sealed class RenderContextCreateInfo
     public ISoftwareRenderSurface? SoftwareSurface { get; set; }
     /// <summary>原生窗口渲染目标（用于 GPU 后端）。</summary>
     public INativeRenderTarget? NativeTarget { get; set; }
+    /// <summary>后端需要宿主重新提交完整画面时调用。</summary>
+    public Action? RequestRender { get; set; }
 }
 
 /// <summary>渲染上下文接口，由各后端实现。</summary>

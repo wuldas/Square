@@ -61,6 +61,10 @@ public interface IRenderBackendFactory
 }
 ```
 
+`RenderContextCreateInfo.NativeTarget` 将平台 HWND/X11 handle 交给原生后端；`RequestRender`
+用于 target 丢失或平台曝光后请求宿主重新提交完整 DisplayTree。Win32 host 会把它转发为
+`IPlatformHost.RenderRequested`，`DesktopApplication` 再进入现有全帧请求路径。
+
 ### 2.3 IRenderBitmapSource
 
 ```csharp
@@ -71,7 +75,7 @@ public interface IRenderBitmapSource
 }
 ```
 
-渲染上下文可通过该接口提供活动帧截图。GPU 后端可以根据运行配置返回 `IsCaptureAvailable == false`；此时 `DesktopApplication.CaptureRendererBitmapAsync()` 使用 Software RenderContext 重放 Display Tree，而不是强制分配 GPU readback buffer。
+渲染上下文可通过该接口提供活动帧截图。GPU 后端可以根据运行配置返回 `IsCaptureAvailable == false`；此时 `DesktopApplication.CaptureRendererBitmapAsync()` 使用 Software RenderContext 重放 Display Tree，而不是强制分配 GPU readback buffer。Direct2D HWND 首版不实现该接口，因此同样使用 Software 重放；需要验证真实 D2D 输出时使用平台窗口截图。
 
 ---
 
@@ -192,6 +196,7 @@ public sealed class TextLayout
 #endif
 
 app.UseVulkanBackend();
+app.UseDirect2DBackend();
 ```
 
 ### 4.2 RenderBackendRegistry

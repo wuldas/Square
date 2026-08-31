@@ -10,10 +10,12 @@
     <PublishAot>true</PublishAot>
     <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>
     <OptimizationPreference>Size</OptimizationPreference>
+    <DefineConstants Condition="'$(SquareTargetPlatform)' == 'Win32'">$(DefineConstants);SQUARE_SAMPLE_DIRECT2D</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Square.Backends.Vulkan\Square.Backends.Vulkan.csproj" />
+    <ProjectReference Include="..\..\src\Square.Backends.Direct2D\Square.Backends.Direct2D.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square\Square.csproj" />
     <ProjectReference Include="..\..\src\Square.Platform.Win32\Square.Platform.Win32.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square.Platform.X11\Square.Platform.X11.csproj" Condition="'$(SquareTargetPlatform)' == 'X11'" />

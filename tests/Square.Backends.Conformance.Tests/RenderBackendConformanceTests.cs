@@ -1,7 +1,9 @@
 using Square.Backends;
 using Square.Backends.Skia;
+using Square.Backends.Direct2D;
 using Square.Backends.Vulkan;
 using Square.Graphics;
+using System.Runtime.Versioning;
 using Xunit;
 
 namespace Square.Backends.Conformance.Tests;
@@ -12,6 +14,7 @@ public sealed class RenderBackendConformanceTests
     {
         { new RenderBackendFactory(), "Software" },
         { new SkiaBackendFactory(), "Skia" },
+        { new Direct2DBackendFactory(), "Direct2D" },
         { new VulkanBackendFactory(), "Vulkan" }
     };
 
@@ -46,6 +49,17 @@ public sealed class RenderBackendConformanceTests
             new RenderContextCreateInfo { CanvasSize = new Size(8, 6) }));
 
         Assert.Contains("NativeTarget", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows6.1")]
+    public void Direct2DFailsFastWithoutWin32Target()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(6, 1)) return;
+        var exception = Assert.Throws<Direct2DException>(() => new Direct2DBackendFactory().CreateContext(
+            new RenderContextCreateInfo { CanvasSize = new Size(8, 6) }));
+
+        Assert.Contains("Win32RenderTarget", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]

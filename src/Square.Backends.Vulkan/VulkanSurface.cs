@@ -14,20 +14,24 @@ internal static unsafe class VulkanSurface
         return target switch
         {
             Win32VulkanRenderTarget win32 => CreateWin32(device, win32),
+            Win32RenderTarget win32 => CreateWin32(device, win32.WindowHandle, win32.InstanceHandle),
             X11VulkanRenderTarget x11 => CreateX11(device, x11),
             _ => throw new VulkanException($"Unsupported native render target '{target.Kind}'.")
         };
     }
 
     private static SurfaceKHR CreateWin32(VulkanDevice device, Win32VulkanRenderTarget target)
+        => CreateWin32(device, target.WindowHandle, target.InstanceHandle);
+
+    private static SurfaceKHR CreateWin32(VulkanDevice device, IntPtr windowHandle, IntPtr instanceHandle)
     {
         if (!device.Api.TryGetInstanceExtension(device.Instance, out KhrWin32Surface ext))
             throw new VulkanException("VK_KHR_win32_surface extension not available.");
 
         var createInfo = new Win32SurfaceCreateInfoKHR(StructureType.Win32SurfaceCreateInfoKhr)
         {
-            Hinstance = target.InstanceHandle,
-            Hwnd = target.WindowHandle
+            Hinstance = instanceHandle,
+            Hwnd = windowHandle
         };
 
         var result = ext.CreateWin32Surface(device.Instance, in createInfo, null, out var surface);

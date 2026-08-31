@@ -34,6 +34,13 @@ public interface IPlatformHost : IDisposable
     /// <summary>帧滴答事件。</summary>
     event Action? Tick;
 
+    /// <summary>平台或原生后端请求重新提交完整画面。</summary>
+    event Action? RenderRequested
+    {
+        add { }
+        remove { }
+    }
+
     /// <summary>窗口状态变化事件。</summary>
     event Action<AppWindowState>? StateChanged
     {

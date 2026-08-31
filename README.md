@@ -87,6 +87,15 @@ dotnet run --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
 dotnet run --project samples/Square.Sample/Square.Sample.csproj -- --backend Skia
 ```
 
+Windows 主示例也可选择原生 Direct2D HWND 后端：
+
+```powershell
+dotnet run --project samples/Square.Sample/Square.Sample.csproj `
+  -p:SquareTargetPlatform=Win32 `
+  -p:SquareSampleUseDirect2D=true `
+  -- --backend Direct2D
+```
+
 运行 RichText 示例：
 
 ```bash
