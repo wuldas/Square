@@ -156,4 +156,5 @@ dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csp
 - 交互会话保存在当前服务进程内。多实例部署需要粘性路由，进程重启会丢失页面状态。
 - 页面 token 是同源事件能力凭据；如果组件 handler 执行业务写操作，应用仍须按 ASP.NET Core 常规方式实施认证、授权与输入验证。
 - SignalR 主动推送、离线恢复、WASM 和通用 pointer/keyboard 事件属于独立阶段。
+- Debug 模板 Hot Reload 首期仅接入 `DesktopApplication`；已经建立的 Web interactive session 不会随 `.sqv` / `.sqx` metadata update 自动重建。
 - 浏览器布局是权威来源，输出不保证与 Software Renderer 像素完全一致。

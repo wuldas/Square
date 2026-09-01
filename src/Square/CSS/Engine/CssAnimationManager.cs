@@ -22,7 +22,7 @@ public sealed class CssAnimationManager
     /// <param name="root">根元素。</param>
     public void Attach(Element root)
     {
-        _timelines.Clear();
+        Clear();
         Collect(root);
         foreach (var timeline in _timelines)
             timeline.Start();
@@ -34,6 +34,13 @@ public sealed class CssAnimationManager
     {
         foreach (var timeline in _timelines.Where(timeline => !timeline.IsComplete).ToArray())
             timeline.Tick(deltaSeconds);
+    }
+
+    internal void Clear()
+    {
+        foreach (var timeline in _timelines)
+            timeline.Cancel();
+        _timelines.Clear();
     }
 
     private void Collect(Element Element)

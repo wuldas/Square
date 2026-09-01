@@ -50,6 +50,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private int? _inspectorHighlightDebugId;
     private bool _inspectorModeEnabled;
     private bool _inspectorOverlayDirty;
+    private int _hotReloadPending;
 
     /// <summary>主窗口。</summary>
     public AppWindow MainWindow { get; }
@@ -172,6 +173,19 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     protected override void RunCore()
     {
+        SquareHotReloadHandler.Register(this);
+        try
+        {
+            RunRegisteredApplication();
+        }
+        finally
+        {
+            SquareHotReloadHandler.Unregister(this);
+        }
+    }
+
+    private void RunRegisteredApplication()
+    {
         BackendRegistration.RegisterDefaults();
         Square.Controls.ControlRegistration.RegisterDefaults();
 
@@ -244,6 +258,117 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     /// <inheritdoc/>
     public void RequestRender() => Volatile.Write(ref _renderRequested, true);
+
+    internal void QueueHotReloadUpdate()
+    {
+        if (!IsRunning || Interlocked.Exchange(ref _hotReloadPending, 1) != 0) return;
+
+        Dispatcher.Invoke(() =>
+        {
+            Volatile.Write(ref _hotReloadPending, 0);
+            if (IsRunning) ApplyHotReload();
+        });
+        RequestRender();
+    }
+
+    private void ApplyHotReload()
+    {
+        var contentChanged = MainWindow.Content is { } content && HasHotReloadChanges(content);
+        var titleBarChanged = MainWindow.CustomTitleBar is { } titleBar && HasHotReloadChanges(titleBar);
+        if (!contentChanged && !titleBarChanged)
+        {
+            InvalidatePaintSubtree(_root);
+            RequestRender();
+            return;
+        }
+
+        ClearTransientInteractionState();
+        if (contentChanged && MainWindow.Content is { } changedContent)
+            RebuildTopLevelComponent(changedContent);
+        if (titleBarChanged && MainWindow.CustomTitleBar is { } changedTitleBar)
+            RebuildTopLevelComponent(changedTitleBar);
+
+        CssStyleReconciler.ReapplyScopesToTree(_root);
+        _root.InvalidateLayout();
+        RequestRender();
+    }
+
+    private static bool HasHotReloadChanges(Element element)
+    {
+        if (element is ISquareHotReloadComponent { HasHotReloadChanges: true }) return true;
+        foreach (var child in element.Children)
+            if (HasHotReloadChanges(child)) return true;
+        return false;
+    }
+
+    private void RebuildTopLevelComponent(Element component)
+    {
+        if (component is not ISquareHotReloadComponent hotReloadComponent)
+        {
+            Debug.WriteLine($"Square Hot Reload requires a generated top-level component: {component.GetType().FullName}");
+            return;
+        }
+
+        var lifecycle = (IComponentLifecycle)component;
+        var wasLoaded = component.IsLoaded;
+        var wasAttached = component.IsAttached;
+        if (wasLoaded) lifecycle.OnUnloaded();
+        if (wasAttached) lifecycle.OnDetached();
+        try
+        {
+            hotReloadComponent.RebuildAfterHotReload();
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"Square Hot Reload failed to rebuild {component.GetType().FullName}: {exception}");
+        }
+        finally
+        {
+            try
+            {
+                if (wasAttached) lifecycle.OnAttached();
+                if (wasLoaded) lifecycle.OnLoaded();
+            }
+            catch (Exception exception)
+            {
+                Debug.WriteLine(
+                    $"Square Hot Reload failed to restore lifecycle for {component.GetType().FullName}: {exception}");
+            }
+        }
+    }
+
+    private void ClearTransientInteractionState()
+    {
+        _focusedInput?.Unfocus();
+        _focusedInput = null;
+        _focusedEditor = null;
+        _isSelectingText = false;
+        _pendingTextSelectionPoint = null;
+        _pendingTextSelectionHit = null;
+        _textSelectionOverlayDirtyBounds = Rect.Empty;
+        ClearDocumentSelection();
+
+        _pointerDownTarget = null;
+        _draggingSplitter = null;
+        _pendingSplitterPoint = null;
+        _lastClickTarget = null;
+        _lastClickSeconds = double.NegativeInfinity;
+        UpdateHoverPath(null);
+        ClearActivePath();
+        _tooltipTarget = null;
+        _tooltipPopup.Anchor = null;
+        _tooltipPopup.Close();
+        _scheduledFrames.Clear();
+        _inspectorHighlightDebugId = null;
+        _inspectorOverlayDirty = true;
+    }
+
+    private static void InvalidatePaintSubtree(Element element)
+    {
+        element.InvalidatePaint();
+        foreach (var child in element.Children)
+            InvalidatePaintSubtree(child);
+    }
 
     /// <inheritdoc/>
     public void Close()

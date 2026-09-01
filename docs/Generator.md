@@ -9,7 +9,7 @@
 
 `Square.Compiler` 是框架核心。
 
-将 `.sqx` 在编译期转换为 C# 代码。
+将 `.sqx` / `.sqv` 在编译期转换为 C# 代码。
 
 ---
 
@@ -26,6 +26,8 @@ Square.Markup 解析 → AST
   ↓
 Roslyn 编译
 ```
+
+Debug `dotnet watch` 下，模板仍经过相同生成管线。生成程序集包含 `MetadataUpdateHandler`，模板或组件样式的方法体更新应用完成后，由桌面宿主在 UI Dispatcher 上重建顶层生成组件的后代树。
 
 ---
 
@@ -62,7 +64,7 @@ public class SqxGenerator : IIncrementalGenerator
 ### 4.1 组件类
 
 ```csharp
-public partial class MyComponent : Component
+public partial class MyComponent : UIElement
 {
     // Props
     [Prop] public ObservableValue<string> Title { get; set; } = new("");
@@ -73,12 +75,12 @@ public partial class MyComponent : Component
     // 绑定源
     public ObservableCollection<Item> Items = new();
 
-    // 构建视觉树
-    protected override void BuildElementTree() { ... }
+    // 构建元素树
+    public override void BuildElementTree() { ... }
 
     // 生命周期钩子（虚方法）
     protected override void OnPropChanged(string name) { }
-    protected override void OnAttached() { }
+    protected override void OnAttachedCore() { }
 }
 ```
 
@@ -87,11 +89,11 @@ public partial class MyComponent : Component
 生成器将 `<template>` 编译为命令式构建代码：
 
 ```csharp
-protected override void BuildElementTree()
+public override void BuildElementTree()
 {
     var view = new View();
     // <Show when={LoggedIn}>
-    _show0 = new ShowNode(() => LoggedIn.Value, () => {
+    var _show0 = new ShowNode(LoggedIn, () => {
         var text = new Text();
         text.BindText(() => UserName.Value);
         return text;
@@ -100,13 +102,26 @@ protected override void BuildElementTree()
     MyBtn = new Button();
     MyBtn.AddEventListener("click", OnClick);
     // <For each={Items}>
-    _for0 = new ForNode<Item>(Items, (it) => {
+    var _for0 = ForNode.Create(Items, (it) => {
         var text = new Text();
         text.BindText(() => it.Name);
         return text;
     });
 }
 ```
+
+结构指令节点使用局部变量，并通过 `RegisterGeneratedResource(...)` 绑定到生成子树生命周期。这样添加或删除 `Show`、`For`、`Switch`、`v-if` 或 `v-for` 时不会仅因生成字段布局变化而触发 Hot Reload rude edit。
+
+### 4.3 Debug Hot Reload
+
+每个 Debug 生成组件包含稳定的热更新成员形状：
+
+- 当前 template + component style 指纹方法。
+- 上次成功构建版本。
+- `ISquareHotReloadComponent` 重建入口。
+- 稳定存在的组件样式 AST 工厂；无 `<style>` 时返回 `null`。
+
+普通 `<script>` 方法体变化不会改变模板/样式指纹，因此 CLR 直接更新代码并请求重绘。模板或组件样式变化会释放旧生成资源、清空旧后代、重置 Slot 与 ref、执行新版 `BuildElementTree()`，然后重新应用 CSS scope。文件/类型重命名、成员删除和部分 ref 类型变化仍由 CLR 判定为需重启的 rude edit。
 
 ---
 

@@ -207,6 +207,22 @@ dotnet run
 
 如果 `.sqv` 有语法错误，编译时会直接报错并指向文件和行列号。运行后应看到一个窗口，包含标题、输入框、按钮和条件问候文本。
 
+开发桌面应用时建议在 Debug 配置下使用：
+
+```bash
+dotnet watch --project MyApp.csproj
+```
+
+`Square.Compiler` 会把 `.sqv` / `.sqx` 作为 `AdditionalFiles` 加入 watch 列表。保存普通 C#、模板或组件 `<style>` 后，Roslyn 生成并应用 metadata delta；Square 再把 UI 更新投递到窗口的 Dispatcher。整个过程仍是编译期生成 C#，不会在运行时解析模板。
+
+模板结构或组件样式变化会复用窗口的顶层生成组件实例并重建后代；窗口 `Content` / 自定义标题栏需要以生成组件作为顶层根。顶层组件字段、`ObservableValue<T>`、集合和窗口 Store 保留，但根组件与后代会重新执行 unload/detach/attach/load 生命周期，生命周期代码应支持重复挂载。后代实例、未绑定输入值、焦点、滚动位置、文本选择与运行中动画不保证保留。以下修改通常仍需重启：
+
+- 重命名或移动模板文件、重命名组件类型。
+- 删除成员、改变基类或接口。
+- 删除、改名或改变生成 `ref` 的类型。
+
+Hot Reload 仅支持非裁剪的 Debug 构建；Release、trimming、ReadyToRun 和 NativeAOT 不在支持范围内。
+
 ---
 
 ## 4. 理解 SQV 组件结构

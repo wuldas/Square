@@ -51,6 +51,8 @@ Layout Engine  (Square.Rendering, CSS 盒/flex/grid)
 - **低耦合**：具体 Backend 与 Platform 实现仅依赖 `Square` 中的抽象接口，核心不反向依赖实现程序集。
 - **NativeAOT 合规**：组件类型在编译期生成，运行时无反射解析；属性系统使用生成代码与强类型委托。
 
+Debug 桌面开发另有一条增量分支：`dotnet watch` 监视 `.sqv` / `.sqx` AdditionalFiles，Roslyn 重新生成 C# 并应用 metadata delta，`SquareHotReloadHandler` 再把更新投递到活动窗口 Dispatcher。模板或组件 `<style>` 变化时复用顶层生成组件实例并重建后代；普通 C# 方法体变化只请求重绘。该分支不引入运行时模板解析，也不进入 Release / NativeAOT 发布路径。
+
 ---
 
 ## 3. 模块划分与职责

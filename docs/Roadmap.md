@@ -17,7 +17,7 @@
 | **M5 跨平台桌面** | Linux(X11)、macOS 平台宿主；高 DPI/高刷新率打磨 | 三桌面平台 AOT 可执行均运行 | 🔄 X11 DPI/刷新率调度与 macOS Software MVP 已落地；macOS AOT/原生验收待完成 |
 | **M6 移动端与 WebAssembly** | Android / iOS / WASM 平台层（最小实现） | 目标平台可启动并渲染基础 UI | ⏳ 计划 |
 | **M7 文本与 Canvas 完整** | BiDi、Font Fallback、Caret/Selection/HitTest 完整、标准 RichTextBox/WYSIWYG 富文本模型与渲染、Canvas `CanvasRenderingContext2D` 兼容层→DrawCommand | 复杂文本/富文本编辑与 Canvas 绘图可运行 | ⏳ 计划 |
-| **M8 工具链** | 完整 Source Generator 诊断、IDE 智能提示/补全、编译期检查 | IDE 内 `.sqx` 报错可定位、可补全 | ⏳ 计划 |
+| **M8 工具链** | 完整 Source Generator 诊断、IDE 智能提示/补全、编译期检查、Debug Hot Reload | IDE 内 `.sqx` 报错可定位、可补全；桌面模板和组件样式可增量更新 | 🔄 桌面 Debug Hot Reload 已落地；补全与更多诊断继续推进 |
 | **M9 多目标输出** | WinUI 宿主、HTML、SVG 导出、Native UI adapter、Godot 嵌入等多目标路线 | Software、Native UI、Export、Embedded Host 四类目标边界清晰，至少两个目标形成闭环 | 🔄 Static HTML/Web Server 已形成首个 Native UI 输出闭环 |
 
 ---

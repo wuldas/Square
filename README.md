@@ -81,6 +81,14 @@ dotnet build Square.slnx
 dotnet run --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
 ```
 
+Debug 模式下可使用 `dotnet watch` 热更新普通 C#、`.sqx` / `.sqv` 模板和组件 `<style>`：
+
+```bash
+dotnet watch --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
+```
+
+模板或组件样式变化时，Square 复用顶层生成组件实例并重建其后代，因此顶层 C# 字段和响应式状态会保留；窗口 `Content` / 自定义标题栏需要以生成组件作为顶层根。根组件及后代会重新执行 unload/detach/attach/load 生命周期，生命周期代码应支持重复挂载。后代控件的局部状态、焦点、滚动位置和选择区不保证保留。组件或文件重命名、删除成员及部分 `ref` 结构变化仍可能要求重启。
+
 主示例可选择 CPU Skia 后端：
 
 ```bash
@@ -109,6 +117,8 @@ dotnet test Square.slnx
 ```
 
 ## NativeAOT 发布
+
+Hot Reload 仅用于框架依赖运行时的 Debug 构建，不适用于 Release、trimming 或 NativeAOT 发布。
 
 Windows x64：
 

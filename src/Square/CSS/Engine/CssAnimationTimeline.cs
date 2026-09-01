@@ -76,6 +76,12 @@ public sealed class CssAnimationTimeline
         }
     }
 
+    internal void Cancel()
+    {
+        _running = false;
+        ClearAnimatedValues();
+    }
+
     private float GetDirectedProgress(float activeElapsed)
     {
         if (_iterationCount != int.MaxValue && activeElapsed >= _duration * _iterationCount)

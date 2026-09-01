@@ -94,6 +94,10 @@ public sealed class SlotCollection
         return true;
     }
 
+    /// <summary>Allows a generated component to render its existing fragments after a Debug hot reload.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public void ResetRendered() => _rendered.Clear();
+
     private static string NormalizeName(string? name) => name?.Trim() ?? "";
     private static string DisplayName(string name) => name.Length == 0 ? "default" : name;
 }

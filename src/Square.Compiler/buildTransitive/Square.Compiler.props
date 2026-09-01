@@ -31,5 +31,6 @@
     <AdditionalFiles Include="$(MSBuildProjectDirectory)\**\*.sqv"
                      Exclude="$(DefaultItemExcludes);$(MSBuildProjectDirectory)\Public\**;$(MSBuildProjectDirectory)\Assets\**" />
     <UpToDateCheckInput Include="@(AdditionalFiles)" />
+    <Watch Include="@(AdditionalFiles)" />
   </ItemGroup>
 </Project>

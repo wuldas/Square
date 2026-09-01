@@ -456,8 +456,26 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// </summary>
     public void DiscardGeneratedSubtree()
     {
-        var children = Children.ToArray();
+        DiscardGeneratedResources();
+        foreach (var child in Children.ToArray())
+            child.DiscardGeneratedSubtree();
+        Square.CSS.Engine.CssStyleReconciler.ClearPendingForSubtree(this);
+    }
 
+    /// <summary>Detaches and permanently discards the generated children while preserving this element.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public void PrepareGeneratedSubtreeRebuild()
+    {
+        DiscardGeneratedResources();
+        var children = Children.ToArray();
+        ChildNodes.Clear();
+        foreach (var child in children)
+            child.DiscardGeneratedSubtree();
+        Square.CSS.Engine.CssStyleReconciler.ClearPendingForSubtree(this);
+    }
+
+    private void DiscardGeneratedResources()
+    {
         if (_generatedResources != null)
         {
             for (var i = _generatedResources.Count - 1; i >= 0; i--)
@@ -468,9 +486,6 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         for (var i = _bindings.Count - 1; i >= 0; i--)
             _bindings[i].Dispose();
         _bindings.Clear();
-
-        foreach (var child in children)
-            child.DiscardGeneratedSubtree();
     }
 
     /// <summary>

@@ -56,6 +56,20 @@ public static class CssStyleReconciler
         }
     }
 
+    internal static IDisposable ApplyOwnedScope(CssEngine engine, Element root)
+    {
+        try
+        {
+            ApplyScope(engine, root);
+            return new ScopeRegistration(engine, root);
+        }
+        catch
+        {
+            UnregisterScope(engine, root);
+            throw;
+        }
+    }
+
     /// <summary>刷新所有脏元素的样式，重新应用级联样式并推进动画。</summary>
     public static void Flush()
     {
@@ -222,10 +236,48 @@ public static class CssStyleReconciler
     public static void UnregisterScopesForTree(Element root)
     {
         ArgumentNullException.ThrowIfNull(root);
-        lock (Gate)
+        StyleScope[] removed;
+        lock (ApplyGate)
         {
-            Scopes.RemoveAll(scope => ReferenceEquals(FindTreeRoot(scope.Root), root));
-            DirtyElements.RemoveWhere(element => ReferenceEquals(FindTreeRoot(element), root));
+            lock (Gate)
+            {
+                removed = Scopes.Where(scope => ReferenceEquals(FindTreeRoot(scope.Root), root)).ToArray();
+                Scopes.RemoveAll(scope => removed.Contains(scope));
+                DirtyElements.RemoveWhere(element => ReferenceEquals(FindTreeRoot(element), root));
+            }
+            foreach (var scope in removed)
+                scope.Animations.Clear();
+            lock (Gate)
+                DirtyElements.RemoveWhere(element => ReferenceEquals(FindTreeRoot(element), root));
+        }
+    }
+
+    internal static void ClearPendingForSubtree(Element subtree)
+    {
+        ArgumentNullException.ThrowIfNull(subtree);
+        lock (Gate)
+            DirtyElements.RemoveWhere(element => IsAncestorOrSelf(subtree, element));
+    }
+
+    private static void UnregisterScope(CssEngine engine, Element root)
+    {
+        StyleScope? removed = null;
+        lock (ApplyGate)
+        {
+            lock (Gate)
+            {
+                var index = Scopes.FindIndex(scope =>
+                    ReferenceEquals(scope.Engine, engine) && ReferenceEquals(scope.Root, root));
+                if (index >= 0)
+                {
+                    removed = Scopes[index];
+                    Scopes.RemoveAt(index);
+                }
+                DirtyElements.RemoveWhere(element => IsAncestorOrSelf(root, element));
+            }
+            removed?.Animations.Clear();
+            lock (Gate)
+                DirtyElements.RemoveWhere(element => IsAncestorOrSelf(root, element));
         }
     }
 
@@ -354,5 +406,17 @@ public static class CssStyleReconciler
         public CssEngine Engine { get; }
         public Element Root { get; }
         public CssAnimationManager Animations { get; }
+    }
+
+    private sealed class ScopeRegistration(CssEngine engine, Element root) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            UnregisterScope(engine, root);
+        }
     }
 }

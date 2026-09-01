@@ -91,7 +91,7 @@ internal sealed class DirectiveEmitPipeline
             var condition = FindAttr(element, descriptor.PrimaryAttribute ?? "when")?.RawValue
                             ?? "new ObservableValue<bool>(false)";
             var fallback = FindAttr(element, "fallback");
-            _sb.AppendLine(indent + field + " = new ShowNode(" + condition + ", () =>");
+            _sb.AppendLine(indent + "var " + field + " = new ShowNode(" + condition + ", () =>");
             _sb.AppendLine(indent + "{");
             _emitFactoryBody(element.Children, indent + "    ", localNames);
             if (fallback?.FragmentNodes != null)
@@ -122,7 +122,7 @@ internal sealed class DirectiveEmitPipeline
             var fallback = FindAttr(element, "fallback");
             var create = tag == "Index" ? "IndexNode.Create" : "ForNode.Create";
             var keyArgument = tag == "For" && !string.IsNullOrWhiteSpace(key) ? key + ", " : "";
-            _sb.AppendLine(indent + field + " = " + create + "(" + source + ", " + keyArgument + lambda + " =>");
+            _sb.AppendLine(indent + "var " + field + " = " + create + "(" + source + ", " + keyArgument + lambda + " =>");
             _sb.AppendLine(indent + "{");
             _emitFactoryBody(element.Children, indent + "    ", AddLocals(localNames, itemLocal, indexName));
             if (fallback?.FragmentNodes != null)
@@ -139,7 +139,7 @@ internal sealed class DirectiveEmitPipeline
 
         if (tag == "Switch")
         {
-            _sb.AppendLine(indent + field + " = new SwitchNode();");
+            _sb.AppendLine(indent + "var " + field + " = new SwitchNode();");
             foreach (var child in element.Children)
             {
                 if (child is not SqxElement matchElement) continue;
@@ -176,7 +176,7 @@ internal sealed class DirectiveEmitPipeline
         }
 
         var primaryValue = FindAttr(element, descriptor.PrimaryAttribute)?.RawValue;
-        _sb.AppendLine(indent + field + " = new " + descriptor.RuntimeTypeName + "(" + primaryValue + ", () =>");
+        _sb.AppendLine(indent + "var " + field + " = new " + descriptor.RuntimeTypeName + "(" + primaryValue + ", () =>");
         _sb.AppendLine(indent + "{");
         _emitFactoryBody(element.Children, indent + "    ", localNames);
         _sb.AppendLine(indent + "});");

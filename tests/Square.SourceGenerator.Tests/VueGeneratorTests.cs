@@ -104,6 +104,71 @@ public class VueGeneratorTests
         Assert.Contains("Square.CSS.Ast.KeyFramesRule", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("Square.CSS.Engine.CssParser", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("Square.CSS.Tokenizer.CssTokenizer", generated, StringComparison.Ordinal);
+        Assert.Contains("CreateComponentStyleSheet()", generated, StringComparison.Ordinal);
+        Assert.Contains("MethodImplOptions.NoInlining", generated, StringComparison.Ordinal);
+        Assert.Contains("static readonly Square.CSS.Ast.CssStyleSheet? ComponentStyleSheet", generated,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GeneratedComponentsEmitDebugHotReloadContract()
+    {
+        const string source = "<template><View /></template>";
+
+        var generated = Assert.Single(RunGenerator(
+            new InMemoryAdditionalText("HotReloadCard.sqv", source)).GeneratedTrees)
+            .GetText().ToString();
+
+        Assert.Contains("Square.Hosting.ISquareHotReloadComponent", generated);
+        Assert.Contains("CurrentHotReloadVersion()", generated);
+        Assert.Contains("RebuildAfterHotReload()", generated);
+        Assert.Contains("PrepareGeneratedSubtreeRebuild();", generated);
+        Assert.Contains("Slots.ResetRendered();", generated);
+    }
+
+    [Fact]
+    public void CompilationEmitsSingleMetadataUpdateHandler()
+    {
+        const string source = "<template><View /></template>";
+
+        var result = RunGenerator(
+            new InMemoryAdditionalText("Second.sqv", source),
+            new InMemoryAdditionalText("First.sqv", source));
+        var generated = result.AllGeneratedTrees.Select(tree => tree.GetText().ToString()).ToArray();
+
+        Assert.Equal(1, generated.Sum(code =>
+            code.Split("MetadataUpdateHandler(typeof(Square.Hosting.SquareHotReloadHandler))").Length - 1));
+    }
+
+    [Fact]
+    public void HotReloadVersionTracksTemplateAndStyleButNotScript()
+    {
+        const string original = """
+            <template><Text text="one" /></template>
+            <script>public int Value = 1;</script>
+            <style>Text { color: red; }</style>
+            """;
+        const string scriptChanged = """
+            <template><Text text="one" /></template>
+            <script>public int Value = 2;</script>
+            <style>Text { color: red; }</style>
+            """;
+        const string templateChanged = """
+            <template><Text text="two" /></template>
+            <script>public int Value = 1;</script>
+            <style>Text { color: red; }</style>
+            """;
+        const string styleChanged = """
+            <template><Text text="one" /></template>
+            <script>public int Value = 1;</script>
+            <style>Text { color: blue; }</style>
+            """;
+
+        var originalVersion = ReadHotReloadVersion(original);
+
+        Assert.Equal(originalVersion, ReadHotReloadVersion(scriptChanged));
+        Assert.NotEqual(originalVersion, ReadHotReloadVersion(templateChanged));
+        Assert.NotEqual(originalVersion, ReadHotReloadVersion(styleChanged));
     }
 
     [Fact]
@@ -564,7 +629,8 @@ public class VueGeneratorTests
             (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
         driver = driver.RunGenerators(compilation);
         var result = driver.GetRunResult();
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var generated = Assert.Single(result.GeneratedTrees.Where(tree =>
+            !tree.FilePath.EndsWith("SquareHotReload.g.cs", StringComparison.Ordinal))).GetText().ToString();
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.Contains("__slotProps.Get<int>(\"item\")", generated);
@@ -713,7 +779,8 @@ public class VueGeneratorTests
         var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
 
         Assert.DoesNotContain("protected override void OnGeneratedDetachedCore()", generated);
-        Assert.Equal(1, generated.Split("SaveButton = null!;").Length - 1);
+        Assert.Contains("SaveButton = null!;", generated);
+        Assert.Contains("ISquareHotReloadComponent.RebuildAfterHotReload", generated);
         Assert.Contains("protected override void OnDetachedCore()", generated);
     }
 
@@ -1114,6 +1181,10 @@ public class VueGeneratorTests
         Assert.Contains(".RegisterGeneratedResource(_show", generated);
         Assert.Contains(".RegisterGeneratedResource(_for", generated);
         Assert.DoesNotContain("_generatedDirectives", generated);
+        Assert.Contains("var _show0", generated);
+        Assert.Contains("var _for0", generated);
+        Assert.DoesNotContain("private ShowNode _show", generated);
+        Assert.DoesNotContain("private IForNode _for", generated);
     }
 
     [Fact]
@@ -1150,7 +1221,21 @@ public class VueGeneratorTests
             $"Model listener must precede explicit listener: {modelIndex} !< {explicitIndex}");
     }
 
-    private static GeneratorDriverRunResult RunGenerator(params AdditionalText[] files)
+    private static string ReadHotReloadVersion(string source)
+    {
+        var generated = Assert.Single(RunGenerator(
+            new InMemoryAdditionalText("Versioned.sqv", source)).GeneratedTrees)
+            .GetText().ToString();
+        const string marker = "CurrentHotReloadVersion() => ";
+        var start = generated.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        start += marker.Length;
+        var end = generated.IndexOf('L', start);
+        Assert.True(end > start);
+        return generated.Substring(start, end - start);
+    }
+
+    private static GeneratorResult RunGenerator(params AdditionalText[] files)
     {
         var compilation = CreateCompilation("public sealed class Placeholder { }");
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
@@ -1158,7 +1243,13 @@ public class VueGeneratorTests
             files,
             (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
         driver = driver.RunGenerators(compilation);
-        return driver.GetRunResult();
+        var result = driver.GetRunResult();
+        return new GeneratorResult(
+            result.GeneratedTrees
+                .Where(tree => !tree.FilePath.EndsWith("SquareHotReload.g.cs", StringComparison.Ordinal))
+                .ToImmutableArray(),
+            result.GeneratedTrees,
+            result.Diagnostics);
     }
 
     private static CSharpCompilation CreateCompilation(string source)
@@ -1187,4 +1278,9 @@ public class VueGeneratorTests
         public override SourceText GetText(CancellationToken cancellationToken = default) =>
             SourceText.From(content, Encoding.UTF8);
     }
+
+    private sealed record GeneratorResult(
+        ImmutableArray<SyntaxTree> GeneratedTrees,
+        ImmutableArray<SyntaxTree> AllGeneratedTrees,
+        ImmutableArray<Diagnostic> Diagnostics);
 }

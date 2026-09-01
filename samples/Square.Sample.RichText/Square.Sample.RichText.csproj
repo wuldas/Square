@@ -6,7 +6,7 @@
     <OutputType Condition="'$(IsWindowsBuild)' == 'false'">Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Description>Square RichText Editor Demo</Description>
-    <PublishAot>true</PublishAot>
+    <PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
     <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>
     <OptimizationPreference>Size</OptimizationPreference>
   </PropertyGroup>

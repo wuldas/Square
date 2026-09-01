@@ -97,6 +97,8 @@ public sealed class RouterView : View
         if (entry.Definition.KeepAlive && _cache.TryGetValue(cacheKey, out var cached))
         {
             page = cached;
+            if (HasHotReloadChanges(page) && page is Square.Hosting.ISquareHotReloadComponent hotReloadComponent)
+                hotReloadComponent.RebuildAfterHotReload();
         }
         else
         {
@@ -113,6 +115,14 @@ public sealed class RouterView : View
         _activeLocation = location;
         _activeCacheKey = entry.Definition.KeepAlive ? cacheKey : null;
         if (page is IRouteAware routeAware) routeAware.OnRouteActivated(location);
+    }
+
+    private static bool HasHotReloadChanges(Element element)
+    {
+        if (element is Square.Hosting.ISquareHotReloadComponent { HasHotReloadChanges: true }) return true;
+        foreach (var child in element.Children)
+            if (HasHotReloadChanges(child)) return true;
+        return false;
     }
 
     private void DeactivateCurrent()

@@ -5,6 +5,7 @@
 
   <ItemGroup>
     <UpToDateCheckInput Include="@(AdditionalFiles)" />
+    <Watch Include="@(AdditionalFiles)" />
   </ItemGroup>
 
   <Target Name="ValidateSquareTargetPlatform" BeforeTargets="PrepareForBuild">

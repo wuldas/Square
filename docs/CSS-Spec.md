@@ -249,6 +249,8 @@ Button:active {
 - 当前不支持 HTTP/HTTPS、media 条件、`supports()`、`layer()` 条件和内存 CSS 的相对导入。
 - 顶层样式表通过 `Document.StyleSheets` 枚举，导入关系通过 `DocumentStyleSheet.Imports` 访问。
 
+Debug Hot Reload 当前支持 `.sqv` / `.sqx` 内的组件 `<style>`：样式 AST 由 Source Generator 重新生成，旧组件 scope 被注销，新 scope 在组件树重建后重新应用。`AppWindow.LoadGlobalCss(...)` 加载的独立 CSS 文件及其 `@import` 依赖暂不支持实时替换，修改后需要重启应用。
+
 ---
 
 ## 13. Animation（M2）✅ 已实现

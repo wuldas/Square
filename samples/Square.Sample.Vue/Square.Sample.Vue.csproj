@@ -7,7 +7,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Square.Sample.Vue</RootNamespace>
     <Description>Square Vue Template Sample Application</Description>
-    <PublishAot>true</PublishAot>
+    <PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
     <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>
     <OptimizationPreference>Size</OptimizationPreference>
     <DefineConstants Condition="'$(SquareTargetPlatform)' == 'Win32'">$(DefineConstants);SQUARE_SAMPLE_DIRECT2D</DefineConstants>

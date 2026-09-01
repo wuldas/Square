@@ -507,6 +507,11 @@ public sealed class CssEngine
         CssStyleReconciler.ApplyScope(this, Element);
     }
 
+    /// <summary>Applies a generated style scope and returns its ownership handle.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public IDisposable ApplyGeneratedStylesToTree(Element element) =>
+        CssStyleReconciler.ApplyOwnedScope(this, element);
+
     internal void ApplyStylesToTreeCore(Element Element)
     {
         ApplyStylesCore(Element);

@@ -793,6 +793,90 @@ public class DocumentTests
     }
 
     [Fact]
+    public void MetadataUpdateHandlerQueuesWorkOnTheApplicationDispatcher()
+    {
+        var window = new AppWindow("Hot reload");
+        window.Load(new View());
+        var application = new DesktopApplication(window);
+        var isRunning = typeof(Square.Runtime.Application).GetField(
+            "<IsRunning>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(isRunning);
+        isRunning!.SetValue(application, true);
+        SquareHotReloadHandler.Register(application);
+        try
+        {
+            SquareHotReloadHandler.UpdateApplication(null);
+
+            Assert.True(application.Dispatcher.HasWork);
+            application.Dispatcher.Run();
+            Assert.False(application.Dispatcher.HasWork);
+        }
+        finally
+        {
+            SquareHotReloadHandler.Unregister(application);
+            isRunning.SetValue(application, false);
+        }
+    }
+
+    [Fact]
+    public void DisposingGeneratedScopePreservesOtherScopesOnTheSameRoot()
+    {
+        var root = new View();
+        var component = new View();
+        var button = new Button("Styled");
+        root.Children.Add(component);
+        component.Children.Add(button);
+
+        var customEngine = new CssEngine();
+        customEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Button { color: green; background: white; }").Tokenize()).Parse());
+        customEngine.ApplyStylesToTree(component);
+
+        var generatedEngine = new CssEngine();
+        generatedEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Button { color: blue; }").Tokenize()).Parse());
+        using var generatedScope = generatedEngine.ApplyGeneratedStylesToTree(component);
+        CssStyleReconciler.ReapplyScopesToTree(root);
+        Assert.Equal("blue", button.Style.Get("color"));
+
+        generatedScope.Dispose();
+        CssStyleReconciler.ReapplyScopesToTree(root);
+
+        Assert.Equal("green", button.Style.Get("color"));
+        Assert.Equal("white", button.Style.Get("background"));
+        CssStyleReconciler.UnregisterScopesForTree(root);
+    }
+
+    [Fact]
+    public void DisposingGeneratedScopeClearsAnimatedOverrides()
+    {
+        var root = new View();
+        var button = new Button("Animated");
+        root.Children.Add(button);
+
+        var baseEngine = new CssEngine();
+        baseEngine.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "Button { opacity: 0.75; }").Tokenize()).Parse());
+        baseEngine.ApplyStylesToTree(root);
+
+        var generatedEngine = new CssEngine();
+        generatedEngine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            Button { animation: fade 10s linear infinite; }
+            @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+            """).Tokenize()).Parse());
+        var generatedScope = generatedEngine.ApplyGeneratedStylesToTree(root);
+        CssStyleReconciler.ReapplyScopesToTree(root);
+        CssStyleReconciler.TickAnimations(root, 1f);
+        Assert.NotEqual("0.75", button.Style.Get("opacity"));
+
+        generatedScope.Dispose();
+        CssStyleReconciler.ReapplyScopesToTree(root);
+
+        Assert.Equal("0.75", button.Style.Get("opacity"));
+        CssStyleReconciler.UnregisterScopesForTree(root);
+    }
+
+    [Fact]
     public void HoverFlushDoesNotReapplySiblingComponentScope()
     {
         var root = new View();

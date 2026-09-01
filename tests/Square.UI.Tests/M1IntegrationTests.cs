@@ -1130,6 +1130,55 @@ public class M1IntegrationTests
         Assert.Contains(fallbackCard.QueryAll<Square.Controls.Text>(), text => text.TextContent == "Fallback content");
     }
 
+#if DEBUG
+    [Fact]
+    public void GeneratedComponentHotReloadPreservesRootAndRendersSlotsAgain()
+    {
+        var card = new SlotCard();
+        var renderCount = 0;
+        card.Slots.Set("header", parent =>
+        {
+            renderCount++;
+            parent.Children.Add(new Square.Controls.Text("Header " + renderCount));
+        });
+        card.SetProperty("PreservedState", "kept");
+        card.BuildElementTree();
+        var oldRoot = Assert.Single(card.Children);
+
+        Assert.IsAssignableFrom<ISquareHotReloadComponent>(card).RebuildAfterHotReload();
+
+        Assert.Equal("kept", card.GetProperty<string>("PreservedState"));
+        Assert.Equal(2, renderCount);
+        Assert.Null(oldRoot.Parent);
+        Assert.NotSame(oldRoot, Assert.Single(card.Children));
+        Assert.Contains(card.QueryAll<Square.Controls.Text>(), text => text.TextContent == "Header 2");
+        CssStyleReconciler.UnregisterScopesForTree(card);
+    }
+
+    [Fact]
+    public void FailedGeneratedComponentHotReloadDiscardsPartialTree()
+    {
+        var card = new SlotCard();
+        var renderCount = 0;
+        card.Slots.Set("header", parent =>
+        {
+            renderCount++;
+            parent.Children.Add(new Square.Controls.Text("Partial"));
+            if (renderCount == 2) throw new InvalidOperationException("reload failed");
+        });
+        card.BuildElementTree();
+        var hotReload = Assert.IsAssignableFrom<ISquareHotReloadComponent>(card);
+
+        Assert.Throws<InvalidOperationException>(hotReload.RebuildAfterHotReload);
+
+        Assert.Empty(card.Children);
+        hotReload.RebuildAfterHotReload();
+        Assert.Single(card.Children);
+        Assert.Equal(3, renderCount);
+        CssStyleReconciler.UnregisterScopesForTree(card);
+    }
+#endif
+
     [Fact]
     public void GeneratedNestedRouterNavigatesWithParamsQueryLinksAndHistory()
     {

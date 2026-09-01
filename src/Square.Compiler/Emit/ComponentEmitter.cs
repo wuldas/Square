@@ -17,7 +17,6 @@ namespace Square.Compiler.Emit
         private readonly DirectiveCatalog _catalog;
         private readonly TemplateCatalog _templateCatalog;
         private DirectiveEmitPipeline _pipeline;
-        private readonly Dictionary<string, int> _structCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         private int _vforIndex;
         private int _vifIndex;
         private int _varCounter;
@@ -44,7 +43,6 @@ namespace Square.Compiler.Emit
             ResetState();
             var roots = GetTemplateRoots();
             CollectRefs(roots);
-            CountStructs(roots);
             _hasObjectBindings = HasObjectBindings(roots);
             var (scriptUsings, scriptBody) = GetScriptParts();
 
@@ -64,20 +62,29 @@ namespace Square.Compiler.Emit
             _sb.AppendLine("namespace " + _namespace + ";");
             _sb.AppendLine();
             _sb.AppendLine(_doc.Access + " partial class " + _doc.Name + " : UIElement");
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("    , Square.Hosting.ISquareHotReloadComponent");
+            _sb.AppendLine("#endif");
             _sb.AppendLine("{");
 
             EmitFields();
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+            _sb.AppendLine("#endif");
             _sb.AppendLine("    public override void BuildElementTree()");
             _sb.AppendLine("    {");
             _sb.AppendLine("        if (_visualTreeBuilt) return;");
             _sb.AppendLine("        _visualTreeBuilt = true;");
             EmitNodes(roots, "        ", "this", Array.Empty<string>());
-            if (_doc.Syntax?.Style?.Css != null)
-                _sb.AppendLine("        ApplyComponentStyles(this);");
+            _sb.AppendLine("        ApplyComponentStyles(this);");
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("        _hotReloadVersion = CurrentHotReloadVersion();");
+            _sb.AppendLine("#endif");
             _sb.AppendLine("    }");
 
             EmitScript(scriptBody);
             EmitStyleSupport();
+            EmitHotReloadSupport();
             _sb.AppendLine("}");
             return _sb.ToString();
         }
@@ -99,7 +106,6 @@ namespace Square.Compiler.Emit
             _hasObjectBindings = false;
             _vforIndex = 0;
             _vifIndex = 0;
-            _structCounts.Clear();
             _refs.Clear();
             _sb.Clear();
             _pipeline = new DirectiveEmitPipeline(
@@ -134,77 +140,15 @@ namespace Square.Compiler.Emit
             }
         }
 
-        private void CountStructs(List<SqxNode> nodes)
-        {
-            foreach (var node in nodes)
-            {
-                if (node is SqxElement element)
-                {
-                    if (_catalog.TryGet(element.TagName, out var descriptor) &&
-                        !descriptor.SkipStandaloneEmit &&
-                        descriptor.Pattern == "ControlFlowAttach")
-                    {
-                        var prefix = string.IsNullOrEmpty(descriptor.FieldPrefix) ? "_dir" : descriptor.FieldPrefix;
-                        if (!_structCounts.TryGetValue(prefix, out var count)) count = 0;
-                        _structCounts[prefix] = count + 1;
-                    }
-                    CountStructs(element.Children);
-                }
-                else if (node is TemplateForDirective)
-                {
-                    _structCounts["_vfor"] = (_structCounts.TryGetValue("_vfor", out var c) ? c : 0) + 1;
-                    CountStructs(((TemplateForDirective)node).Children);
-                }
-                else if (node is TemplateIfChainDirective ifChain)
-                {
-                    _structCounts["_vif"] = (_structCounts.TryGetValue("_vif", out var c2) ? c2 : 0) + ifChain.Branches.Count;
-                    foreach (var branch in ifChain.Branches)
-                        CountStructs(branch.Children);
-                }
-            }
-        }
-
         private void EmitFields()
         {
             _sb.AppendLine("    private bool _visualTreeBuilt;");
             foreach (var item in _refs)
                 _sb.AppendLine("    internal " + item.TypeName + " " + item.Name + " = null!;");
-
-            foreach (var descriptor in _catalog.Descriptors
-                         .Where(descriptor => descriptor.Pattern == "ControlFlowAttach" &&
-                             !string.IsNullOrWhiteSpace(descriptor.FieldPrefix) &&
-                             !string.IsNullOrWhiteSpace(descriptor.RuntimeTypeName))
-                         .GroupBy(descriptor => descriptor.FieldPrefix, StringComparer.Ordinal)
-                         .Select(group => group.First()))
-                EmitStructFields(descriptor.FieldPrefix, GetDirectiveFieldType(descriptor));
-            // Vue 专属结构节点
-            EmitStructFields("_vfor", "IForNode");
-            EmitStructFields("_vif", "ShowNode");
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("    private long _hotReloadVersion;");
+            _sb.AppendLine("#endif");
             _sb.AppendLine();
-        }
-
-        private void EmitStructFields(string prefix, string typeName)
-        {
-            var count = _structCounts.TryGetValue(prefix, out var c) ? c : 0;
-            for (var i = 0; i < count; i++)
-                _sb.AppendLine("    private " + typeName + " " + prefix + i + " = null!;");
-        }
-
-        private static string GetDirectiveFieldType(DirectiveDescriptor descriptor) =>
-            descriptor.TagName is "For" or "Index" ? "IForNode" : descriptor.RuntimeTypeName;
-
-        private void EmitDisposeFields(string prefix)
-        {
-            var count = _structCounts.TryGetValue(prefix, out var c) ? c : 0;
-            for (var i = 0; i < count; i++)
-                _sb.AppendLine("        " + prefix + i + "?.Dispose();");
-        }
-
-        private void EmitNullFields(string prefix)
-        {
-            var count = _structCounts.TryGetValue(prefix, out var c) ? c : 0;
-            for (var i = 0; i < count; i++)
-                _sb.AppendLine("        " + prefix + i + " = null!;");
         }
 
         private void EmitNodes(List<SqxNode> nodes, string indent, string parentName, IReadOnlyList<string> localNames)
@@ -487,7 +431,7 @@ namespace Square.Compiler.Emit
             var keySelector = string.IsNullOrWhiteSpace(directive.KeyExpression)
                 ? ""
                 : lambda + " => " + directive.KeyExpression + ", ";
-            _sb.AppendLine(indent + field + " = ForNode.Create(" + directive.SourceExpression + ", " + keySelector + lambda + " =>");
+            _sb.AppendLine(indent + "var " + field + " = ForNode.Create(" + directive.SourceExpression + ", " + keySelector + lambda + " =>");
             _sb.AppendLine(indent + "{");
             EmitFactoryBody(directive.Children, indent + "    ",
                 AddLocals(localNames, item, directive.IndexName));
@@ -514,7 +458,7 @@ namespace Square.Compiler.Emit
                     ? "(" + (branch.Condition ?? "false") + ")"
                     : accumulated + " || (" + (branch.Condition ?? "false") + ")";
 
-                _sb.AppendLine(indent + field + " = new ShowNode(" + condition + ", () =>");
+                _sb.AppendLine(indent + "var " + field + " = new ShowNode(" + condition + ", () =>");
                 _sb.AppendLine(indent + "{");
                 EmitFactoryBody(branch.Children, indent + "    ", localNames);
                 _sb.AppendLine(indent + "});");
@@ -535,8 +479,7 @@ namespace Square.Compiler.Emit
             if (content.Count == 1)
             {
                 var rootName = EmitFactoryRoot(content[0], indent, localNames);
-                if (_doc.Syntax?.Style?.Css != null)
-                    _sb.AppendLine(indent + "ApplyComponentStyles(" + rootName + ");");
+                _sb.AppendLine(indent + "ApplyComponentStyles(" + rootName + ");");
                 _sb.AppendLine(indent + "return " + rootName + ";");
                 return;
             }
@@ -544,8 +487,7 @@ namespace Square.Compiler.Emit
             var fragmentName = NextVariable();
             _sb.AppendLine(indent + "var " + fragmentName + " = new View();");
             EmitNodes(content, indent, fragmentName, localNames);
-            if (_doc.Syntax?.Style?.Css != null)
-                _sb.AppendLine(indent + "ApplyComponentStyles(" + fragmentName + ");");
+            _sb.AppendLine(indent + "ApplyComponentStyles(" + fragmentName + ");");
             _sb.AppendLine(indent + "return " + fragmentName + ";");
         }
 
@@ -647,17 +589,70 @@ namespace Square.Compiler.Emit
         private void EmitStyleSupport()
         {
             var style = _doc.Syntax?.Style?.Css;
-            if (style == null) return;
             _sb.AppendLine();
-            _sb.AppendLine("    private static readonly Square.CSS.Ast.CssStyleSheet ComponentStyleSheet =");
-            _sb.AppendLine("        " + StyleAstRuntimeEmitter.Emit(style) + ";");
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+            _sb.AppendLine("    private static Square.CSS.Ast.CssStyleSheet? CreateComponentStyleSheet() =>");
+            _sb.AppendLine(style == null
+                ? "        null;"
+                : "        " + StyleAstRuntimeEmitter.Emit(style) + ";");
+            _sb.AppendLine("#else");
+            _sb.AppendLine("    private static readonly Square.CSS.Ast.CssStyleSheet? ComponentStyleSheet =");
+            _sb.AppendLine(style == null
+                ? "        null;"
+                : "        " + StyleAstRuntimeEmitter.Emit(style) + ";");
+            _sb.AppendLine("    private static Square.CSS.Ast.CssStyleSheet? CreateComponentStyleSheet() => ComponentStyleSheet;");
+            _sb.AppendLine("#endif");
             _sb.AppendLine();
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+            _sb.AppendLine("#endif");
             _sb.AppendLine("    private static void ApplyComponentStyles(Element root)");
             _sb.AppendLine("    {");
+            _sb.AppendLine("        var styleSheet = CreateComponentStyleSheet();");
+            _sb.AppendLine("        if (styleSheet == null) return;");
             _sb.AppendLine("        var engine = new Square.CSS.Engine.CssEngine();");
-            _sb.AppendLine("        engine.LoadStyleSheet(ComponentStyleSheet);");
-            _sb.AppendLine("        engine.ApplyStylesToTree(root);");
+            _sb.AppendLine("        engine.LoadStyleSheet(styleSheet);");
+            _sb.AppendLine("        root.RegisterGeneratedResource(engine.ApplyGeneratedStylesToTree(root));");
             _sb.AppendLine("    }");
+        }
+
+        private void EmitHotReloadSupport()
+        {
+            var template = _doc.Syntax?.Template?.ContentText ?? string.Empty;
+            var style = _doc.Syntax?.Style?.ContentText ?? string.Empty;
+            var version = StableVersion(template + "\0" + style);
+
+            _sb.AppendLine();
+            _sb.AppendLine("#if DEBUG");
+            _sb.AppendLine("    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+            _sb.AppendLine("    private static long CurrentHotReloadVersion() => " + version + "L;");
+            _sb.AppendLine();
+            _sb.AppendLine("    bool Square.Hosting.ISquareHotReloadComponent.HasHotReloadChanges =>");
+            _sb.AppendLine("        _hotReloadVersion != CurrentHotReloadVersion();");
+            _sb.AppendLine();
+            _sb.AppendLine("    void Square.Hosting.ISquareHotReloadComponent.RebuildAfterHotReload()");
+            _sb.AppendLine("    {");
+            _sb.AppendLine("        PrepareGeneratedSubtreeRebuild();");
+            _sb.AppendLine("        Slots.ResetRendered();");
+            foreach (var item in _refs)
+                _sb.AppendLine("        " + item.Name + " = null!;");
+            _sb.AppendLine("        _visualTreeBuilt = false;");
+            _sb.AppendLine("        try");
+            _sb.AppendLine("        {");
+            _sb.AppendLine("            BuildElementTree();");
+            _sb.AppendLine("        }");
+            _sb.AppendLine("        catch");
+            _sb.AppendLine("        {");
+            _sb.AppendLine("            PrepareGeneratedSubtreeRebuild();");
+            _sb.AppendLine("            Slots.ResetRendered();");
+            foreach (var item in _refs)
+                _sb.AppendLine("            " + item.Name + " = null!;");
+            _sb.AppendLine("            _visualTreeBuilt = false;");
+            _sb.AppendLine("            throw;");
+            _sb.AppendLine("        }");
+            _sb.AppendLine("    }");
+            _sb.AppendLine("#endif");
         }
 
         private string NextVariable() => "_v" + _varCounter++;
@@ -771,6 +766,22 @@ namespace Square.Compiler.Emit
                 var hash = 17;
                 foreach (var character in value ?? "") hash = hash * 31 + character;
                 return hash;
+            }
+        }
+
+        private static long StableVersion(string value)
+        {
+            unchecked
+            {
+                const ulong offset = 14695981039346656037UL;
+                const ulong prime = 1099511628211UL;
+                var hash = offset;
+                foreach (var character in value ?? string.Empty)
+                {
+                    hash ^= character;
+                    hash *= prime;
+                }
+                return (long)hash;
             }
         }
 
