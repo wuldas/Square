@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Square.Backends.Direct2D.Tests" />
+    <InternalsVisibleTo Include="Square.Backends.Conformance.Tests" />
   </ItemGroup>
 
 </Project>

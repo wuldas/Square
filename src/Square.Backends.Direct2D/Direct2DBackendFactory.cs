@@ -4,10 +4,13 @@ using System.Runtime.Versioning;
 namespace Square.Backends.Direct2D;
 
 /// <summary>Direct2D HWND 渲染后端工厂。</summary>
-public sealed class Direct2DBackendFactory : IRenderBackendFactory
+public sealed class Direct2DBackendFactory : IRenderBackendFactory, ITextLayoutProviderSource
 {
     /// <inheritdoc/>
     public string Name => "Direct2D";
+    /// <inheritdoc/>
+    [SupportedOSPlatform("windows6.1")]
+    public ITextLayoutProvider TextLayoutProvider => DirectWriteTextLayoutProvider.Shared;
 
     /// <inheritdoc/>
     [SupportedOSPlatform("windows6.1")]

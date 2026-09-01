@@ -323,6 +323,22 @@ process.privateMemoryBytes - managed.currentBytes
 
 该差值还包含 CLR、线程栈、模块映像、JIT/AOT、内存池、映射文件以及其他进程私有内存。需要对象引用链、GC Root、分配调用栈或 Native 内存来源时，应继续使用 dotMemory、PerfView、`dotnet-gcdump`、`dotnet-dump` 或 VMMap。
 
+仓库提供 `tools/Memory/Invoke-SquareMemoryProfile.ps1` 包装 PerfView。脚本按顺序查找
+`-PerfViewPath`、`PERFVIEW_PATH`、`C:\quick\PerfView\PerfView.exe` 和 `PATH`，产物默认写入
+`artifacts/perfview/`：
+
+```powershell
+# 运行真实 DirectWrite/Direct2D 内存压力用例并采集 sampled allocation stacks
+.\tools\Memory\Invoke-SquareMemoryProfile.ps1 -Mode Allocation
+
+# 对已运行进程抓托管堆或 native OS heap
+.\tools\Memory\Invoke-SquareMemoryProfile.ps1 -Mode HeapSnapshot -ProcessId 1234
+.\tools\Memory\Invoke-SquareMemoryProfile.ps1 -Mode NativeHeap -ProcessId 1234 -DurationSeconds 30
+```
+
+`HeapSnapshot` 用于托管保留路径，`Allocation` 用于分配调用栈，`NativeHeap` 用于 DirectWrite、
+Direct2D 和 COM/native heap；它们不能互相替代。采集 ETW/native heap 通常需要管理员权限。
+
 `process` 下的指标直接来自 `System.Diagnostics.Process`。不同操作系统的统计口径并不完全一致；特别是值为 `0` 时，调用方需要将其视为“可能不可用”，不能直接得出实际内存为零的结论。
 
 ### GET /api/v1/screenshot

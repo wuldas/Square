@@ -41,13 +41,19 @@ BGRA 帧回调呈现。应用可调用 `window.UseSkiaBackend()` 选择它。该
 `TextLayout`、字符 fragment、选择区、光标、RichText 和 DrawCommand dirty bounds 共用该度量；
 CSS `line-height` 仍控制行进距离，Skia font bounds 用于计算行盒内 baseline 与实际墨迹范围。
 
-Direct2D 后端位于独立的 `Square.Backends.Direct2D` 包，仅支持 Windows/Win32。首版使用
-`ID2D1HwndRenderTarget` 直接绘制窗口，并复用现有 `TextMetrics`、`TextLayout` 和系统 glyph coverage，
-不引入 DirectWrite 布局差异。它支持 transform、矩形/几何 clip、几何/渐变/描边、group opacity、
-bitmap 与 `ContentVersion` 更新、resize/DPI 和 `D2DERR_RECREATE_TARGET` 重建；当前只声明全帧渲染，
-也不提供真实 framebuffer readback。普通平移下 glyph 原点和 baseline 会对齐到物理像素，避免
-`FillOpacityMask` 把 coverage 最后一行分配到相邻像素而使 descender 底边变淡；旋转、斜切和缩放
-仍保留浮点坐标。
+Direct2D 后端位于独立的 `Square.Backends.Direct2D` 包，仅支持 Windows/Win32。它使用
+`ID2D1HwndRenderTarget` 直接绘制窗口，并由 DirectWrite 为支持的文本统一提供 shaping、字体回退、
+line/cluster metrics、BiDi、命中测试、selection/caret 和 `DrawTextLayout`。系统字体与已加载的内存
+`FontFace` 都进入同一权威 layout snapshot；Windows 8+ 的 letter/word spacing 使用
+`IDWriteTextLayout1`，Windows 7 或暂不支持的 text-indent/布局边界整体回退 Square 原路径，不会只替换
+绘制导致几何不一致。它支持 transform、矩形/几何 clip、渐变/描边、group opacity、bitmap 版本更新、
+resize/DPI 和 `D2DERR_RECREATE_TARGET` 重建；当前只声明全帧渲染，也不提供真实 framebuffer readback。
+
+DirectWrite 的 `TextFormat` cache 上限为 128 项，`TextLayout` cache 上限为 256 项/估算 16 MiB；
+Direct2D fallback glyph cache 为 4096 项/8 MiB，image cache 为 256 项/64 MiB。动画 Bitmap 复用同一
+`ID2D1Bitmap.CopyFromMemory`，预乘上传使用最大 256 KiB 分块缓冲，不再每帧分配整图 LOH 数组。
+选区背景按视觉行合并连续 cluster，选择前景通过同一完整 layout 的 clip 重绘，避免字符间接缝和
+substring 重排导致的 shaping 差异。
 
 ---
 

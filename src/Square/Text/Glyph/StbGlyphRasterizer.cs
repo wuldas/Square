@@ -10,6 +10,12 @@ internal sealed class StbGlyphRasterizer
 {
     private readonly Dictionary<GlyphKey, RasterizedGlyph?> _cache = [];
     private readonly FontCollection _fonts = FontCollection.Shared;
+    private readonly bool _cacheGlyphs;
+
+    public StbGlyphRasterizer(bool cacheGlyphs = true)
+    {
+        _cacheGlyphs = cacheGlyphs;
+    }
 
     /// <summary>当前是否已加载任何可用字体。</summary>
     public bool IsAvailable => _fonts.HasAnyFont;
@@ -26,6 +32,7 @@ internal sealed class StbGlyphRasterizer
         var effectiveFont = entry.Family == font.Family
             ? font
             : new Font(entry.Family, font.Size, font.Weight, font.Style);
+        if (!_cacheGlyphs) return RasterizeStb(entry, effectiveFont, character);
         var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style, character);
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
@@ -33,6 +40,8 @@ internal sealed class StbGlyphRasterizer
         _cache[key] = glyph;
         return glyph;
     }
+
+    public void Clear() => _cache.Clear();
 
     private static unsafe RasterizedGlyph? RasterizeStb(FontEntry entry, Font font, char character)
     {
@@ -233,9 +242,11 @@ internal sealed class FontCollection
     private string? _cjkFamily;
     private string? _japaneseFamily;
     private string? _koreanFamily;
+    private int _customGeneration;
 
     /// <summary>是否已加载任何字体。</summary>
     public bool HasAnyFont { get; private set; }
+    internal int CustomGeneration { get { lock (_gate) return _customGeneration; } }
 
     private FontCollection()
     {
@@ -278,6 +289,22 @@ internal sealed class FontCollection
             // fallbacks for normal text, especially for private-use icon fonts.
             _fallbacks.RemoveAll(e => Normalize(e.Family) == norm);
             HasAnyFont = true;
+            _customGeneration++;
+        }
+    }
+
+    internal IReadOnlyList<CustomFontFaceData> GetCustomFaces(string family)
+    {
+        lock (_gate)
+        {
+            return _customFaces.TryGetValue(Normalize(family), out var faces)
+                ? faces.Select(face => new CustomFontFaceData(
+                    face.Family,
+                    face.GetData() ?? [],
+                    face.Offset,
+                    face.Weight,
+                    face.Style)).ToArray()
+                : [];
         }
     }
 
@@ -615,3 +642,10 @@ internal sealed class FontCollection
         return [];
     }
 }
+
+internal sealed record CustomFontFaceData(
+    string Family,
+    byte[] Data,
+    int Offset,
+    FontWeight Weight,
+    FontStyle Style);

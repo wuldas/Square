@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.Versioning;
 using Square.Backends.Direct2D;
 using Square.Graphics;
 using Square.Hosting;
 using Square.Platform;
-using Square.Text.Glyph;
 #if PLATFORM_WIN32
 using Square.Platform.Win32;
 #endif
@@ -16,6 +16,7 @@ public sealed class RealDirect2DConformanceTests
 {
     [Fact]
     [Trait("Category", "RealDirect2D")]
+    [SupportedOSPlatform("windows6.1")]
     public void WindowedContextPresentsActualDirect2DPixels()
     {
         if (!string.Equals(
@@ -26,7 +27,9 @@ public sealed class RealDirect2DConformanceTests
 
 #if PLATFORM_WIN32
         var platformFactory = new Win32PlatformFactory();
-        RenderBackendRegistry.Register(new Direct2DBackendFactory());
+        var backendFactory = new Direct2DBackendFactory();
+        RenderBackendRegistry.Register(backendFactory);
+        using var textLayoutScope = TextLayoutProviderContext.Push(backendFactory.TextLayoutProvider);
         using var host = platformFactory.CreateHost(new PlatformHostCreateInfo
         {
             Title = "Square Direct2D conformance",
@@ -39,6 +42,7 @@ public sealed class RealDirect2DConformanceTests
         host.Show();
 
         using var context = host.CreateRenderContext();
+        var direct2D = Assert.IsType<Direct2DRenderContext>(context);
         Assert.False(context.SupportsPartialRendering);
         Assert.IsNotAssignableFrom<IRenderBitmapSource>(context);
         using var image = new Bitmap(1, 1);
@@ -46,11 +50,17 @@ public sealed class RealDirect2DConformanceTests
 
         DrawFrame();
         context.Present();
+
+        Assert.Equal(1, direct2D.ImageBitmapCreationCount);
+        Assert.Equal(1, direct2D.ImageCacheCount);
+        Assert.Equal(4, direct2D.ImageCacheBytes);
+        Assert.InRange(direct2D.BitmapUploadBufferLength, 4, 256 * 1024);
         host.ShowAfterFirstFrame();
         ((IDpiResizableRenderContext)context).Resize(context.CanvasSize, context.DpiScale);
         image.SetPixels([255, 0, 255, 255]);
         DrawFrame();
         context.Present();
+        Assert.Equal(1, direct2D.ImageBitmapCreationCount);
 
         Assert.True(platformFactory.TryCaptureByProcessId(Process.GetCurrentProcess().Id, out var captured));
         using var bitmap = Assert.IsType<Bitmap>(captured);
@@ -77,11 +87,38 @@ public sealed class RealDirect2DConformanceTests
         AssertPixelNear(bitmap, host.DpiScale, 46, 24, 128, 255, 128, 12);
         AssertPixelNear(bitmap, host.DpiScale, 12, 76, 255, 128, 0, 12);
         AssertPixelNear(bitmap, host.DpiScale, 8, 76, 255, 255, 255, 8);
+        AssertPixelNear(bitmap, host.DpiScale, 55, 65, 0, 255, 255, 12);
+        AssertPixelNear(bitmap, host.DpiScale, 85, 65, 255, 255, 127, 16);
         Assert.True(CountDarkPixels(bitmap, host.DpiScale, new Rect(66, 36, 20, 18)) > 5,
             "Direct2D text coverage did not produce ink in the expected text region.");
         Assert.True(CountDarkPixels(bitmap, host.DpiScale, new Rect(96, 50, 20, 20)) > 2,
             "Direct2D supplementary-rune fallback did not produce visible ink.");
-        AssertGlyphBottomRow(bitmap, host.DpiScale);
+        Assert.True(CountDarkPixels(bitmap, host.DpiScale, new Rect(34, 70, 60, 20)) > 8,
+            "DirectWrite descender ink did not reach the expected lower text region.");
+
+        context.Clear(Color.White);
+        for (var index = 0; index < 17; index++)
+        {
+            using var stressImage = new Bitmap(1024, 1024);
+            stressImage.GetPixel(0, 0).Fill(255);
+            stressImage.MarkDirty();
+            context.DrawImage(stressImage, new Rect(index, 0, 1, 1));
+        }
+        context.Present();
+        Assert.Equal(0, direct2D.ImageCacheBytes);
+        Assert.Equal(0, direct2D.ImageCacheCount);
+        Assert.InRange(direct2D.BitmapUploadBufferLength, 4, 256 * 1024);
+
+        using (var oversizedImage = new Bitmap(4097, 4097))
+        {
+            oversizedImage.MarkDirty();
+            context.Clear(Color.White);
+            context.DrawImage(oversizedImage, new Rect(0, 0, 1, 1));
+            Assert.Equal(0, direct2D.ImageCacheCount);
+            Assert.Equal(0, direct2D.ImageCacheBytes);
+            Assert.InRange(direct2D.BitmapUploadBufferLength, 4, 256 * 1024);
+            context.Present();
+        }
 
         void DrawFrame()
         {
@@ -136,6 +173,11 @@ public sealed class RealDirect2DConformanceTests
             context.PopClip();
             context.PopClip();
             context.PopTransform();
+            context.PushTransform(Matrix3x2.CreateTranslation(-180, 0));
+            context.PushLayer(new Rect(260, 60, 20, 16), 0.5f);
+            context.FillRect(new Rect(260, 60, 20, 16), Brush.FromColor(Color.FromRgb(255, 255, 0)));
+            context.PopLayer();
+            context.PopTransform();
             context.PushTransform(Matrix3x2.CreateTranslation(10, 66));
             context.PushClip(new RectGeometry(new Rect(0, 0, 20, 20)));
             context.FillRect(new Rect(-10, -10, 40, 40), Brush.FromColor(Color.FromRgb(255, 128, 0)));
@@ -145,6 +187,11 @@ public sealed class RealDirect2DConformanceTests
                 new TextLayout("gypq", new Font("Segoe UI", 24)),
                 new Point(34, 55),
                 Brush.FromColor(Color.Black));
+            context.PushTransform(Matrix3x2.CreateTranslation(-180, 0));
+            context.PushClip(new RoundedRectGeometry(new Rect(230, 60, 20, 16), 4, 4));
+            context.FillRect(new Rect(230, 60, 20, 16), Brush.FromColor(Color.FromRgb(0, 255, 255)));
+            context.PopClip();
+            context.PopTransform();
         }
 #else
         throw new PlatformNotSupportedException("Real Direct2D conformance requires Win32.");
@@ -203,39 +250,4 @@ public sealed class RealDirect2DConformanceTests
         return count;
     }
 
-    private static void AssertGlyphBottomRow(Bitmap bitmap, float dpiScale)
-    {
-        var font = new Font("Segoe UI", 24);
-        var glyph = Assert.IsType<RasterizedGlyph>(
-            new SystemGlyphRasterizer().Rasterize(font.WithSize(font.Size * dpiScale), 'g'));
-        var baseline = 55 + TextMetrics.GetBaselineOffset(
-            font,
-            TextMetrics.GetLineHeight(font, TextLayout.DefaultLineHeight));
-        var bottomRow = (int)MathF.Round(baseline * dpiScale) + glyph.OffsetY + LastCoverageRow(glyph);
-        var left = (int)MathF.Round(34 * dpiScale) + glyph.OffsetX;
-
-        Assert.True(HasDarkPixel(bitmap, left, left + glyph.Width, bottomRow),
-            $"Direct2D dropped the glyph's final coverage row at physical y={bottomRow}.");
-        Assert.False(HasDarkPixel(bitmap, left, left + glyph.Width, bottomRow + 1),
-            "Direct2D glyph ink extended below the rasterized coverage bitmap.");
-    }
-
-    private static int LastCoverageRow(RasterizedGlyph glyph)
-    {
-        for (var y = glyph.Height - 1; y >= 0; y--)
-        for (var x = 0; x < glyph.Width; x++)
-            if (glyph.Coverage[y * glyph.Stride + x] > 0) return y;
-        return -1;
-    }
-
-    private static bool HasDarkPixel(Bitmap bitmap, int left, int right, int y)
-    {
-        if ((uint)y >= (uint)bitmap.Height) return false;
-        for (var x = Math.Max(0, left); x < Math.Min(bitmap.Width, right); x++)
-        {
-            var pixel = bitmap.GetPixel(x, y);
-            if (pixel[0] < 180 && pixel[1] < 180 && pixel[2] < 180) return true;
-        }
-        return false;
-    }
 }

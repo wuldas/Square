@@ -37,6 +37,9 @@ public static class TextMetrics
     public static FontMetrics GetFontMetrics(Font font)
     {
         ArgumentNullException.ThrowIfNull(font);
+        if (TextLayoutProviderContext.Current?.TryGetFontMetrics(font, out var scopedMetrics) == true &&
+            IsValid(scopedMetrics))
+            return scopedMetrics;
         if (_provider?.TryGetFontMetrics(font, out var metrics) == true && IsValid(metrics))
             return metrics;
 
@@ -50,6 +53,9 @@ public static class TextMetrics
     {
         ArgumentNullException.ThrowIfNull(font);
         if (IsZeroAdvanceCategory(rune)) return new GlyphMetrics(0, Rect.Empty);
+        if (TextLayoutProviderContext.Current?.TryGetGlyphMetrics(font, rune, out var scopedMetrics) == true &&
+            IsValid(scopedMetrics))
+            return scopedMetrics;
         if (_provider?.TryGetGlyphMetrics(font, rune, out var metrics) == true && IsValid(metrics))
             return metrics;
 
@@ -84,6 +90,13 @@ public static class TextMetrics
     {
         ArgumentNullException.ThrowIfNull(layout);
         if (string.IsNullOrEmpty(layout.Text)) return Rect.Empty;
+        if (layout.TryGetAuthoritativeSnapshot(out var snapshot))
+        {
+            var authoritative = snapshot.InkBounds.Offset(origin.X, origin.Y);
+            foreach (var decoration in layout.GetDecorationRects(origin))
+                authoritative = authoritative.IsEmpty ? decoration : Rect.Union(authoritative, decoration);
+            return authoritative;
+        }
 
         var lineHeight = GetLineHeight(layout.Font, layout.LineHeight);
         var lines = TextWrapping.Wrap(layout.Text, layout.MaxSize.Width,

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Square.Controls.Animation;
 using Square.Events;
@@ -162,6 +163,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         var fontSize = GetFontSize();
         var lineHeight = GetLineHeight(fontSize);
         var textColor = ControlDrawing.GetStyledColor(this, "color", Color.Black);
+        var textMaxSize = new Size(Math.Max(1, Geometry.Width - TextPaddingX * 2 - 2), float.MaxValue);
         var selectionBackground = ControlDrawing.GetStyledColor(
             this,
             Style.Get("selection-background-color") != null ? "selection-background-color" : "selection-background",
@@ -173,13 +175,15 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             if (!string.IsNullOrEmpty(Placeholder))
                 ControlDrawing.DrawText(
                     context, this, Placeholder, GetTextOrigin(fontSize, lineHeight),
-                    Color.FromRgb(117, 117, 117), fontSize, lineHeight, useStyledColor: false);
+                    Color.FromRgb(117, 117, 117), fontSize, lineHeight, useStyledColor: false,
+                    maxSize: textMaxSize);
         }
         else
         {
             var displayValue = DisplayValue;
             var selectionRects = GetSelectionRects(displayValue);
-            ControlDrawing.DrawText(context, this, displayValue, GetTextOrigin(fontSize, lineHeight), textColor, fontSize, lineHeight);
+            ControlDrawing.DrawText(context, this, displayValue, GetTextOrigin(fontSize, lineHeight), textColor,
+                fontSize, lineHeight, maxSize: textMaxSize);
             foreach (var rect in selectionRects)
                 context.FillRect(rect, new SolidColorBrush(selectionBackground));
             foreach (var rect in selectionRects)
@@ -187,7 +191,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
                 context.PushClip(rect);
                 ControlDrawing.DrawText(
                     context, this, displayValue, GetTextOrigin(fontSize, lineHeight),
-                    selectionForeground, fontSize, lineHeight, useStyledColor: false);
+                    selectionForeground, fontSize, lineHeight, useStyledColor: false, maxSize: textMaxSize);
                 context.PopClip();
             }
         }
@@ -484,7 +488,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     {
         if (DeleteSelection()) return;
         if (_caretIndex == 0) return;
-        var previous = PreviousCodePointIndex(Value, _caretIndex);
+        var previous = PreviousCaretStop(Value, _caretIndex);
         _selectionAnchor = previous;
         ReplaceSelection("");
     }
@@ -493,7 +497,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     {
         if (DeleteSelection()) return;
         if (_caretIndex >= Value.Length) return;
-        _selectionAnchor = NextCodePointIndex(Value, _caretIndex);
+        _selectionAnchor = NextCaretStop(Value, _caretIndex);
         ReplaceSelection("");
     }
 
@@ -505,8 +509,8 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             return;
         }
         var target = direction < 0
-            ? byWord ? PreviousWordIndex(Value, _caretIndex) : PreviousCodePointIndex(Value, _caretIndex)
-            : byWord ? NextWordIndex(Value, _caretIndex) : NextCodePointIndex(Value, _caretIndex);
+            ? byWord ? PreviousWordIndex(Value, _caretIndex) : PreviousCaretStop(Value, _caretIndex)
+            : byWord ? NextWordIndex(Value, _caretIndex) : NextCaretStop(Value, _caretIndex);
         MoveCaret(target, extend);
     }
 
@@ -536,8 +540,16 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private int HitTestIndex(Point point)
     {
         var displayValue = DisplayValue;
+        var fontSize = GetFontSize();
+        var lineHeight = GetLineHeight(fontSize);
+        var authoritative = CreateEditorTextLayout(displayValue, fontSize, lineHeight);
+        if (authoritative.TryGetAuthoritativeSnapshot(out var snapshot))
+        {
+            var origin = GetTextOrigin(fontSize, lineHeight);
+            return Math.Clamp(snapshot.HitTestPoint(new Point(point.X - origin.X, point.Y - origin.Y)),
+                0, displayValue.Length);
+        }
         var lines = GetLines(displayValue);
-        var lineHeight = GetLineHeight(GetFontSize());
         var lineIndex = IsMultiline
             ? Math.Clamp((int)MathF.Floor((point.Y - GetFirstLineTop(lineHeight)) / lineHeight), 0, lines.Count - 1)
             : 0;
@@ -553,6 +565,13 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         var fontSize = GetFontSize();
         var lineHeight = GetLineHeight(fontSize);
         var origin = GetTextOrigin(fontSize, lineHeight);
+        var authoritative = CreateEditorTextLayout(displayValue, fontSize, lineHeight);
+        if (authoritative.TryGetAuthoritativeSnapshot(out var snapshot))
+        {
+            foreach (var rect in snapshot.GetSelectionRects(SelectionStart, SelectionLength))
+                result.Add(rect.Offset(origin.X, origin.Y));
+            return result;
+        }
         var lines = GetLines(displayValue);
         var selectionEnd = SelectionStart + SelectionLength;
         for (var i = 0; i < lines.Count; i++)
@@ -602,6 +621,17 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         var fontSize = GetFontSize();
         var lineHeight = GetLineHeight(fontSize);
         var displayValue = DisplayValue;
+        var origin = GetTextOrigin(fontSize, lineHeight);
+        var authoritative = CreateEditorTextLayout(displayValue, fontSize, lineHeight);
+        if (authoritative.TryGetAuthoritativeSnapshot(out var snapshot))
+        {
+            var caret = snapshot.GetCaretPoint(_caretIndex);
+            return new Rect(
+                MathF.Round(origin.X + caret.X),
+                MathF.Round(origin.Y + caret.Y),
+                1,
+                Math.Max(1, Math.Min(lineHeight, Geometry.Bottom - origin.Y - caret.Y - 1)));
+        }
         var lines = GetLines(displayValue);
         var lineIndex = FindLineIndex(lines, _caretIndex);
         var line = lines[lineIndex];
@@ -704,6 +734,11 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private int HitTestLine(ReadOnlySpan<char> line, float x)
     {
         if (x <= 0) return 0;
+        var text = line.ToString();
+        var fontSize = GetFontSize();
+        var authoritative = CreateEditorTextLayout(text, fontSize, GetLineHeight(fontSize));
+        if (authoritative.TryGetAuthoritativeSnapshot(out var snapshot))
+            return snapshot.HitTestPoint(new Point(x, 0));
         var width = 0f;
         var index = 0;
         while (index < line.Length)
@@ -720,6 +755,14 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private float MeasureRange(string text, int start, int length)
     {
         if (length <= 0) return 0;
+        var fontSize = GetFontSize();
+        var authoritative = CreateEditorTextLayout(text, fontSize, GetLineHeight(fontSize));
+        if (authoritative.TryGetAuthoritativeSnapshot(out var snapshot))
+        {
+            var first = snapshot.GetCaretPoint(start);
+            var last = snapshot.GetCaretPoint(start + length, trailing: true);
+            return MathF.Abs(last.X - first.X);
+        }
         var width = 0f;
         var span = text.AsSpan(start, length);
         var index = 0;
@@ -737,6 +780,23 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         var editorFont = ControlDrawing.ResolveFont(this, GetFontSize());
         Rune.DecodeFromUtf16(character, out var rune, out _);
         return ControlDrawing.MeasureRenderedRuneAdvance(rune, editorFont);
+    }
+
+    private TextLayout CreateEditorTextLayout(string text, float fontSize, float lineHeight)
+    {
+        var font = ControlDrawing.ResolveFont(this, fontSize);
+        return new TextLayout(text, font)
+        {
+            MaxSize = new Size(Math.Max(1, Geometry.Width - TextPaddingX * 2 - 2), float.MaxValue),
+            Alignment = ControlDrawing.ResolveTextAlignment(this),
+            Direction = ControlDrawing.ResolveTextDirection(this),
+            UnicodeBidi = ControlDrawing.ResolveUnicodeBidi(this),
+            WhiteSpace = IsMultiline ? ControlDrawing.ResolveWhiteSpace(this) : TextWhiteSpaceMode.Nowrap,
+            LetterSpacing = ControlDrawing.ResolveTextLength(this, "letter-spacing", font.Size),
+            WordSpacing = ControlDrawing.ResolveTextLength(this, "word-spacing", font.Size),
+            TextTransform = ControlDrawing.ResolveTextTransform(this),
+            LineHeight = lineHeight / Math.Max(1, font.Size)
+        };
     }
 
     private float MeasureCharacterAdvanceBefore(string text, int end)
@@ -770,6 +830,39 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     {
         if (index >= text.Length) return text.Length;
         return index + (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]) ? 2 : 1);
+    }
+
+    private int PreviousCaretStop(string text, int index)
+    {
+        if (index <= 0) return 0;
+        if (TryGetEditorSnapshot(text, out var snapshot))
+            return snapshot.Lines.SelectMany(line => line.Clusters)
+                .SelectMany(cluster => new[] { cluster.StartOffset, cluster.EndOffset })
+                .Where(offset => offset < index)
+                .DefaultIfEmpty(0)
+                .Max();
+        var starts = StringInfo.ParseCombiningCharacters(text);
+        return starts.LastOrDefault(offset => offset < index);
+    }
+
+    private int NextCaretStop(string text, int index)
+    {
+        if (index >= text.Length) return text.Length;
+        if (TryGetEditorSnapshot(text, out var snapshot))
+            return snapshot.Lines.SelectMany(line => line.Clusters)
+                .SelectMany(cluster => new[] { cluster.StartOffset, cluster.EndOffset })
+                .Where(offset => offset > index)
+                .DefaultIfEmpty(text.Length)
+                .Min();
+        var starts = StringInfo.ParseCombiningCharacters(text);
+        return starts.FirstOrDefault(offset => offset > index, text.Length);
+    }
+
+    private bool TryGetEditorSnapshot(string text, out ITextLayoutSnapshot snapshot)
+    {
+        var fontSize = GetFontSize();
+        return CreateEditorTextLayout(text, fontSize, GetLineHeight(fontSize))
+            .TryGetAuthoritativeSnapshot(out snapshot);
     }
 
     private static int PreviousWordIndex(string text, int index)

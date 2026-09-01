@@ -8,6 +8,10 @@ namespace Square.Rendering;
 public sealed record TextFragment(Element Element, string Text, Font Font, Rect Bounds, IReadOnlyList<TextCharacterFragment> Characters)
 {
     private readonly int[] _textElementStarts = StringInfo.ParseCombiningCharacters(Text);
+    /// <summary>生成该片段的原始布局；存在时可在选择前景重绘中保持 shaping。</summary>
+    public TextLayout? Layout { get; init; }
+    /// <summary>原始布局在 DisplayTree 中的绘制原点。</summary>
+    public Point LayoutOrigin { get; init; }
 
     /// <summary>按坐标命中测试，返回 UTF-16 偏移。</summary>
     public int HitTestOffset(Point point)

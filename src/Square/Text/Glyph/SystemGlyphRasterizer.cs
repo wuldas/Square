@@ -31,7 +31,7 @@ public sealed partial class SystemGlyphRasterizer
 
     private readonly Dictionary<GlyphKey, RasterizedGlyph?> _cache = [];
     private readonly object _cacheGate = new();
-    private readonly StbGlyphRasterizer _stbRasterizer = new();
+    private readonly StbGlyphRasterizer _stbRasterizer;
     private readonly bool _cacheGlyphs;
 
     /// <summary>初始化实例。</summary>
@@ -39,6 +39,7 @@ public sealed partial class SystemGlyphRasterizer
     public SystemGlyphRasterizer(bool cacheGlyphs = true)
     {
         _cacheGlyphs = cacheGlyphs;
+        _stbRasterizer = new StbGlyphRasterizer(cacheGlyphs);
     }
 
     /// <summary>当前平台是否可用光栅化（Windows 或已加载字体）。</summary>
@@ -48,7 +49,10 @@ public sealed partial class SystemGlyphRasterizer
     public void Clear()
     {
         lock (_cacheGate)
+        {
             _cache.Clear();
+            _stbRasterizer.Clear();
+        }
     }
 
     /// <summary>光栅化指定字体的单个字符，返回字形位图与度量；不可用或失败时返回 null。</summary>

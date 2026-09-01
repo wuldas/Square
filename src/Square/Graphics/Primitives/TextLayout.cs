@@ -79,13 +79,17 @@ public sealed class TextLayout
         => _advanceProvider = provider ?? throw new ArgumentNullException(nameof(provider));
 
     /// <summary>测量文本尺寸。</summary>
-    public Size Measure() => MeasureCore();
+    public Size Measure() => TryGetAuthoritativeSnapshot(out var snapshot)
+        ? snapshot.Size
+        : MeasureCore();
 
     /// <summary>测量从行首到指定 UTF-16 偏移的水平距离。</summary>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="offset"/> 越界。</exception>
     public float MeasureOffset(int offset)
     {
         if (offset < 0 || offset > Text.Length) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (TryGetAuthoritativeSnapshot(out var snapshot))
+            return snapshot.MeasureOffset(offset);
         var line = EnumerateVisualLines().FirstOrDefault();
         if (line.Runes is not { Count: > 0 }) return 0;
 
@@ -106,6 +110,9 @@ public sealed class TextLayout
     {
         if (string.IsNullOrEmpty(Text)) return 0;
 
+        if (TryGetAuthoritativeSnapshot(out var snapshot))
+            return snapshot.HitTestPoint(new Point(x, 0));
+
         var line = EnumerateVisualLines().FirstOrDefault();
         if (line.Runes is not { Count: > 0 }) return 0;
         if (x <= GetLineIndent(0)) return GetVisualEdgeOffset(line.Runes[0], leading: true);
@@ -125,6 +132,8 @@ public sealed class TextLayout
     /// <summary>返回按逻辑换行、每行按视觉顺序排列的字符。</summary>
     public IReadOnlyList<TextVisualLine> GetVisualLines()
     {
+        if (TryGetAuthoritativeSnapshot(out var snapshot))
+            return CreateVisualLines(snapshot);
         var lines = TextWrapping.Wrap(Text, MaxSize.Width, (_, rune) => MeasureRuneAdvance(rune, Font),
             CreateWrappingOptions());
         var result = new List<TextVisualLine>(lines.Count);
@@ -142,6 +151,65 @@ public sealed class TextLayout
     /// <summary>枚举指定逻辑行中的视觉字符，字符偏移仍指向原始 UTF-16 文本。</summary>
     public IEnumerable<TextVisualRune> EnumerateVisualRunes(TextLineRange line) => GetVisualRunes(line);
 
+    /// <summary>按二维相对坐标命中 UTF-16 偏移。</summary>
+    public int HitTestPoint(Point point)
+    {
+        if (string.IsNullOrEmpty(Text)) return 0;
+        return TryGetAuthoritativeSnapshot(out var snapshot)
+            ? snapshot.HitTestPoint(point)
+            : HitTestOffset(point.X);
+    }
+
+    /// <summary>返回 UTF-16 偏移对应的 caret 位置。</summary>
+    public Point GetCaretPoint(int utf16Offset, bool trailing = false)
+    {
+        if (utf16Offset < 0 || utf16Offset > Text.Length)
+            throw new ArgumentOutOfRangeException(nameof(utf16Offset));
+        if (TryGetAuthoritativeSnapshot(out var snapshot))
+            return snapshot.GetCaretPoint(utf16Offset, trailing);
+        return new Point(MeasureOffset(utf16Offset), 0);
+    }
+
+    /// <summary>返回 UTF-16 范围的选择矩形。</summary>
+    public IReadOnlyList<Rect> GetSelectionRects(int start, int length)
+    {
+        if (start < 0 || length < 0 || start > Text.Length - length)
+            throw new ArgumentOutOfRangeException(nameof(start));
+        if (length == 0) return [];
+        if (TryGetAuthoritativeSnapshot(out var snapshot))
+            return snapshot.GetSelectionRects(start, length);
+
+        var end = start + length;
+        var lineHeight = TextMetrics.GetLineHeight(Font, LineHeight);
+        var result = new List<Rect>();
+        var lines = GetVisualLines();
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+        {
+            var line = lines[lineIndex];
+            var x = GetLineOriginX(0, lineIndex, line.Width);
+            foreach (var rune in line.Runes)
+            {
+                if (rune.EndOffset > start && rune.StartOffset < end)
+                    result.Add(new Rect(x, lineIndex * lineHeight, rune.Advance, lineHeight));
+                x += rune.Advance;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>尝试获取当前后端的权威布局快照。</summary>
+    public bool TryGetAuthoritativeSnapshot(out ITextLayoutSnapshot snapshot)
+    {
+        var provider = TextLayoutProviderContext.Current;
+        if (provider != null && provider.TryCreateLayout(this, out var resolved) && resolved != null)
+        {
+            snapshot = resolved;
+            return true;
+        }
+        snapshot = null!;
+        return false;
+    }
+
     private Size MeasureCore()
     {
         if (string.IsNullOrEmpty(Text))
@@ -157,6 +225,32 @@ public sealed class TextLayout
         var constrainWidth = float.IsFinite(maxWidth) && maxWidth > 0;
         var wrapped = lines.Count > Text.Count(character => character == '\n') + 1;
         return new Size(constrainWidth && wrapped ? maxWidth : widestLine, lines.Count * lineHeight);
+    }
+
+    private IReadOnlyList<TextVisualLine> CreateVisualLines(ITextLayoutSnapshot snapshot)
+    {
+        var result = new List<TextVisualLine>(snapshot.Lines.Count);
+        foreach (var line in snapshot.Lines)
+        {
+            var runes = new List<TextVisualRune>(line.Clusters.Count);
+            foreach (var cluster in line.Clusters)
+            {
+                if (cluster.StartOffset < 0 || cluster.StartOffset >= Text.Length ||
+                    cluster.EndOffset <= cluster.StartOffset || cluster.EndOffset > Text.Length)
+                    continue;
+                runes.Add(new TextVisualRune(
+                    cluster.Rune,
+                    cluster.StartOffset,
+                    cluster.EndOffset,
+                    cluster.Bounds.Width,
+                    cluster.Direction));
+            }
+            result.Add(new TextVisualLine(
+                new TextLineRange(line.StartOffset, line.EndOffset, line.Width),
+                runes,
+                GetLineIndent(result.Count)));
+        }
+        return result;
     }
 
     private IReadOnlyList<TextVisualRune> GetVisualRunes(TextLineRange line)

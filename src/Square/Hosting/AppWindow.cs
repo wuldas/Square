@@ -20,6 +20,7 @@ public sealed class AppWindow : IRenderBackendApplication
     private readonly int _initialWidth;
     private readonly int _initialHeight;
     private string _title;
+    private string _renderBackend = "Software";
     private Size _clientSize;
     private float _dpiScale = 1f;
     private AppWindowState _state;
@@ -83,7 +84,17 @@ public sealed class AppWindow : IRenderBackendApplication
     internal bool IsModal { get; set; }
 
     /// <summary>渲染后端名称。</summary>
-    public string RenderBackend { get; set; } = "Software";
+    public string RenderBackend
+    {
+        get => _renderBackend;
+        set
+        {
+            if (_runtime?.IsRunning == true)
+                throw new InvalidOperationException("The render backend cannot be changed while the application is running.");
+            ArgumentException.ThrowIfNullOrWhiteSpace(value);
+            _renderBackend = value;
+        }
+    }
 
     /// <summary>软件渲染表面类型。</summary>
     public SoftwareRenderSurfaceKind SoftwareSurface { get; set; } = SoftwareRenderSurfaceKind.Auto;

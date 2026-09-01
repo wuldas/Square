@@ -17,16 +17,29 @@ namespace Square.Backends.Direct2D;
 [SupportedOSPlatform("windows6.1")]
 internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizableRenderContext
 {
+    internal const long MaxGlyphCacheBytes = 8 * 1024 * 1024;
+    internal const int MaxGlyphCacheEntries = 4096;
+    internal const long MaxImageCacheBytes = 64 * 1024 * 1024;
+    internal const int MaxImageCacheEntries = 256;
+    private const int BitmapUploadBufferBytes = 256 * 1024;
+
     private readonly IComObject<ID2D1Factory> _factory;
     private readonly IntPtr _windowHandle;
     private readonly bool _vsync;
     private readonly Action? _requestRender;
     private readonly SystemGlyphRasterizer _glyphRasterizer = new(cacheGlyphs: false);
     private readonly Dictionary<Bitmap, CachedBitmap> _imageCache = [];
+    private readonly LinkedList<Bitmap> _imageLru = [];
     private readonly Dictionary<GlyphCacheKey, CachedGlyph> _glyphCache = [];
+    private readonly LinkedList<GlyphCacheKey> _glyphLru = [];
     private readonly Stack<Matrix3x2> _transformStack = [];
     private readonly Stack<NativeState> _nativeStateStack = [];
     private IComObject<ID2D1HwndRenderTarget>? _target;
+    private IComObject<ID2D1SolidColorBrush>? _solidBrush;
+    private byte[]? _bitmapUploadBuffer;
+    private long _imageCacheBytes;
+    private long _glyphCacheBytes;
+    private int _imageBitmapCreationCount;
     private Matrix3x2 _currentTransform = Matrix3x2.Identity;
     private Size _canvasSize;
     private float _dpiScale;
@@ -55,6 +68,12 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     public Size CanvasSize => _canvasSize;
     public float DpiScale => _dpiScale;
     public bool SupportsPartialRendering => false;
+    internal int ImageCacheCount => _imageCache.Count;
+    internal long ImageCacheBytes => _imageCacheBytes;
+    internal int GlyphCacheCount => _glyphCache.Count;
+    internal long GlyphCacheBytes => _glyphCacheBytes;
+    internal int ImageBitmapCreationCount => _imageBitmapCreationCount;
+    internal int BitmapUploadBufferLength => _bitmapUploadBuffer?.Length ?? 0;
 
     public void PushTransform(Matrix3x2 matrix)
     {
@@ -80,15 +99,21 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
 
     public void PushClip(Geometry geometry)
     {
+        if (geometry is RectGeometry rect)
+        {
+            PushClip(rect.Rect);
+            return;
+        }
         EnsureDrawing();
         var mask = CreateGeometry(geometry);
         IComObject<ID2D1Layer>? layer = null;
         try
         {
-            layer = CreateLayer();
+            var contentBounds = GetGeometryBounds(mask.Object);
+            layer = CreateLayer(GetLayerSize(contentBounds));
             var parameters = new D2D1_LAYER_PARAMETERS
             {
-                contentBounds = InfiniteRect,
+                contentBounds = ToRect(contentBounds),
                 geometricMask = ComObject.ToComInstanceOfTypeNoAddRef<ID2D1Geometry>(mask.Object),
                 maskAntialiasMode = D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                 maskTransform = IdentityMatrix,
@@ -221,6 +246,13 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         EnsureDrawing();
         if (string.IsNullOrEmpty(text.Text)) return;
         using var nativeBrush = CreateBrush(brush);
+        if (ReferenceEquals(TextLayoutProviderContext.Current, DirectWriteTextLayoutProvider.Shared) &&
+            DirectWriteTextLayoutProvider.Shared.TryDraw(text, _target!.Object, origin, nativeBrush.Object))
+        {
+            foreach (var rect in text.GetDecorationRects(origin))
+                _target.Object.FillRectangle(ToRect(rect), nativeBrush.Object);
+            return;
+        }
         var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width, (offset, rune) =>
             TextLayout.MeasureRuneAdvance(rune, text.Font), text.WrappingOptions);
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight);
@@ -240,22 +272,29 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
                 {
                     var rune = visualRune.Glyph;
                     var glyph = GetOrCreateGlyph(text.Font, rune.IsBmp ? (char)rune.Value : '\ufffd');
-                    if (glyph is { Width: > 0, Height: > 0 })
+                    try
                     {
-                        var glyphX = SnapTextCoordinate(x, _currentTransform.M31);
-                        var glyphBaseline = SnapTextCoordinate(baseline, _currentTransform.M32);
-                        var destination = new D2D_RECT_F(
-                            glyphX + glyph.OffsetX,
-                            glyphBaseline + glyph.OffsetY,
-                            glyphX + glyph.OffsetX + glyph.Width,
-                            glyphBaseline + glyph.OffsetY + glyph.Height);
-                        var source = new D2D_RECT_F(0, 0, glyph.Width, glyph.Height);
-                        _target.Object.FillOpacityMask(
-                            glyph.Bitmap!.Object,
-                            nativeBrush.Object,
-                            D2D1_OPACITY_MASK_CONTENT.D2D1_OPACITY_MASK_CONTENT_TEXT_NATURAL,
-                            (IntPtr)(&destination),
-                            (IntPtr)(&source));
+                        if (glyph is { Width: > 0, Height: > 0 })
+                        {
+                            var glyphX = SnapTextCoordinate(x, _currentTransform.M31);
+                            var glyphBaseline = SnapTextCoordinate(baseline, _currentTransform.M32);
+                            var destination = new D2D_RECT_F(
+                                glyphX + glyph.OffsetX,
+                                glyphBaseline + glyph.OffsetY,
+                                glyphX + glyph.OffsetX + glyph.Width,
+                                glyphBaseline + glyph.OffsetY + glyph.Height);
+                            var source = new D2D_RECT_F(0, 0, glyph.Width, glyph.Height);
+                            _target.Object.FillOpacityMask(
+                                glyph.Bitmap!.Object,
+                                nativeBrush.Object,
+                                D2D1_OPACITY_MASK_CONTENT.D2D1_OPACITY_MASK_CONTENT_TEXT_NATURAL,
+                                (IntPtr)(&destination),
+                                (IntPtr)(&source));
+                        }
+                    }
+                    finally
+                    {
+                        if (glyph?.IsTransient == true) glyph.Dispose();
                     }
                     x += visualRune.Advance;
                 }
@@ -275,18 +314,25 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         EnsureDrawing();
         if (image is not Bitmap bitmap || bitmap.IsDisposed || dest.IsEmpty) return;
         var cached = GetOrCreateBitmap(bitmap);
-        _target!.DrawBitmap(
-            cached.Bitmap,
-            1f,
-            D2D1_BITMAP_INTERPOLATION_MODE.D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-            ToRect(dest),
-            ToRect(source ?? new Rect(0, 0, bitmap.Width, bitmap.Height)));
+        try
+        {
+            _target!.DrawBitmap(
+                cached.Bitmap,
+                1f,
+                D2D1_BITMAP_INTERPOLATION_MODE.D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                ToRect(dest),
+                ToRect(source ?? new Rect(0, 0, bitmap.Width, bitmap.Height)));
+        }
+        finally
+        {
+            if (cached.IsTransient) cached.Dispose();
+        }
     }
 
     public void PushLayer(Rect bounds, float opacity)
     {
         EnsureDrawing();
-        var layer = CreateLayer();
+        var layer = CreateLayer(GetLayerSize(bounds));
         var parameters = new D2D1_LAYER_PARAMETERS
         {
             contentBounds = ToRect(bounds),
@@ -358,6 +404,7 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         var result = _target!.Object.EndDraw(IntPtr.Zero, IntPtr.Zero);
         _drawing = false;
         HandleDrawResult(result, "Failed to present the Direct2D frame.");
+        if (_target != null) PruneDisposedImages();
     }
 
     public void Resize(Size canvasSize)
@@ -367,11 +414,15 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     {
         ThrowIfDisposed();
         FinishPendingDraw();
+        var dpiChanged = _dpiScale != NormalizeDpiScale(dpiScale);
         _canvasSize = canvasSize;
         _dpiScale = NormalizeDpiScale(dpiScale);
         ResetStacks();
-        _glyphRasterizer.Clear();
-        ClearGlyphCache();
+        if (dpiChanged)
+        {
+            _glyphRasterizer.Clear();
+            ClearGlyphCache();
+        }
         if (_target == null)
         {
             CreateTarget();
@@ -395,6 +446,7 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         ReleaseDeviceResources();
         _factory.Dispose();
         _glyphRasterizer.Clear();
+        _bitmapUploadBuffer = null;
     }
 
     private void EnsureDrawing()
@@ -478,8 +530,14 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
 
     private NativeBrush CreateSolidBrush(Color color)
     {
-        var native = _target!.CreateSolidColorBrush(ToColor(color), null);
-        return new NativeBrush(native, native.Object);
+        if (_solidBrush == null)
+            _solidBrush = _target!.CreateSolidColorBrush(ToColor(color), null);
+        else
+        {
+            var nativeColor = ToColor(color);
+            _solidBrush.Object.SetColor(in nativeColor);
+        }
+        return new NativeBrush(null, _solidBrush.Object);
     }
 
     private IComObject<ID2D1GradientStopCollection> CreateGradientStops(
@@ -531,9 +589,10 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         return _factory.CreateStrokeStyle(properties, dashes);
     }
 
-    private IComObject<ID2D1Layer> CreateLayer()
+    private IComObject<ID2D1Layer> CreateLayer(Size size)
     {
-        var result = _target!.Object.CreateLayer(IntPtr.Zero, out var layer);
+        var desiredSize = new D2D_SIZE_F(Math.Max(1, size.Width), Math.Max(1, size.Height));
+        var result = _target!.Object.CreateLayer((IntPtr)(&desiredSize), out var layer);
         result.ThrowOnError();
         return new ComObject<ID2D1Layer>(layer);
     }
@@ -667,50 +726,79 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
 
     private CachedBitmap GetOrCreateBitmap(Bitmap bitmap)
     {
-        if (_imageCache.TryGetValue(bitmap, out var cached) && cached.Version == bitmap.ContentVersion)
-            return cached;
-        cached?.Dispose();
-        var premultiplied = Premultiply(bitmap.Pixels);
-        fixed (byte* pixels = premultiplied)
+        if (_imageCache.TryGetValue(bitmap, out var cached))
         {
-            var properties = new D2D1_BITMAP_PROPERTIES
+            TouchImage(cached);
+            if (cached.Version != bitmap.ContentVersion)
             {
-                pixelFormat = new D2D1_PIXEL_FORMAT
-                {
-                    format = DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode = D2D1_ALPHA_MODE.D2D1_ALPHA_MODE_PREMULTIPLIED
-                },
-                dpiX = 96,
-                dpiY = 96
-            };
-            var native = _target!.CreateBitmap(
-                new D2D_SIZE_U(bitmap.Width, bitmap.Height),
-                (IntPtr)pixels,
-                (uint)bitmap.Stride,
-                properties);
-            cached = new CachedBitmap(bitmap.ContentVersion, native);
-            _imageCache[bitmap] = cached;
+                UploadBitmap(bitmap, cached.Bitmap.Object);
+                cached.Version = bitmap.ContentVersion;
+            }
             return cached;
         }
+
+        var properties = new D2D1_BITMAP_PROPERTIES
+        {
+            pixelFormat = new D2D1_PIXEL_FORMAT
+            {
+                format = DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode = D2D1_ALPHA_MODE.D2D1_ALPHA_MODE_PREMULTIPLIED
+            },
+            dpiX = 96,
+            dpiY = 96
+        };
+        var native = _target!.CreateBitmap(new D2D_SIZE_U(bitmap.Width, bitmap.Height), properties);
+        _imageBitmapCreationCount++;
+        try
+        {
+            UploadBitmap(bitmap, native.Object);
+        }
+        catch
+        {
+            native.Dispose();
+            throw;
+        }
+        var bytes = checked((long)bitmap.Stride * bitmap.Height);
+        if (bytes > MaxImageCacheBytes)
+            return new CachedBitmap(bitmap.ContentVersion, native, bytes, null, isTransient: true);
+        var node = _imageLru.AddFirst(bitmap);
+        cached = new CachedBitmap(bitmap.ContentVersion, native, bytes, node, isTransient: false);
+        _imageCache.Add(bitmap, cached);
+        _imageCacheBytes += bytes;
+        TrimImages(cached);
+        return cached;
     }
 
     private CachedGlyph? GetOrCreateGlyph(Font font, char character)
     {
         var physicalSize = font.Size * _dpiScale;
-        var key = new GlyphCacheKey(font.Family, physicalSize, font.Weight, font.Style, character);
-        if (_glyphCache.TryGetValue(key, out var cached)) return cached;
+        var key = new GlyphCacheKey(
+            font.Family,
+            physicalSize,
+            font.Weight,
+            font.Style,
+            character,
+            FontCollection.Shared.IsCustomFamily(font.Family) ? FontCollection.Shared.CustomGeneration : 0);
+        if (_glyphCache.TryGetValue(key, out var cached))
+        {
+            TouchGlyph(cached);
+            return cached;
+        }
         var rasterized = _glyphRasterizer.Rasterize(font.WithSize(physicalSize), character);
         if (rasterized == null) return null;
         if (rasterized.Width == 0 || rasterized.Height == 0)
         {
+            var node = _glyphLru.AddFirst(key);
             cached = new CachedGlyph(null, 0, 0,
-                rasterized.OffsetX / _dpiScale, rasterized.OffsetY / _dpiScale);
+                rasterized.OffsetX / _dpiScale, rasterized.OffsetY / _dpiScale, 0, node, isTransient: false);
             _glyphCache[key] = cached;
+            TrimGlyphs(cached);
             return cached;
         }
 
         fixed (byte* coverage = rasterized.Coverage)
         {
+            var bytes = checked((long)rasterized.Stride * rasterized.Height);
             var properties = new D2D1_BITMAP_PROPERTIES
             {
                 pixelFormat = new D2D1_PIXEL_FORMAT
@@ -731,9 +819,57 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
                 rasterized.Width / _dpiScale,
                 rasterized.Height / _dpiScale,
                 rasterized.OffsetX / _dpiScale,
-                rasterized.OffsetY / _dpiScale);
+                rasterized.OffsetY / _dpiScale,
+                bytes,
+                bytes > MaxGlyphCacheBytes ? null : _glyphLru.AddFirst(key),
+                isTransient: bytes > MaxGlyphCacheBytes);
+            if (cached.IsTransient) return cached;
             _glyphCache[key] = cached;
+            _glyphCacheBytes += cached.Bytes;
+            TrimGlyphs(cached);
             return cached;
+        }
+    }
+
+    private void UploadBitmap(Bitmap bitmap, ID2D1Bitmap target)
+    {
+        var chunkWidth = Math.Max(1, Math.Min(bitmap.Width, BitmapUploadBufferBytes / 4));
+        for (var left = 0; left < bitmap.Width; left += chunkWidth)
+        {
+            var width = Math.Min(chunkWidth, bitmap.Width - left);
+            var chunkStride = checked(width * 4);
+            var rowsPerChunk = Math.Max(1, BitmapUploadBufferBytes / chunkStride);
+            var bufferLength = checked(chunkStride * Math.Min(rowsPerChunk, bitmap.Height));
+            if (_bitmapUploadBuffer == null || _bitmapUploadBuffer.Length < bufferLength)
+                _bitmapUploadBuffer = new byte[bufferLength];
+
+            for (var top = 0; top < bitmap.Height; top += rowsPerChunk)
+            {
+                var rowCount = Math.Min(rowsPerChunk, bitmap.Height - top);
+                for (var row = 0; row < rowCount; row++)
+                {
+                    var source = bitmap.Pixels.AsSpan((top + row) * bitmap.Stride + left * 4, chunkStride);
+                    var destination = _bitmapUploadBuffer.AsSpan(row * chunkStride, chunkStride);
+                    Premultiply(source, destination);
+                }
+                fixed (byte* pixels = _bitmapUploadBuffer)
+                {
+                    var rect = new D2D_RECT_U((uint)left, (uint)top, (uint)(left + width), (uint)(top + rowCount));
+                    target.CopyFromMemory((IntPtr)(&rect), (IntPtr)pixels, (uint)chunkStride).ThrowOnError();
+                }
+            }
+        }
+    }
+
+    private static void Premultiply(ReadOnlySpan<byte> source, Span<byte> destination)
+    {
+        for (var index = 0; index + 3 < source.Length; index += 4)
+        {
+            var alpha = source[index + 3];
+            destination[index] = (byte)(source[index] * alpha / 255);
+            destination[index + 1] = (byte)(source[index + 1] * alpha / 255);
+            destination[index + 2] = (byte)(source[index + 2] * alpha / 255);
+            destination[index + 3] = alpha;
         }
     }
 
@@ -772,7 +908,11 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         foreach (var bitmap in _imageCache.Values)
             bitmap.Dispose();
         _imageCache.Clear();
+        _imageLru.Clear();
+        _imageCacheBytes = 0;
         ClearGlyphCache();
+        _solidBrush?.Dispose();
+        _solidBrush = null;
         _target?.Dispose();
         _target = null;
         _drawing = false;
@@ -783,6 +923,8 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         foreach (var glyph in _glyphCache.Values)
             glyph.Dispose();
         _glyphCache.Clear();
+        _glyphLru.Clear();
+        _glyphCacheBytes = 0;
     }
 
     private void ResetStacks()
@@ -806,27 +948,57 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         }
         if (disposed == null) return;
         foreach (var bitmap in disposed)
-            _imageCache.Remove(bitmap);
+        {
+            if (!_imageCache.Remove(bitmap, out var cached)) continue;
+            _imageLru.Remove(cached.Node!);
+            _imageCacheBytes -= cached.Bytes;
+        }
+    }
+
+    private void TouchImage(CachedBitmap cached)
+    {
+        _imageLru.Remove(cached.Node!);
+        _imageLru.AddFirst(cached.Node!);
+    }
+
+    private void TrimImages(CachedBitmap protectedEntry)
+    {
+        while ((_imageCache.Count > MaxImageCacheEntries || _imageCacheBytes > MaxImageCacheBytes) &&
+               _imageLru.Last is { } last)
+        {
+            if (ReferenceEquals(_imageCache[last.Value], protectedEntry) && _imageCache.Count == 1) break;
+            var key = last.Value;
+            _imageLru.RemoveLast();
+            if (!_imageCache.Remove(key, out var victim)) continue;
+            _imageCacheBytes -= victim.Bytes;
+            victim.Dispose();
+        }
+    }
+
+    private void TouchGlyph(CachedGlyph cached)
+    {
+        _glyphLru.Remove(cached.Node!);
+        _glyphLru.AddFirst(cached.Node!);
+    }
+
+    private void TrimGlyphs(CachedGlyph protectedEntry)
+    {
+        while ((_glyphCache.Count > MaxGlyphCacheEntries || _glyphCacheBytes > MaxGlyphCacheBytes) &&
+               _glyphLru.Last is { } last)
+        {
+            if (ReferenceEquals(_glyphCache[last.Value], protectedEntry) && _glyphCache.Count == 1) break;
+            var key = last.Value;
+            _glyphLru.RemoveLast();
+            if (!_glyphCache.Remove(key, out var victim)) continue;
+            _glyphCacheBytes -= victim.Bytes;
+            victim.Dispose();
+        }
     }
 
     private D2D_SIZE_U GetPhysicalSize()
         => new(
             Math.Max(1, (int)MathF.Ceiling(_canvasSize.Width * _dpiScale)),
             Math.Max(1, (int)MathF.Ceiling(_canvasSize.Height * _dpiScale)));
-
-    private static byte[] Premultiply(byte[] pixels)
-    {
-        var result = new byte[pixels.Length];
-        for (var index = 0; index + 3 < pixels.Length; index += 4)
-        {
-            var alpha = pixels[index + 3];
-            result[index] = (byte)(pixels[index] * alpha / 255);
-            result[index + 1] = (byte)(pixels[index + 1] * alpha / 255);
-            result[index + 2] = (byte)(pixels[index + 2] * alpha / 255);
-            result[index + 3] = alpha;
-        }
-        return result;
-    }
 
     private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)
         => !float.IsFinite(text.MaxSize.Width) || text.MaxSize.Width <= lineWidth
@@ -902,8 +1074,32 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private static readonly D2D_MATRIX_3X2_F IdentityMatrix = ToMatrix(Matrix3x2.Identity);
-    private static readonly D2D_RECT_F InfiniteRect =
-        new(-float.MaxValue / 4, -float.MaxValue / 4, float.MaxValue / 4, float.MaxValue / 4);
+    private Rect GetGeometryBounds(ID2D1Geometry geometry)
+    {
+        geometry.GetBounds(IntPtr.Zero, out var bounds).ThrowOnError();
+        return new Rect(bounds.left, bounds.top, Math.Max(0, bounds.right - bounds.left),
+            Math.Max(0, bounds.bottom - bounds.top));
+    }
+
+    private Size GetLayerSize(Rect bounds)
+    {
+        var transformed = TransformBounds(bounds, _currentTransform);
+        var visible = Rect.Intersect(transformed, new Rect(Point.Zero, _canvasSize));
+        return visible.IsEmpty ? new Size(1, 1) : visible.Size;
+    }
+
+    private static Rect TransformBounds(Rect rect, Matrix3x2 transform)
+    {
+        var topLeft = Vector2.Transform(new Vector2(rect.Left, rect.Top), transform);
+        var topRight = Vector2.Transform(new Vector2(rect.Right, rect.Top), transform);
+        var bottomRight = Vector2.Transform(new Vector2(rect.Right, rect.Bottom), transform);
+        var bottomLeft = Vector2.Transform(new Vector2(rect.Left, rect.Bottom), transform);
+        var left = Math.Min(Math.Min(topLeft.X, topRight.X), Math.Min(bottomRight.X, bottomLeft.X));
+        var top = Math.Min(Math.Min(topLeft.Y, topRight.Y), Math.Min(bottomRight.Y, bottomLeft.Y));
+        var right = Math.Max(Math.Max(topLeft.X, topRight.X), Math.Max(bottomRight.X, bottomLeft.X));
+        var bottom = Math.Max(Math.Max(topLeft.Y, topRight.Y), Math.Max(bottomRight.Y, bottomLeft.Y));
+        return new Rect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+    }
 
     private enum NativeStateKind
     {
@@ -912,7 +1108,7 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         OpacityLayer
     }
 
-    private sealed class NativeState(
+    private readonly struct NativeState(
         NativeStateKind kind,
         IComObject<ID2D1Layer>? layer = null,
         NativeGeometry? geometry = null) : IDisposable
@@ -927,12 +1123,25 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     }
 
     private readonly record struct GlyphCacheKey(
-        string Family, float Size, FontWeight Weight, FontStyle Style, char Character);
+        string Family,
+        float Size,
+        FontWeight Weight,
+        FontStyle Style,
+        char Character,
+        int FontGeneration);
 
-    private sealed class CachedBitmap(long version, IComObject<ID2D1Bitmap> bitmap) : IDisposable
+    private sealed class CachedBitmap(
+        long version,
+        IComObject<ID2D1Bitmap> bitmap,
+        long bytes,
+        LinkedListNode<Bitmap>? node,
+        bool isTransient) : IDisposable
     {
-        public long Version { get; } = version;
+        public long Version { get; set; } = version;
         public IComObject<ID2D1Bitmap> Bitmap { get; } = bitmap;
+        public long Bytes { get; } = bytes;
+        public LinkedListNode<Bitmap>? Node { get; } = node;
+        public bool IsTransient { get; } = isTransient;
         public void Dispose() => Bitmap.Dispose();
     }
 
@@ -941,20 +1150,26 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         float width,
         float height,
         float offsetX,
-        float offsetY) : IDisposable
+        float offsetY,
+        long bytes,
+        LinkedListNode<GlyphCacheKey>? node,
+        bool isTransient) : IDisposable
     {
         public IComObject<ID2D1Bitmap>? Bitmap { get; } = bitmap;
         public float Width { get; } = width;
         public float Height { get; } = height;
         public float OffsetX { get; } = offsetX;
         public float OffsetY { get; } = offsetY;
+        public long Bytes { get; } = bytes;
+        public LinkedListNode<GlyphCacheKey>? Node { get; } = node;
+        public bool IsTransient { get; } = isTransient;
         public void Dispose() => Bitmap?.Dispose();
     }
 
-    private sealed class NativeBrush(IComObject owner, ID2D1Brush value) : IDisposable
+    private sealed class NativeBrush(IComObject? owner, ID2D1Brush value) : IDisposable
     {
         public ID2D1Brush Object { get; } = value;
-        public void Dispose() => owner.Dispose();
+        public void Dispose() => owner?.Dispose();
     }
 
     private sealed class NativeGeometry(IComObject owner, ID2D1Geometry value) : IDisposable

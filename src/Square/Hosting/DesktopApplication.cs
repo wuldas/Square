@@ -188,6 +188,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         BackendRegistration.RegisterDefaults();
         Square.Controls.ControlRegistration.RegisterDefaults();
+        var renderBackend = MainWindow.RenderBackend;
+        using var textLayoutScope = RenderBackendRegistry.Get(renderBackend) is ITextLayoutProviderSource source
+            ? TextLayoutProviderContext.Push(source.TextLayoutProvider)
+            : null;
 
         MainWindow.RegisterGlobalCssScope(_root);
         _document.Build();
@@ -200,7 +204,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         try
         {
             _hostCreateInfo.Title = MainWindow.Title;
-            _hostCreateInfo.RenderBackend = MainWindow.RenderBackend;
+            _hostCreateInfo.RenderBackend = renderBackend;
             _hostCreateInfo.TitleStyle = MainWindow.TitleStyle;
             _hostCreateInfo.BorderStyle = MainWindow.BorderStyle;
             _host = PlatformRegistry.Get().CreateHost(_hostCreateInfo);
@@ -420,6 +424,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 }
 
                 // Fallback: re-render the display tree into a software capture context.
+                using var textLayoutScope = TextLayoutProviderContext.Suppress();
                 using var captureContext = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
                 {
                     CanvasSize = _host.ClientSize,
@@ -1781,6 +1786,28 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         Point visualOffset)
     {
         var characters = fragment.Characters;
+        if (fragment.Layout != null)
+        {
+            foreach (var selectionRect in fragment.Layout.GetSelectionRects(startOffset, endOffset - startOffset))
+            {
+                var layoutBounds = selectionRect.Offset(fragment.LayoutOrigin.X, fragment.LayoutOrigin.Y);
+                var bounds = Translate(layoutBounds, visualOffset);
+                foreach (var character in characters)
+                {
+                    if (character.EndOffset <= startOffset || character.StartOffset >= endOffset) continue;
+                    if (character.Bounds.Bottom < layoutBounds.Top || character.Bounds.Top > layoutBounds.Bottom ||
+                        character.Bounds.Right < layoutBounds.Left - 0.01f ||
+                        character.Bounds.Left > layoutBounds.Right + 0.01f)
+                        continue;
+                    bounds = Rect.Union(bounds, Translate(character.SelectionBounds, visualOffset));
+                }
+                context.FillRect(bounds, background);
+                context.PushClip(bounds);
+                context.DrawText(fragment.Layout, fragment.LayoutOrigin + visualOffset, foreground);
+                context.PopClip();
+            }
+            return;
+        }
         var index = 0;
         while (index < characters.Count)
         {

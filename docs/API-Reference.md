@@ -1471,10 +1471,21 @@ public sealed class TextLayout
     public float LineHeight { get; set; }   // 倍数，默认 DefaultLineHeight
 
     public Size Measure();
+    public float MeasureOffset(int utf16Offset);
+    public int HitTestOffset(float x);
+    public int HitTestPoint(Point point);
+    public Point GetCaretPoint(int utf16Offset, bool trailing = false);
+    public IReadOnlyList<Rect> GetSelectionRects(int start, int length);
+    public bool TryGetAuthoritativeSnapshot(out ITextLayoutSnapshot snapshot);
     public static float DefaultLineHeight { get; }
     public static float MeasureRuneAdvance(Rune rune, float fontSize);
 }
 ```
+
+渲染后端可通过 `ITextLayoutProviderSource` 在应用运行 scope 中提供 `ITextLayoutProvider`。
+同一 `ITextLayoutSnapshot` 同时承载测量、line/cluster、ink bounds、hit test、caret 和 selection rect，
+避免布局与绘制分别使用不同字体度量。Direct2D 后端使用有界 DirectWrite snapshot cache；不支持的
+布局选项返回 `false` 并整体回退 Square 默认实现。
 
 ### IRenderBackendFactory / RenderBackendRegistry
 

@@ -23,6 +23,7 @@
     <InternalsVisibleTo Include="Square.UI.Tests" />
     <InternalsVisibleTo Include="Square.DevTools.Tests" />
     <InternalsVisibleTo Include="Square.Backends.Skia" />
+    <InternalsVisibleTo Include="Square.Backends.Direct2D" />
   </ItemGroup>
 
   <ItemGroup>

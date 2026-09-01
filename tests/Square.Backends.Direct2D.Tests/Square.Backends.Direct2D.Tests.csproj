@@ -16,4 +16,9 @@
     <ProjectReference Include="..\..\src\Square.Backends.Direct2D\Square.Backends.Direct2D.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\..\tools\Square.FontComparison\Assets\Fonts\Inter-Regular.ttf"
+             Link="Fixtures\Inter-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

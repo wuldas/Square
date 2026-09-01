@@ -78,7 +78,7 @@ window.UseDirect2DBackend();
 new DesktopApplication(window).Run();
 ```
 
-Direct2D 首版使用 `ID2D1HwndRenderTarget` 直接绘制 Win32 窗口，支持当前 `IRenderContext` 的几何、渐变、描边、clip、group opacity、bitmap 和文本 coverage。它只声明全帧渲染；`CaptureRendererBitmapAsync()` 暂时使用 Software DisplayTree 重放，而真实 D2D 验证使用窗口截图。
+Direct2D 使用 `ID2D1HwndRenderTarget` 直接绘制 Win32 窗口，并以 DirectWrite 统一普通文本的 shaping、测量、换行、cluster、BiDi、命中、selection/caret 和绘制；已加载的内存 `FontFace` 也进入 DirectWrite custom collection。暂不支持的文本选项整体回退 Square 原路径。该后端只声明全帧渲染；`CaptureRendererBitmapAsync()` 暂时使用 Software DisplayTree 重放，真实 D2D/DirectWrite 验证使用窗口截图。
 
 ### 2.3 编写入口
 

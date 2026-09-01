@@ -469,6 +469,42 @@ public sealed class DisplayTree
     {
         var text = command.Text.Text;
         if (string.IsNullOrEmpty(text)) return null;
+        if (command.Text.TryGetAuthoritativeSnapshot(out var authoritative))
+        {
+            var authoritativeCharacters = authoritative.Lines
+                .SelectMany(line => line.Clusters)
+                .Select(cluster =>
+                {
+                    var bounds = cluster.Bounds.Offset(command.Origin.X, command.Origin.Y);
+                    var glyph = TextMetrics.GetGlyphMetrics(command.Text.Font, cluster.Rune).InkBounds;
+                    var ink = new Rect(
+                        bounds.X + glyph.X,
+                        bounds.Y + TextMetrics.GetBaselineOffset(command.Text.Font, cluster.Bounds.Height) + glyph.Y,
+                        glyph.Width,
+                        glyph.Height);
+                    var selection = ink.IsEmpty ? bounds : Rect.Union(bounds, ink);
+                    return new TextCharacterFragment(
+                        cluster.StartOffset,
+                        cluster.EndOffset,
+                        bounds,
+                        selection)
+                    {
+                        Direction = cluster.Direction
+                    };
+                })
+                .ToArray();
+            if (authoritativeCharacters.Length == 0) return null;
+            return new TextFragment(
+                element,
+                text,
+                command.Text.Font,
+                new Rect(command.Origin, authoritative.Size),
+                authoritativeCharacters)
+            {
+                Layout = command.Text,
+                LayoutOrigin = command.Origin
+            };
+        }
 
         var lineHeight = TextMetrics.GetLineHeight(command.Text.Font, command.Text.LineHeight);
         var maxWidth = command.Text.MaxSize.Width;
@@ -518,7 +554,11 @@ public sealed class DisplayTree
             command.Origin.Y,
             maxRight - command.Origin.X,
             bottom - command.Origin.Y);
-        return new TextFragment(element, text, command.Text.Font, boundsAll, characters);
+        return new TextFragment(element, text, command.Text.Font, boundsAll, characters)
+        {
+            Layout = command.Text,
+            LayoutOrigin = command.Origin
+        };
     }
 
     private static float GetTextAlignmentOffset(TextLayout text, float lineWidth)
