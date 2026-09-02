@@ -48,6 +48,7 @@ public sealed class ChromeUserAgentFormControlTests
         Assert.Equal("#767676", input.Style.Get("border-top-color"));
         Assert.Equal("Arial", input.Style.Get("font-family"));
         Assert.Equal("13.3333px", input.Style.Get("font-size"));
+        Assert.Equal("21px", input.Style.Get("min-height"));
 
         Assert.Equal("auto", textArea.Style.Get("appearance"));
         Assert.Equal("Field", textArea.Style.Get("background-color"));

@@ -46,6 +46,7 @@ internal static class CssUserAgentStyles
             cursor: text;
             font-family: Arial;
             font-size: 13.3333px;
+            min-height: 21px;
             padding: 1px 2px;
             border: 2px inset #767676;
             background-color: Field;

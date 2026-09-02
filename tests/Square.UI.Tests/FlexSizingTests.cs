@@ -127,9 +127,41 @@ public class FlexSizingTests
         input.Style.Set("font-size", "48px");
         Layout(root, new Size(300, 100));
 
-        Assert.True(defaultHeight >= 21);
+        Assert.Equal(appearance == "auto" ? 21 : 42, defaultHeight);
         Assert.True(input.Geometry.Height > defaultHeight);
         Assert.True(input.Geometry.Height >= 62);
+    }
+
+    [Fact]
+    public void BareInputUsesAReadableUserAgentHeight()
+    {
+        var root = new View();
+        root.Style.CssText = "display: flex; flex-direction: column;";
+        var input = new Input { Placeholder = "KeepAlive note" };
+        root.Children.Add(input);
+        new CssEngine().ApplyStylesToTree(root);
+
+        Layout(root, new Size(300, 100));
+
+        Assert.Equal(21, input.Geometry.Height);
+    }
+
+    [Fact]
+    public void BareInputKeepsItsUserAgentMinimumWhenColumnIsConstrained()
+    {
+        var root = new View();
+        root.Style.CssText = "display: flex; flex-direction: column; height: 48px; gap: 6px;";
+        var routeLabel = new Square.Controls.Text("Current route") { Style = { CssText = "height: 17px;" } };
+        var input = new Input { Placeholder = "KeepAlive note" };
+        var draftLabel = new Square.Controls.Text("Saved") { Style = { CssText = "height: 14px;" } };
+        root.Children.Add(routeLabel);
+        root.Children.Add(input);
+        root.Children.Add(draftLabel);
+        new CssEngine().ApplyStylesToTree(root);
+
+        Layout(root, new Size(300, 48));
+
+        Assert.Equal(21, input.Geometry.Height);
     }
 
     [Fact]
