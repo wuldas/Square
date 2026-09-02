@@ -102,6 +102,20 @@ public abstract class UIElement : Element
         return Math.Clamp(height, MinHeight, MaxHeight);
     }
 
+    /// <summary>同步派发无载荷的组件自定义事件。</summary>
+    protected void Emit(ComponentEvent componentEvent)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        DispatchEvent(componentEvent.CreateEvent());
+    }
+
+    /// <summary>同步派发带强类型载荷的组件自定义事件。</summary>
+    protected void Emit<TDetail>(ComponentEvent<TDetail> componentEvent, TDetail detail)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        DispatchEvent(componentEvent.CreateEvent(detail));
+    }
+
     /// <inheritdoc />
     public override bool HasCustomMeasure => true;
 

@@ -509,6 +509,38 @@ public class EventTarget
 
 传播：捕获 → 目标 →（若 `Bubbles`）冒泡。父链由 `GetEventParent()` 提供（`Element.Parent`，否则 `OwnerDocument`）。
 
+### ComponentEvent / CustomEvent / Emit
+
+组件自定义事件复用 `EventTarget`，但使用静态契约提供生成期发现与 Detail 类型检查：
+
+```csharp
+public sealed class ComponentEvent
+{
+    public ComponentEvent(string name);
+    public string Name { get; }
+}
+
+public sealed class ComponentEvent<TDetail>
+{
+    public ComponentEvent(string name);
+    public string Name { get; }
+}
+
+public sealed class CustomEvent<TDetail> : Event
+{
+    public TDetail Detail { get; }
+}
+```
+
+生成组件继承的 `UIElement` 提供：
+
+```csharp
+protected void Emit(ComponentEvent componentEvent);
+protected void Emit<TDetail>(ComponentEvent<TDetail> componentEvent, TDetail detail);
+```
+
+事件名必须为小写 kebab-case，且要被生成器与语言服务提取时应在契约构造器中使用字符串字面量。组件事件同步派发且默认不可取消，派发路径只有组件自身，不进入祖先捕获或冒泡阶段；父模板 listener 直接注册到子组件实例。已声明事件可使用无参 handler、`Action<Event>` 或匹配的 `Action<CustomEvent<TDetail>>`，生成监听资源在组件生成子树永久丢弃时自动释放。
+
 ### StandardEvents
 
 ```csharp

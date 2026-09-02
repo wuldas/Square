@@ -1,7 +1,7 @@
 <template>
   <View class="app">
     <Text class="app-title" text="Square Framework Vue Samples" />
-    <Tabs :paths="TabPaths" :pageFactories="TabPages" initialPath="/text">
+    <Tabs :paths="TabPaths" :pageFactories="TabPages" initialPath="/text" @selected="OnTabSelected">
       <template v-slot:tabs>
         <Button class="tab-button">Text</Button>
         <Button class="tab-button">Controls</Button>
@@ -13,6 +13,7 @@
         <Button class="tab-button">Overflow</Button>
       </template>
     </Tabs>
+    <Text class="tab-status" :text="SelectedTabStatus" />
   </View>
 </template>
 <script lang="csharp">
@@ -36,8 +37,13 @@
     static () => new SignalsSamplesPage(),
     static () => new OverflowSamplesPage()
   ]);
+  public ObservableValue<string> SelectedTabStatus = new("Selected tab: 0");
+
+  private void OnTabSelected(CustomEvent<int> e) =>
+    SelectedTabStatus.Value = "Selected tab: " + e.Detail;
 </script>
 <style>
   .app { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
   .app-title { color: #202124; font-size: 22px; }
+  .tab-status { color: #475467; font-size: 13px; }
 </style>

@@ -1,0 +1,32 @@
+<template>
+  <View class="component-event-emitter">
+    <Text class="component-event-title" text="Child component" />
+    <View class="component-event-actions">
+      <Button onClick={Increment}>Emit count-changed</Button>
+      <Button onClick={Reset}>Emit reset</Button>
+    </View>
+  </View>
+</template>
+<script lang="csharp">
+  public static readonly ComponentEvent<int> CountChangedEvent = new("count-changed");
+  public static readonly ComponentEvent ResetEvent = new("reset");
+
+  private int _count;
+
+  private void Increment()
+  {
+    _count++;
+    Emit(CountChangedEvent, _count);
+  }
+
+  private void Reset()
+  {
+    _count = 0;
+    Emit(ResetEvent);
+  }
+</script>
+<style>
+  .component-event-emitter { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #d0d5dd; border-radius: 6px; }
+  .component-event-title { color: #344054; font-size: 14px; }
+  .component-event-actions { display: flex; flex-direction: row; gap: 8px; }
+</style>

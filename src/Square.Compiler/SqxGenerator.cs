@@ -73,10 +73,11 @@ public sealed class SqxGenerator : IIncrementalGenerator
             var semanticAnalyzer = new TemplateSemanticAnalyzer();
             var semanticInputs = files.Select(file => (file.Path, file.Content, file.Namespace)).ToArray();
             var contracts = semanticAnalyzer.BuildPropContracts(compilation, semanticInputs);
+            var eventContracts = semanticAnalyzer.BuildEventContracts(compilation, semanticInputs);
             var generatedTypes = semanticAnalyzer.BuildGeneratedTypeNames(semanticInputs);
             var slotContracts = semanticAnalyzer.BuildSlotContracts(compilation);
             foreach (var file in files)
-                Generate(productionContext, compilation, file, contracts, generatedTypes, slotContracts, catalog);
+                Generate(productionContext, compilation, file, contracts, eventContracts, generatedTypes, slotContracts, catalog);
         });
     }
 
@@ -85,6 +86,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
         Compilation compilation,
         SqxInput input,
         IReadOnlyDictionary<string, TemplatePropDescriptor[]> contracts,
+        IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> eventContracts,
         IReadOnlyCollection<string> generatedTypes,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, TemplateSlotDescriptor>> slotContracts,
         DirectiveCatalog catalog)
@@ -97,7 +99,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
             ValidateRefNames(context, input, document);
             ValidateSlotScopes(context, input, document, slotContracts);
             code = DirectiveValidator.Validate(context, input.Path, input.Content, document, catalog)
-                ? new ComponentEmitter(document, input.Namespace, catalog).Emit()
+                ? new ComponentEmitter(document, input.Namespace, catalog, eventContracts).Emit()
                 : "// Generator error: unsupported directive shape\n// Path: " + input.Path;
             if (input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase))
                 ReportSemanticDiagnostics(context, compilation, input, code, generatedTypes);
@@ -513,7 +515,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
 
     private static bool IsMissingGeneratedTypeDiagnostic(Diagnostic diagnostic, IReadOnlyCollection<string> generatedTypes)
     {
-        if (diagnostic.Id != "CS0246") return false;
+        if (diagnostic.Id is not ("CS0246" or "CS0103")) return false;
         var message = diagnostic.GetMessage();
         var firstQuote = message.IndexOfAny(new[] { '\'', '“' });
         if (firstQuote < 0) return false;
@@ -521,7 +523,15 @@ public sealed class SqxGenerator : IIncrementalGenerator
         var secondQuote = message.IndexOf(closingQuote, firstQuote + 1);
         if (secondQuote <= firstQuote + 1) return false;
         var typeName = message.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
-        return generatedTypes.Contains(typeName) || generatedTypes.Any(name => name.EndsWith("." + typeName, StringComparison.Ordinal));
+        if (!generatedTypes.Contains(typeName) &&
+            !generatedTypes.Any(name => name.EndsWith("." + typeName, StringComparison.Ordinal)))
+            return false;
+        if (diagnostic.Id != "CS0103") return true;
+
+        var sourceText = diagnostic.Location.SourceTree?.GetText();
+        if (sourceText == null) return false;
+        var line = sourceText.Lines.GetLineFromPosition(diagnostic.Location.SourceSpan.Start).ToString();
+        return line.IndexOf(".Listen(" + typeName + ".", StringComparison.Ordinal) >= 0;
     }
 
     private static uint StableHash(string value)

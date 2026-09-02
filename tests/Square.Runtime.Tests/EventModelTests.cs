@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Square.Events;
+using Square.UI;
 using Xunit;
 
 namespace Square.Runtime.Tests;
@@ -414,10 +415,87 @@ public class EventModelTests
         Assert.Equal(new[] { "CLICK" }, target.RegisteredEventTypes);
     }
 
+    [Fact]
+    public void ComponentEmitDeliversTypedDetailWithoutBubbling()
+    {
+        var parent = new TestComponent();
+        var child = new TestComponent();
+        parent.Children.Add(child);
+        CustomEvent<int>? received = null;
+        Event? baseReceived = null;
+        var parentCalls = 0;
+        var parentCaptureCalls = 0;
+        using var subscription = child.Listen(TestComponent.SelectedEvent, e => received = e);
+        using var baseSubscription = child.Listen(TestComponent.SelectedEvent, (Event e) => baseReceived = e);
+        parent.AddEventListener("selected", _ => parentCalls++);
+        parent.AddEventListener("selected", _ => parentCaptureCalls++, useCapture: true);
+
+        child.EmitSelected(7);
+
+        Assert.NotNull(received);
+        Assert.Equal(7, received!.Detail);
+        Assert.Same(received, baseReceived);
+        Assert.Same(child, received.Target);
+        Assert.False(received.Bubbles);
+        Assert.False(received.Cancelable);
+        Assert.Equal(0, parentCalls);
+        Assert.Equal(0, parentCaptureCalls);
+    }
+
+    [Fact]
+    public void ComponentEmitCreatesFreshEventInstances()
+    {
+        var component = new TestComponent();
+        var events = new List<CustomEvent<int>>();
+        component.Listen(TestComponent.SelectedEvent, events.Add);
+
+        component.EmitSelected(1);
+        component.EmitSelected(2);
+
+        Assert.Equal(2, events.Count);
+        Assert.NotSame(events[0], events[1]);
+        Assert.Equal(new[] { 1, 2 }, events.Select(item => item.Detail));
+    }
+
+    [Fact]
+    public void ComponentEventSubscriptionDisposalStopsNoDetailHandler()
+    {
+        var component = new TestComponent();
+        var calls = 0;
+        var subscription = component.Listen(TestComponent.ClosedEvent, () => calls++);
+
+        component.EmitClosed();
+        subscription.Dispose();
+        component.EmitClosed();
+
+        Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("ItemSelected")]
+    [InlineData("item--selected")]
+    [InlineData("item_selected")]
+    public void ComponentEventRejectsNonKebabCaseNames(string name)
+    {
+        Assert.Throws<ArgumentException>(() => new ComponentEvent(name));
+    }
+
     private sealed class TestNode : EventTarget
     {
         public TestNode? Parent { get; set; }
         protected override EventTarget? GetEventParent() => Parent;
+    }
+
+    private sealed class TestComponent : UIElement
+    {
+        public static readonly ComponentEvent<int> SelectedEvent = new("selected");
+        public static readonly ComponentEvent ClosedEvent = new("closed");
+
+        public void EmitSelected(int value) => Emit(SelectedEvent, value);
+        public void EmitClosed() => Emit(ClosedEvent);
+
+        public override void BuildElementTree() { }
     }
 
     private sealed class ValueEqualListener : IEventListener

@@ -360,7 +360,52 @@ private void OnClick(Event e) { }
 ```
 
 - DOM 事件提供 `Target`、`CurrentTarget`、`EventPhase`、`StopPropagation()` 与 `PreventDefault()`。
-- `TunnelAndBubble` 事件按根→目标隧道、目标处理、目标父级→根冒泡；`Handled` 抑制后续普通 handler，仅 `handledEventsToo` 观察者仍可收到事件。
+- 事件传播遵循捕获→目标→冒泡；`StopPropagation()` 停止后续目标传播，`StopImmediatePropagation()` 同时停止当前目标的后续监听器。
+
+#### 5.4.1 组件自定义事件
+
+自定义组件以静态契约声明可输出的事件：
+
+```csharp
+public static readonly ComponentEvent<int> SelectedEvent = new("selected");
+public static readonly ComponentEvent ClosedEvent = new("closed");
+
+private void Select(int index)
+{
+    SelectedIndex = index;
+    Emit(SelectedEvent, index);
+}
+```
+
+调用方监听：
+
+```xml
+<!-- SQX -->
+<Tabs onSelected={OnSelected} onClosed={OnClosed} />
+```
+
+```vue
+<!-- SQV -->
+<Tabs @selected="OnSelected" @closed="OnClosed" />
+```
+
+```csharp
+private void OnSelected(CustomEvent<int> e)
+{
+    var index = e.Detail;
+}
+
+private void OnClosed() { }
+```
+
+- 运行时事件名使用小写 kebab-case，例如 `selected`、`item-selected`。
+- 契约声明中的事件名应使用字符串字面量，生成器与语言服务据此提取静态契约；动态名称只保留运行时字符串事件能力。
+- SQX 将 `item-selected` 写为 `onItemSelected`；SQV 写为 `@item-selected`。
+- `Emit` 同步派发，组件应先更新状态，再派发事件。
+- 每次 `Emit` 创建新的事件实例；静态字段保存的是事件契约，不是可重复派发的 `Event`。
+- 组件事件默认 `Bubbles == false`、`Cancelable == false`，派发路径只有组件自身，不进入祖先捕获或冒泡阶段。
+- 已声明事件由生成器发射强类型契约监听；未声明事件继续按字符串事件处理以保持兼容。
+- 无直接组件关系或跨线程通信使用 `Signal<T>`，不使用组件 emit。
 
 ### 5.5 双向（显式）
 

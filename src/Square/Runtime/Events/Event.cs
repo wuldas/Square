@@ -81,6 +81,7 @@ public class Event
 
     internal bool PropagationStopped => _propagationStopped;
     internal bool ImmediatePropagationStopped => _immediatePropagationStopped;
+    internal bool TargetOnly { get; private set; }
 
     /// <summary>阻止默认行为（仅当 <see cref="Cancelable"/> 且非 passive 监听时有效）。</summary>
     public void PreventDefault()
@@ -104,6 +105,8 @@ public class Event
     public IReadOnlyList<EventTarget> ComposedPath() => _path ?? Array.Empty<EventTarget>();
 
     internal void SetPath(IReadOnlyList<EventTarget> path) => _path = path;
+
+    internal void SetTargetOnly() => TargetOnly = true;
 
     internal void ResetDispatchFlags()
     {

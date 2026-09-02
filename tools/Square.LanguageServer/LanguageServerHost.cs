@@ -284,10 +284,22 @@ public sealed class LanguageServerHost
         var position = parameters.GetProperty("position");
         var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
         var context = TemplateCompletionService.GetContext(document.Text, offset, GetSourcePath(uri));
-        var completionItems = TemplateCompletionService.GetItems(context, document.Text).ToList();
+        TemplateComponentEventDescriptor? currentComponentEvent = null;
+        if (context.Kind == TemplateCompletionKind.EventHandler &&
+            _componentIndex.TryGetEvents(context.TagName, out var handlerEvents))
+        {
+            var eventName = NormalizeComponentEventName(context.AttributeName);
+            currentComponentEvent = handlerEvents.FirstOrDefault(componentEvent =>
+                NormalizeEventAlias(componentEvent.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase));
+        }
+        var completionItems = (currentComponentEvent == null
+                ? TemplateCompletionService.GetItems(context, document.Text)
+                : TemplateCompletionService.GetItems(context, document.Text, currentComponentEvent))
+            .ToList();
         if (context.Kind is TemplateCompletionKind.Tag or
             TemplateCompletionKind.Attribute or
-            TemplateCompletionKind.Binding)
+            TemplateCompletionKind.Binding or
+            TemplateCompletionKind.Event)
         {
             if (context.Kind == TemplateCompletionKind.Tag)
             {
@@ -303,7 +315,8 @@ public sealed class LanguageServerHost
             }
             else
             {
-                if (_componentIndex.TryGetProps(context.TagName, out var props))
+                if (context.Kind is TemplateCompletionKind.Attribute or TemplateCompletionKind.Binding &&
+                    _componentIndex.TryGetProps(context.TagName, out var props))
                 {
                     var existing = new HashSet<string>(
                         context.ExistingAttributes.Select(NormalizeComponentPropertyName),
@@ -332,6 +345,32 @@ public sealed class LanguageServerHost
                                 "Dynamic " + item.Prop.TypeName +
                                 (item.Prop.Required ? " (required)" : string.Empty),
                                 item.Name)));
+                }
+
+                if (context.Kind is TemplateCompletionKind.Attribute or TemplateCompletionKind.Event &&
+                    _componentIndex.TryGetEvents(context.TagName, out var events))
+                {
+                    var existingEvents = new HashSet<string>(
+                        context.ExistingAttributes.Select(NormalizeComponentEventName),
+                        StringComparer.OrdinalIgnoreCase);
+                    completionItems.AddRange(events
+                        .Where(componentEvent =>
+                            !existingEvents.Contains(NormalizeEventAlias(componentEvent.Name)))
+                        .Select(componentEvent => new
+                        {
+                            Event = componentEvent,
+                            Name = context.IsSqv ? componentEvent.Name : componentEvent.SqxName
+                        })
+                        .Where(item => item.Name.StartsWith(
+                            context.Prefix,
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(item => new TemplateCompletionItem(
+                            item.Name,
+                            23,
+                            item.Event.HasDetail
+                                ? "CustomEvent<" + item.Event.DetailTypeName + ">"
+                                : "Event",
+                            item.Name)));
                 }
             }
         }
@@ -408,6 +447,27 @@ public sealed class LanguageServerHost
         var modifier = name.IndexOf('.');
         return modifier < 0 ? name : name.Substring(0, modifier);
     }
+
+    private static string NormalizeComponentEventName(string name)
+    {
+        if (name.StartsWith("@", StringComparison.Ordinal)) name = name.Substring(1);
+        else if (name.StartsWith("v-on:", StringComparison.OrdinalIgnoreCase))
+            name = name.Substring("v-on:".Length);
+        else if (name.StartsWith("on", StringComparison.OrdinalIgnoreCase) && name.Length > 2)
+            name = name.Substring(2);
+        var modifier = name.IndexOf('.');
+        if (modifier >= 0) name = name.Substring(0, modifier);
+        return new string(name
+            .Where(character => character != '-')
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+    }
+
+    private static string NormalizeEventAlias(string name) =>
+        new string((name ?? string.Empty)
+            .Where(character => character != '-')
+            .Select(char.ToLowerInvariant)
+            .ToArray());
 
     private static int GetOffset(string text, int line, int character)
     {

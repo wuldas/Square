@@ -156,7 +156,7 @@ public static class TemplateCompletionService
                         string.Empty,
                         Array.Empty<string>(),
                         offset < text.Length && text[offset] == '>');
-                if (element.ContainsEventValue(offset))
+                if (element.TryGetEventValue(offset, out var eventValue))
                 {
                     var prefix = GetTokenPrefix(text, offset, out _);
                     return new TemplateCompletionContext(
@@ -165,7 +165,7 @@ public static class TemplateCompletionService
                         element.TagName,
                         isSqv,
                         element.AttributeNames,
-                        element.RequiresEventParameter(offset) ? "requires-event-parameter" : string.Empty,
+                        eventValue.Name,
                         element.AttributeLocalNames);
                 }
                 if (element.TryGetAttributeValue(offset, out var attributeValue) &&
@@ -241,7 +241,8 @@ public static class TemplateCompletionService
 
     public static IReadOnlyList<TemplateCompletionItem> GetItems(
         TemplateCompletionContext context,
-        string text)
+        string text,
+        TemplateComponentEventDescriptor componentEvent = null)
     {
         if (context == null) return Array.Empty<TemplateCompletionItem>();
         var inferredSourcePath = context.IsSqv ? "Completion.sqv" : "Completion.sqx";
@@ -268,7 +269,8 @@ public static class TemplateCompletionService
                 text,
                 inferredSourcePath,
                 context.Prefix,
-                context.AttributeName == "requires-event-parameter");
+                RequiresEventParameter(context.AttributeName),
+                componentEvent);
         if (context.Kind == TemplateCompletionKind.Expression)
             return GetExpressionItems(text, inferredSourcePath, context);
 
@@ -421,14 +423,15 @@ public static class TemplateCompletionService
         string text,
         string sourcePath,
         string prefix,
-        bool requiresEventParameter)
+        bool requiresEventParameter,
+        TemplateComponentEventDescriptor componentEvent)
     {
         var script = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty)
             .ParsedSqxDocument?.Syntax?.Script?.CSharp;
         if (script == null) return Array.Empty<TemplateCompletionItem>();
         return script.Members
             .OfType<MethodDeclarationSyntax>()
-            .Where(method => IsCompatibleEventHandler(method, requiresEventParameter))
+            .Where(method => IsCompatibleEventHandler(method, requiresEventParameter, componentEvent))
             .Where(method => method.Identifier.ValueText.StartsWith(
                 prefix ?? string.Empty,
                 StringComparison.OrdinalIgnoreCase))
@@ -486,7 +489,8 @@ public static class TemplateCompletionService
 
     private static bool IsCompatibleEventHandler(
         MethodDeclarationSyntax method,
-        bool requiresEventParameter)
+        bool requiresEventParameter,
+        TemplateComponentEventDescriptor componentEvent)
     {
         if (method.ReturnType is not PredefinedTypeSyntax predefined ||
             predefined.Keyword.RawKind != (int)SyntaxKind.VoidKeyword ||
@@ -496,11 +500,24 @@ public static class TemplateCompletionService
         if (method.ParameterList.Parameters.Count != 1) return false;
         var parameter = method.ParameterList.Parameters[0];
         if (parameter.Modifiers.Count != 0 || parameter.Type == null) return false;
-        var typeName = parameter.Type.ToString();
-        return typeName == "Event" ||
-               typeName == "Square.Events.Event" ||
-               typeName == "global::Square.Events.Event";
+        var typeName = NormalizeEventHandlerType(parameter.Type.ToString());
+        if (typeName == "Event") return true;
+        return componentEvent?.HasDetail == true &&
+               typeName == "CustomEvent<" + NormalizeEventHandlerType(componentEvent.DetailTypeName) + ">";
     }
+
+    private static bool RequiresEventParameter(string attributeName) =>
+        (attributeName ?? string.Empty)
+            .Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Any(modifier => modifier is "stop" or "prevent");
+
+    private static string NormalizeEventHandlerType(string typeName) =>
+        new string((typeName ?? string.Empty)
+            .Replace("global::", string.Empty)
+            .Replace("Square.Events.", string.Empty)
+            .Where(character => !char.IsWhiteSpace(character))
+            .ToArray());
 
     private static IReadOnlyList<TemplateCompletionItem> GetDirectiveItems(
         TemplateCompletionContext context)
@@ -966,7 +983,6 @@ public static class TemplateCompletionService
                                attribute.Name.Length > 2)
                            .Select(attribute => attribute.ValueRange)
                            .ToArray(),
-                       Array.Empty<SquareSourceRange>(),
                        element.Attributes.Select(attribute => attribute.Name).ToArray(),
                        element.Attributes
                            .Where(attribute => attribute.Value != null)
@@ -1021,13 +1037,6 @@ public static class TemplateCompletionService
                        element.Origin.Offset,
                        element.Attributes
                            .Where(attribute => attribute.DirectiveName == "on" && attribute.Value != null)
-                           .Select(attribute => attribute.ValueRange)
-                           .ToArray(),
-                       element.Attributes
-                           .Where(attribute =>
-                               attribute.DirectiveName == "on" &&
-                               attribute.Value != null &&
-                               attribute.Modifiers.Any(modifier => modifier is "stop" or "prevent"))
                            .Select(attribute => attribute.ValueRange)
                            .ToArray(),
                        element.Attributes.Select(attribute => attribute.Name).ToArray(),
@@ -1097,7 +1106,6 @@ public static class TemplateCompletionService
             string tagName,
             int start,
             IReadOnlyList<SquareSourceRange> eventValueRanges,
-            IReadOnlyList<SquareSourceRange> eventParameterRanges,
             IReadOnlyCollection<string> attributeNames,
             IReadOnlyList<TemplateAttributeValueContext> attributeValues,
             IReadOnlyList<SquareSourceRange> expressionRanges,
@@ -1107,7 +1115,6 @@ public static class TemplateCompletionService
             TagName = tagName ?? string.Empty;
             Start = start;
             EventValueRanges = eventValueRanges ?? throw new ArgumentNullException(nameof(eventValueRanges));
-            EventParameterRanges = eventParameterRanges ?? throw new ArgumentNullException(nameof(eventParameterRanges));
             AttributeNames = attributeNames ?? throw new ArgumentNullException(nameof(attributeNames));
             AttributeValues = attributeValues ?? throw new ArgumentNullException(nameof(attributeValues));
             ExpressionRanges = expressionRanges ?? throw new ArgumentNullException(nameof(expressionRanges));
@@ -1118,18 +1125,20 @@ public static class TemplateCompletionService
         public string TagName { get; }
         public int Start { get; }
         public IReadOnlyList<SquareSourceRange> EventValueRanges { get; }
-        public IReadOnlyList<SquareSourceRange> EventParameterRanges { get; }
         public IReadOnlyCollection<string> AttributeNames { get; }
         public IReadOnlyList<TemplateAttributeValueContext> AttributeValues { get; }
         public IReadOnlyList<SquareSourceRange> ExpressionRanges { get; }
         public IReadOnlyCollection<string> AttributeLocalNames { get; }
         public IReadOnlyCollection<string> LocalNames { get; }
 
-        public bool ContainsEventValue(int offset) =>
-            EventValueRanges.Any(range => offset >= range.Offset && offset <= range.End);
-
-        public bool RequiresEventParameter(int offset) =>
-            EventParameterRanges.Any(range => offset >= range.Offset && offset <= range.End);
+        public bool TryGetEventValue(int offset, out TemplateAttributeValueContext value)
+        {
+            value = AttributeValues.FirstOrDefault(item =>
+                offset >= item.Range.Offset && offset <= item.Range.End &&
+                EventValueRanges.Any(range =>
+                    range.Offset == item.Range.Offset && range.Length == item.Range.Length));
+            return value != null;
+        }
 
         public bool ContainsExpression(int offset) =>
             ExpressionRanges.Any(range => offset >= range.Offset && offset <= range.End);

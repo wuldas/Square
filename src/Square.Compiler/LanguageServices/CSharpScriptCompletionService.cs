@@ -56,7 +56,8 @@ public static class CSharpScriptCompletionService
     {
         "bool", "byte", "char", "decimal", "double", "float", "int", "long", "object", "short", "string",
         "uint", "ulong", "ushort", "Action", "Func", "Task", "CancellationToken", "List", "Dictionary",
-        "HashSet", "IEnumerable", "IReadOnlyList", "Event", "ObservableValue", "Color"
+        "HashSet", "IEnumerable", "IReadOnlyList", "Event", "CustomEvent", "ComponentEvent",
+        "ObservableValue", "Color"
     };
 
     private static readonly string[] Attributes =
@@ -423,6 +424,11 @@ public static class CSharpScriptCompletionService
         if (IsElementType(normalized))
         {
             foreach (var member in ElementMembers()) yield return member;
+            if (normalized == "__Component")
+                yield return Method(
+                    "Emit",
+                    "void Emit(ComponentEvent componentEvent)\n" +
+                    "void Emit<TDetail>(ComponentEvent<TDetail> componentEvent, TDetail detail)");
             foreach (var member in ControlMembers(normalized)) yield return member;
         }
     }

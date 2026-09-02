@@ -112,6 +112,94 @@ public sealed class TemplateSemanticAnalyzer
         return contracts;
     }
 
+    public IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> BuildEventContracts(
+        Compilation compilation,
+        IEnumerable<(string Path, string Content, string Namespace)> inputs)
+    {
+        var contracts = new Dictionary<string, TemplateComponentEventDescriptor[]>(StringComparer.Ordinal);
+        foreach (var input in inputs)
+        {
+            if (!TryParse(input.Content, input.Path, out var document)) continue;
+            var events = new Dictionary<string, TemplateComponentEventDescriptor>(StringComparer.Ordinal);
+            foreach (var componentEvent in NormalizeEventContracts(ExtractEmbeddedEvents(document)))
+                events[componentEvent.MemberName] = componentEvent;
+            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
+                ? input.Namespace
+                : document.Namespace;
+            var metadataName = string.IsNullOrWhiteSpace(namespaceName)
+                ? document.Name
+                : namespaceName + "." + document.Name;
+            var codeBehindType = compilation.GetTypeByMetadataName(metadataName);
+            if (codeBehindType != null)
+            {
+                foreach (var field in codeBehindType.GetMembers().OfType<IFieldSymbol>())
+                {
+                    if (!field.IsStatic || !field.IsReadOnly ||
+                        field.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal) ||
+                        !TryGetComponentEventDetailType(field.Type, out var detailTypeName))
+                        continue;
+                    var eventName = field.DeclaringSyntaxReferences
+                        .Select(reference => reference.GetSyntax())
+                        .OfType<VariableDeclaratorSyntax>()
+                        .Select(variable => GetEventName(variable.Initializer?.Value))
+                        .FirstOrDefault(name => name != null);
+                    if (eventName == null) continue;
+                    events[field.Name] = new TemplateComponentEventDescriptor(
+                        field.Name,
+                        eventName,
+                        detailTypeName);
+                }
+            }
+
+            contracts[metadataName] = NormalizeEventContracts(events.Values).ToArray();
+        }
+
+        return contracts;
+    }
+
+    public IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> BuildEmbeddedEventContracts(
+        IEnumerable<(string Path, string Content, string Namespace)> inputs)
+    {
+        var contracts = new Dictionary<string, TemplateComponentEventDescriptor[]>(StringComparer.Ordinal);
+        foreach (var input in inputs)
+        {
+            if (!TryParse(input.Content, input.Path, out var document)) continue;
+            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace)
+                ? input.Namespace
+                : document.Namespace;
+            var metadataName = string.IsNullOrWhiteSpace(namespaceName)
+                ? document.Name
+                : namespaceName + "." + document.Name;
+            contracts[metadataName] = NormalizeEventContracts(ExtractEmbeddedEvents(document)).ToArray();
+        }
+        return contracts;
+    }
+
+    public IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> BuildCodeBehindEventContracts(
+        string content)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(content ?? string.Empty);
+        if (syntaxTree.GetDiagnostics().Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            return new Dictionary<string, TemplateComponentEventDescriptor[]>(StringComparer.Ordinal);
+
+        var contracts = new Dictionary<string, TemplateComponentEventDescriptor[]>(StringComparer.Ordinal);
+        foreach (var componentClass in syntaxTree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+        {
+            var events = NormalizeEventContracts(
+                ExtractEventFields(componentClass.Members.OfType<FieldDeclarationSyntax>())).ToArray();
+            if (events.Length == 0) continue;
+            var namespaceName = string.Join(".", componentClass.Ancestors()
+                .OfType<BaseNamespaceDeclarationSyntax>()
+                .Reverse()
+                .Select(declaration => declaration.Name.ToString()));
+            var metadataName = string.IsNullOrWhiteSpace(namespaceName)
+                ? componentClass.Identifier.ValueText
+                : namespaceName + "." + componentClass.Identifier.ValueText;
+            contracts[metadataName] = events;
+        }
+        return contracts;
+    }
+
     public IReadOnlyDictionary<string, IReadOnlyDictionary<string, TemplateSlotDescriptor>> BuildSlotContracts(
         Compilation compilation)
     {
@@ -207,6 +295,100 @@ public sealed class TemplateSemanticAnalyzer
             props[prop.Name] = prop;
         }
         return props;
+    }
+
+    private static IEnumerable<TemplateComponentEventDescriptor> ExtractEmbeddedEvents(SqxDocument document)
+    {
+        var script = document.Syntax?.Script;
+        if (script == null) yield break;
+        foreach (var componentEvent in ExtractEventFields(script.CSharp.Members.OfType<FieldDeclarationSyntax>()))
+            yield return componentEvent;
+    }
+
+    private static IEnumerable<TemplateComponentEventDescriptor> ExtractEventFields(
+        IEnumerable<FieldDeclarationSyntax> fields)
+    {
+        foreach (var field in fields)
+        {
+            if (!IsExportedStaticReadonly(field.Modifiers) ||
+                !TryGetComponentEventDetailType(field.Declaration.Type, out var detailTypeName))
+                continue;
+
+            foreach (var variable in field.Declaration.Variables)
+            {
+                var eventName = GetEventName(variable.Initializer?.Value);
+                if (eventName == null) continue;
+                yield return new TemplateComponentEventDescriptor(
+                    variable.Identifier.ValueText,
+                    eventName,
+                    detailTypeName);
+            }
+        }
+    }
+
+    private static bool IsExportedStaticReadonly(SyntaxTokenList modifiers) =>
+        (modifiers.Any(SyntaxKind.PublicKeyword) || modifiers.Any(SyntaxKind.InternalKeyword)) &&
+        modifiers.Any(SyntaxKind.StaticKeyword) &&
+        modifiers.Any(SyntaxKind.ReadOnlyKeyword);
+
+    private static IEnumerable<TemplateComponentEventDescriptor> NormalizeEventContracts(
+        IEnumerable<TemplateComponentEventDescriptor> events)
+    {
+        var byMember = new Dictionary<string, TemplateComponentEventDescriptor>(StringComparer.Ordinal);
+        foreach (var componentEvent in events)
+            if (!byMember.ContainsKey(componentEvent.MemberName))
+                byMember.Add(componentEvent.MemberName, componentEvent);
+        return byMember.Values
+            .GroupBy(componentEvent => componentEvent.NormalizedName, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() == 1)
+            .Select(group => group.First());
+    }
+
+    private static bool TryGetComponentEventDetailType(TypeSyntax type, out string detailTypeName)
+    {
+        var typeName = type.ToString().Replace("global::", string.Empty);
+        var genericStart = typeName.IndexOf('<');
+        var baseName = genericStart < 0 ? typeName : typeName.Substring(0, genericStart);
+        if (baseName is not ("ComponentEvent" or "Square.Events.ComponentEvent"))
+        {
+            detailTypeName = string.Empty;
+            return false;
+        }
+
+        detailTypeName = genericStart < 0
+            ? string.Empty
+            : typeName.Substring(genericStart + 1, typeName.Length - genericStart - 2);
+        return true;
+    }
+
+    private static bool TryGetComponentEventDetailType(ITypeSymbol type, out string detailTypeName)
+    {
+        if (type is not INamedTypeSymbol named ||
+            !named.Name.Equals("ComponentEvent", StringComparison.Ordinal) ||
+            !named.ContainingNamespace.ToDisplayString().Equals("Square.Events", StringComparison.Ordinal) ||
+            named.Arity > 1)
+        {
+            detailTypeName = string.Empty;
+            return false;
+        }
+
+        detailTypeName = named.Arity == 0
+            ? string.Empty
+            : named.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+        return true;
+    }
+
+    private static string GetEventName(ExpressionSyntax expression)
+    {
+        ArgumentListSyntax arguments = null;
+        if (expression is ImplicitObjectCreationExpressionSyntax implicitCreation)
+            arguments = implicitCreation.ArgumentList;
+        else if (expression is ObjectCreationExpressionSyntax creation)
+            arguments = creation.ArgumentList;
+        if (arguments?.Arguments.FirstOrDefault()?.Expression is LiteralExpressionSyntax literal &&
+            literal.IsKind(SyntaxKind.StringLiteralExpression))
+            return literal.Token.ValueText;
+        return null;
     }
 }
 

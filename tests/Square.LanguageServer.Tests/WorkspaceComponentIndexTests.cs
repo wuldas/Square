@@ -126,6 +126,44 @@ public sealed class WorkspaceComponentIndexTests
     }
 
     [Fact]
+    public void WorkspaceIndexExposesEmbeddedComponentEvents()
+    {
+        const string source = """
+            <template><View /></template>
+            <script>
+              public static readonly ComponentEvent<int> ItemSelectedEvent = new("item-selected");
+            </script>
+            """;
+        var index = new WorkspaceComponentIndex();
+
+        index.Update("Card.sqx", source);
+
+        Assert.True(index.TryGetEvents("Card", out var events));
+        var componentEvent = Assert.Single(events);
+        Assert.Equal("item-selected", componentEvent.Name);
+        Assert.Equal("int", componentEvent.DetailTypeName);
+    }
+
+    [Fact]
+    public void WorkspaceIndexExposesCompanionCodeBehindEvents()
+    {
+        var fileSystem = new FakeWorkspaceFileSystem
+        {
+            FileExists = path => path.EndsWith("Card.sqx.cs", StringComparison.OrdinalIgnoreCase),
+            Open = path => new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+                "namespace Sample; public partial class Card { public static readonly Square.Events.ComponentEvent<string> SavedEvent = new(\"saved\"); }"))
+        };
+        var index = new WorkspaceComponentIndex(fileSystem: fileSystem);
+
+        index.Update("Card.sqx", "<template><View /></template>");
+
+        Assert.True(index.TryGetEvents("Card", out var events));
+        var componentEvent = Assert.Single(events);
+        Assert.Equal("saved", componentEvent.Name);
+        Assert.Equal("string", componentEvent.DetailTypeName);
+    }
+
+    [Fact]
     public void WorkspaceIndexHonorsPreCancelledInitialization()
     {
         using var cancellation = new CancellationTokenSource();
@@ -317,8 +355,11 @@ public sealed class WorkspaceComponentIndexTests
         public Func<string, FileAttributes> Attributes { get; set; } = _ => FileAttributes.Normal;
         public Func<string, Stream> Open { get; set; } = _ => ComponentStream();
         public Func<string, bool> Exists { get; set; } = _ => true;
+        public Func<string, bool> FileExists { get; set; } = _ => false;
 
         public bool DirectoryExists(string path) => Exists(path);
+
+        bool IWorkspaceFileSystem.FileExists(string path) => FileExists(path);
 
         public IEnumerable<string> EnumerateDirectories(string path) => Directories(path);
 

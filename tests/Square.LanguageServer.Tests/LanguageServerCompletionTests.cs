@@ -55,6 +55,100 @@ public sealed class LanguageServerCompletionTests
     }
 
     [Fact]
+    public async Task CompletionOffersWorkspaceComponentEventsForBothDialects()
+    {
+        using var process = StartServer();
+        await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
+
+        const string card = "<template><View /></template><script>public static readonly ComponentEvent<int> ItemSelectedEvent = new(\"item-selected\");</script>";
+        await OpenDocument(process, "file:///C:/Square/Card.sqx", "sqx", card);
+        const string sqxUsage = "<template><Card on";
+        await OpenDocument(process, "file:///C:/Square/Page.sqx", "sqx", sqxUsage);
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 2,
+            method = "textDocument/completion",
+            @params = new
+            {
+                textDocument = new { uri = "file:///C:/Square/Page.sqx" },
+                position = new { line = 0, character = sqxUsage.Length }
+            }
+        }));
+        var sqxCompletion = await Read(process.StandardOutput);
+        AssertCompletionItem(sqxCompletion, "onItemSelected", "CustomEvent<int>");
+
+        const string sqxWithExistingEvent = "<template><Card onItemSelected={OnSelected} on";
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didChange",
+            @params = new
+            {
+                textDocument = new { uri = "file:///C:/Square/Page.sqx", version = 2 },
+                contentChanges = new[] { new { text = sqxWithExistingEvent } }
+            }
+        }));
+        _ = await Read(process.StandardOutput);
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 3,
+            method = "textDocument/completion",
+            @params = new
+            {
+                textDocument = new { uri = "file:///C:/Square/Page.sqx" },
+                position = new { line = 0, character = sqxWithExistingEvent.Length }
+            }
+        }));
+        var sqxDeduplicated = await Read(process.StandardOutput);
+        Assert.DoesNotContain("\"label\":\"onItemSelected\"", sqxDeduplicated, StringComparison.Ordinal);
+
+        const string handlerPage = "<template><Card onItemSelected={On} /></template><script>private void OnTyped(CustomEvent<int> e) { } private void OnWrong(CustomEvent<string> e) { }</script>";
+        await OpenDocument(process, "file:///C:/Square/HandlerPage.sqx", "sqx", handlerPage);
+        var handlerOffset = handlerPage.IndexOf("{On}", StringComparison.Ordinal) + "{On".Length;
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 4,
+            method = "textDocument/completion",
+            @params = new
+            {
+                textDocument = new { uri = "file:///C:/Square/HandlerPage.sqx" },
+                position = new { line = 0, character = handlerOffset }
+            }
+        }));
+        var handlerCompletion = await Read(process.StandardOutput);
+        Assert.Contains("\"label\":\"OnTyped\"", handlerCompletion, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"label\":\"OnWrong\"", handlerCompletion, StringComparison.Ordinal);
+
+        await OpenDocument(process, "file:///C:/Square/VueCard.sqv", "sqv", card);
+        const string sqvUsage = "<template><VueCard @";
+        await OpenDocument(process, "file:///C:/Square/Page.sqv", "sqv", sqvUsage);
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 5,
+            method = "textDocument/completion",
+            @params = new
+            {
+                textDocument = new { uri = "file:///C:/Square/Page.sqv" },
+                position = new { line = 0, character = sqvUsage.Length }
+            }
+        }));
+        var sqvCompletion = await Read(process.StandardOutput);
+        AssertCompletionItem(sqvCompletion, "item-selected", "CustomEvent<int>");
+
+        await Write(process, """{"jsonrpc":"2.0","id":6,"method":"shutdown","params":null}""");
+        _ = await Read(process.StandardOutput);
+        await Write(process, """{"jsonrpc":"2.0","method":"exit","params":null}""");
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
     public async Task EventExpressionCompletionOffersCurrentScriptMethods()
     {
         using var process = StartServer();
@@ -347,6 +441,29 @@ public sealed class LanguageServerCompletionTests
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static async Task OpenDocument(Process process, string uri, string languageId, string text)
+    {
+        await Write(process, JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new
+            {
+                textDocument = new { uri, languageId, version = 1, text }
+            }
+        }));
+        _ = await Read(process.StandardOutput);
+    }
+
+    private static void AssertCompletionItem(string response, string label, string detail)
+    {
+        using var document = JsonDocument.Parse(response);
+        var item = document.RootElement.GetProperty("result").GetProperty("items")
+            .EnumerateArray()
+            .Single(candidate => candidate.GetProperty("label").GetString() == label);
+        Assert.Equal(detail, item.GetProperty("detail").GetString());
     }
 
     private static Process StartServer()

@@ -220,6 +220,34 @@ public sealed class TemplateCompletionServiceTests
     }
 
     [Fact]
+    public void ComponentEventValueCompletesHandlersMatchingDetailType()
+    {
+        const string source = """
+            <template><Card onItemSelected={On} /></template>
+            <script>
+            private void OnTyped(CustomEvent<int> e) { }
+            private void OnBase(Event e) { }
+            private void OnEmpty() { }
+            private void OnWrong(CustomEvent<string> e) { }
+            </script>
+            """;
+        var offset = source.IndexOf("{On}", StringComparison.Ordinal) + "{On".Length;
+        var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
+        var componentEvent = new TemplateComponentEventDescriptor(
+            "ItemSelectedEvent",
+            "item-selected",
+            "int");
+
+        var items = TemplateCompletionService.GetItems(context, source, componentEvent);
+
+        Assert.Contains(items, item => item.Label == "OnTyped");
+        Assert.Contains(items, item => item.Label == "OnBase");
+        Assert.Contains(items, item => item.Label == "OnEmpty");
+        Assert.DoesNotContain(items, item => item.Label == "OnWrong");
+        Assert.Equal("onItemSelected", context.AttributeName);
+    }
+
+    [Fact]
     public void ClosingTagCompletesNearestOpenElement()
     {
         const string source = "<template><View><Button></";

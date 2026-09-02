@@ -1206,6 +1206,101 @@ public class VueGeneratorTests
         Assert.Contains(", FirstName, LastName);", generated);
     }
 
+    [Theory]
+    [InlineData("Child.sqx", "<template><View /></template><script>public static readonly ComponentEvent<int> ItemSelectedEvent = new(\"item-selected\");</script>", "Parent.sqx", "<template><Child onItemSelected={OnSelected} /></template><script>private void OnSelected(CustomEvent<int> e) { }</script>")]
+    [InlineData("Child.sqv", "<template><View /></template><script>public static readonly ComponentEvent<int> ItemSelectedEvent = new(\"item-selected\");</script>", "Parent.sqv", "<template><Child @item-selected=\"OnSelected\" /></template><script>private void OnSelected(CustomEvent<int> e) { }</script>")]
+    public void CustomComponentEventsUseDeclaredEventContract(
+        string childPath,
+        string childSource,
+        string parentPath,
+        string parentSource)
+    {
+        var result = RunGenerator(
+            new InMemoryAdditionalText(childPath, childSource),
+            new InMemoryAdditionalText(parentPath, parentSource));
+        var generated = result.GeneratedTrees
+            .Select(tree => tree.GetText().ToString())
+            .Single(code => code.Contains("partial class Parent", StringComparison.Ordinal));
+
+        Assert.Contains(".Listen(Child.ItemSelectedEvent, OnSelected)", generated, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Child.sqx", "Parent.sqx", "onItemSelected={OnSelected}")]
+    [InlineData("Child.sqv", "Parent.sqv", "@item-selected=\"OnSelected\"")]
+    public void CustomComponentTypedEventHandlersCompile(
+        string childPath,
+        string parentPath,
+        string eventAttribute)
+    {
+        const string child = "<template><View /></template><script>public static readonly ComponentEvent<int> ItemSelectedEvent = new(\"item-selected\");</script>";
+        var parent = "<template><Child " + eventAttribute + " /></template>" +
+            "<script>private void OnSelected(CustomEvent<int> e) { _ = e.Detail; }</script>";
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText(childPath, child), new InMemoryAdditionalText(parentPath, parent)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
+
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void CustomComponentEventResolutionUsesScriptNamespaceImports()
+    {
+        const string shared = "<template><View /></template><script>public static readonly ComponentEvent<int> SelectedEvent = new(\"selected\");</script>";
+        const string other = "<template><View /></template><script>public static readonly ComponentEvent ClosedEvent = new(\"closed\");</script>";
+        const string page = """
+            <template><Child onSelected={OnSelected} /></template>
+            <script>
+              using Square.Sample.Shared;
+              private void OnSelected(CustomEvent<int> e) { }
+            </script>
+            """;
+
+        var result = RunGenerator(
+            new InMemoryAdditionalText("Shared/Child.sqx", shared),
+            new InMemoryAdditionalText("Other/Child.sqx", other),
+            new InMemoryAdditionalText("Pages/Parent.sqx", page));
+        var generated = result.GeneratedTrees
+            .Select(tree => tree.GetText().ToString())
+            .Single(code => code.Contains("partial class Parent", StringComparison.Ordinal));
+
+        Assert.Contains(".Listen(Child.SelectedEvent, OnSelected)", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoDetailComponentEventHandlersCompile()
+    {
+        const string child = """
+            <template><View /></template>
+            <script>
+              public static readonly ComponentEvent ClosedEvent = new("closed");
+              public static readonly ComponentEvent SavedEvent = new("saved");
+            </script>
+            """;
+        const string parent = """
+            <template><Child onClosed={OnClosed} onSaved={OnSaved} /></template>
+            <script>
+              private void OnClosed() { }
+              private void OnSaved(Event e) { }
+            </script>
+            """;
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Child.sqx", child), new InMemoryAdditionalText("Parent.sqx", parent)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
+
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
     private static void AssertGeneratedBindingOrder(
         string generated, string propertyBinding, string modelListener, string explicitListener)
     {

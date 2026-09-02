@@ -118,6 +118,22 @@ public sealed class CSharpScriptCompletionServiceTests
     }
 
     [Fact]
+    public void CompletesComponentEventTypesAndEmitMethod()
+    {
+        const string typeSource = "<template><View /></template><script>private ComponentE</script>";
+        var typeOffset = typeSource.IndexOf("</script>", StringComparison.Ordinal);
+        var typeItems = TemplateCompletionService.GetItems(typeSource, typeOffset, "Editing.sqx");
+        Assert.Contains(typeItems, item => item.Label == "ComponentEvent" && item.Kind == 7);
+
+        const string memberSource = "<template><View /></template><script>private void Save() { this.Em }</script>";
+        var memberOffset = memberSource.IndexOf("this.Em", StringComparison.Ordinal) + "this.Em".Length;
+        var memberItems = TemplateCompletionService.GetItems(memberSource, memberOffset, "Editing.sqx");
+        var emit = Assert.Single(memberItems, item => item.Label == "Emit" && item.Kind == 2);
+        Assert.Contains("Emit(ComponentEvent componentEvent)", emit.Detail, StringComparison.Ordinal);
+        Assert.Contains("Emit<TDetail>", emit.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompletesLifecycleOverridesOnlyAtComponentScope()
     {
         const string source = "<template><View /></template><script>OnA</script>";

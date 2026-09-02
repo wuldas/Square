@@ -16,6 +16,8 @@ namespace Square.Compiler.Emit
         private readonly List<RefInfo> _refs = new List<RefInfo>();
         private readonly DirectiveCatalog _catalog;
         private readonly TemplateCatalog _templateCatalog;
+        private readonly IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> _eventContracts;
+        private readonly Dictionary<string, string> _variableTags = new Dictionary<string, string>();
         private DirectiveEmitPipeline _pipeline;
         private int _vforIndex;
         private int _vifIndex;
@@ -23,16 +25,26 @@ namespace Square.Compiler.Emit
         private int _slotCounter;
         private bool _hasObjectBindings;
 
-        public ComponentEmitter(SqxDocument doc, string namespaceName = "Square.Sample", DirectiveCatalog catalog = null)
-            : this(TemplateDocument.From(doc), namespaceName, catalog)
+        public ComponentEmitter(
+            SqxDocument doc,
+            string namespaceName = "Square.Sample",
+            DirectiveCatalog catalog = null,
+            IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> eventContracts = null)
+            : this(TemplateDocument.From(doc), namespaceName, catalog, eventContracts)
         {
         }
 
-        public ComponentEmitter(TemplateDocument doc, string namespaceName = "Square.Sample", DirectiveCatalog catalog = null)
+        public ComponentEmitter(
+            TemplateDocument doc,
+            string namespaceName = "Square.Sample",
+            DirectiveCatalog catalog = null,
+            IReadOnlyDictionary<string, TemplateComponentEventDescriptor[]> eventContracts = null)
         {
             _doc = doc;
             _catalog = catalog ?? DirectiveCatalog.BuiltIn;
             _templateCatalog = TemplateCatalog.BuiltIn;
+            _eventContracts = eventContracts ??
+                new Dictionary<string, TemplateComponentEventDescriptor[]>(StringComparer.Ordinal);
             _namespace = !string.IsNullOrWhiteSpace(doc.Namespace)
                 ? doc.Namespace
                 : string.IsNullOrWhiteSpace(namespaceName) ? "Square.Sample" : namespaceName;
@@ -107,6 +119,7 @@ namespace Square.Compiler.Emit
             _vforIndex = 0;
             _vifIndex = 0;
             _refs.Clear();
+            _variableTags.Clear();
             _sb.Clear();
             _pipeline = new DirectiveEmitPipeline(
                 _sb,
@@ -207,6 +220,7 @@ namespace Square.Compiler.Emit
             var tagName = MapTagName(element.TagName);
             var isCustomComponent = !IsBuiltInTag(element.TagName);
             var usesSlots = isCustomComponent || IsBuiltInSlotHost(element.TagName);
+            _variableTags[variableName] = element.TagName;
 
             if (isRef)
                 _sb.AppendLine(indent + variableName + " = new " + tagName + "();");
@@ -289,9 +303,13 @@ namespace Square.Compiler.Emit
                 if (attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase))
                 {
                     var eventName = attribute.Name.Substring(2).ToLowerInvariant();
+                    var componentEvent = FindComponentEvent(variableName, eventName);
+                    var eventArgument = componentEvent == null
+                        ? "\"" + eventName + "\""
+                        : MapTagName(_variableTags[variableName]) + "." + componentEvent.MemberName;
                     EmitSourceMappedLine(indent, attribute.Line,
-                        variableName + ".RegisterGeneratedResource(" + variableName + ".Listen(\"" +
-                        eventName + "\", " + attribute.RawValue + "));");
+                        variableName + ".RegisterGeneratedResource(" + variableName + ".Listen(" +
+                        eventArgument + ", " + attribute.RawValue + "));");
                 }
                 else
                 {
@@ -795,6 +813,59 @@ namespace Square.Compiler.Emit
         }
 
         private string MapTagName(string tag) => _templateCatalog.GetComponent(tag).TypeName;
+
+        private TemplateComponentEventDescriptor FindComponentEvent(string variableName, string eventName)
+        {
+            if (!_variableTags.TryGetValue(variableName, out var tagName)) return null;
+            var normalizedTag = tagName.StartsWith("global::", StringComparison.Ordinal)
+                ? tagName.Substring("global::".Length)
+                : tagName;
+            TemplateComponentEventDescriptor[] events = null;
+            var currentName = string.IsNullOrWhiteSpace(_namespace)
+                ? normalizedTag
+                : _namespace + "." + normalizedTag;
+            if (!_eventContracts.TryGetValue(currentName, out events) &&
+                !_eventContracts.TryGetValue(normalizedTag, out events))
+            {
+                foreach (var namespaceName in ExtractNamespaceUsings())
+                {
+                    if (_eventContracts.TryGetValue(namespaceName + "." + normalizedTag, out events))
+                        break;
+                }
+            }
+            if (events == null)
+            {
+                var suffix = "." + normalizedTag;
+                var matches = _eventContracts
+                    .Where(pair => pair.Key.EndsWith(suffix, StringComparison.Ordinal))
+                    .Select(pair => pair.Value)
+                    .ToArray();
+                if (matches.Length == 1) events = matches[0];
+            }
+            if (events == null) return null;
+
+            var alias = NormalizeEventAlias(eventName);
+            return events.FirstOrDefault(item =>
+                NormalizeEventAlias(item.Name).Equals(alias, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string NormalizeEventAlias(string name) =>
+            new string((name ?? string.Empty)
+                .Where(character => character != '-')
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+
+        private IEnumerable<string> ExtractNamespaceUsings()
+        {
+            var script = _doc.Syntax?.Script;
+            if (script == null) yield break;
+            foreach (var directive in script.CSharp.Usings)
+            {
+                if (directive.Alias != null || directive.StaticKeyword.RawKind != 0) continue;
+                var name = directive.Name?.ToString();
+                if (!string.IsNullOrWhiteSpace(name)) yield return name;
+            }
+        }
 
         private bool IsBuiltInTag(string tag) => _templateCatalog.GetComponent(tag).IsBuiltIn;
 

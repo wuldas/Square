@@ -10,6 +10,8 @@
   </View>
 </template>
 <script lang="csharp">
+  public static readonly ComponentEvent<int> SelectedEvent = new("selected");
+
   private readonly List<(Button Button, Action Handler)> _tabHandlers = [];
   private Button[] _tabButtons = [];
   private string[] _tabPaths = [];
@@ -94,7 +96,7 @@
   private void Select(int index)
   {
     if (index == SelectedIndex) return;
-    if (NavigateTo(index)) DispatchEvent(StandardEvents.CreateChange());
+    if (NavigateTo(index)) Emit(SelectedEvent, SelectedIndex);
   }
 
   private bool NavigateTo(int index)

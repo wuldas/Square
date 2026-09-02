@@ -48,6 +48,46 @@ public sealed class TemplateEventDescriptor
     public string CanonicalName { get; }
 }
 
+public sealed class TemplateComponentEventDescriptor
+{
+    public TemplateComponentEventDescriptor(string memberName, string name, string detailTypeName)
+    {
+        MemberName = memberName;
+        Name = name;
+        DetailTypeName = detailTypeName;
+        NormalizedName = NormalizeName(name);
+        SqxName = ToSqxName(name);
+        SqvName = "@" + name;
+    }
+
+    public string MemberName { get; }
+
+    public string Name { get; }
+
+    public string DetailTypeName { get; }
+
+    public bool HasDetail => !string.IsNullOrEmpty(DetailTypeName);
+
+    public string NormalizedName { get; }
+
+    public string SqxName { get; }
+
+    public string SqvName { get; }
+
+    private static string ToSqxName(string name)
+    {
+        var parts = name.Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries);
+        return "on" + string.Concat(parts.Select(part =>
+            char.ToUpperInvariant(part[0]) + part.Substring(1)));
+    }
+
+    private static string NormalizeName(string name) =>
+        new string((name ?? string.Empty)
+            .Where(character => character != '-')
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+}
+
 public sealed class TemplatePropertyDescriptor
 {
     public TemplatePropertyDescriptor(

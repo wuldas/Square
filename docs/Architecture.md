@@ -124,6 +124,15 @@ SQV 示例：
 
 详见 `Sqx-Spec.md` §Props。
 
+#### 4.2.1 自定义事件（组件输出契约）
+
+- 组件以 `public/internal static readonly ComponentEvent` 或 `ComponentEvent<TDetail>` 声明事件契约。
+- 组件内部通过 `Emit(ComponentEvent)` / `Emit(ComponentEvent<TDetail>, detail)` 同步派发。
+- 调用方在 SQX 使用 `onSelected={Handler}`，在 SQV 使用 `@selected="Handler"`。
+- 有载荷 handler 接收 `CustomEvent<TDetail>`，从 `Detail` 读取强类型值。
+- 组件事件默认不冒泡、不可取消，只通知直接监听该组件实例的调用方；需要 DOM 冒泡或取消语义时显式使用 `DispatchEvent`。
+- 未声明事件继续兼容现有字符串监听；跨线程或无直接父子关系的通信仍使用 `Signal<T>`。
+
 ### 4.3 绑定模型
 
 - `ObservableValue<T>`：强类型、委托订阅、零反射

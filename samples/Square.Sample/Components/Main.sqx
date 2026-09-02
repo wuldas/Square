@@ -32,7 +32,7 @@
     </MenuBar>
     <Text class="app-title" text="Square Framework Samples" />
     <Text ref={MenuStatus} class="menu-status" text="Choose a menu command" />
-    <Tabs class="main-tabs">
+    <Tabs class="main-tabs" onSelected={OnTabSelected}>
       <Button slot="tabs" class="tab-button">Text</Button>
       <Button slot="tabs" class="tab-button">Controls</Button>
       <Button slot="tabs" class="tab-button">SplitContainer</Button>
@@ -67,6 +67,9 @@
 
   private void OnThemeChanged(Event e) =>
     SetMenuStatus("Theme: " + ((MenuItem)e.Target!).TextContent);
+
+  private void OnTabSelected(CustomEvent<int> e) =>
+    SetMenuStatus("Selected tab: " + e.Detail);
 
   private void SetMenuStatus(string text) => MenuStatus.TextContent = text;
 </script>

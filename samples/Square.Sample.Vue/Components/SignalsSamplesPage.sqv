@@ -1,13 +1,27 @@
 <template>
   <View class="signals-page sample-page">
-    <Text class="page-title" text="Signals" />
+    <Text class="page-title" text="Signals and component events" />
+    <Text class="section-title" text="Component emit: child → parent" />
+    <ComponentEventEmitter @count-changed="OnCountChanged" @reset="OnReset" />
+    <Text ref="ComponentEventStatus" class="event-status" text="Waiting for a component event" />
+    <Text class="section-title" text="SignalHub: unrelated components" />
     <SignalPublisher />
     <SignalSubscriber />
   </View>
 </template>
+<script lang="csharp">
+  private void OnCountChanged(CustomEvent<int> e) =>
+    ComponentEventStatus.TextContent = "Parent received count-changed: " + e.Detail;
+
+  private void OnReset() =>
+    ComponentEventStatus.TextContent = "Parent received reset";
+</script>
 <style>
   .sample-page { display: flex; flex-direction: column; gap: 12px; padding: 0; }
   .page-title { color: #202124; font-size: 18px; }
+  .section-title { color: #344054; font-size: 15px; }
+  .event-status { color: #0067c0; font-size: 14px; }
+  ComponentEventEmitter { height: 110px; }
   SignalPublisher { height: 180px; }
   SignalSubscriber { height: 150px; }
 </style>

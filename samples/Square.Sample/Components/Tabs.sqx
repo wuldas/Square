@@ -13,6 +13,8 @@
   </View>
 </template>
 <script lang="csharp">
+  public static readonly ComponentEvent<int> SelectedEvent = new("selected");
+
   private readonly List<(Button Button, Action Handler)> _tabHandlers = [];
   private Button[] _tabButtons = [];
   private UIElement[] _tabPages = [];
@@ -59,7 +61,7 @@
   {
     if (index == SelectedIndex) return;
     SelectedIndex = index;
-    DispatchEvent(StandardEvents.CreateChange());
+    Emit(SelectedEvent, index);
   }
 
   private void ApplySelection()

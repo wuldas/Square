@@ -9,6 +9,7 @@ namespace Square.LanguageServer;
 internal interface IWorkspaceFileSystem
 {
     bool DirectoryExists(string path);
+    bool FileExists(string path);
     IEnumerable<string> EnumerateDirectories(string path);
     IEnumerable<string> EnumerateComponentFiles(string path);
     FileAttributes GetAttributes(string path);
@@ -18,6 +19,8 @@ internal interface IWorkspaceFileSystem
 internal sealed class PhysicalWorkspaceFileSystem : IWorkspaceFileSystem
 {
     public bool DirectoryExists(string path) => Directory.Exists(path);
+
+    public bool FileExists(string path) => File.Exists(path);
 
     public IEnumerable<string> EnumerateDirectories(string path) =>
         Directory.EnumerateDirectories(path, "*", SearchOption.TopDirectoryOnly);
@@ -175,7 +178,46 @@ internal sealed class WorkspaceComponentIndex
         var contracts = _analyzer.BuildEmbeddedPropContracts(input);
         cancellationToken.ThrowIfCancellationRequested();
         contracts.TryGetValue(component.TypeName, out var props);
-        _entries[normalizedPath] = new Entry(component, props ?? Array.Empty<TemplatePropDescriptor>());
+        var eventContracts = _analyzer.BuildEmbeddedEventContracts(input);
+        cancellationToken.ThrowIfCancellationRequested();
+        eventContracts.TryGetValue(component.TypeName, out var events);
+        var mergedEvents = new Dictionary<string, TemplateComponentEventDescriptor>(StringComparer.Ordinal);
+        foreach (var componentEvent in events ?? Array.Empty<TemplateComponentEventDescriptor>())
+            if (!mergedEvents.ContainsKey(componentEvent.MemberName))
+                mergedEvents.Add(componentEvent.MemberName, componentEvent);
+        var codeBehindPath = normalizedPath + ".cs";
+        try
+        {
+            if (_fileSystem.FileExists(codeBehindPath))
+            {
+                var codeBehind = ReadBoundedUtf8(codeBehindPath, cancellationToken);
+                var codeBehindContracts = codeBehind == null
+                    ? null
+                    : _analyzer.BuildCodeBehindEventContracts(codeBehind);
+                var matches = codeBehindContracts?.Where(pair =>
+                        pair.Key.Equals(component.TypeName, StringComparison.Ordinal) ||
+                        pair.Key.EndsWith("." + component.TagName, StringComparison.Ordinal))
+                    .Select(pair => pair.Value)
+                    .ToArray();
+                if (matches?.Length == 1)
+                    foreach (var componentEvent in matches[0])
+                        mergedEvents[componentEvent.MemberName] = componentEvent;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        _entries[normalizedPath] = new Entry(
+            component,
+            props ?? Array.Empty<TemplatePropDescriptor>(),
+            mergedEvents.Values
+                .GroupBy(componentEvent => componentEvent.NormalizedName, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() == 1)
+                .Select(group => group.First())
+                .ToArray());
     }
 
     public void RestoreFromDisk(string path, CancellationToken cancellationToken = default)
@@ -226,6 +268,19 @@ internal sealed class WorkspaceComponentIndex
             return false;
         }
         props = entry.Props;
+        return true;
+    }
+
+    public bool TryGetEvents(string tagName, out TemplateComponentEventDescriptor[] events)
+    {
+        var entry = _entries.Values.FirstOrDefault(candidate =>
+            candidate.Component.TagName.Equals(tagName, StringComparison.OrdinalIgnoreCase));
+        if (entry == null)
+        {
+            events = Array.Empty<TemplateComponentEventDescriptor>();
+            return false;
+        }
+        events = entry.Events;
         return true;
     }
 
@@ -316,13 +371,18 @@ internal sealed class WorkspaceComponentIndex
 
     private sealed class Entry
     {
-        public Entry(TemplateComponentDescriptor component, TemplatePropDescriptor[] props)
+        public Entry(
+            TemplateComponentDescriptor component,
+            TemplatePropDescriptor[] props,
+            TemplateComponentEventDescriptor[] events)
         {
             Component = component;
             Props = props;
+            Events = events;
         }
 
         public TemplateComponentDescriptor Component { get; }
         public TemplatePropDescriptor[] Props { get; }
+        public TemplateComponentEventDescriptor[] Events { get; }
     }
 }

@@ -97,6 +97,50 @@ public class EventTarget
         return CreateSubscription(AddAdapterCore(type, handler, adapter, options));
     }
 
+    /// <summary>订阅无载荷的组件事件。</summary>
+    public IDisposable Listen(ComponentEvent componentEvent, Action handler, AddEventListenerOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        return Listen(componentEvent.Name, handler, options);
+    }
+
+    /// <summary>订阅无载荷的组件事件并接收事件对象。</summary>
+    public IDisposable Listen(ComponentEvent componentEvent, Action<Event> handler, AddEventListenerOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        return Listen(componentEvent.Name, handler, options);
+    }
+
+    /// <summary>订阅带载荷的组件事件。</summary>
+    public IDisposable Listen<TDetail>(
+        ComponentEvent<TDetail> componentEvent,
+        Action handler,
+        AddEventListenerOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        return Listen(componentEvent.Name, handler, options);
+    }
+
+    /// <summary>订阅带载荷的组件事件并接收基础事件对象。</summary>
+    public IDisposable Listen<TDetail>(
+        ComponentEvent<TDetail> componentEvent,
+        Action<Event> handler,
+        AddEventListenerOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        return Listen(componentEvent.Name, handler, options);
+    }
+
+    /// <summary>订阅带载荷的组件事件并接收强类型事件对象。</summary>
+    public IDisposable Listen<TDetail>(
+        ComponentEvent<TDetail> componentEvent,
+        Action<CustomEvent<TDetail>> handler,
+        AddEventListenerOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(componentEvent);
+        return Listen(componentEvent.Name, handler, options);
+    }
+
     /// <summary>注册无事件参数的监听器（Square 便捷重载）。</summary>
     public void AddEventListener(string type, Action handler, AddEventListenerOptions? options = null)
     {
@@ -237,7 +281,7 @@ public class EventTarget
         e.IsTrusted = isTrusted;
         e.Target ??= this;
 
-        var path = BuildPath();
+        var path = e.TargetOnly ? new List<EventTarget> { this } : BuildPath();
         e.SetPath(path);
 
         for (var i = path.Count - 1; i > 0; i--)
