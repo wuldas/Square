@@ -49,7 +49,11 @@ public sealed partial class LayoutEngine
         foreach (var fixedRoot in plan.FixedRoots)
             ElementLayoutStore.Get(fixedRoot).IsFixedRoot = true;
 
-        UpdateCssScrollContentSize(element, finalRect);
+        foreach (var entry in plan.Entries)
+        {
+            if (ReferenceEquals(entry.Element, element) || entry.Element.IsScrollContainer())
+                UpdateCssScrollContentSize(entry.Element, entry.Bounds);
+        }
     }
 
     private CssLayoutPlan BuildCssPlan(Element root, Rect requestedBounds)
@@ -81,12 +85,13 @@ public sealed partial class LayoutEngine
     private float LayoutContainerContents(Element container, Rect borderBounds, CssBox box,
         CssContainingBlock containingBlock, CssLayoutPlan plan)
     {
+        var scrollbarInsets = container.GetReservedScrollbarInsets();
         var content = new Rect(
-            borderBounds.X + box.BorderLeft + box.PaddingLeft,
-            borderBounds.Y + box.BorderTop + box.PaddingTop,
-            Math.Max(0, borderBounds.Width - box.BorderLeft - box.BorderRight - box.PaddingLeft - box.PaddingRight),
+            borderBounds.X + box.BorderLeft + box.PaddingLeft + scrollbarInsets.Left,
+            borderBounds.Y + box.BorderTop + box.PaddingTop + scrollbarInsets.Top,
+            Math.Max(0, borderBounds.Width - box.BorderLeft - box.BorderRight - box.PaddingLeft - box.PaddingRight - scrollbarInsets.Left - scrollbarInsets.Right),
             borderBounds.Height > 0 && float.IsFinite(borderBounds.Height)
-                ? Math.Max(0, borderBounds.Height - box.BorderTop - box.BorderBottom - box.PaddingTop - box.PaddingBottom)
+                ? Math.Max(0, borderBounds.Height - box.BorderTop - box.BorderBottom - box.PaddingTop - box.PaddingBottom - scrollbarInsets.Top - scrollbarInsets.Bottom)
                 : float.MaxValue);
         var floats = new List<CssFloatArea>();
         var absolute = new List<Element>();
@@ -181,14 +186,15 @@ public sealed partial class LayoutEngine
             return;
         }
 
-        var right = rect.Width;
-        var bottom = rect.Height;
+        var viewport = element.GetScrollViewportRect();
+        var right = viewport.Width;
+        var bottom = viewport.Height;
         foreach (var child in element.Children)
         {
             if (!child.IsVisible ||
                 ElementLayoutStore.TryGet(child, out var data) && data.IsFixedRoot) continue;
-            right = Math.Max(right, child.Geometry.Right - rect.X);
-            bottom = Math.Max(bottom, child.Geometry.Bottom - rect.Y);
+            right = Math.Max(right, child.Geometry.Right - viewport.X);
+            bottom = Math.Max(bottom, child.Geometry.Bottom - viewport.Y);
         }
 
         element.SetScrollContentSize(new Size(right, bottom));

@@ -5,6 +5,7 @@ using Square.Rendering;
 using Square.Runtime;
 using Square.Runtime.State;
 using Square.UI;
+using Square.UI.Scrolling;
 
 namespace Square.Hosting;
 
@@ -21,6 +22,7 @@ public sealed class AppWindow : IRenderBackendApplication
     private readonly int _initialHeight;
     private string _title;
     private string _renderBackend = "Software";
+    private ScrollbarDeviceProfile _scrollbarProfile = ScrollbarDeviceProfile.Auto;
     private Size _clientSize;
     private float _dpiScale = 1f;
     private AppWindowState _state;
@@ -94,6 +96,25 @@ public sealed class AppWindow : IRenderBackendApplication
             ArgumentException.ThrowIfNullOrWhiteSpace(value);
             _renderBackend = value;
         }
+    }
+
+    /// <summary>滚动条设备 profile；Auto 在当前桌面宿主上解析为 Desktop。</summary>
+    public ScrollbarDeviceProfile ScrollbarProfile
+    {
+        get => _scrollbarProfile;
+        set
+        {
+            if (_scrollbarProfile == value) return;
+            _scrollbarProfile = value;
+            if (Content != null) InvalidateScrollbarProfile(Content);
+        }
+    }
+
+    private static void InvalidateScrollbarProfile(Element element)
+    {
+        element.InvalidateLayout();
+        foreach (var child in element.Children)
+            InvalidateScrollbarProfile(child);
     }
 
     /// <summary>软件渲染表面类型。</summary>
@@ -424,6 +445,7 @@ public sealed class AppWindow : IRenderBackendApplication
             RenderBackend = RenderBackend,
             Background = Background,
             RenderingMode = RenderingMode,
+            ScrollbarProfile = ScrollbarProfile,
             BorderStyle = BorderStyle,
             OwnerHandle = nativeOwner.Handle,
             IsModal = isModal

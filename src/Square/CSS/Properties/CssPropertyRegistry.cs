@@ -1,6 +1,7 @@
 using System.Globalization;
 using Square.CSS.Tokenizer;
 using Square.CSS.Values;
+using Square.Graphics;
 
 namespace Square.CSS.Properties;
 
@@ -118,6 +119,9 @@ internal static class CssPropertyRegistry
         Add("overflow", "visible", false, value => IsKeyword(value, "visible", "hidden", "scroll", "auto", "clip"));
         AddMany(new[] { "overflow-x", "overflow-y" }, "visible", false,
             value => IsKeyword(value, "visible", "hidden", "scroll", "auto", "clip"));
+        Add("scrollbar-gutter", "auto", false, value => IsKeyword(value, "auto", "stable", "stable both-edges"));
+        Add("scrollbar-color", "auto", true, IsScrollbarColor);
+        Add("scrollbar-width", "auto", false, value => IsKeyword(value, "auto", "thin", "none"));
         Add("padding", "0", false, Any);
         AddMany(new[] { "padding-top", "padding-right", "padding-bottom", "padding-left" }, "0", false,
             value => IsNonNegativeLength(value, allowPercent: true));
@@ -162,6 +166,13 @@ internal static class CssPropertyRegistry
         if (IsFunction(value, "rgb") || IsFunction(value, "rgba") || IsFunction(value, "hsl") || IsFunction(value, "hsla"))
             return true;
         return value.All(c => char.IsLetter(c) || c == '-');
+    }
+
+    private static bool IsScrollbarColor(string value)
+    {
+        if (IsKeyword(value, "auto")) return true;
+        return CssValueSyntax.TrySplitWhitespace(value, out var tokens) &&
+            tokens.Length == 2 && tokens.All(token => Color.TryParse(token, out _));
     }
 
     private static bool IsImage(string value) =>

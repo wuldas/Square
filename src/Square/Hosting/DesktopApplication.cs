@@ -8,6 +8,7 @@ using Square.Rendering;
 using Square.Platform;
 using Square.Runtime;
 using Square.UI;
+using Square.UI.Scrolling;
 using Reconciler = Square.UI.Reconciler;
 
 namespace Square.Hosting;
@@ -36,12 +37,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private Rect _textSelectionOverlayDirtyBounds = Rect.Empty;
     private bool _isSelectingText;
     private Element? _pointerDownTarget;
+    private Element? _draggingScrollbar;
+    private Element? _pressedScrollbar;
+    private ScrollbarPart _pressedScrollbarPart;
+    private bool _scrollbarCornerPressed;
+    private double _nextScrollbarRepeatSeconds;
     private Splitter? _draggingSplitter;
     private Point? _pendingSplitterPoint;
     private Element? _lastClickTarget;
     private Point _lastClickPoint;
     private double _lastClickSeconds = double.NegativeInfinity;
     private readonly List<UIElement> _hoverPath = [];
+    private Element? _hoveringScrollbar;
     private readonly List<UIElement> _activePath = [];
     private readonly TooltipPopup _tooltipPopup;
     private UIElement? _tooltipTarget;
@@ -353,6 +360,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         ClearDocumentSelection();
 
         _pointerDownTarget = null;
+        if (_draggingScrollbar is { } activeDraggingScrollbar)
+            EndScrollbarInteraction(activeDraggingScrollbar);
+        _draggingScrollbar = null;
+        if (_pressedScrollbar is { } activePressedScrollbar)
+            EndScrollbarInteraction(activePressedScrollbar);
+        _pressedScrollbar = null;
+        _pressedScrollbarPart = ScrollbarPart.None;
+        _scrollbarCornerPressed = false;
         _draggingSplitter = null;
         _pendingSplitterPoint = null;
         _lastClickTarget = null;
@@ -362,6 +377,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _tooltipTarget = null;
         _tooltipPopup.Anchor = null;
         _tooltipPopup.Close();
+        _hoveringScrollbar?.ClearScrollbarHover();
+        _hoveringScrollbar = null;
         _scheduledFrames.Clear();
         _inspectorHighlightDebugId = null;
         _inspectorOverlayDirty = true;
@@ -742,7 +759,26 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     }
 
     private Element? HitTest(Point point) =>
-        _displayTree.HitTestPopups(point) ?? _displayTree.HitTestFixed(point) ?? _displayTree.HitTestRoot(point);
+        _displayTree.HitTestScrollbar(point) ?? _displayTree.HitTestPopups(point) ??
+        _displayTree.HitTestFixed(point) ?? _displayTree.HitTestRoot(point);
+
+    private void UpdateScrollbarHover(Point point)
+    {
+        var next = _displayTree.HitTestScrollbar(point);
+        var changed = false;
+        if (!ReferenceEquals(next, _hoveringScrollbar))
+        {
+            if (_hoveringScrollbar != null)
+            {
+                _hoveringScrollbar.ClearScrollbarHover();
+                changed = true;
+            }
+            _hoveringScrollbar = next;
+        }
+        if (_hoveringScrollbar?.UpdateScrollbarHover(MapPointerPoint(_hoveringScrollbar, point)) == true)
+            changed = true;
+        if (changed) RequestRender();
+    }
 
     private static bool AreLayoutSizesEquivalent(Size actual, Size requested) =>
         MathF.Abs(actual.Width - requested.Width) < 0.5f &&
@@ -848,6 +884,23 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left)
     {
         if (_host == null) return;
+        if (action == MouseAction.Move || button == MouseButton.Left) UpdateScrollbarHover(point);
+
+        if (_draggingScrollbar is { } dragging &&
+            !IsUsableScrollbarInteraction(dragging, dragging.ScrollbarInteractionPart))
+        {
+            EndScrollbarInteraction(dragging);
+            _draggingScrollbar = null;
+            RequestRender();
+        }
+        if (_pressedScrollbar is { } pressed &&
+            !IsUsableScrollbarInteraction(pressed, _pressedScrollbarPart))
+        {
+            EndScrollbarInteraction(pressed);
+            _pressedScrollbar = null;
+            _pressedScrollbarPart = ScrollbarPart.None;
+            RequestRender();
+        }
 
         if (button == MouseButton.Right)
         {
@@ -858,6 +911,106 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 contextTarget?.DispatchTrusted(StandardEvents.CreateContextMenu(point.X, point.Y));
             RenderFrame();
             return;
+        }
+
+        if (action == MouseAction.Down && button == MouseButton.Left &&
+            _displayTree.DismissPopupsOutside(point))
+            RequestRender();
+
+        if (_scrollbarCornerPressed)
+        {
+            if (action == MouseAction.Up && button == MouseButton.Left)
+            {
+                _scrollbarCornerPressed = false;
+                RenderFrame();
+                return;
+            }
+            if (action == MouseAction.Move) return;
+        }
+
+        if (_draggingScrollbar != null)
+        {
+            if (action == MouseAction.Move)
+            {
+                if (_draggingScrollbar is ITextEditor { OwnsScrollbarChrome: true } draggingEditor)
+                    draggingEditor.HandlePointerMove(MapPointerPoint(_draggingScrollbar, point));
+                else if (_draggingScrollbar.ContinueScrollbarInteraction(MapPointerPoint(_draggingScrollbar, point)))
+                    RequestRender();
+                return;
+            }
+            if (action == MouseAction.Up)
+            {
+                EndScrollbarInteraction(_draggingScrollbar);
+                _draggingScrollbar = null;
+                RenderFrame();
+                return;
+            }
+        }
+
+        if (_pressedScrollbar != null)
+        {
+            if (action == MouseAction.Up)
+            {
+                EndScrollbarInteraction(_pressedScrollbar);
+                _pressedScrollbar = null;
+                _pressedScrollbarPart = ScrollbarPart.None;
+                RenderFrame();
+                return;
+            }
+            if (action == MouseAction.Move)
+            {
+                if (_pressedScrollbar is ITextEditor { OwnsScrollbarChrome: true } pressedEditor)
+                {
+                    if (pressedEditor.UpdateScrollbarInteractionPointer(
+                        MapPointerPoint(_pressedScrollbar, point)))
+                        RequestRender();
+                    return;
+                }
+                if (_pressedScrollbar.UpdateScrollbarInteractionPointer(MapPointerPoint(_pressedScrollbar, point)))
+                    RequestRender();
+                return;
+            }
+        }
+
+        if (action == MouseAction.Down && button == MouseButton.Left)
+        {
+            var scrollbarTarget = _displayTree.HitTestScrollbar(point);
+            if (scrollbarTarget != null)
+            {
+                var scrollbarPoint = MapPointerPoint(scrollbarTarget, point);
+                var customScrollbarPart = scrollbarTarget is ITextEditor customEditor
+                    ? customEditor.GetScrollbarPartAt(scrollbarPoint)
+                    : ScrollbarPart.None;
+                var ownsCustomScrollbar = scrollbarTarget is ITextEditor { OwnsScrollbarChrome: true };
+                if (!ownsCustomScrollbar && customScrollbarPart == ScrollbarPart.None &&
+                    scrollbarTarget.GetScrollbarMetrics().HitTest(scrollbarPoint) == ScrollbarPart.Corner)
+                {
+                    _scrollbarCornerPressed = true;
+                    _pointerDownTarget = null;
+                    ClearActivePath();
+                    RenderFrame();
+                    return;
+                }
+                var scrollbarPart = ownsCustomScrollbar || customScrollbarPart != ScrollbarPart.None
+                    ? ScrollbarPart.None
+                    : scrollbarTarget.StartScrollbarInteraction(scrollbarPoint);
+                if (scrollbarPart != ScrollbarPart.None)
+                {
+                    _draggingScrollbar = scrollbarPart is ScrollbarPart.VerticalThumb or ScrollbarPart.HorizontalThumb
+                        ? scrollbarTarget
+                        : null;
+                    if (_draggingScrollbar == null)
+                    {
+                        _pressedScrollbar = scrollbarTarget;
+                        _pressedScrollbarPart = scrollbarPart;
+                        _nextScrollbarRepeatSeconds = _clock.Elapsed.TotalSeconds + 0.5;
+                    }
+                    _pointerDownTarget = null;
+                    ClearActivePath();
+                    RenderFrame();
+                    return;
+                }
+            }
         }
 
         if (_draggingSplitter != null && action == MouseAction.Move)
@@ -921,8 +1074,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             return;
         }
 
-        if (action == MouseAction.Down && _displayTree.DismissPopupsOutside(point))
-            RequestRender();
         if (action == MouseAction.Move)
         {
             var isSelectingDocumentText = _textSelection is { IsSelecting: true };
@@ -996,17 +1147,39 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var deltaY = point.Y - _lastClickPoint.Y;
         var isDoubleClick = ReferenceEquals(hit, _lastClickTarget) && elapsed <= 0.5 &&
                             deltaX * deltaX + deltaY * deltaY <= 25;
+        var suppressDocumentPointer = IsEditorScrollbarHit(hit, point);
         _lastClickTarget = isDoubleClick ? null : hit;
         _lastClickPoint = point;
         _lastClickSeconds = _clock.Elapsed.TotalSeconds;
-        _pointerDownTarget = hit;
-        UpdateHoverPath(hit);
-        UpdateActivePath(hit);
-        hit?.DispatchTrusted(StandardEvents.CreatePointerDown());
+        _pointerDownTarget = suppressDocumentPointer ? null : hit;
+        if (suppressDocumentPointer)
+        {
+            UpdateHoverPath(null);
+            ClearActivePath();
+        }
+        else
+        {
+            UpdateHoverPath(hit);
+            UpdateActivePath(hit);
+            hit?.DispatchTrusted(StandardEvents.CreatePointerDown());
+        }
         _draggingSplitter = FindAncestor<Splitter>(hit);
         _pendingSplitterPoint = null;
         _draggingSplitter?.HandlePointerDown(point);
         UpdateFocus(hit, point, isDoubleClick);
+
+        if (hit is ITextEditor editor && hit is UIElement editorElement)
+        {
+            var editorPart = editor.GetScrollbarPartAt(MapPointerPoint(editorElement, point));
+            if (editorPart is ScrollbarPart.VerticalBackButton or ScrollbarPart.VerticalTrack or
+                ScrollbarPart.VerticalForwardButton or ScrollbarPart.HorizontalBackButton or
+                ScrollbarPart.HorizontalTrack or ScrollbarPart.HorizontalForwardButton)
+            {
+                _pressedScrollbar = hit;
+                _pressedScrollbarPart = editorPart;
+                _nextScrollbarRepeatSeconds = _clock.Elapsed.TotalSeconds + 0.5;
+            }
+        }
 
         if (hit is Select selected) selected.HandlePointerDown(point);
         RenderFrame();
@@ -1053,7 +1226,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 editorPoint,
                 CurrentModifiers.HasFlag(KeyModifiers.Shift),
                 CurrentModifiers.HasFlag(KeyModifiers.Alt));
-            if (selectWord && startedDrag) editor.SelectWordAt(editorPoint);
+            if (selectWord && startedDrag && editor.IsTextSelectionDragActive)
+                editor.SelectWordAt(editorPoint);
             // gutter/折叠等消费点击时返回 false：保留选区，不进入拖选
             _isSelectingText = startedDrag;
             return;
@@ -1088,10 +1262,50 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static Point MapPointerPoint(Element? target, Point point)
     {
+        if (target is IPopupElement { IsLayoutOverlay: true } targetPopup)
+            return targetPopup.MapPointToContent(point);
+        if (target?.IsFixedPositioned() == true) return point;
+        var mapped = point;
         for (var current = target?.Parent; current != null; current = current.Parent)
+        {
             if (current is IPopupElement popup)
-                return popup.MapPointToContent(point);
-        return point;
+            {
+                mapped = popup.MapPointToContent(mapped);
+                if (popup.IsLayoutOverlay && current.MapsScrollOffsetForChildren())
+                    mapped = new Point(mapped.X + current.ScrollLeft, mapped.Y + current.ScrollTop);
+                return mapped;
+            }
+            if (current.IsFixedPositioned())
+            {
+                if (current.MapsScrollOffsetForChildren())
+                    mapped = new Point(mapped.X + current.ScrollLeft, mapped.Y + current.ScrollTop);
+                break;
+            }
+            if (current.MapsScrollOffsetForChildren())
+                mapped = new Point(mapped.X + current.ScrollLeft, mapped.Y + current.ScrollTop);
+        }
+        return mapped;
+    }
+
+    private bool IsUsableScrollbarInteraction(Element element, ScrollbarPart part)
+    {
+        if (!element.IsAttached || !ReferenceEquals(element.OwnerDocument, _document) ||
+            !element.IsEffectivelyVisible) return false;
+        for (var current = element; current != null; current = current.Parent)
+            if (current is IPopupElement popup && !popup.IsPopupOpen) return false;
+        if (element is ITextEditor customEditor && customEditor.OwnsScrollbarChrome)
+            return customEditor.IsScrollbarInteractionUsable(part);
+        if (!element.IsCssDisplayed() || element.IsCssVisibilityHidden()) return false;
+        var metrics = element.GetScrollbarMetrics();
+        if (metrics.IsOverlay) return false;
+        return part switch
+        {
+            ScrollbarPart.VerticalBackButton or ScrollbarPart.VerticalTrack or ScrollbarPart.VerticalThumb or
+                ScrollbarPart.VerticalForwardButton => metrics.HasVertical,
+            ScrollbarPart.HorizontalBackButton or ScrollbarPart.HorizontalTrack or ScrollbarPart.HorizontalThumb or
+                ScrollbarPart.HorizontalForwardButton => metrics.HasHorizontal,
+            _ => false
+        };
     }
 
     private static Rect MapContentRectToScreen(Element? target, Rect rect)
@@ -1100,7 +1314,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             if (current is not IPopupElement popup) continue;
             var origin = popup.MapPointToContent(Point.Zero);
-            return rect.Offset(-origin.X, -origin.Y);
+            var scrollOffset = popup is Element element && popup.IsLayoutOverlay
+                ? new Point(element.ScrollLeft, element.ScrollTop)
+                : default;
+            return rect.Offset(-origin.X - scrollOffset.X, -origin.Y - scrollOffset.Y);
         }
 
         return rect;
@@ -1119,6 +1336,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         for (var current = hit; current != null; current = current.Parent)
             if (current is T match) return match;
         return null;
+    }
+
+    private static bool IsEditorScrollbarHit(Element? hit, Point point) =>
+        hit is ITextEditor editor && hit is UIElement element &&
+        editor.IsScrollbarInteractionAt(MapPointerPoint(element, point));
+
+    private static void EndScrollbarInteraction(Element element)
+    {
+        if (element is ITextEditor editor && editor.OwnsScrollbarChrome)
+            editor.EndScrollbarInteraction();
+        else
+            element.EndScrollbarInteraction();
     }
 
     private static CursorKind ResolveCursor(Element? hit, Point point)
@@ -2001,13 +2230,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         List<Element>? staleTargets = null;
         foreach (var pair in _scheduledFrames)
         {
-            if (!pair.Key.IsAttached || !pair.Key.IsEffectivelyVisible || !ReferenceEquals(pair.Key.OwnerDocument, _document))
+            if (!pair.Key.IsAttached || !ReferenceEquals(pair.Key.OwnerDocument, _document))
             {
                 staleTargets ??= [];
                 staleTargets.Add(pair.Key);
                 continue;
             }
-            if (now < pair.Value) continue;
+            if (!pair.Key.IsEffectivelyVisible || now < pair.Value) continue;
             dueTargets ??= [];
             dueTargets.Add(pair.Key);
         }
@@ -2015,6 +2244,32 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (staleTargets != null)
             foreach (var target in staleTargets)
                 _scheduledFrames.Remove(target);
+
+        if (_draggingScrollbar is { } draggingScrollbar &&
+            !IsUsableScrollbarInteraction(draggingScrollbar, draggingScrollbar.ScrollbarInteractionPart))
+        {
+            draggingScrollbar.EndScrollbarInteraction();
+            _draggingScrollbar = null;
+            RequestRender();
+        }
+
+        var scrollbarRepeated = false;
+        if (_pressedScrollbar is { } pressedScrollbar)
+        {
+            if (!IsUsableScrollbarInteraction(pressedScrollbar, _pressedScrollbarPart))
+            {
+                EndScrollbarInteraction(pressedScrollbar);
+                _pressedScrollbar = null;
+                _pressedScrollbarPart = ScrollbarPart.None;
+            }
+            else if (now >= _nextScrollbarRepeatSeconds)
+            {
+                scrollbarRepeated = pressedScrollbar is ITextEditor { OwnsScrollbarChrome: true } pressedEditor
+                    ? pressedEditor.RepeatScrollbarInteraction()
+                    : pressedScrollbar.RepeatScrollbarInteraction();
+                _nextScrollbarRepeatSeconds = now + 0.05;
+            }
+        }
 
         if (dueTargets != null)
         {
@@ -2029,6 +2284,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
 
         var needsRender = (dueTargets != null && dueTargets.Count > 0)
+                          || scrollbarRepeated
                           || animationsRunning
                           || Volatile.Read(ref _renderRequested)
                           || _document.Context.Reconciler.HasWork

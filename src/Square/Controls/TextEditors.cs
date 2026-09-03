@@ -5,6 +5,7 @@ using Square.Events;
 using Square.Graphics;
 using Square.Platform;
 using Square.UI;
+using Square.UI.Scrolling;
 
 namespace Square.Controls;
 
@@ -34,11 +35,29 @@ public interface ITextEditor
     void HandleKey(int keyCode, bool shift = false, bool control = false);
     /// <summary>
     /// 处理指针按下。
-    /// 返回 <c>true</c> 表示进入文本拖选；返回 <c>false</c> 表示点击已被控件消费（如 gutter 折叠 / Alt 多光标），宿主不应开始拖选。
+    /// 返回 <c>true</c> 表示宿主必须继续路由指针移动/抬起；
+    /// <see cref="IsTextSelectionDragActive"/> 区分文本拖选与滚动条等非文本指针捕获。
+    /// 返回 <c>false</c> 表示点击已被控件消费且无需后续拖动路由（如 gutter 折叠 / Alt 多光标）。
     /// </summary>
     /// <param name="extendSelection">Shift 扩展选区。</param>
     /// <param name="addCursor">Alt 添加光标（多光标编辑器可选支持）。</param>
     bool HandlePointerDown(Point point, bool extendSelection = false, bool addCursor = false);
+    /// <summary>最近一次指针按下是否开始了文本拖选；非文本指针捕获可返回 false。</summary>
+    bool IsTextSelectionDragActive => true;
+    /// <summary>指定编辑器局部坐标是否命中其私有 scrollbar chrome。</summary>
+    bool IsScrollbarInteractionAt(Point point) => false;
+    /// <summary>返回编辑器私有 scrollbar 在指定局部坐标处的部件。</summary>
+    ScrollbarPart GetScrollbarPartAt(Point point) => ScrollbarPart.None;
+    /// <summary>是否由编辑器自行绘制 scrollbar chrome。</summary>
+    bool OwnsScrollbarChrome => false;
+    /// <summary>当前私有 scrollbar capture 是否仍可使用。</summary>
+    bool IsScrollbarInteractionUsable(ScrollbarPart part) => true;
+    /// <summary>重复当前按住的私有 scrollbar 部件。</summary>
+    bool RepeatScrollbarInteraction() => false;
+    /// <summary>更新当前私有 scrollbar 按下状态的指针位置。</summary>
+    bool UpdateScrollbarInteractionPointer(Point point) => false;
+    /// <summary>结束当前私有 scrollbar capture。</summary>
+    void EndScrollbarInteraction() { }
     /// <summary>处理指针移动。</summary>
     void HandlePointerMove(Point point);
     /// <summary>处理指针抬起。</summary>
@@ -88,6 +107,9 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private bool _hasUserEditSinceFocus;
 
     protected abstract bool IsMultiline { get; }
+
+    /// <summary>多行编辑器由自绘路径上报滚动内容尺寸，布局阶段跳过子元素统计。</summary>
+    internal bool ReportsIntrinsicScrollContent => IsMultiline;
     protected virtual bool CanEditText => true;
     protected virtual bool PaintEditorChrome => true;
     protected virtual bool ShowCaret => true;
@@ -98,6 +120,11 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     {
         AddEventListener("focus", ResetCaretBlink);
         AddEventListener("blur", CollapseSelectionOnBlur);
+        AddEventListener(StandardEvents.Scroll, _ =>
+        {
+            _horizontalScroll = ScrollLeft;
+            _verticalScroll = ScrollTop;
+        });
     }
 
     /// <summary>当前文本值。</summary>
@@ -156,14 +183,14 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         if (PaintEditorChrome && string.IsNullOrWhiteSpace(Style.Get("appearance")))
             ControlDrawing.DrawInputFrame(context, this);
         EnsureCaretVisible();
-        context.PushClip(PaintEditorChrome
-            ? new Rect(Geometry.X + 1, Geometry.Y + 1, Math.Max(0, Geometry.Width - 2), Math.Max(0, Geometry.Height - 2))
-            : Geometry);
+        SyncIntrinsicScrollContent();
+        var textViewport = GetTextViewport();
+        context.PushClip(textViewport);
 
         var fontSize = GetFontSize();
         var lineHeight = GetLineHeight(fontSize);
         var textColor = ControlDrawing.GetStyledColor(this, "color", Color.Black);
-        var textMaxSize = new Size(Math.Max(1, Geometry.Width - TextPaddingX * 2 - 2), float.MaxValue);
+        var textMaxSize = new Size(Math.Max(1, textViewport.Width - TextPaddingX * 2 - 2), float.MaxValue);
         var selectionBackground = ControlDrawing.GetStyledColor(
             this,
             Style.Get("selection-background-color") != null ? "selection-background-color" : "selection-background",
@@ -554,7 +581,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             ? Math.Clamp((int)MathF.Floor((point.Y - GetFirstLineTop(lineHeight)) / lineHeight), 0, lines.Count - 1)
             : 0;
         var line = lines[lineIndex];
-        var localX = point.X - Geometry.X - TextPaddingX + _horizontalScroll;
+        var localX = point.X - GetScrollViewportRect().X - TextPaddingX + _horizontalScroll;
         return line.Start + HitTestLine(displayValue.AsSpan(line.Start, line.Length), localX);
     }
 
@@ -626,11 +653,12 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         if (authoritative.TryGetAuthoritativeSnapshot(out var snapshot))
         {
             var caret = snapshot.GetCaretPoint(_caretIndex);
+            var textViewport = GetTextViewport();
             return new Rect(
                 MathF.Round(origin.X + caret.X),
                 MathF.Round(origin.Y + caret.Y),
                 1,
-                Math.Max(1, Math.Min(lineHeight, Geometry.Bottom - origin.Y - caret.Y - 1)));
+                Math.Max(1, Math.Min(lineHeight, textViewport.Bottom - origin.Y - caret.Y)));
         }
         var lines = GetLines(displayValue);
         var lineIndex = FindLineIndex(lines, _caretIndex);
@@ -638,20 +666,60 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         var width = MeasureRange(displayValue, line.Start, Math.Max(0, _caretIndex - line.Start));
         var visualLineBox = GetVisualLineBox(fontSize, lineHeight, lineIndex);
         return new Rect(
-            MathF.Round(Geometry.X + TextPaddingX - _horizontalScroll + width),
+            MathF.Round(GetScrollViewportRect().X + TextPaddingX - _horizontalScroll + width),
             MathF.Round(visualLineBox.Top),
             1,
-            Math.Max(1, Math.Min(visualLineBox.Height, Geometry.Bottom - visualLineBox.Top - 1)));
+            Math.Max(1, Math.Min(visualLineBox.Height, GetTextViewport().Bottom - visualLineBox.Top)));
     }
 
     private Point GetTextOrigin(float fontSize, float lineHeight)
         => new(
-            Geometry.X + TextPaddingX - _horizontalScroll,
+            GetScrollViewportRect().X + TextPaddingX - _horizontalScroll,
             GetFirstLineTop(lineHeight));
 
     private float GetFirstLineTop(float lineHeight) => IsMultiline
-        ? Geometry.Y + TextPaddingY - _verticalScroll
+        ? GetScrollViewportRect().Y + TextPaddingY - _verticalScroll
         : Geometry.Y + Math.Max(1, (Geometry.Height - lineHeight) / 2f);
+
+    private Rect GetTextViewport()
+    {
+        var borderViewport = PaintEditorChrome
+            ? new Rect(Geometry.X + 1, Geometry.Y + 1,
+                Math.Max(0, Geometry.Width - 2), Math.Max(0, Geometry.Height - 2))
+            : Geometry;
+        var scrollViewport = GetScrollViewportRect();
+        if (scrollViewport.IsEmpty) return borderViewport;
+        var left = Math.Max(borderViewport.Left, scrollViewport.Left);
+        var top = Math.Max(borderViewport.Top, scrollViewport.Top);
+        var right = Math.Min(borderViewport.Right, scrollViewport.Right);
+        var bottom = Math.Min(borderViewport.Bottom, scrollViewport.Bottom);
+        return new Rect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+    }
+
+    /// <summary>
+    /// 多行编辑器把自绘文本的内在尺寸并入滚动内容；布局引擎对这类控件
+    /// 没有子元素几何可统计。只扩张不收缩，避免覆盖显式设置的更大范围。
+    /// </summary>
+    private void SyncIntrinsicScrollContent()
+    {
+        if (!IsMultiline || !IsScrollContainer()) return;
+        var fontSize = GetFontSize();
+        var lineHeight = GetLineHeight(fontSize);
+        var lineCount = Math.Max(1, GetLines(Value).Count);
+        var intrinsicWidth = 0f;
+        if (!string.IsNullOrEmpty(Value))
+        {
+            foreach (var line in GetLines(Value))
+                intrinsicWidth = Math.Max(intrinsicWidth,
+                    MeasureRange(Value, line.Start, line.Length));
+        }
+        var viewport = GetTextViewport();
+        var width = Math.Max(Geometry.Width, viewport.Width);
+        var current = ScrollContentSize;
+        SetScrollContentSize(new Size(
+            Math.Max(current.Width, Math.Max(width, intrinsicWidth + TextPaddingX * 2)),
+            Math.Max(current.Height, TextPaddingY * 2 + lineCount * lineHeight)));
+    }
 
     private (float Top, float Height) GetVisualLineBox(float fontSize, float lineHeight, int lineIndex)
     {
@@ -670,10 +738,10 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     {
         if (IsMultiline)
         {
-            _horizontalScroll = 0;
+            _horizontalScroll = IsScrollContainer() ? ScrollLeft : 0;
             if (!IsFocused)
             {
-                _verticalScroll = 0;
+                _verticalScroll = IsScrollContainer() ? ScrollTop : 0;
                 return;
             }
             if (Geometry.Width <= 0 || Geometry.Height <= 0)
@@ -686,8 +754,9 @@ public abstract class TextEditorBase : UIElement, ITextEditor
             var lines = GetLines(DisplayValue);
             var lineIndex = FindLineIndex(lines, _caretIndex);
             var visualLineBox = GetVisualLineBox(fontSize, lineHeight, lineIndex);
-            var viewportTop = Geometry.Y + 1;
-            var viewportBottom = Geometry.Bottom - 1;
+            var textViewport = GetTextViewport();
+            var viewportTop = textViewport.Top;
+            var viewportBottom = textViewport.Bottom;
             var viewportHeight = Math.Max(0, viewportBottom - viewportTop);
             if (visualLineBox.Height >= viewportHeight)
                 _verticalScroll = Math.Max(0, _verticalScroll + visualLineBox.Top - viewportTop);
@@ -695,13 +764,24 @@ public abstract class TextEditorBase : UIElement, ITextEditor
                 _verticalScroll = Math.Max(0, _verticalScroll - (viewportTop - visualLineBox.Top));
             else if (visualLineBox.Top + visualLineBox.Height > viewportBottom)
                 _verticalScroll += visualLineBox.Top + visualLineBox.Height - viewportBottom;
+            SyncSharedScrollOffset();
             return;
         }
         var width = MeasureRange(DisplayValue, 0, _caretIndex);
-        var viewport = Math.Max(0, Geometry.Width - TextPaddingX * 2 - 2);
+        var viewport = Math.Max(0, GetTextViewport().Width - TextPaddingX * 2 - 2);
         if (width - _horizontalScroll > viewport) _horizontalScroll = width - viewport;
         if (width - _horizontalScroll < 0) _horizontalScroll = width;
         _horizontalScroll = Math.Max(0, _horizontalScroll);
+        SyncSharedScrollOffset();
+    }
+
+    private void SyncSharedScrollOffset()
+    {
+        if (!IsScrollContainer()) return;
+        if (Math.Abs(ScrollLeft - _horizontalScroll) > 0.01f)
+            ScrollLeft = _horizontalScroll;
+        if (Math.Abs(ScrollTop - _verticalScroll) > 0.01f)
+            ScrollTop = _verticalScroll;
     }
 
     private LineRange CurrentLine()
@@ -787,7 +867,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         var font = ControlDrawing.ResolveFont(this, fontSize);
         return new TextLayout(text, font)
         {
-            MaxSize = new Size(Math.Max(1, Geometry.Width - TextPaddingX * 2 - 2), float.MaxValue),
+            MaxSize = new Size(Math.Max(1, GetTextViewport().Width - TextPaddingX * 2 - 2), float.MaxValue),
             Alignment = ControlDrawing.ResolveTextAlignment(this),
             Direction = ControlDrawing.ResolveTextDirection(this),
             UnicodeBidi = ControlDrawing.ResolveUnicodeBidi(this),

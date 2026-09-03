@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Square.Events;
 using Square.Graphics;
 using Square.Runtime;
@@ -6,6 +7,7 @@ using Square.Runtime.State;
 using Square.Hosting;
 using Square.UI.ElementApi;
 using Square.UI.Properties;
+using Square.UI.Scrolling;
 
 namespace Square.UI;
 
@@ -15,8 +17,13 @@ namespace Square.UI;
 /// <para>Web API 对应：<c>tagName</c> / <c>id</c> / <c>classList</c> / <c>style</c> / 树关系 / 事件。</para>
 /// <para>Square 扩展：<see cref="Geometry"/>、<see cref="Measure"/>/<see cref="Arrange"/>/<see cref="Paint"/>、脏标记与绑定等。</para>
 /// </summary>
-public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
+public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFrameScheduledElement
 {
+    private const float SmoothScrollDurationSeconds = 0.18f;
+    private const float ScrollbarFadeDelaySeconds = 0.5f;
+    private const float ScrollbarFadeDurationSeconds = 0.2f;
+    private const float ScrollbarLineStep = 40f;
+
     private Rect _geometry;
     private bool _isVisible = true;
     private bool _isLayoutDirty = true;
@@ -25,6 +32,21 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     private List<Rect>? _paintDirtyRects;
     private Size _scrollContentSize;
     private Point _scrollOffset;
+    private Point _smoothScrollStart;
+    private Point _smoothScrollTarget;
+    private float _smoothScrollElapsed;
+    private long _smoothScrollLastTimestamp;
+    private bool _smoothScrollActive;
+    private long _scrollbarFadeLastTimestamp;
+    private float _scrollbarFadeElapsed;
+    private float _scrollbarOpacity;
+    private bool _scrollbarFadeActive;
+    private ScrollbarPart _scrollbarInteractionPart;
+    private bool _scrollbarRepeatForward;
+    private bool _scrollbarRepeatPointerInside;
+    private Point _scrollbarRepeatPoint;
+    private Point _scrollbarDragStartPoint;
+    private Point _scrollbarDragStartOffset;
     private int _zIndex;
     private HitTestEntry[]? _hitTestChildren;
     private readonly List<IDisposable> _bindings = [];
@@ -211,7 +233,15 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     protected virtual void OnIsVisibleChanged(bool isVisible) { }
 
     /// <summary>当前元素或祖先的可见性导致实际可见状态变化时触发。</summary>
-    protected virtual void OnEffectiveVisibilityChanged(bool isVisible) { }
+    protected virtual void OnEffectiveVisibilityChanged(bool isVisible)
+    {
+        if (!isVisible) return;
+        var now = Stopwatch.GetTimestamp();
+        if (_smoothScrollActive) _smoothScrollLastTimestamp = now;
+        if (_scrollbarFadeActive) _scrollbarFadeLastTimestamp = now;
+        if (_smoothScrollActive || _scrollbarFadeActive)
+            DispatchEvent(StandardEvents.CreateRequestFrame());
+    }
 
     private void NotifyEffectiveVisibilityChanged(bool wasEffectivelyVisible, bool isEffectivelyVisible)
     {
@@ -577,28 +607,32 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         var (clipX, clipY) = GetOverflowClipAxes();
         if (!clipX && !clipY) return Rect.Empty;
         const float unbounded = 1_000_000f;
+        var viewport = GetScrollbarMetrics().ViewportRect;
         return new Rect(
-            clipX ? Geometry.X : -unbounded,
-            clipY ? Geometry.Y : -unbounded,
-            clipX ? Geometry.Width : unbounded * 2,
-            clipY ? Geometry.Height : unbounded * 2);
+            clipX ? viewport.X : -unbounded,
+            clipY ? viewport.Y : -unbounded,
+            clipX ? viewport.Width : unbounded * 2,
+            clipY ? viewport.Height : unbounded * 2);
     }
 
     private bool ClipsOverflowAt(Point point)
     {
         var (clipX, clipY) = GetOverflowClipAxes();
-        return clipX && (point.X < Geometry.Left || point.X > Geometry.Right) ||
-            clipY && (point.Y < Geometry.Top || point.Y > Geometry.Bottom);
+        var viewport = GetScrollbarMetrics().ViewportRect;
+        return clipX && (point.X < viewport.Left || point.X > viewport.Right) ||
+            clipY && (point.Y < viewport.Top || point.Y > viewport.Bottom);
     }
 
     private (bool clipX, bool clipY) GetOverflowClipAxes()
     {
         var isTable = IsTableFormattingBox();
         if (!IsOverflowContainer() && !isTable) return (false, false);
+        var tableHasScrollOverflow = isTable && HasActualTableScrollOverflow();
         var overflow = Style.Get("overflow");
-        var clipBoth = ClipsOverflowValue(overflow, isTable);
-        return (clipBoth || ClipsOverflowValue(Style.Get("overflow-x"), isTable),
-            clipBoth || ClipsOverflowValue(Style.Get("overflow-y"), isTable));
+        var tableOverflow = isTable && !tableHasScrollOverflow;
+        var clipBoth = ClipsOverflowValue(overflow, tableOverflow);
+        return (clipBoth || ClipsOverflowValue(Style.Get("overflow-x"), tableOverflow),
+            clipBoth || ClipsOverflowValue(Style.Get("overflow-y"), tableOverflow));
     }
 
     private bool IsTableFormattingBox()
@@ -619,15 +653,27 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
     /// <summary>是否为滚动容器（由 CSS overflow 推导）。</summary>
     public bool IsScrollContainer()
     {
-        if (!IsOverflowContainer()) return false;
+        if (!IsOverflowContainer() && !IsTableFormattingBox()) return false;
         var (scrollX, scrollY) = GetScrollAxes();
-        return scrollX || scrollY;
+        return (scrollX || scrollY) &&
+            (!IsTableFormattingBox() || HasActualTableScrollOverflow());
     }
 
     private bool IsOverflowContainer()
     {
         var display = Style.Get("display")?.Trim().ToLowerInvariant();
         return display is null or "" or "block" or "inline-block" or "flow-root" or "flex" or "grid";
+    }
+
+    internal bool IsScrollLayoutContainer() => IsOverflowContainer() || IsTableFormattingBox();
+
+    private bool HasActualTableScrollOverflow()
+    {
+        if (!IsTableFormattingBox()) return false;
+        var axes = GetScrollAxes();
+        var viewport = GetScrollbarMetrics().ViewportRect;
+        return axes.scrollX && _scrollContentSize.Width > viewport.Width + 0.01f ||
+            axes.scrollY && _scrollContentSize.Height > viewport.Height + 0.01f;
     }
 
     /// <summary>当前元素或祖先的 <c>user-select</c> 是否允许文本选择。</summary>
@@ -642,6 +688,76 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
 
         return false;
     }
+
+    /// <summary>获取当前滚动容器的统一 scrollbar 几何。</summary>
+    internal ScrollbarMetrics GetScrollbarMetrics()
+    {
+        var axes = GetScrollAxes();
+        var canExposeScrollbar = IsScrollLayoutContainer();
+        var profile = AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto;
+        return ScrollbarGeometry.Calculate(
+            Geometry,
+            _scrollContentSize,
+            _scrollOffset,
+            verticalEnabled: canExposeScrollbar && axes.scrollY,
+            horizontalEnabled: canExposeScrollbar && axes.scrollX,
+            alwaysShowVertical: IsAlwaysScrolling("overflow-y"),
+            alwaysShowHorizontal: IsAlwaysScrolling("overflow-x"),
+            profile,
+            GetScrollbarWidthMode(),
+            GetScrollbarGutterMode());
+    }
+
+    /// <summary>当前滚动内容可用的视口矩形；desktop gutter 已从中扣除。</summary>
+    protected internal Rect GetScrollViewportRect() => GetScrollbarMetrics().ViewportRect;
+
+    internal float ScrollbarOpacity => GetScrollbarMetrics().IsOverlay ? _scrollbarOpacity : 1f;
+    internal ScrollbarPart ScrollbarInteractionPart =>
+        _scrollbarInteractionPart is ScrollbarPart.VerticalThumb or ScrollbarPart.HorizontalThumb ||
+        _scrollbarRepeatPointerInside
+            ? _scrollbarInteractionPart
+            : ScrollbarPart.None;
+    internal ScrollbarPart ScrollbarHoverPart { get; private set; }
+
+    internal Size GetReservedScrollbarGutter()
+    {
+        var insets = GetReservedScrollbarInsets();
+        return new Size(insets.Left + insets.Right, insets.Top + insets.Bottom);
+    }
+
+    internal (float Left, float Top, float Right, float Bottom) GetReservedScrollbarInsets()
+    {
+        var metrics = GetScrollbarMetrics();
+        if (metrics.IsOverlay) return (0, 0, 0, 0);
+        var bothEdges = GetScrollbarGutterMode() == ScrollbarGutterMode.StableBothEdges;
+        var left = metrics.ReservesVerticalGutter && bothEdges ? metrics.ScrollbarThickness : 0;
+        var top = metrics.ReservesHorizontalGutter && bothEdges ? metrics.ScrollbarThickness : 0;
+        var right = metrics.ReservesVerticalGutter ? metrics.ScrollbarThickness : 0;
+        var bottom = metrics.ReservesHorizontalGutter ? metrics.ScrollbarThickness : 0;
+        return (left, top, right, bottom);
+    }
+
+    private ScrollbarWidthMode GetScrollbarWidthMode() =>
+        Style.Get("scrollbar-width")?.Trim().ToLowerInvariant() switch
+        {
+            "thin" => ScrollbarWidthMode.Thin,
+            "none" => ScrollbarWidthMode.None,
+            _ => ScrollbarWidthMode.Auto
+        };
+
+    private ScrollbarGutterMode GetScrollbarGutterMode() =>
+        Style.Get("scrollbar-gutter")?.Trim().ToLowerInvariant() switch
+        {
+            "stable" => ScrollbarGutterMode.Stable,
+            "stable both-edges" => ScrollbarGutterMode.StableBothEdges,
+            _ => ScrollbarGutterMode.Auto
+        };
+
+    private bool IsAlwaysScrolling(string property) =>
+        IsForcedScrolling(Style.Get("overflow")) || IsForcedScrolling(Style.Get(property));
+
+    private static bool IsForcedScrolling(string? value) =>
+        string.Equals(value, "scroll", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>是否需要为子元素映射滚动偏移。</summary>
     public bool MapsScrollOffsetForChildren() =>
@@ -664,14 +780,90 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         return old.X != _scrollOffset.X || old.Y != _scrollOffset.Y;
     }
 
+    private bool ScrollBySmooth(float deltaX, float deltaY)
+    {
+        var (maxX, maxY) = GetMaxScrollOffset();
+        var (scrollX, scrollY) = GetScrollAxes();
+        var origin = _smoothScrollActive ? _smoothScrollTarget : _scrollOffset;
+        var targetX = scrollX ? Math.Clamp(origin.X + deltaX, 0, maxX) : 0;
+        var targetY = scrollY ? Math.Clamp(origin.Y + deltaY, 0, maxY) : 0;
+        if (Math.Abs(origin.X - targetX) < 0.01f && Math.Abs(origin.Y - targetY) < 0.01f)
+            return false;
+
+        _smoothScrollStart = _scrollOffset;
+        _smoothScrollTarget = new Point(targetX, targetY);
+        _smoothScrollElapsed = 0;
+        _smoothScrollLastTimestamp = Stopwatch.GetTimestamp();
+        _smoothScrollActive = true;
+        DispatchEvent(StandardEvents.CreateRequestFrame());
+        return true;
+    }
+
+    internal void AdvanceSmoothScroll(float deltaSeconds)
+    {
+        if (!_smoothScrollActive) return;
+
+        _smoothScrollElapsed += Math.Max(0, float.IsFinite(deltaSeconds) ? deltaSeconds : 0);
+        var progress = Math.Clamp(_smoothScrollElapsed / SmoothScrollDurationSeconds, 0, 1);
+        var remaining = 1 - progress;
+        var easedProgress = 1 - remaining * remaining * remaining;
+        SetScrollOffsetCore(
+            _smoothScrollStart.X + (_smoothScrollTarget.X - _smoothScrollStart.X) * easedProgress,
+            _smoothScrollStart.Y + (_smoothScrollTarget.Y - _smoothScrollStart.Y) * easedProgress,
+            force: progress >= 1);
+
+        if (progress >= 1)
+        {
+            _smoothScrollActive = false;
+            return;
+        }
+
+        DispatchEvent(StandardEvents.CreateRequestFrame());
+    }
+
+    void IFrameScheduledElement.OnFrameDue() => OnFrameDueCore();
+
+    /// <summary>处理宿主调度到期的帧；派生控件应调用基类以保留平滑滚动。</summary>
+    protected virtual void OnFrameDueCore()
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (_smoothScrollActive)
+        {
+            var deltaSeconds = (now - _smoothScrollLastTimestamp) / (float)Stopwatch.Frequency;
+            _smoothScrollLastTimestamp = now;
+            AdvanceSmoothScroll(deltaSeconds);
+        }
+        if (_scrollbarFadeActive)
+        {
+            var deltaSeconds = (now - _scrollbarFadeLastTimestamp) / (float)Stopwatch.Frequency;
+            _scrollbarFadeLastTimestamp = now;
+            AdvanceScrollbarFade(deltaSeconds);
+        }
+        if (!_smoothScrollActive && !_scrollbarFadeActive)
+            InvalidatePaint();
+    }
+
     /// <summary>设置滚动内容总尺寸。</summary>
     public void SetScrollContentSize(Size size)
     {
-        _scrollContentSize = new Size(Math.Max(0, size.Width), Math.Max(0, size.Height));
+        var normalized = new Size(Math.Max(0, size.Width), Math.Max(0, size.Height));
+        var oldMetrics = GetScrollbarMetrics();
+        _scrollContentSize = normalized;
         SetScrollOffset(_scrollOffset.X, _scrollOffset.Y);
+        var newMetrics = GetScrollbarMetrics();
+        if (oldMetrics.ViewportRect != newMetrics.ViewportRect)
+            InvalidateLayout();
+        else if (oldMetrics != newMetrics)
+            InvalidatePaint();
     }
 
     private void SetScrollOffset(float x, float y)
+    {
+        CancelSmoothScroll();
+        SetScrollOffsetCore(x, y);
+    }
+
+    private void SetScrollOffsetCore(float x, float y, bool force = false)
     {
         var (maxX, maxY) = GetMaxScrollOffset();
         var (scrollX, scrollY) = GetScrollAxes();
@@ -679,15 +871,205 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         if (!scrollY) y = 0;
         x = Math.Clamp(float.IsNaN(x) ? 0 : x, 0, maxX);
         y = Math.Clamp(float.IsNaN(y) ? 0 : y, 0, maxY);
-        if (Math.Abs(_scrollOffset.X - x) < 0.01f && Math.Abs(_scrollOffset.Y - y) < 0.01f) return;
+        if (_scrollOffset.X == x && _scrollOffset.Y == y ||
+            !force && Math.Abs(_scrollOffset.X - x) < 0.01f && Math.Abs(_scrollOffset.Y - y) < 0.01f) return;
         _scrollOffset = new Point(x, y);
+        ShowScrollbar();
         InvalidatePaint();
         DispatchEvent(StandardEvents.CreateScroll());
     }
 
+    internal void AdvanceScrollbarFade(float deltaSeconds)
+    {
+        if (!_scrollbarFadeActive) return;
+        _scrollbarFadeElapsed += Math.Max(0, float.IsFinite(deltaSeconds) ? deltaSeconds : 0);
+        var nextOpacity = _scrollbarFadeElapsed <= ScrollbarFadeDelaySeconds
+            ? 1f
+            : 1f - Math.Clamp(
+                (_scrollbarFadeElapsed - ScrollbarFadeDelaySeconds) / ScrollbarFadeDurationSeconds,
+                0,
+                1);
+        var changed = Math.Abs(_scrollbarOpacity - nextOpacity) > 0.001f;
+        _scrollbarOpacity = nextOpacity;
+        if (_scrollbarFadeElapsed >= ScrollbarFadeDelaySeconds + ScrollbarFadeDurationSeconds)
+            _scrollbarFadeActive = false;
+        if (changed) InvalidatePaint();
+        if (_scrollbarFadeActive) DispatchEvent(StandardEvents.CreateRequestFrame());
+    }
+
+    internal ScrollbarPart StartScrollbarInteraction(Point point)
+    {
+        var metrics = GetScrollbarMetrics();
+        if (metrics.IsOverlay) return ScrollbarPart.None;
+        var part = metrics.HitTest(point);
+        if (part is ScrollbarPart.None or ScrollbarPart.Corner) return ScrollbarPart.None;
+        _scrollbarInteractionPart = part;
+        _scrollbarRepeatPoint = point;
+        _scrollbarRepeatPointerInside = true;
+        InvalidatePaint();
+
+        switch (part)
+        {
+            case ScrollbarPart.VerticalThumb:
+            case ScrollbarPart.HorizontalThumb:
+                CancelSmoothScroll();
+                _scrollbarInteractionPart = part;
+                _scrollbarDragStartPoint = point;
+                _scrollbarDragStartOffset = _scrollOffset;
+                break;
+            case ScrollbarPart.VerticalBackButton:
+                ScrollBy(0, -ScrollbarLineStep);
+                break;
+            case ScrollbarPart.VerticalForwardButton:
+                ScrollBy(0, ScrollbarLineStep);
+                break;
+            case ScrollbarPart.HorizontalBackButton:
+                ScrollBy(-ScrollbarLineStep, 0);
+                break;
+            case ScrollbarPart.HorizontalForwardButton:
+                ScrollBy(ScrollbarLineStep, 0);
+                break;
+            case ScrollbarPart.VerticalTrack:
+                _scrollbarRepeatForward = point.Y >= metrics.VerticalThumb.Top;
+                ScrollBy(0, point.Y < metrics.VerticalThumb.Top
+                    ? -metrics.ViewportRect.Height
+                    : metrics.ViewportRect.Height);
+                break;
+            case ScrollbarPart.HorizontalTrack:
+                _scrollbarRepeatForward = point.X >= metrics.HorizontalThumb.Left;
+                ScrollBy(point.X < metrics.HorizontalThumb.Left
+                    ? -metrics.ViewportRect.Width
+                    : metrics.ViewportRect.Width, 0);
+                break;
+        }
+        return part;
+    }
+
+    internal bool RepeatScrollbarInteraction()
+    {
+        if (!_scrollbarRepeatPointerInside) return false;
+        var metrics = GetScrollbarMetrics();
+        switch (_scrollbarInteractionPart)
+        {
+            case ScrollbarPart.VerticalBackButton:
+                return ScrollBy(0, -ScrollbarLineStep);
+            case ScrollbarPart.VerticalForwardButton:
+                return ScrollBy(0, ScrollbarLineStep);
+            case ScrollbarPart.HorizontalBackButton:
+                return ScrollBy(-ScrollbarLineStep, 0);
+            case ScrollbarPart.HorizontalForwardButton:
+                return ScrollBy(ScrollbarLineStep, 0);
+            case ScrollbarPart.VerticalTrack:
+                if (_scrollbarRepeatForward && metrics.VerticalThumb.Bottom >= _scrollbarRepeatPoint.Y ||
+                    !_scrollbarRepeatForward && metrics.VerticalThumb.Top <= _scrollbarRepeatPoint.Y)
+                    return false;
+                return ScrollBy(0, _scrollbarRepeatForward
+                    ? metrics.ViewportRect.Height
+                    : -metrics.ViewportRect.Height);
+            case ScrollbarPart.HorizontalTrack:
+                if (_scrollbarRepeatForward && metrics.HorizontalThumb.Right >= _scrollbarRepeatPoint.X ||
+                    !_scrollbarRepeatForward && metrics.HorizontalThumb.Left <= _scrollbarRepeatPoint.X)
+                    return false;
+                return ScrollBy(_scrollbarRepeatForward
+                    ? metrics.ViewportRect.Width
+                    : -metrics.ViewportRect.Width, 0);
+            default:
+                return false;
+        }
+    }
+
+    internal bool UpdateScrollbarInteractionPointer(Point point)
+    {
+        var metrics = GetScrollbarMetrics();
+        var inside = _scrollbarInteractionPart switch
+        {
+            ScrollbarPart.VerticalBackButton => metrics.VerticalBackButton.Contains(point),
+            ScrollbarPart.VerticalForwardButton => metrics.VerticalForwardButton.Contains(point),
+            ScrollbarPart.HorizontalBackButton => metrics.HorizontalBackButton.Contains(point),
+            ScrollbarPart.HorizontalForwardButton => metrics.HorizontalForwardButton.Contains(point),
+            ScrollbarPart.VerticalTrack => metrics.VerticalTrack.Contains(point),
+            ScrollbarPart.HorizontalTrack => metrics.HorizontalTrack.Contains(point),
+            _ => true
+        };
+        if (inside == _scrollbarRepeatPointerInside) return false;
+        _scrollbarRepeatPointerInside = inside;
+        InvalidatePaint();
+        return true;
+    }
+
+    internal bool UpdateScrollbarHover(Point point)
+    {
+        var next = GetScrollbarMetrics().HitTest(point);
+        if (next == ScrollbarHoverPart) return false;
+        ScrollbarHoverPart = next;
+        InvalidatePaint();
+        return true;
+    }
+
+    internal void ClearScrollbarHover()
+    {
+        if (ScrollbarHoverPart == ScrollbarPart.None) return;
+        ScrollbarHoverPart = ScrollbarPart.None;
+        InvalidatePaint();
+    }
+
+    internal bool ContinueScrollbarInteraction(Point point)
+    {
+        var metrics = GetScrollbarMetrics();
+        if (_scrollbarInteractionPart == ScrollbarPart.VerticalThumb)
+        {
+            var travel = metrics.VerticalTrack.Height - metrics.VerticalThumb.Height;
+            if (travel <= 0) return false;
+            SetScrollOffset(
+                _scrollbarDragStartOffset.X,
+                _scrollbarDragStartOffset.Y + (point.Y - _scrollbarDragStartPoint.Y) * metrics.MaxScrollY / travel);
+            return true;
+        }
+        if (_scrollbarInteractionPart == ScrollbarPart.HorizontalThumb)
+        {
+            var travel = metrics.HorizontalTrack.Width - metrics.HorizontalThumb.Width;
+            if (travel <= 0) return false;
+            SetScrollOffset(
+                _scrollbarDragStartOffset.X + (point.X - _scrollbarDragStartPoint.X) * metrics.MaxScrollX / travel,
+                _scrollbarDragStartOffset.Y);
+            return true;
+        }
+        return false;
+    }
+
+    internal void EndScrollbarInteraction()
+    {
+        if (_scrollbarInteractionPart == ScrollbarPart.None) return;
+        _scrollbarInteractionPart = ScrollbarPart.None;
+        _scrollbarRepeatPointerInside = false;
+        InvalidatePaint();
+    }
+
+    private void ShowScrollbar()
+    {
+        if (!GetScrollbarMetrics().IsOverlay) return;
+        _scrollbarOpacity = 1f;
+        _scrollbarFadeElapsed = 0;
+        _scrollbarFadeLastTimestamp = Stopwatch.GetTimestamp();
+        _scrollbarFadeActive = true;
+        DispatchEvent(StandardEvents.CreateRequestFrame());
+    }
+
+    private void CancelSmoothScroll()
+    {
+        _smoothScrollActive = false;
+        _smoothScrollElapsed = 0;
+    }
+
+    private void CancelScrollbarFade()
+    {
+        _scrollbarFadeActive = false;
+        _scrollbarFadeElapsed = 0;
+        _scrollbarOpacity = 0;
+    }
+
     private (float maxX, float maxY) GetMaxScrollOffset() =>
-        (Math.Max(0, _scrollContentSize.Width - Geometry.Width),
-            Math.Max(0, _scrollContentSize.Height - Geometry.Height));
+        (GetScrollbarMetrics().MaxScrollX, GetScrollbarMetrics().MaxScrollY);
 
     private static bool IsScrollingOverflow(string? value) =>
         string.Equals(value, "scroll", StringComparison.OrdinalIgnoreCase) ||
@@ -903,8 +1285,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         if (e is not WheelEvent wheel) return;
         for (Element? current = this; current != null; current = current.Parent)
         {
-            if (!current.IsScrollContainer() || !current.CanScroll(wheel.DeltaX, wheel.DeltaY)) continue;
-            current.ScrollBy(wheel.DeltaX, wheel.DeltaY);
+            if (!current.IsScrollContainer() || !current.ScrollBySmooth(wheel.DeltaX, wheel.DeltaY)) continue;
             e.PreventDefault();
             return;
         }
@@ -933,12 +1314,21 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle
         IsAttached = true;
         OnAttachedCore();
         foreach (var child in Children) ((IComponentLifecycle)child).OnAttached();
+        var now = Stopwatch.GetTimestamp();
+        if (_smoothScrollActive) _smoothScrollLastTimestamp = now;
+        if (_scrollbarFadeActive) _scrollbarFadeLastTimestamp = now;
+        if (_smoothScrollActive || _scrollbarFadeActive)
+            DispatchEvent(StandardEvents.CreateRequestFrame());
     }
 
     void IComponentLifecycle.OnDetached()
     {
         if (!IsAttached) return;
         foreach (var child in Children) ((IComponentLifecycle)child).OnDetached();
+        CancelSmoothScroll();
+        CancelScrollbarFade();
+        EndScrollbarInteraction();
+        ScrollbarHoverPart = ScrollbarPart.None;
         OnGeneratedDetachedCore();
         OnDetachedCore();
         IsAttached = false;

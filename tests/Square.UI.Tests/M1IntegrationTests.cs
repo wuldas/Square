@@ -917,7 +917,7 @@ public class M1IntegrationTests
         var clip = Assert.IsType<Rect>(clipMethod.Invoke(null, [text]));
 
         Assert.Equal(new Point(0, -75), offset);
-        Assert.Equal(new Rect(30, 20, 240, 120), clip);
+        Assert.Equal(new Rect(30, 20, 225, 120), clip);
     }
 
     [Fact]
@@ -1394,15 +1394,40 @@ public class M1IntegrationTests
     }
 
     [Fact]
-    public void WheelDefaultActionScrollsNearestOverflowContainer()
+    public void WheelDefaultActionSmoothlyScrollsNearestOverflowContainer()
     {
         var scroller = new View { Geometry = new Rect(0, 0, 100, 40) };
         scroller.Style.Set("overflow-y", "auto");
         scroller.SetScrollContentSize(new Size(100, 140));
         var child = new Button { Geometry = new Rect(0, 80, 100, 20) };
         scroller.Children.Add(child);
+        var frameRequests = 0;
+        scroller.AddEventListener(StandardEvents.RequestFrame, _ => frameRequests++);
 
         child.DispatchTrusted(StandardEvents.CreateWheel(0, 30));
+
+        Assert.Equal(0, scroller.ScrollTop);
+        Assert.Equal(1, frameRequests);
+        scroller.AdvanceSmoothScroll(0.08f);
+        Assert.InRange(scroller.ScrollTop, 0.01f, 29.99f);
+        Assert.Equal(2, frameRequests);
+        scroller.AdvanceSmoothScroll(1f);
+        Assert.Equal(30, scroller.ScrollTop);
+        Assert.Equal(2, frameRequests);
+    }
+
+    [Fact]
+    public void SmoothWheelScrollingWorksForFrameScheduledControls()
+    {
+        var scroller = new Square.Controls.Image { Geometry = new Rect(0, 0, 100, 40) };
+        scroller.Style.Set("overflow-y", "auto");
+        scroller.SetScrollContentSize(new Size(100, 140));
+        var child = new Button { Geometry = new Rect(0, 80, 100, 20) };
+        scroller.Children.Add(child);
+
+        child.DispatchTrusted(StandardEvents.CreateWheel(0, 30));
+        System.Threading.Thread.Sleep(200);
+        ((IFrameScheduledElement)scroller).OnFrameDue();
 
         Assert.Equal(30, scroller.ScrollTop);
     }
@@ -1432,9 +1457,9 @@ public class M1IntegrationTests
 
         Assert.Equal(0, scroller.HorizontalOffset);
         Assert.Equal(100, scroller.VerticalOffset);
-        Assert.Equal(80, scroller.ScrollableWidth);
+        Assert.Equal(95, scroller.ScrollableWidth);
         Assert.Equal(100, scroller.ScrollableHeight);
-        Assert.Equal(100, scroller.ViewportWidth);
+        Assert.Equal(85, scroller.ViewportWidth);
         Assert.Equal(40, scroller.ViewportHeight);
     }
 
@@ -1455,7 +1480,7 @@ public class M1IntegrationTests
     }
 
     [Fact]
-    public void ScrollViewerWheelUsesExistingOverflowDefaultAction()
+    public void ScrollViewerWheelUsesSmoothOverflowDefaultAction()
     {
         var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 40) };
         scroller.SetScrollContentSize(new Size(100, 140));
@@ -1464,6 +1489,8 @@ public class M1IntegrationTests
 
         child.DispatchTrusted(StandardEvents.CreateWheel(0, 30));
 
+        Assert.Equal(0, scroller.VerticalOffset);
+        scroller.AdvanceSmoothScroll(1f);
         Assert.Equal(30, scroller.VerticalOffset);
     }
 

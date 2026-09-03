@@ -20,10 +20,14 @@ internal static class StyleInvalidation
                 "border-bottom-right-radius" or "border-bottom-left-radius" or "caret-color" or "outline" or
                 "outline-color" or "outline-style" or "outline-width" or "outline-offset" or
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
-                "opacity" or "selection-background" or "selection-color" => ElementInvalidation.Paint,
+                "opacity" or "selection-background" or "selection-color" or "scrollbar-color" => ElementInvalidation.Paint,
 
-            "z-index" or "visibility" or "overflow" or "overflow-x" or "overflow-y" or "user-select" or "cursor" =>
+            "z-index" or "visibility" or "user-select" or "cursor" =>
                 ElementInvalidation.Paint | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest,
+
+            "overflow" or "overflow-x" or "overflow-y" or "scrollbar-width" or "scrollbar-gutter" =>
+                ElementInvalidation.Layout | ElementInvalidation.Paint |
+                ElementInvalidation.DisplayTree | ElementInvalidation.HitTest,
 
             _ when IsLayoutProperty(property) => ElementInvalidation.Layout,
             _ => ElementInvalidation.Layout

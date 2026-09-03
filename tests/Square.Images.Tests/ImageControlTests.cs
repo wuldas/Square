@@ -1,8 +1,10 @@
 using Square.Controls;
 using Square.Events;
 using Square.Graphics;
+using Square.Hosting;
 using Square.Runtime;
 using Square.UI;
+using Square.UI.Scrolling;
 using System.Collections.Concurrent;
 using Xunit;
 using ImageControl = Square.Controls.Image;
@@ -11,6 +13,8 @@ namespace Square.Images.Tests;
 
 public sealed class ImageControlTests
 {
+    public ImageControlTests() => ImageSourceRegistration.RegisterDefaults();
+
     [Fact]
     public void SourceLoadsLocalImageAndRaisesLoad()
     {
@@ -128,6 +132,88 @@ public sealed class ImageControlTests
     }
 
     [Fact]
+    public void AnimatedFrameInvalidatesPaintWhileMobileScrollbarFadeIsScheduled()
+    {
+        ImageSourceRegistration.RegisterDefaults();
+        var palette = new byte[] { 255, 0, 0, 0, 255, 0 };
+        var gif = CodecTestData.GifAnimation(1, 1, palette,
+        [
+            new CodecTestData.GifFrameData(0, 0, 1, 1, [0], Delay: 1),
+            new CodecTestData.GifFrameData(0, 0, 1, 1, [1], Delay: 1)
+        ], repeatCount: 0);
+        var path = WriteTempImage(gif);
+        try
+        {
+            var window = new AppWindow("animated-image-scrollbar")
+            {
+                ScrollbarProfile = ScrollbarDeviceProfile.Mobile
+            };
+            var document = Assert.IsType<UIDocument>(window.Document);
+            var image = document.CreateElement<ImageControl>();
+            image.Geometry = new Rect(0, 0, 100, 100);
+            image.Style.Set("overflow-y", "auto");
+            image.SetScrollContentSize(new Size(100, 300));
+            window.Load(image);
+            var loaded = false;
+            image.AddEventListener("load", () => loaded = true);
+            image.Source = path;
+
+            ((IComponentLifecycle)document.Body).OnAttached();
+            DrainUntil(document, () => loaded || image.Error != null);
+            Assert.True(loaded, image.Error?.ToString());
+            image.ScrollTop = 20;
+            image.ClearPaintDirty();
+            Thread.Sleep(30);
+
+            ((IFrameScheduledElement)image).OnFrameDue();
+
+            Assert.True(image.NeedsPaint);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ScheduledAnimatedFrameRequeuesWhenInvokedBeforeDeadline()
+    {
+        ImageSourceRegistration.RegisterDefaults();
+        var palette = new byte[] { 255, 0, 0, 0, 255, 0 };
+        var gif = CodecTestData.GifAnimation(1, 1, palette,
+        [
+            new CodecTestData.GifFrameData(0, 0, 1, 1, [0], Delay: 500),
+            new CodecTestData.GifFrameData(0, 0, 1, 1, [1], Delay: 500)
+        ], repeatCount: 0);
+        var path = WriteTempImage(gif);
+        try
+        {
+            var document = new UIDocument();
+            var image = document.CreateElement<ImageControl>();
+            document.Body.Children.Add(image);
+            var requests = new List<FrameRequestEvent>();
+            document.Body.AddEventListener(StandardEvents.RequestFrame, e => requests.Add((FrameRequestEvent)e));
+            var loaded = false;
+            image.AddEventListener("load", () => loaded = true);
+            image.Source = path;
+
+            ((IComponentLifecycle)document.Body).OnAttached();
+            DrainUntil(document, () => loaded || image.Error != null);
+            Assert.True(loaded, image.Error?.ToString());
+            var initialRequests = requests.Count;
+
+            ((IFrameScheduledElement)image).OnFrameDue();
+
+            Assert.True(requests.Count > initialRequests);
+            Assert.InRange(requests[^1].Delay.TotalMilliseconds, 4_000, 5_000);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void AnimatedImagePausesAndResumesWithAncestorVisibility()
     {
         ImageSourceRegistration.RegisterDefaults();
@@ -165,6 +251,53 @@ public sealed class ImageControlTests
             parent.IsVisible = true;
             Assert.True(image.IsEffectivelyVisible);
             Assert.True(requests.Count > requestsBeforeHide);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void AnimatedImagePausesWhenAncestorDisplayIsNone()
+    {
+        ImageSourceRegistration.RegisterDefaults();
+        var palette = new byte[] { 255, 0, 0, 0, 255, 0 };
+        var gif = CodecTestData.GifAnimation(1, 1, palette,
+        [
+            new CodecTestData.GifFrameData(0, 0, 1, 1, [0], Delay: 20),
+            new CodecTestData.GifFrameData(0, 0, 1, 1, [1], Delay: 20)
+        ], repeatCount: 0);
+        var path = WriteTempImage(gif);
+        try
+        {
+            var document = new UIDocument();
+            var parent = document.CreateElement<View>();
+            var image = document.CreateElement<ImageControl>();
+            parent.Children.Add(image);
+            document.Body.Children.Add(parent);
+            var requests = new List<FrameRequestEvent>();
+            document.Body.AddEventListener(StandardEvents.RequestFrame, e => requests.Add((FrameRequestEvent)e));
+            var loaded = false;
+            image.AddEventListener("load", () => loaded = true);
+            image.Source = path;
+
+            ((IComponentLifecycle)document.Body).OnAttached();
+            DrainUntil(document, () => loaded || image.Error != null);
+            Assert.True(loaded, image.Error?.ToString());
+            var requestsBeforeHide = requests.Count;
+
+            parent.Style.Set("display", "none");
+            Thread.Sleep(30);
+            ((IFrameScheduledElement)image).OnFrameDue();
+
+            Assert.Equal(requestsBeforeHide, requests.Count);
+
+            parent.Style.Set("display", "block");
+            image.Paint(new RecordingRenderContext());
+            ((IFrameScheduledElement)image).OnFrameDue();
+            Assert.True(requests.Count > requestsBeforeHide,
+                $"resume requests={requests.Count}, before={requestsBeforeHide}");
         }
         finally
         {

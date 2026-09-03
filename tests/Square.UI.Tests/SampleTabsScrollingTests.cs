@@ -35,6 +35,7 @@ public class SampleTabsScrollingTests
 
         textPage.DispatchTrusted(StandardEvents.CreateWheel(0, 120));
 
+        tabPanels.AdvanceSmoothScroll(0.08f);
         Assert.True(tabPanels.ScrollTop > 0);
         Assert.Equal(appTop, app.Geometry.Top);
         Assert.Equal(tabListTop, tabList.Geometry.Top);

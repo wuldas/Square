@@ -12,19 +12,41 @@ internal sealed class TableLayoutEngine
 
     public TableLayoutEngine(LayoutEngine layout) => _layout = layout;
 
-    public Size Measure(Element table, Size availableSize)
+    public Size Measure(Element table, Size availableSize, Size scrollbarGutter = default)
     {
         var model = BuildModel(table);
-        return Compute(table, model, availableSize, arrange: false, default);
+        return Compute(table, model, DeflateScrollbarGutter(availableSize, scrollbarGutter), arrange: false, default,
+            scrollbarGutter);
     }
 
-    public void Arrange(Element table, Rect finalRect)
+    public void Arrange(Element table, Rect finalRect, Size scrollbarGutter = default)
     {
         var model = BuildModel(table);
-        Compute(table, model, finalRect.Size, arrange: true, finalRect);
+        var insets = table.GetReservedScrollbarInsets();
+        Compute(table, model, DeflateScrollbarGutter(finalRect.Size, scrollbarGutter), arrange: true, finalRect,
+            scrollbarGutter,
+            insets.Left, insets.Top);
     }
 
-    private Size Compute(Element table, TableModel model, Size availableSize, bool arrange, Rect finalRect)
+    private static Size DeflateScrollbarGutter(Size size, Size gutter) => new(
+        Deflate(size.Width, gutter.Width),
+        Deflate(size.Height, gutter.Height));
+
+    private static float Deflate(float value, float amount) =>
+        float.IsFinite(value) ? Math.Max(0, value - Math.Max(0, amount)) : value;
+
+    private static float InflateScrollbarGutter(float value, float amount) =>
+        float.IsFinite(value) ? value + Math.Max(0, amount) : value;
+
+    private Size Compute(
+        Element table,
+        TableModel model,
+        Size availableSize,
+        bool arrange,
+        Rect finalRect,
+        Size scrollbarGutter,
+        float leadingLeft = 0,
+        float leadingTop = 0)
     {
         PrepareLayoutElement(table, availableSize);
 
@@ -32,12 +54,19 @@ internal sealed class TableLayoutEngine
         var border = ResolveBorder(table, availableSize.Width, availableSize.Height);
         var horizontalInsets = padding.Left + padding.Right + border.Left + border.Right;
         var verticalInsets = padding.Top + padding.Bottom + border.Top + border.Bottom;
-        var explicitWidth = ResolveLength(table, table.Style.Get("width"), availableSize.Width, availableSize.Height);
-        var explicitHeight = ResolveLength(table, table.Style.Get("height"), availableSize.Width, availableSize.Height);
+        var explicitReferenceSize = new Size(
+            InflateScrollbarGutter(availableSize.Width, scrollbarGutter.Width),
+            InflateScrollbarGutter(availableSize.Height, scrollbarGutter.Height));
+        var explicitWidth = ResolveLength(table, table.Style.Get("width"),
+            explicitReferenceSize.Width, explicitReferenceSize.Height);
+        var explicitHeight = ResolveLength(table, table.Style.Get("height"),
+            explicitReferenceSize.Width, explicitReferenceSize.Height);
         var constrainedWidth = IsFinite(availableSize.Width)
             ? Math.Max(0, availableSize.Width - horizontalInsets)
             : float.PositiveInfinity;
-        var specifiedGridWidth = IsFinite(explicitWidth) ? Math.Max(0, explicitWidth - horizontalInsets) : float.NaN;
+        var specifiedGridWidth = IsFinite(explicitWidth)
+            ? Math.Max(0, explicitWidth - horizontalInsets - scrollbarGutter.Width)
+            : float.NaN;
         var captionConstraint = IsFinite(specifiedGridWidth) ? specifiedGridWidth : constrainedWidth;
 
         var captionSizes = new Dictionary<Element, Size>();
@@ -92,7 +121,8 @@ internal sealed class TableLayoutEngine
         var outerWidth = contentWidthWithCaptions + horizontalInsets;
         if (IsFinite(explicitWidth)) outerWidth = Math.Max(0, explicitWidth);
 
-        var contentBoxWidth = Math.Max(0, outerWidth - horizontalInsets);
+        var contentBoxWidth = Math.Max(0, outerWidth - horizontalInsets -
+            (IsFinite(explicitWidth) ? scrollbarGutter.Width : 0));
         if (contentBoxWidth > gridWidth)
         {
             GrowColumns(columnWidths, contentBoxWidth - gridWidth);
@@ -134,8 +164,8 @@ internal sealed class TableLayoutEngine
         if (!arrange) return new Size(outerWidth, outerHeight);
 
         table.Arrange(finalRect);
-        var contentX = finalRect.X + border.Left + padding.Left;
-        var contentY = finalRect.Y + border.Top + padding.Top;
+        var contentX = finalRect.X + border.Left + padding.Left + leadingLeft;
+        var contentY = finalRect.Y + border.Top + padding.Top + leadingTop;
         var captionWidthForArrange = Math.Max(gridWidth, contentBoxWidth);
         var y = contentY;
         foreach (var caption in model.Captions.Where(caption => !IsBottomCaption(caption)))

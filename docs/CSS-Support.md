@@ -73,6 +73,20 @@ The local manifest records the CSS2.2 revision/errata subset layered over the CS
 
 The CSS2.2 IDs intentionally distinguish portable local behavior from deferred browser-level claims. Full CSS2.2 W3C conformance, full BFC behavior, anonymous boxes, the full table model, full Unicode bidi, and paged media remain deferred. The local table, fixed-layer, and subtree-visibility tests do not constitute full model conformance.
 
+## Scrollbar chrome 支持范围
+
+Scrollbar 是 Square 的 UA chrome 扩展，不是完整 CSS scrollbar 模块或 W3C conformance 声明。当前实现状态如下：
+
+| 范围 | 状态 | 当前边界 |
+|---|---|---|
+| `overflow` / `overflow-x` / `overflow-y` 滚动状态 | 🟢 **已实现并测试** | 共享 viewport、content size、max offset、裁剪、wheel 默认动作、嵌套滚动和 Grid/Table/Flex/normal-flow 有限布局稳定化。 |
+| desktop scrollbar chrome | 🟢 **已实现并测试** | 15 DIP gutter、`thin` 10 DIP、track/thumb/button/corner、分页、拖拽、按住重复和 hover/pressed 状态。 |
+| mobile scrollbar chrome | 🟢 **已实现并测试** | 4 DIP overlay thumb、滚动后显示、500ms 延迟 + 200ms 淡出；不占布局且不参与 scrollbar 命中。 |
+| `scrollbar-width` | 🟢 **已实现并测试** | `auto`、`thin`、`none`；不是浏览器完整 used-value/平台主题实现。 |
+| `scrollbar-color` | 🟢 **已实现并测试** | `auto` 或两个 `Color.TryParse` 可消费的 thumb/track 颜色；继承和后代绘制失效已支持，hsl/hsla 暂不接受。 |
+| `scrollbar-gutter` | 🟢 **已实现并测试** | 支持 `auto`、desktop `stable` 和 `stable both-edges`；无溢出时仅预留空 gutter，Mobile overlay 不占 gutter。 |
+| WebKit 私有伪元素、RTL 左侧条、系统自动隐藏、完整触摸惯性 | ⚪ **明确 deferred** | 不支持，不应通过字符串样式声明推断为已实现。 |
+
 本地 harness 的明确限制：
 
 - fixture 数量很小，覆盖的是已实现路径的回归样例，不代表 CSS2.1 每个 property、value、selector、错误恢复或交互组合。
@@ -124,7 +138,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 | 32 | [Inline layout](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Inline_layout) | 行内格式化上下文、line box、baseline、inline flow | 🟡 **部分支持**：提供有限 inline formatting path、文本 fragment 和 atomic inline 元素；不等价于完整浏览器 inline layout，匿名 inline box、全部 line box/baseline 语义和完整 bidi 仍未实现。 |
 | 34 | [CSS 逻辑属性与逻辑值](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Logical_properties_and_values) | 逻辑尺寸、逻辑 margin/padding/border、逻辑定位 | 🟡 **极少量支持**：`inset-block-start/end`、`inset-inline-start/end`，但固定映射到物理方向；无 writing-mode 感知。 |
 | 38 | [CSS 多列布局](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Multicol_layout) | column count/width、列规则、跨列、平衡、分段 | ⚪ **未支持**。`column-gap` 仅用于 Flex/Grid。 |
-| 41 | [Overflow](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Overflow) | 溢出裁剪、滚动容器、滚动内容和 carousel | 🟡 **部分支持且可用**：🟢 `overflow`、`overflow-x/y` 的 visible/hidden/clip/scroll/auto，裁剪、滚动偏移、wheel 和命中映射；无通用滚动条 UI。 |
+| 41 | [Overflow](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Overflow) | 溢出裁剪、滚动容器、滚动内容和 carousel | 🟡 **部分支持且可用**：🟢 `overflow`、`overflow-x/y` 的 visible/hidden/clip/scroll/auto，裁剪、滚动偏移、wheel、命中映射，以及 desktop gutter / mobile overlay 通用 scrollbar chrome；⚪ 无 carousel。 |
 | 42 | [Overscroll behavior](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Overscroll_behavior) | 滚动链、边界行为、overscroll containment | ⚪ **未支持**。 |
 | 43 | [CSS 分页媒体](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Paged_media) | 页面盒、分页、纸张尺寸、打印分页 | ⚪ **未支持**。 |
 | 44 | [CSS 定位布局](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Positioned_layout) | relative/absolute/fixed/sticky、包含块、堆叠上下文、`z-index` | 🟡 **部分支持**：🟢 relative、absolute、fixed viewport layer、物理 inset、`inset`；fixed 仅提供 viewport overlay ordering，`z-index` 为简单同级排序。⚪ 无 sticky 和浏览器堆叠上下文。 |
@@ -200,7 +214,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 | 36 | [媒体查询](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Media_queries) | viewport/media feature、无障碍偏好、打印和 matchMedia | 🟡 **部分支持**：`@media screen`/`print`/`all` 可求值并可通过 `CssEngine.SetMediaType` 切换；无 viewport/features、无障碍偏好和 `matchMedia()`。 |
 | 50 | [Scroll anchoring](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Scroll_anchoring) | 滚动位置稳定、anchor node、`overflow-anchor` | ⚪ **未支持**。 |
 | 51 | [CSS 滚动吸附](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Scroll_snap) | snap container、snap position、snap event | ⚪ **未支持**。 |
-| 53 | [CSS Scrollbars](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Scrollbars_styling) | scrollbar color/width/gutter 和平台样式 | ⚪ **未支持通用 CSS scrollbar styling**。 |
+| 53 | [CSS Scrollbars](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Scrollbars_styling) | scrollbar color/width/gutter 和平台样式 | 🟡 **部分支持**：🟢 `scrollbar-width: auto | thin | none`、`scrollbar-color` 颜色对和 `scrollbar-gutter: auto | stable | stable both-edges`；⚪ 无 WebKit 私有伪元素、RTL 左侧条、系统自动隐藏或完整平台主题。 |
 | 66 | [WebXR DOM overlays](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/WebXR_DOM_overlays) | XR DOM overlay、沉浸式呈现和 overlay 交互 | ⚪ **未支持**。 |
 
 ### 1.7 图片、分段、Shadow DOM 和其他模块
@@ -448,9 +462,10 @@ Button {
 | 命中测试裁剪和滚动映射 | 🟢 | 支持。 |
 | `ScrollLeft`、`ScrollTop` | 🟢 | Element API。 |
 | wheel 滚动最近祖先 | 🟢 | 默认动作。 |
-| 通用 scrollbar chrome | ⚪ | 未实现。 |
-| scroll snap、overscroll、smooth scroll | ⚪ | 未实现。 |
-| scrollbar styling | ⚪ | 未实现。 |
+| 通用 scrollbar chrome | 🟢 | desktop gutter scrollbar 与 mobile overlay thumb。 |
+| smooth scroll | 🟢 子集 | wheel 使用 180ms cubic ease-out；同步 Scroll API 立即生效。 |
+| scrollbar styling | 🟢 子集 | `scrollbar-width`、`scrollbar-color`、`scrollbar-gutter`。 |
+| scroll snap、overscroll | ⚪ | 未实现。 |
 
 ### 4.6 背景、边框和阴影
 
@@ -510,7 +525,7 @@ Button {
 | `caret-color` | 🟡 | 文本编辑器，有限颜色值。 |
 | `selection-background(-color)`、`selection-color` | 🟡 | 文本编辑器内部属性。 |
 | `appearance` | 🟡 子集 | `none`（initial）、`auto`。UA 对齐 Chrome `html.css` 浅色表单控件：`Button` 为 `ButtonFace` + `2px outset ButtonBorder`，`:active` 切 `inset`，`:active:disabled` 保持 `outset`，`:disabled` 用半透明灰；`Input` 为 `Field` + `2px inset #767676`；`TextArea`/`Select` 为 `Field` + `1px solid #767676`。`:disabled` 再把 Input/TextArea 边框改成半透明灰，Select 用 `opacity: 0.7` + `GrayText`。`:focus-visible` 画 `1px solid Highlight` 轮廓；键盘/程序焦点匹配，鼠标点击获得的焦点不匹配；Input/Button/Select/TextArea 的 `outline-offset` 为 `0`，CheckBox/Radio 为 `2px`。占位文本用 Chrome `#757575`。无作者 box 覆盖时保留校准过的默认 widget 路径；作者 `background`、border、`border-radius`、`box-shadow`、outline 与 Button `text-align` 覆盖 UA，并由 Software/Skia/Vulkan 共享盒绘制路径消费。`none` 不自动清掉 UA 边框/背景，作者需覆盖。不支持 `button`/`checkbox` 等控件关键字、AppearanceBase、暗色 `light-dark()`。 |
-| `scrollbar-width` | ⚪ Native / HTML passthrough | Native Square 没有通用滚动条 UI，不消费该属性；静态 HTML 导出保留声明，由浏览器解释。 |
+| `scrollbar-width` | 🟢 子集 | Native Square 支持 `auto`、`thin`、`none`，用于通用 desktop gutter scrollbar 与 mobile overlay thumb；静态 HTML 导出保留声明，由浏览器解释。 |
 | `accent-color`、`resize` | ⚪ Native | Native 未实现；静态 HTML 导出保留声明，由浏览器解释。 |
 | `pointer-events`、`touch-action` | ⚪ | 未实现。 |
 

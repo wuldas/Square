@@ -400,8 +400,18 @@ public class Popup : View, IPopupElement
         var background = ControlDrawing.GetStyledColor(this, "background", Color.White);
         ControlDrawing.DrawStyledBackground(context, this, background);
         CssBoxPainter.PaintBorder(context, this);
+        var contentClip = GetScrollViewportRect();
+        if (contentClip.IsEmpty) contentClip = Geometry;
+        context.PushClip(contentClip);
+        var scrolls = MapsScrollOffsetForChildren();
+        if (scrolls)
+            context.PushTransform(Matrix3x2.CreateTranslation(-ScrollLeft, -ScrollTop));
         foreach (var child in Children.OrderBy(child => child.ZIndex))
             PaintPopupSubtree(context, child);
+        if (scrolls)
+            context.PopTransform();
+        context.PopClip();
+        ScrollbarPainter.Paint(context, this);
         context.PopClip();
         context.PopTransform();
     }
@@ -412,9 +422,12 @@ public class Popup : View, IPopupElement
         var bounds = ContentBounds;
         if (!IsPopupOpen || !bounds.Contains(point)) return null;
         var localPoint = MapPointToContent(point);
-        foreach (var child in Children.OrderByDescending(child => child.ZIndex))
+        var childPoint = MapsScrollOffsetForChildren()
+            ? new Point(localPoint.X + ScrollLeft, localPoint.Y + ScrollTop)
+            : localPoint;
+        foreach (var child in EnumerateChildrenTopmostFirst(this))
         {
-            var hit = child.HitTest(localPoint);
+            var hit = child.HitTest(childPoint);
             if (hit != null) return hit;
         }
         return this;
@@ -532,4 +545,11 @@ public class Popup : View, IPopupElement
         if (!clip.IsEmpty) context.PopClip();
         if (paintsNode) CssBoxPainter.PaintAfterChildren(context, element);
     }
+
+    private static IEnumerable<Element> EnumerateChildrenTopmostFirst(Element element) =>
+        element.Children
+            .Select((child, index) => (Child: child, Index: index))
+            .OrderByDescending(item => item.Child.ZIndex)
+            .ThenByDescending(item => item.Index)
+            .Select(item => item.Child);
 }

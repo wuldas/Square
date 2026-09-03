@@ -924,6 +924,8 @@ public sealed class PropertyStore
 
 `ScrollViewer` 复用通用 CSS overflow 管线，默认 `overflow-x: hidden`、`overflow-y: auto`。滚轮默认动作会滚动最近仍可继续滚动的祖先容器；偏移变化派发不冒泡的 `scroll` 事件。
 
+滚动条作为 UA chrome 绘制，不会出现在 `Children` 中。桌面 profile 默认预留 15 DIP gutter，支持 thumb 拖拽、track 分页、按钮和按住重复；移动 profile 使用 4 DIP overlay thumb，不占用 viewport，并在滚动停止后淡出。`scrollbar-width`、`scrollbar-color` 和 `scrollbar-gutter: stable | stable both-edges` 可分别控制宽度、颜色和稳定预留空间；`stable` 在无溢出时只保留空 gutter，不绘制或命中 scrollbar chrome。
+
 ```csharp
 public class ScrollViewer : View
 {
@@ -940,6 +942,12 @@ public class ScrollViewer : View
     public void ScrollToTop();
     public void ScrollToBottom();
 }
+```
+
+```csharp
+public enum ScrollbarDeviceProfile { Auto, Desktop, Mobile }
+
+window.ScrollbarProfile = ScrollbarDeviceProfile.Mobile;
 ```
 
 ### Popup
@@ -2475,7 +2483,7 @@ editor.Value = "public class App { }";
 <CodeEditor Language="json" ThemeId="default-dark" ShowLineNumbers="true" />
 ```
 
-核心能力包括 PieceTable 编辑模型、增量撤销/重做、视口虚拟化、多光标、查找替换、行装饰、overview ruler 与代码折叠。语法高亮使用 `TextMateSharp` / `TextMateSharp.Grammars`；未知 languageId 回退为纯文本。
+核心能力包括 PieceTable 编辑模型、增量撤销/重做、视口虚拟化、多光标、查找替换、行装饰、overview ruler 与代码折叠。编辑器 scrollbar 复用核心 geometry/painter；Mobile profile 下 wheel 滚动后显示 overlay thumb，并在 500ms + 200ms 后淡出。语法高亮使用 `TextMateSharp` / `TextMateSharp.Grammars`；未知 languageId 回退为纯文本。
 
 `TextMateLanguageProvider.RegisterExtension(path)` 可加载包含 `package.json` 和 `syntaxes/*.tmLanguage.json` 的 VS Code 扩展目录。`LanguageRegistry.GuessLanguage(path)` 可按文件扩展名推断 languageId。
 

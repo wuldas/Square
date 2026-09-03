@@ -383,12 +383,12 @@ public sealed class StyleAccessor
         var currentAuthorSpecified = IsAuthorSpecified(property);
         if (string.Equals(previous.Value, current, StringComparison.Ordinal) &&
             previous.AuthorSpecified == currentAuthorSpecified) return;
+        var invalidation = StyleInvalidation.ForProperty(property);
         if (property.StartsWith("--", StringComparison.Ordinal))
             ClearComputedStylesRecursive();
         else
-            RemoveDependentDescendantComputedStyle(property);
+            RemoveDependentDescendantComputedStyle(property, invalidation);
         if (property == "z-index") SyncOwnerZIndex();
-        var invalidation = StyleInvalidation.ForProperty(property);
         if (property.StartsWith("--", StringComparison.Ordinal)) invalidation |= ElementInvalidation.Style;
         _owner.Invalidate(invalidation);
     }
@@ -407,13 +407,14 @@ public sealed class StyleAccessor
         _parentDependentStyles?.Remove(property);
     }
 
-    private void RemoveDependentDescendantComputedStyle(string property)
+    private void RemoveDependentDescendantComputedStyle(string property, ElementInvalidation invalidation)
     {
         foreach (var child in _owner.Children)
         {
             if (child.Style._parentDependentStyles?.Contains(property) != true) continue;
             child.Style.RemoveComputedStyle(property);
-            child.Style.RemoveDependentDescendantComputedStyle(property);
+            child.Invalidate(invalidation);
+            child.Style.RemoveDependentDescendantComputedStyle(property, invalidation);
         }
     }
 

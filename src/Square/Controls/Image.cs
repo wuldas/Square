@@ -6,7 +6,7 @@ using Square.UI;
 namespace Square.Controls;
 
 /// <summary>图像控件，支持位图与矢量图，可加载本地或远程源。</summary>
-public class Image : UIElement, ITextSelectable, IFrameScheduledElement
+public class Image : UIElement, ITextSelectable
 {
     private IImageFrameSource? _frameSource;
     private Bitmap? _sourceSurface;
@@ -49,6 +49,22 @@ public class Image : UIElement, ITextSelectable, IFrameScheduledElement
     }
 
     /// <inheritdoc/>
+    protected override void OnAttachedCore()
+    {
+        base.OnAttachedCore();
+        if (_frameSource == null && ImageContent == null && !string.IsNullOrWhiteSpace(Source)) BeginSourceLoad();
+        else ResumeAnimation();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnDetachedCore()
+    {
+        CancelPendingLoad();
+        DisposeLoadedSource();
+        base.OnDetachedCore();
+    }
+
+    /// <inheritdoc/>
     protected override void OnPropertyChanged(string name)
     {
         base.OnPropertyChanged(name);
@@ -66,32 +82,19 @@ public class Image : UIElement, ITextSelectable, IFrameScheduledElement
     }
 
     /// <inheritdoc/>
-    protected override void OnAttachedCore()
-    {
-        base.OnAttachedCore();
-        if (_frameSource == null && ImageContent == null && !string.IsNullOrWhiteSpace(Source)) BeginSourceLoad();
-        else ResumeAnimation();
-    }
-
-    /// <inheritdoc/>
-    protected override void OnDetachedCore()
-    {
-        CancelPendingLoad();
-        DisposeLoadedSource();
-        base.OnDetachedCore();
-    }
-
-    /// <inheritdoc/>
     protected override void OnEffectiveVisibilityChanged(bool isVisible)
     {
         base.OnEffectiveVisibilityChanged(isVisible);
-        if (isVisible) ResumeAnimation();
+        if (isVisible && IsCssDisplayed()) ResumeAnimation();
         else PauseAnimation();
     }
 
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
+        // display:none 恢复后没有独立的样式回调；能走到 Paint 即代表可见，惰性恢复动画调度。
+        if (_frameSource is { FrameCount: > 1 } && !_frameScheduled && CanAnimate())
+            ResumeAnimation();
         var image = DisplayImage;
         if (image is VectorImage vectorImage)
         {
@@ -218,10 +221,19 @@ public class Image : UIElement, ITextSelectable, IFrameScheduledElement
     private void AdvanceAnimationIfDue()
     {
         var now = Stopwatch.GetTimestamp();
-        if (!_frameScheduled || now < _frameDeadline) return;
+        if (!_frameScheduled) return;
+        if (!CanAnimate())
+        {
+            _frameScheduled = false;
+            return;
+        }
+        if (now < _frameDeadline)
+        {
+            DispatchEvent(StandardEvents.CreateRequestFrame(
+                TimeSpan.FromSeconds((_frameDeadline - now) / (double)Stopwatch.Frequency)));
+            return;
+        }
         _frameScheduled = false;
-        if (!CanAnimate()) return;
-
         var advanced = false;
         while (now >= _frameDeadline)
         {
@@ -234,7 +246,11 @@ public class Image : UIElement, ITextSelectable, IFrameScheduledElement
                 _completedPlays++;
                 if (_frameSource.PlayCount > 0 && _completedPlays >= _frameSource.PlayCount)
                 {
-                    if (advanced) CopyCurrentFrame();
+                    if (advanced)
+                    {
+                        CopyCurrentFrame();
+                        InvalidatePaint();
+                    }
                     return;
                 }
                 _frameIndex = 0;
@@ -244,19 +260,24 @@ public class Image : UIElement, ITextSelectable, IFrameScheduledElement
             _frameDeadline += ToStopwatchTicks(NormalizeFrameDelay(_frameSource.GetFrameDuration(_frameIndex)));
         }
 
-        if (advanced) CopyCurrentFrame();
+        if (advanced)
+        {
+            CopyCurrentFrame();
+            InvalidatePaint();
+        }
         _frameScheduled = true;
         DispatchEvent(StandardEvents.CreateRequestFrame(
             TimeSpan.FromSeconds(Math.Max(0, _frameDeadline - now) / (double)Stopwatch.Frequency)));
     }
 
-    void IFrameScheduledElement.OnFrameDue()
+    /// <inheritdoc/>
+    protected override void OnFrameDueCore()
     {
+        base.OnFrameDueCore();
         AdvanceAnimationIfDue();
-        InvalidatePaint();
     }
 
-    private bool CanAnimate() => IsAttached && IsEffectivelyVisible && _frameSource is { FrameCount: > 1 };
+    private bool CanAnimate() => IsAttached && IsEffectivelyVisible && IsCssDisplayed() && _frameSource is { FrameCount: > 1 };
 
     private static TimeSpan NormalizeFrameDelay(TimeSpan delay) =>
         delay > TimeSpan.Zero ? delay : TimeSpan.FromMilliseconds(10);

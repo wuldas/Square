@@ -110,6 +110,8 @@ internal static class CssBoxPainter
     public static void PaintAfterChildren(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
+        if (element is not ITextEditor { OwnsScrollbarChrome: true })
+            ScrollbarPainter.Paint(context, element);
         if (element is Button button && UsesDefaultButtonWidgetPaint(button) &&
             !HasAuthorOutlineStyle(button)) return;
         if (element is CheckBox checkBox && ControlDrawing.UsesWidgetAppearance(checkBox)) return;

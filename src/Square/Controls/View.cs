@@ -1,5 +1,6 @@
 using Square.Graphics;
 using Square.UI;
+using Square.UI.Scrolling;
 
 namespace Square.Controls;
 
@@ -30,10 +31,10 @@ public class ScrollViewer : View
     public float VerticalOffset => ScrollTop;
     public float ExtentWidth => ScrollContentSize.Width;
     public float ExtentHeight => ScrollContentSize.Height;
-    public float ViewportWidth => Geometry.Width;
-    public float ViewportHeight => Geometry.Height;
-    public float ScrollableWidth => Math.Max(0, ExtentWidth - ViewportWidth);
-    public float ScrollableHeight => Math.Max(0, ExtentHeight - ViewportHeight);
+    public float ViewportWidth => GetScrollbarMetrics().ViewportRect.Width;
+    public float ViewportHeight => GetScrollbarMetrics().ViewportRect.Height;
+    public float ScrollableWidth => GetScrollbarMetrics().MaxScrollX;
+    public float ScrollableHeight => GetScrollbarMetrics().MaxScrollY;
 
     /// <summary>滚动到指定偏移量。</summary>
     public void ScrollTo(float horizontalOffset, float verticalOffset)

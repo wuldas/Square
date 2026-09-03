@@ -32,6 +32,10 @@ public sealed class DisplayNode
     public List<DrawCommand> Commands { get; } = [];
     /// <summary>本节点及其绘制命令的可视边界。</summary>
     public Rect VisualBounds { get; private set; }
+    /// <summary>最近一次构建绘制命令时应用到子树的滚动偏移。</summary>
+    internal Point ChildScrollOffset { get; private set; }
+    /// <summary>最近一次构建绘制命令时是否对孩子映射了滚动偏移。</summary>
+    internal bool MapsChildScrollOffset { get; private set; }
     /// <summary>弹出层可视边界。</summary>
     public Rect PopupBounds { get; set; }
 
@@ -117,6 +121,8 @@ public sealed class DisplayNode
         var afterChildrenBounds = DrawCommandBounds.Calculate(_afterChildrenCommands, Bounds, fallbackWhenEmpty: false);
         VisualBounds = Union(Union(beforeBounds, contentBounds), Union(afterContentBounds, afterChildrenBounds));
         if (VisualBounds.IsEmpty) VisualBounds = Bounds;
+        MapsChildScrollOffset = Element?.MapsScrollOffsetForChildren() == true;
+        ChildScrollOffset = MapsChildScrollOffset ? Element!.ScrollOffset : default;
         SortChildrenByZIndex();
         // Clear before Paint so a frame callback can invalidate/request the next frame
         // without that new dirty state being erased after command collection.

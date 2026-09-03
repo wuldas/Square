@@ -1,6 +1,7 @@
 using Square.Controls;
 using Square.Graphics;
 using Square.UI;
+using Square.UI.Scrolling;
 using Square.Rendering.Tree;
 using System.Text;
 
@@ -103,11 +104,21 @@ public sealed class DisplayTree
             }
             if (node.Element.NeedsPaint)
             {
+                var mapsChildScrollOffset = node.Element.MapsScrollOffsetForChildren();
+                var childScrollOffsetChanged = node.MapsChildScrollOffset != mapsChildScrollOffset ||
+                    mapsChildScrollOffset && node.ChildScrollOffset != node.Element.ScrollOffset;
                 node.IsDirty = true;
                 var partial = !node.Element.IsPaintFullDirty && node.Element.PaintDirtyRects.Count > 0;
                 var partialRects = partial ? node.Element.PaintDirtyRects.ToArray() : null;
                 node.RebuildCommands();
-                if (partialRects is { Length: > 0 })
+                if (childScrollOffsetChanged)
+                {
+                    var viewport = node.Element.GetScrollViewportRect();
+                    if (viewport.IsEmpty) viewport = node.Bounds;
+                    var damage = Union(Union(oldVisualBounds, node.VisualBounds), Union(viewport, node.Bounds));
+                    _dirtyRects.Add(PadAndSnap(Translate(damage, visualOffset)));
+                }
+                else if (partialRects is { Length: > 0 })
                 {
                     var origin = node.Element.Geometry;
                     foreach (var local in partialRects)
@@ -366,6 +377,101 @@ public sealed class DisplayTree
 
     /// <summary>对普通文档层进行命中测试，不包含固定层和顶层弹出层。</summary>
     public Element? HitTestRoot(Point point) => HitTestLayer(_root, point, allowFixedRoot: false);
+
+    /// <summary>命中 UA scrollbar chrome；滚动条不作为文档树节点返回。</summary>
+    public Element? HitTestScrollbar(Point point)
+    {
+        for (var i = _popups.Count - 1; i >= 0; i--)
+        {
+            var popup = _popups[i];
+            if (!IsVisibleOpenPopup(popup) || popup.HitTestPopup(point) == null) continue;
+            return HitTestPopupScrollbar(popup, point);
+        }
+        for (var i = _fixedRoots.Count - 1; i >= 0; i--)
+        {
+            var root = _fixedRoots[i];
+            var scrollbar = HitTestScrollbarLayer(root, point, allowFixedRoot: true);
+            if (scrollbar != null) return scrollbar;
+            if (HitTestLayer(root, point, allowFixedRoot: true) != null) return null;
+        }
+        return HitTestScrollbarLayer(_root, point, allowFixedRoot: false);
+    }
+
+    private static Element? HitTestPopupScrollbar(IPopupElement popup, Point point)
+    {
+        if (popup is not Element element || !popup.PopupBounds.Contains(point)) return null;
+        var localPoint = popup.MapPointToContent(point);
+        if (element.GetScrollbarMetrics().HitTest(localPoint) != ScrollbarPart.None)
+            return element;
+        var childPoint = element.MapsScrollOffsetForChildren()
+            ? new Point(localPoint.X + element.ScrollLeft, localPoint.Y + element.ScrollTop)
+            : localPoint;
+        foreach (var child in EnumerateChildrenTopmostFirst(element))
+        {
+            if (child.HitTest(childPoint) == null) continue;
+            return HitTestScrollbarSubtree(child, childPoint);
+        }
+        return null;
+    }
+
+    private static IEnumerable<Element> EnumerateChildrenTopmostFirst(Element element) =>
+        element.Children
+            .Select((child, index) => (Child: child, Index: index))
+            .OrderByDescending(item => item.Child.ZIndex)
+            .ThenByDescending(item => item.Index)
+            .Select(item => item.Child);
+
+    private static Element? HitTestScrollbarSubtree(Element element, Point point)
+    {
+        if (!element.IsVisible || !element.IsCssDisplayed() ||
+            element is IPopupElement) return null;
+        if (element is not ITextEditor { OwnsScrollbarChrome: true } &&
+            !element.IsCssVisibilityHidden() && element.GetScrollbarMetrics().HitTest(point) != ScrollbarPart.None)
+            return element;
+
+        var overflowClip = element.GetOverflowClipRect();
+        if (!overflowClip.IsEmpty && !overflowClip.Contains(point)) return null;
+        var childPoint = element.MapsScrollOffsetForChildren()
+            ? new Point(point.X + element.ScrollLeft, point.Y + element.ScrollTop)
+            : point;
+        foreach (var child in EnumerateChildrenTopmostFirst(element))
+        {
+            if (child.HitTest(childPoint) == null) continue;
+            return HitTestScrollbarSubtree(child, childPoint);
+        }
+        return null;
+    }
+
+    private static bool IsVisibleOpenPopup(IPopupElement popup) =>
+        popup.IsPopupOpen &&
+        popup is not Element { IsVisible: false } &&
+        (popup is not Element element || element.IsCssDisplayed() && !element.IsCssVisibilityHidden());
+
+    private Element? HitTestScrollbarLayer(DisplayNode node, Point point, bool allowFixedRoot)
+    {
+        if (!allowFixedRoot && _fixedRootSet.Contains(node) || node.Element == null ||
+            !node.Element.IsVisible || !node.Element.IsCssDisplayed() ||
+            node.Element is IPopupElement { IsLayoutOverlay: true }) return null;
+
+        var element = node.Element;
+        if (element is not ITextEditor { OwnsScrollbarChrome: true } &&
+            !element.IsCssVisibilityHidden() && element.GetScrollbarMetrics().HitTest(point) != ScrollbarPart.None)
+            return element;
+
+        var overflowClip = element.GetOverflowClipRect();
+        if (!overflowClip.IsEmpty && !overflowClip.Contains(point)) return null;
+        var childPoint = element.MapsScrollOffsetForChildren()
+            ? new Point(point.X + element.ScrollLeft, point.Y + element.ScrollTop)
+            : point;
+        for (var i = node.Children.Count - 1; i >= 0; i--)
+        {
+            var child = node.Children[i];
+            var scrollbar = HitTestScrollbarLayer(child, childPoint, allowFixedRoot: false);
+            if (scrollbar != null) return scrollbar;
+            if (HitTestLayer(child, childPoint, allowFixedRoot: false) != null) return null;
+        }
+        return null;
+    }
 
     private Element? HitTestLayer(DisplayNode node, Point point, bool allowFixedRoot)
     {

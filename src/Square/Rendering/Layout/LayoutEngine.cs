@@ -3,6 +3,7 @@ using System.Buffers;
 using Facebook.Yoga;
 using Square.Graphics;
 using Square.UI;
+using Square.Controls;
 using static Facebook.Yoga.YGConfigAPI;
 using static Facebook.Yoga.YGNodeAPI;
 using static Facebook.Yoga.YGNodeLayoutAPI;
@@ -197,14 +198,14 @@ public sealed partial class LayoutEngine
 
         if (style.Display == DisplayMode.Grid)
         {
-            MeasureGrid(element, style, availableSize);
+            MeasureGrid(element, style, DeflateScrollbarGutter(availableSize, element.GetReservedScrollbarGutter()));
             element.ClearLayoutDirty();
             return;
         }
 
         if (IsTableRoot(style.Display))
         {
-            new TableLayoutEngine(this).Measure(element, availableSize);
+            new TableLayoutEngine(this).Measure(element, availableSize, element.GetReservedScrollbarGutter());
             element.ClearLayoutDirty();
             return;
         }
@@ -253,28 +254,57 @@ public sealed partial class LayoutEngine
 
         if (style.Display == DisplayMode.Grid)
         {
-            var inner = Inset(finalRect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
-            ArrangeGrid(element, style, inner);
-            element.Arrange(finalRect);
+            var gridGutter = element.GetReservedScrollbarGutter();
+            for (var pass = 0; pass < 4; pass++)
+            {
+                var inner = Inset(finalRect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
+                inner = DeflateScrollbarGutter(inner, element);
+                ArrangeGrid(element, style, inner);
+                element.Arrange(finalRect);
+                UpdateScrollContentSize(element, finalRect);
+                var nextGutter = element.GetReservedScrollbarGutter();
+                if (nextGutter.Equals(gridGutter)) break;
+                gridGutter = nextGutter;
+            }
+            ClearDirtyRecursive(element);
             return;
         }
 
         if (IsTableRoot(style.Display))
         {
-            new TableLayoutEngine(this).Arrange(element, finalRect);
+            var tableGutter = element.GetReservedScrollbarGutter();
+            for (var pass = 0; pass < 4; pass++)
+            {
+                new TableLayoutEngine(this).Arrange(element, finalRect, tableGutter);
+                UpdateScrollContentSize(element, finalRect);
+                var nextGutter = element.GetReservedScrollbarGutter();
+                if (nextGutter.Equals(tableGutter)) break;
+                tableGutter = nextGutter;
+            }
+            ClearDirtyRecursive(element);
             return;
         }
 
         if (UsesCssNormalFlow(element))
         {
-            ArrangeCssNormalFlow(element, finalRect);
+            for (var pass = 0; pass < 4; pass++)
+            {
+                var gutterSnapshot = CaptureReservedScrollbarGutters(element);
+                ArrangeCssNormalFlow(element, finalRect);
+                if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
+            }
             ArrangePopupSubtrees(element);
             ClearDirtyRecursive(element);
             return;
         }
 
-        using var session = BuildYogaTree(element, finalRect.Width, finalRect.Height);
-        ApplyYogaLayout(element, session.Root, finalRect.X, finalRect.Y);
+        for (var pass = 0; pass < 4; pass++)
+        {
+            var gutterSnapshot = CaptureReservedScrollbarGutters(element);
+            using var session = BuildYogaTree(element, finalRect.Width, finalRect.Height);
+            ApplyYogaLayout(element, session.Root, finalRect.X, finalRect.Y);
+            if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
+        }
         ArrangePopupSubtrees(element);
         ClearDirtyRecursive(element);
     }
@@ -301,35 +331,62 @@ public sealed partial class LayoutEngine
 
             if (style.Display == DisplayMode.Grid)
             {
-                MeasureGrid(element, style, availableSize);
-                var inner = Inset(new Rect(0, 0, availableSize.Width, availableSize.Height),
-                    style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
-                ArrangeGrid(element, style, inner);
-                element.Arrange(new Rect(0, 0, availableSize.Width, availableSize.Height));
-                element.ClearLayoutDirty();
+                var gridGutter = element.GetReservedScrollbarGutter();
+                for (var pass = 0; pass < 4; pass++)
+                {
+                    MeasureGrid(element, style, DeflateScrollbarGutter(availableSize, gridGutter));
+                    var fullRect = new Rect(0, 0, availableSize.Width, availableSize.Height);
+                    var inner = Inset(fullRect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
+                    ArrangeGrid(element, style, DeflateScrollbarGutter(inner, element));
+                    element.Arrange(fullRect);
+                    UpdateScrollContentSize(element, fullRect);
+                    var nextGutter = element.GetReservedScrollbarGutter();
+                    if (nextGutter.Equals(gridGutter)) break;
+                    gridGutter = nextGutter;
+                }
+                ClearDirtyRecursive(element);
                 return;
             }
 
             if (IsTableRoot(style.Display))
             {
                 var tableLayout = new TableLayoutEngine(this);
-                tableLayout.Measure(element, availableSize);
-                tableLayout.Arrange(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
-                element.ClearLayoutDirty();
+                var tableGutter = element.GetReservedScrollbarGutter();
+                for (var pass = 0; pass < 4; pass++)
+                {
+                    tableLayout.Measure(element, availableSize, tableGutter);
+                    var fullRect = new Rect(0, 0, availableSize.Width, availableSize.Height);
+                    tableLayout.Arrange(element, fullRect, tableGutter);
+                    UpdateScrollContentSize(element, fullRect);
+                    var nextGutter = element.GetReservedScrollbarGutter();
+                    if (nextGutter.Equals(tableGutter)) break;
+                    tableGutter = nextGutter;
+                }
+                ClearDirtyRecursive(element);
                 return;
             }
 
             if (UsesCssNormalFlow(element))
             {
-                MeasureCssNormalFlow(element, availableSize);
-                ArrangeCssNormalFlow(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
+                for (var pass = 0; pass < 4; pass++)
+                {
+                    var gutterSnapshot = CaptureReservedScrollbarGutters(element);
+                    MeasureCssNormalFlow(element, availableSize);
+                    ArrangeCssNormalFlow(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
+                    if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
+                }
                 ArrangePopupSubtrees(element);
                 ClearDirtyRecursive(element);
                 return;
             }
 
-            using var session = BuildYogaTree(element, availableSize.Width, availableSize.Height);
-            ApplyYogaLayout(element, session.Root, 0, 0);
+            for (var pass = 0; pass < 4; pass++)
+            {
+                var gutterSnapshot = CaptureReservedScrollbarGutters(element);
+                using var session = BuildYogaTree(element, availableSize.Width, availableSize.Height);
+                ApplyYogaLayout(element, session.Root, 0, 0);
+                if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
+            }
             ArrangePopupSubtrees(element);
             ClearDirtyRecursive(element);
         }
@@ -438,6 +495,9 @@ public sealed partial class LayoutEngine
                 {
                     var child = visibleChildren[j];
                     if (child is IPopupElement { IsLayoutOverlay: true }) continue;
+                    // fixed 子元素由 DisplayTree 作为独立固定层渲染，不参与文档流布局，
+                    // 也不应贡献滚动范围；这里与 CSS 流的 fixedPositioned 处理保持一致。
+                    if (child.IsFixedPositioned()) continue;
                     var childNode = CreateYogaSubtree(child, session, refW, refH, rem, isRoot: false);
                     if (element.IsScrollContainer() && child.Style.Get("flex-shrink") == null)
                         YGNodeStyleSetFlexShrink(childNode, 0);
@@ -579,14 +639,16 @@ public sealed partial class LayoutEngine
         {
             var style = GetComputedStyle(element, width, height);
             var inner = Inset(rect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
-            ArrangeGrid(element, style, inner);
+            ArrangeGrid(element, style, DeflateScrollbarGutter(inner, element));
             element.Arrange(rect);
+            UpdateScrollContentSize(element, rect);
             return;
         }
 
         if (IsTableRoot(ParseDisplayMode(display)))
         {
-            new TableLayoutEngine(this).Arrange(element, rect);
+            new TableLayoutEngine(this).Arrange(element, rect, element.GetReservedScrollbarGutter());
+            UpdateScrollContentSize(element, rect);
             return;
         }
 
@@ -612,6 +674,31 @@ public sealed partial class LayoutEngine
         UpdateScrollContentSize(element, rect);
     }
 
+    private static Dictionary<Element, Size> CaptureReservedScrollbarGutters(Element element)
+    {
+        var snapshot = new Dictionary<Element, Size>();
+        Capture(element);
+        return snapshot;
+
+        void Capture(Element current)
+        {
+            snapshot[current] = current.GetReservedScrollbarGutter();
+            foreach (var child in current.Children)
+                Capture(child);
+        }
+    }
+
+    private static bool ReservedScrollbarGuttersEqual(
+        Element element,
+        IReadOnlyDictionary<Element, Size> snapshot)
+    {
+        if (!snapshot.TryGetValue(element, out var previous) ||
+            !element.GetReservedScrollbarGutter().Equals(previous)) return false;
+        foreach (var child in element.Children)
+            if (!ReservedScrollbarGuttersEqual(child, snapshot)) return false;
+        return true;
+    }
+
     private void ArrangePopupSubtrees(Element element)
     {
         foreach (var child in element.Children)
@@ -621,8 +708,13 @@ public sealed partial class LayoutEngine
                 var measured = child.Measure(new Size(float.MaxValue, float.MaxValue));
                 var width = ResolvePopupDimension(child.Style.Get("width"), measured.Width);
                 var height = ResolvePopupDimension(child.Style.Get("height"), measured.Height);
-                using var session = BuildYogaTree(child, width, height);
-                ApplyYogaLayout(child, session.Root, 0, 0);
+                for (var pass = 0; pass < 4; pass++)
+                {
+                    var gutterSnapshot = CaptureReservedScrollbarGutters(child);
+                    using var session = BuildYogaTree(child, width, height);
+                    ApplyYogaLayout(child, session.Root, 0, 0);
+                    if (ReservedScrollbarGuttersEqual(child, gutterSnapshot)) break;
+                }
             }
             ArrangePopupSubtrees(child);
         }
@@ -636,19 +728,25 @@ public sealed partial class LayoutEngine
 
     private static void UpdateScrollContentSize(Element element, Rect rect)
     {
-        if (!element.IsScrollContainer())
+        if (!element.IsScrollLayoutContainer())
         {
             element.SetScrollContentSize(rect.Size);
             return;
         }
 
-        var right = rect.Width;
-        var bottom = rect.Height;
+        // 自绘内容的滚动容器（如 TextArea）没有子元素几何，由控件在绘制/输入路径
+        // 里自行调用 SetScrollContentSize 上报内在内容尺寸；布局阶段保留该值。
+        if (element is TextEditorBase { ReportsIntrinsicScrollContent: true })
+            return;
+
+        var viewport = element.GetScrollViewportRect();
+        var right = viewport.Width;
+        var bottom = viewport.Height;
         foreach (var child in element.Children)
         {
-            if (!child.IsVisible) continue;
-            right = Math.Max(right, child.Geometry.Right - rect.X);
-            bottom = Math.Max(bottom, child.Geometry.Bottom - rect.Y);
+            if (!child.IsVisible || child.IsFixedPositioned()) continue;
+            right = Math.Max(right, child.Geometry.Right - viewport.X);
+            bottom = Math.Max(bottom, child.Geometry.Bottom - viewport.Y);
         }
 
         element.SetScrollContentSize(new Size(right, bottom));
@@ -829,6 +927,11 @@ public sealed partial class LayoutEngine
     private static void ApplyBoxModel(Element element, YogaNode node, float parentW, float parentH, float em, float rem)
     {
         var padding = ResolvePadding(element, parentW, parentH, em, rem);
+        var scrollbarInsets = element.GetReservedScrollbarInsets();
+        var leftPadding = padding.Left + scrollbarInsets.Left;
+        var topPadding = padding.Top + scrollbarInsets.Top;
+        var rightPadding = padding.Right + scrollbarInsets.Right;
+        var bottomPadding = padding.Bottom + scrollbarInsets.Bottom;
         var contentBox = ParseBoxSizing(element.Style.Get("box-sizing")) == BoxSizing.ContentBox;
         var horizontalPadding = contentBox ? padding.Left + padding.Right : 0;
         var verticalPadding = contentBox ? padding.Top + padding.Bottom : 0;
@@ -851,6 +954,14 @@ public sealed partial class LayoutEngine
         ApplyEdge(element.Style.Get("padding-top"), YGEdge.Top, true, node, parentW, parentH, em, rem);
         ApplyEdge(element.Style.Get("padding-right"), YGEdge.Right, true, node, parentW, parentH, em, rem);
         ApplyEdge(element.Style.Get("padding-bottom"), YGEdge.Bottom, true, node, parentW, parentH, em, rem);
+        if (scrollbarInsets.Left > 0)
+            YGNodeStyleSetPadding(node, YGEdge.Left, leftPadding);
+        if (scrollbarInsets.Top > 0)
+            YGNodeStyleSetPadding(node, YGEdge.Top, topPadding);
+        if (scrollbarInsets.Right > 0)
+            YGNodeStyleSetPadding(node, YGEdge.Right, rightPadding);
+        if (scrollbarInsets.Bottom > 0)
+            YGNodeStyleSetPadding(node, YGEdge.Bottom, bottomPadding);
 
         ApplyBoxShorthand(element.Style.Get("margin"), node, isPadding: false, parentW, parentH, em, rem);
         ApplyEdge(element.Style.Get("margin-left"), YGEdge.Left, false, node, parentW, parentH, em, rem);
@@ -1676,6 +1787,29 @@ public sealed partial class LayoutEngine
         var height = Math.Max(0, rect.Height - top - bottom);
         return new Rect(rect.X + left, rect.Y + top, width, height);
     }
+
+    private static Size DeflateScrollbarGutter(Size size, Size gutter) => new(
+        DeflateScrollbarLength(size.Width, gutter.Width),
+        DeflateScrollbarLength(size.Height, gutter.Height));
+
+    private static Rect DeflateScrollbarGutter(Rect rect, Size gutter) => new(
+        rect.X,
+        rect.Y,
+        DeflateScrollbarLength(rect.Width, gutter.Width),
+        DeflateScrollbarLength(rect.Height, gutter.Height));
+
+    private static Rect DeflateScrollbarGutter(Rect rect, Element element)
+    {
+        var insets = element.GetReservedScrollbarInsets();
+        return new Rect(
+            rect.X + insets.Left,
+            rect.Y + insets.Top,
+            DeflateScrollbarLength(rect.Width, insets.Left + insets.Right),
+            DeflateScrollbarLength(rect.Height, insets.Top + insets.Bottom));
+    }
+
+    private static float DeflateScrollbarLength(float value, float amount) =>
+        float.IsFinite(value) ? Math.Max(0, value - Math.Max(0, amount)) : value;
 
     private static float GetFontSize(Element element)
     {

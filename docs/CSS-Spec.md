@@ -154,6 +154,10 @@ await face.LoadAsync();
 
 当前 `overflow: hidden` / `overflow: clip` 会裁剪子树渲染与命中测试；`visible` 保持子元素可溢出命中。`overflow: scroll` / `auto` 会跟踪内容尺寸、裁剪并平移子树、映射滚动后的命中测试，并通过 wheel 默认动作滚动最近的可滚动祖先。`ScrollViewer` 控件在该通用机制上提供默认纵向滚动和强类型 offset / extent / viewport API。
 
+滚动容器还支持 `scrollbar-width: auto | thin | none`、继承的 `scrollbar-color: auto | <thumb-color> <track-color>` 和 `scrollbar-gutter: auto | stable | stable both-edges`。颜色值限于当前 `Color.TryParse` 可消费的 hex、rgb/rgba、transparent 与已支持命名色；暂不接受 hsl/hsla。`stable` 会在 desktop profile 的可滚动轴上保留 gutter，即使当前内容没有溢出，但无溢出时不绘制或命中 scrollbar chrome；`stable both-edges` 会在对应轴的两侧预留空间。Mobile profile 使用 overlay scrollbar，因此 stable gutter 不占布局。scrollbar 是 UA chrome，不会作为隐藏子元素加入 Element Tree：desktop profile 使用 15 DIP gutter（`thin` 为 10 DIP），支持 track、thumb、按钮、分页、拖拽和按住重复；mobile profile 使用不占布局的 4 DIP overlay thumb，滚动后显示并在空闲后淡出。宿主可通过 `AppWindow.ScrollbarProfile` 选择 `Auto`、`Desktop` 或 `Mobile`。
+
+当前边界：不支持 `::-webkit-scrollbar*` 私有伪元素、RTL 左侧 scrollbar、系统自动隐藏偏好和完整触摸滚动/惯性；这些不是已实现的 CSS 兼容能力。
+
 `box-shadow` 支持逗号分隔的多个外阴影：`offset-x offset-y [blur-radius] [spread-radius] color`。支持 `px`、十六进制颜色、`rgb()` 和 `rgba()`；列表首项绘制在后续阴影之上。暂不支持 `inset` 和 `text-shadow`。全部阴影均不参与布局，但会共同扩展 DisplayTree 的视觉边界和脏矩形。Popup、Menu、ContextMenu 与 Dialog 默认使用 `0 4px 8px 2px rgba(0,0,0,0.48)` elevation 阴影，可通过 `box-shadow: none` 覆盖。
 
 ---

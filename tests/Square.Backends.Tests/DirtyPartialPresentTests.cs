@@ -529,6 +529,7 @@ public class DirtyPartialPresentTests
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 60) };
         root.Style.Set("overflow-y", "auto");
+        root.Style.Set("scrollbar-width", "none");
         root.SetScrollContentSize(new Size(100, 160));
         var child = new CountingPaintElement { Geometry = new Rect(0, 100, 100, 20) };
         root.Children.Add(child);
@@ -544,10 +545,57 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void ScrollingWithScrollbarInvalidatesViewportAndGutter()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 100, 60) };
+        root.Style.Set("overflow-y", "auto");
+        root.SetScrollContentSize(new Size(85, 160));
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var context = new CountingRenderContext();
+        tree.Render(context);
+        root.ClearPaintDirty();
+
+        root.ScrollTop = 80;
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+
+        Assert.Contains(dirty, rect =>
+            rect.Left <= 0 && rect.Right >= 100 && rect.Top <= 0 && rect.Bottom >= 60);
+    }
+
+    [Fact]
+    public void ScrollingWithOneVisibleOverflowAxisKeepsDamageFinite()
+    {
+        var root = new View { Geometry = new Rect(20, 30, 100, 60) };
+        root.Style.Set("overflow-x", "visible");
+        root.Style.Set("overflow-y", "auto");
+        root.SetScrollContentSize(new Size(85, 160));
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        tree.Render(new CountingRenderContext());
+        root.ClearPaintDirty();
+
+        root.ScrollTop = 20;
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+
+        Assert.NotEmpty(dirty);
+        Assert.All(dirty, rect =>
+        {
+            Assert.InRange(rect.Left, 19, 121);
+            Assert.InRange(rect.Right, 19, 121);
+            Assert.InRange(rect.Top, 29, 91);
+            Assert.InRange(rect.Bottom, 29, 91);
+        });
+    }
+
+    [Fact]
     public void DirtyRectsUseViewportCoordinatesForScrolledChildren()
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 60) };
         root.Style.Set("overflow-y", "auto");
+        root.Style.Set("scrollbar-width", "none");
         root.SetScrollContentSize(new Size(100, 160));
         var child = new CountingPaintElement { Geometry = new Rect(0, 100, 100, 20) };
         root.Children.Add(child);
@@ -600,6 +648,67 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void ScrolledDirtyRenderWithScrollbarMatchesFullFramePixels()
+    {
+        var root = CreateScrolledPixelTreeWithScrollbar();
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var bitmap = new Bitmap(100, 60);
+        using var context = new RenderContext(bitmap, 1f);
+        context.Clear(Color.White);
+        tree.Render(context);
+
+        root.ScrollTop = 80;
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+        var union = dirty.Aggregate(DisplayTree.Union);
+        context.Clear(Color.White, union);
+        tree.Render(context, union);
+
+        var expectedRoot = CreateScrolledPixelTreeWithScrollbar();
+        expectedRoot.ScrollTop = 80;
+        var expectedTree = new DisplayTree();
+        expectedTree.BuildFrom(expectedRoot);
+        using var expectedBitmap = new Bitmap(100, 60);
+        using var expectedContext = new RenderContext(expectedBitmap, 1f);
+        expectedContext.Clear(Color.White);
+        expectedTree.Render(expectedContext);
+
+        Assert.Equal(expectedBitmap.Pixels, bitmap.Pixels);
+    }
+
+    [Fact]
+    public void ScrollingBackToZeroDirtyRenderMatchesFullFramePixels()
+    {
+        var root = CreateScrolledPixelTreeWithScrollbar();
+        root.ScrollTop = 80;
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var bitmap = new Bitmap(100, 60);
+        using var context = new RenderContext(bitmap, 1f);
+        context.Clear(Color.White);
+        tree.Render(context);
+        root.ClearPaintDirty();
+
+        root.ScrollTop = 0;
+        tree.UpdateDirty();
+        var dirty = tree.CollectDirtyRects();
+        var union = dirty.Aggregate(DisplayTree.Union);
+        context.Clear(Color.White, union);
+        tree.Render(context, union);
+
+        var expectedRoot = CreateScrolledPixelTreeWithScrollbar();
+        var expectedTree = new DisplayTree();
+        expectedTree.BuildFrom(expectedRoot);
+        using var expectedBitmap = new Bitmap(100, 60);
+        using var expectedContext = new RenderContext(expectedBitmap, 1f);
+        expectedContext.Clear(Color.White);
+        expectedTree.Render(expectedContext);
+
+        Assert.Equal(expectedBitmap.Pixels, bitmap.Pixels);
+    }
+
+    [Fact]
     public void FixedRootDirtyRectsStayInViewportCoordinatesAfterAncestorScroll()
     {
         var (root, fixedElement) = CreateFixedScrollTree();
@@ -638,6 +747,7 @@ public class DirtyPartialPresentTests
         var root = new View();
         root.Style.Set("display", "block");
         root.Style.Set("overflow-y", "auto");
+        root.Style.Set("scrollbar-width", "none");
         var normal = new View();
         normal.Style.Set("display", "block");
         normal.Style.Set("height", "100px");
@@ -660,9 +770,20 @@ public class DirtyPartialPresentTests
     {
         var root = new View { Geometry = new Rect(0, 0, 100, 60) };
         root.Style.Set("overflow-y", "auto");
+        root.Style.Set("scrollbar-width", "none");
         root.SetScrollContentSize(new Size(100, 160));
         root.Children.Add(new ColorPaintElement(Color.Red) { Geometry = new Rect(0, 0, 100, 60) });
         root.Children.Add(new ColorPaintElement(Color.Blue) { Geometry = new Rect(0, 100, 100, 20) });
+        return root;
+    }
+
+    private static View CreateScrolledPixelTreeWithScrollbar()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 100, 60) };
+        root.Style.Set("overflow-y", "auto");
+        root.SetScrollContentSize(new Size(85, 160));
+        root.Children.Add(new ColorPaintElement(Color.Red) { Geometry = new Rect(0, 0, 85, 60) });
+        root.Children.Add(new ColorPaintElement(Color.Blue) { Geometry = new Rect(0, 100, 85, 20) });
         return root;
     }
 
