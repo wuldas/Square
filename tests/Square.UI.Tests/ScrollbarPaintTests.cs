@@ -189,6 +189,46 @@ public sealed class ScrollbarPaintTests
     }
 
     [Fact]
+    public void MultilineTextAreaReportsWrappedLongLineExtentOnPaint()
+    {
+        var textArea = new TextArea
+        {
+            Geometry = new Rect(0, 0, 100, 60),
+            Value = new string('x', 600)
+        };
+        textArea.Style.Set("overflow-y", "auto");
+
+        new DisplayNode { Element = textArea }.Render(new RecordingRenderContext());
+
+        var metrics = textArea.GetScrollbarMetrics();
+        Assert.True(metrics.HasVertical, $"extent={metrics.MaxScrollY}");
+        Assert.True(metrics.MaxScrollY > 0, $"extent={metrics.MaxScrollY}");
+    }
+
+    [Fact]
+    public void MultilineTextAreaShrinksIntrinsicScrollExtentAfterValueShortens()
+    {
+        var textArea = new TextArea
+        {
+            Geometry = new Rect(0, 0, 100, 60),
+            Value = string.Join("\n", Enumerable.Range(0, 20).Select(static i => $"line-{i}"))
+        };
+        textArea.Style.Set("overflow-y", "auto");
+        var node = new DisplayNode { Element = textArea };
+
+        node.Render(new RecordingRenderContext());
+        Assert.True(textArea.GetScrollbarMetrics().HasVertical);
+
+        textArea.Value = "short";
+        node.RebuildCommands();
+        node.Render(new RecordingRenderContext());
+
+        var finalMetrics = textArea.GetScrollbarMetrics();
+        Assert.False(finalMetrics.HasVertical,
+            $"extent={finalMetrics.MaxScrollY}");
+    }
+
+    [Fact]
     public void TextAreaHorizontalScrollSurvivesPaintWhenEnabled()
     {
         var textArea = new TextArea

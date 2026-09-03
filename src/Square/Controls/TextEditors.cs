@@ -105,6 +105,8 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private string _changeBaseline = "";
     private bool _hasChangeBaseline;
     private bool _hasUserEditSinceFocus;
+    private Size _lastIntrinsicScrollContentSize;
+    private bool _hasIntrinsicScrollContentSize;
 
     protected abstract bool IsMultiline { get; }
 
@@ -182,8 +184,8 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     {
         if (PaintEditorChrome && string.IsNullOrWhiteSpace(Style.Get("appearance")))
             ControlDrawing.DrawInputFrame(context, this);
-        EnsureCaretVisible();
         SyncIntrinsicScrollContent();
+        EnsureCaretVisible();
         var textViewport = GetTextViewport();
         context.PushClip(textViewport);
 
@@ -705,20 +707,30 @@ public abstract class TextEditorBase : UIElement, ITextEditor
         if (!IsMultiline || !IsScrollContainer()) return;
         var fontSize = GetFontSize();
         var lineHeight = GetLineHeight(fontSize);
-        var lineCount = Math.Max(1, GetLines(Value).Count);
-        var intrinsicWidth = 0f;
-        if (!string.IsNullOrEmpty(Value))
+        for (var pass = 0; pass < 3; pass++)
         {
-            foreach (var line in GetLines(Value))
-                intrinsicWidth = Math.Max(intrinsicWidth,
-                    MeasureRange(Value, line.Start, line.Length));
+            var layout = CreateEditorTextLayout(Value, fontSize, lineHeight);
+            var measured = layout.Measure();
+            var viewport = GetTextViewport();
+            var intrinsicWidth = layout.WhiteSpace is TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.Nowrap
+                ? measured.Width + TextPaddingX * 2
+                : Math.Max(Geometry.Width, viewport.Width);
+            var current = ScrollContentSize;
+            var intrinsic = new Size(
+                Math.Max(Geometry.Width, intrinsicWidth),
+                Math.Max(TextPaddingY * 2 + measured.Height, TextPaddingY * 2));
+            var isPreviousIntrinsic = _hasIntrinsicScrollContentSize &&
+                Math.Abs(current.Width - _lastIntrinsicScrollContentSize.Width) <= 0.01f &&
+                Math.Abs(current.Height - _lastIntrinsicScrollContentSize.Height) <= 0.01f;
+            var next = isPreviousIntrinsic
+                ? intrinsic
+                : new Size(Math.Max(current.Width, intrinsic.Width), Math.Max(current.Height, intrinsic.Height));
+            _lastIntrinsicScrollContentSize = intrinsic;
+            _hasIntrinsicScrollContentSize = true;
+            if (Math.Abs(next.Width - current.Width) <= 0.01f &&
+                Math.Abs(next.Height - current.Height) <= 0.01f) break;
+            SetScrollContentSize(next);
         }
-        var viewport = GetTextViewport();
-        var width = Math.Max(Geometry.Width, viewport.Width);
-        var current = ScrollContentSize;
-        SetScrollContentSize(new Size(
-            Math.Max(current.Width, Math.Max(width, intrinsicWidth + TextPaddingX * 2)),
-            Math.Max(current.Height, TextPaddingY * 2 + lineCount * lineHeight)));
     }
 
     private (float Top, float Height) GetVisualLineBox(float fontSize, float lineHeight, int lineIndex)

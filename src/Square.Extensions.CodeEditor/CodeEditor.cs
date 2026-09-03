@@ -2390,13 +2390,6 @@ public sealed class CodeEditor : UIElement, ITextEditor
             _contentVersion);
     }
 
-    /// <summary>WordWrap 模式下的换行宽度必须与绘制一致（scrollbar viewport 减去 gutter）。</summary>
-    private float GetWrappedViewWidth(Font font, float lineHeight)
-    {
-        var metrics = GetScrollMetrics(font, lineHeight);
-        return Math.Max(1, metrics.ViewportRect.Width);
-    }
-
     /// <summary>按绘制一致的宽度刷新视图布局；非 WordWrap 保持调用方宽度。</summary>
     private void EnsurePaintConsistentViewLayout(Font font, float contentWidth)
     {
