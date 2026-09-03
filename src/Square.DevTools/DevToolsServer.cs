@@ -170,9 +170,17 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
             {
                 if (!options.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
                 var payload = await ReadJsonAsync(context.Request);
+                var deltaX = ReadOptionalFloat(payload, "deltaX") ?? 0;
+                // The legacy delta field uses the native wheel direction, where positive
+                // means up; normalize it to the DOM/content direction at this boundary.
+                var deltaY = ReadOptionalFloat(payload, "deltaY")
+                    ?? -(ReadOptionalFloat(payload, "delta") ?? throw new BadHttpRequestException("'deltaY' or 'delta' must be a number."));
                 var input = new DevToolsWheelInput(
                     new Point(ReadFloat(payload, "x"), ReadFloat(payload, "y")),
-                    ReadInt(payload, "delta"),
+                    deltaX,
+                    deltaY,
+                    ReadOptionalBool(payload, "isPrecise"),
+                    ReadOptionalBool(payload, "isInertial"),
                     ReadModifiers(payload));
                 await window.InjectWheelAsync(input);
                 await WriteNoContentAsync(context.Response);
@@ -504,6 +512,21 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         if (!element.TryGetProperty(name, out var value) || !value.TryGetSingle(out var result))
             throw new BadHttpRequestException($"'{name}' must be a number.");
         return result;
+    }
+    private static float? ReadOptionalFloat(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return null;
+        if (!value.TryGetSingle(out var result))
+            throw new BadHttpRequestException($"'{name}' must be a number.");
+        return result;
+    }
+
+    private static bool ReadOptionalBool(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return false;
+        if (value.ValueKind != JsonValueKind.True && value.ValueKind != JsonValueKind.False)
+            throw new BadHttpRequestException($"'{name}' must be a boolean.");
+        return value.GetBoolean();
     }
 
     private static float ReadFloat(System.Collections.Specialized.NameValueCollection query, string name)

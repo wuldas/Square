@@ -233,6 +233,7 @@ internal static partial class X11Api
         int pointer_mode, int keyboard_mode,
         IntPtr confine_to, IntPtr cursor);
 
+    public const int GrabSuccess = 0;
     public const int GrabModeAsync = 1;
 
     [LibraryImport("libX11.so.6", EntryPoint = "XSelectInput")]

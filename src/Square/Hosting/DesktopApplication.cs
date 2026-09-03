@@ -415,7 +415,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     /// <inheritdoc/>
     public Task InjectWheelAsync(DevToolsWheelInput input) => Dispatcher.InvokeAsync(() =>
     {
-        WithDevToolsModifiers(input.Modifiers, () => HandleWheel(input.Position, input.Delta));
+        WithDevToolsModifiers(input.Modifiers, () => HandleWheel(new WheelInput(
+            input.Position,
+            input.DeltaX,
+            input.DeltaY,
+            input.IsPrecise,
+            input.IsInertial)));
     });
 
     /// <inheritdoc/>
@@ -873,11 +878,15 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         ? "empty"
         : $"{rect.X:0},{rect.Y:0} {rect.Width:0}x{rect.Height:0}";
 
-    private void HandleWheel(Point point, int delta)
+    private void HandleWheel(WheelInput input)
     {
-        var hit = HitTest(point);
+        var hit = HitTest(input.Position);
         UpdateHoverPath(hit);
-        hit?.DispatchTrusted(StandardEvents.CreateWheel(0, -delta));
+        hit?.DispatchTrusted(StandardEvents.CreateWheel(
+            input.DeltaX,
+            input.DeltaY,
+            input.IsPrecise,
+            input.IsInertial));
         RenderFrame();
     }
 
@@ -1258,7 +1267,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static bool IsFocusable(UIElement element) => element.IsEnabled &&
                                                           (element is ITextEditor or Button or CheckBox or Radio
-                                                              or Select or List or Tree or Swiper or Link);
+                                                              or Select or List or Tree or Swiper or Link or ScrollViewer);
 
     private static Point MapPointerPoint(Element? target, Point point)
     {

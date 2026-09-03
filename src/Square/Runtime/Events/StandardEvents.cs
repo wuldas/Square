@@ -85,7 +85,11 @@ public static class StandardEvents
     /// <summary>创建 contextmenu 事件。</summary>
     public static PointerEvent CreateContextMenu(float x, float y) => new(ContextMenu, x, y, 2);
     /// <summary>创建 wheel 事件。</summary>
-    public static WheelEvent CreateWheel(float deltaX = 0, float deltaY = 0) => new(deltaX, deltaY);
+    public static WheelEvent CreateWheel(
+        float deltaX = 0,
+        float deltaY = 0,
+        bool isPrecise = false,
+        bool isInertial = false) => new(deltaX, deltaY, isPrecise, isInertial);
     /// <summary>创建 scroll 事件（不冒泡）。</summary>
     public static Event CreateScroll() => Create(Scroll);
     /// <summary>创建 keydown 事件。</summary>

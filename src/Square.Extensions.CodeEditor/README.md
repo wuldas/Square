@@ -12,7 +12,7 @@ Square 可选代码编辑控件：
 - Soft wrap（`WordWrap`，按可视宽度换行，不改文档）
 - 查找/替换（`FindNext` / `FindPrevious` / `ReplaceNext` / `ReplaceAll`）
 - 关闭 wrap 时长行横向滚动
-- 滚动条（`ShowScrollBars`，可开关；支持拖拽与轨道点击）
+- 滚动条（`ShowScrollBars` / `ScrollbarVisibility`，支持 auto/always/hover/scroll/hidden、CSS width/color/gutter、拖拽、轨道分页与按住重复）；`EditorScrollOffset` 和 scroll 事件可观察滚动状态
 - 括号匹配高亮、查找匹配高亮
 - Glyph margin + 行 decoration（断点图标、git 色条、行背景、`GutterClick`）
 - 只读模式（`ReadOnly` / `ToggleReadOnly`）

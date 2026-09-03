@@ -26,7 +26,7 @@ public interface IPlatformHost : IDisposable
     /// <summary>鼠标事件。</summary>
     event Action<Point, MouseAction, MouseButton>? MouseEvent;
     /// <summary>滚轮事件。</summary>
-    event Action<Point, int>? WheelEvent;
+    event Action<WheelInput>? WheelEvent;
     /// <summary>键盘事件。</summary>
     event Action<int, KeyAction>? KeyEvent;
     /// <summary>文本输入事件。</summary>

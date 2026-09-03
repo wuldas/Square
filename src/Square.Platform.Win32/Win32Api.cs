@@ -39,6 +39,7 @@ internal static partial class Win32Api
     public const int WM_RBUTTONUP = 0x0205;
     public const int WM_MOUSEMOVE = 0x0200;
     public const int WM_MOUSEWHEEL = 0x020A;
+    public const int WM_MOUSEHWHEEL = 0x020E;
     public const int WM_KEYDOWN = 0x0100;
     public const int WM_KEYUP = 0x0101;
     public const int WM_CHAR = 0x0102;

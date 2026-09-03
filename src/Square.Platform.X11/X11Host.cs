@@ -58,6 +58,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     private Rect _textInputRect;
     private X11CaretSpot _textInputSpot;
     private bool _disposed;
+    private bool _pointerCaptured;
     private bool _closed;
     private AppWindowState _state = AppWindowState.Normal;
 
@@ -271,7 +272,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
 
     public event Action<Size>? SizeChanged;
     public event Action<Point, MouseAction, MouseButton>? MouseEvent;
-    public event Action<Point, int>? WheelEvent;
+    public event Action<WheelInput>? WheelEvent;
     public event Action<int, KeyAction>? KeyEvent;
     public event Action<string>? TextInput;
     public event Action? Tick;
@@ -313,16 +314,39 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         X11Api.MapRaised(_display, _window);
         X11Api.Flush(_display);
     }
+    private void CapturePointer()
+    {
+        if (_pointerCaptured || _window == IntPtr.Zero) return;
+        var result = X11Api.GrabPointer(
+            _display,
+            _window,
+            true,
+            (uint)(X11Api.PointerMotionMask | X11Api.ButtonReleaseMask),
+            X11Api.GrabModeAsync,
+            X11Api.GrabModeAsync,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            X11Api.CurrentTime);
+        _pointerCaptured = result == X11Api.GrabSuccess;
+        X11Api.Flush(_display);
+    }
+
+    private void ReleasePointerCapture()
+    {
+        if (!_pointerCaptured) return;
+        X11Api.UngrabPointer(_display, X11Api.CurrentTime);
+        _pointerCaptured = false;
+        X11Api.Flush(_display);
+    }
 
     public void BeginMove()
     {
         if (_window == IntPtr.Zero) return;
+        ReleasePointerCapture();
         if (!X11Api.QueryPointer(
                 _display, _root, out _, out _, out var rootX, out var rootY,
                 out _, out _, out _))
             return;
-
-        X11Api.UngrabPointer(_display, X11Api.CurrentTime);
         X11Api.XEvent e = default;
         e.clientMessage.type = X11Api.ClientMessage;
         e.clientMessage.display = _display;
@@ -463,23 +487,24 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                     var raw = (byte*)(&e);
                     int x = *(int*)(raw + 64);
                     int y = *(int*)(raw + 68);
-                    int xRoot = *(int*)(raw + 72);
-                    int yRoot = *(int*)(raw + 76);
                     uint state = *(uint*)(raw + 80);
                     uint button = *(uint*)(raw + 84);
                     _lastModifierState = state;
                     var pt = ToLogicalPoint(x, y);
                     if (button == X11Api.Button4)
-                        WheelEvent?.Invoke(pt, 120);
+                        WheelEvent?.Invoke(new WheelInput(pt, 0, -120));
                     else if (button == X11Api.Button5)
-                        WheelEvent?.Invoke(pt, -120);
+                        WheelEvent?.Invoke(new WheelInput(pt, 0, 120));
                     else if (button == X11Api.Button2)
                     {
                         var text = ReadSelection(_primaryAtom);
                         if (!string.IsNullOrEmpty(text)) TextInput?.Invoke(text);
                     }
                     else
+                    {
+                        if (button == X11Api.Button1) CapturePointer();
                         MouseEvent?.Invoke(pt, MouseAction.Down, button == X11Api.Button3 ? MouseButton.Right : MouseButton.Left);
+                    }
                 }
                 break;
             case X11Api.ButtonRelease:
@@ -492,6 +517,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                     _lastModifierState = state;
                     if (button is not X11Api.Button2 and not X11Api.Button4 and not X11Api.Button5)
                         MouseEvent?.Invoke(ToLogicalPoint(x, y), MouseAction.Up, button == X11Api.Button3 ? MouseButton.Right : MouseButton.Left);
+                    if (button == X11Api.Button1) ReleasePointerCapture();
                 }
                 break;
             case X11Api.MotionNotify:
@@ -1032,6 +1058,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     {
         if (_disposed) return;
         _disposed = true;
+        ReleasePointerCapture();
         DestroyXImage();
         if (_xic != IntPtr.Zero)
         {

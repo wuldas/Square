@@ -13,6 +13,7 @@ public static class ScrollbarPainter
 
     internal static void Paint(IRenderContext context, Element element)
     {
+        if (!element.IsScrollbarChromeVisible) return;
         var metrics = element.GetScrollbarMetrics();
         if (!metrics.HasVertical && !metrics.HasHorizontal) return;
 
@@ -40,7 +41,7 @@ public static class ScrollbarPainter
         ScrollbarPart hoverPart = ScrollbarPart.None,
         Color? pressedThumb = null)
     {
-        if (!metrics.HasVertical && !metrics.HasHorizontal) return;
+        if (!metrics.HasVertical && !metrics.HasHorizontal || opacity <= 0.001f) return;
         var verticalThumb = pressedPart == ScrollbarPart.VerticalThumb && pressedThumb.HasValue
             ? pressedThumb.Value
             : ResolveStateColor(thumb, ScrollbarPart.VerticalThumb, pressedPart, hoverPart, 36, 20);
@@ -64,6 +65,19 @@ public static class ScrollbarPainter
             PaintThumb(context, metrics.VerticalThumb, WithOpacity(verticalThumb, opacity));
             PaintThumb(context, metrics.HorizontalThumb, WithOpacity(horizontalThumb, opacity));
             return;
+        }
+
+        if (opacity < 0.999f)
+        {
+            verticalThumb = WithOpacity(verticalThumb, opacity);
+            horizontalThumb = WithOpacity(horizontalThumb, opacity);
+            verticalTrack = WithOpacity(verticalTrack, opacity);
+            horizontalTrack = WithOpacity(horizontalTrack, opacity);
+            verticalBackButton = WithOpacity(verticalBackButton, opacity);
+            verticalForwardButton = WithOpacity(verticalForwardButton, opacity);
+            horizontalBackButton = WithOpacity(horizontalBackButton, opacity);
+            horizontalForwardButton = WithOpacity(horizontalForwardButton, opacity);
+            track = WithOpacity(track, opacity);
         }
 
         PaintTrack(context, metrics.VerticalGutter, verticalTrack);

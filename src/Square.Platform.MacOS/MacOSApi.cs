@@ -97,6 +97,8 @@ internal static partial class MacOSApi
 
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
     internal static partial byte SendByteResult(IntPtr receiver, IntPtr selector);
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial byte RespondsToSelector(IntPtr receiver, IntPtr selector, IntPtr queriedSelector);
 
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
     internal static partial nuint SendNuintResult(IntPtr receiver, IntPtr selector);

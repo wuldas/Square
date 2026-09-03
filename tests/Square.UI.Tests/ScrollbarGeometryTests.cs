@@ -1,4 +1,5 @@
 using Square.Graphics;
+using Square.Events;
 using Square.Hosting;
 using Square.Controls;
 using Square.Rendering;
@@ -461,5 +462,110 @@ public sealed class ScrollbarGeometryTests
 
         Assert.Equal(ScrollbarPart.None, scroller.ScrollbarInteractionPart);
         Assert.Equal(ScrollbarPart.None, scroller.ScrollbarHoverPart);
+    }
+
+    [Fact]
+    public void ScrollbarVisibilityModesControlChromeWithoutDisablingScroll()
+    {
+        var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.SetScrollContentSize(new Size(100, 400));
+
+        scroller.ScrollbarVisibility = ScrollbarVisibilityMode.Scroll;
+        Assert.False(scroller.IsScrollbarChromeVisible);
+        scroller.ScrollTop = 20;
+        Assert.True(scroller.IsScrollbarChromeVisible);
+
+        scroller.ScrollbarVisibility = ScrollbarVisibilityMode.Hover;
+        Assert.False(scroller.IsScrollbarChromeVisible);
+        scroller.SetState(ElementState.Hover, true);
+        Assert.True(scroller.IsScrollbarChromeVisible);
+        scroller.SetState(ElementState.Hover, false);
+        Assert.False(scroller.IsScrollbarChromeVisible);
+
+        scroller.ScrollbarVisibility = ScrollbarVisibilityMode.Hidden;
+        Assert.False(scroller.GetScrollbarMetrics().HasVertical);
+        Assert.True(scroller.ScrollBy(0, 20));
+    }
+
+    [Fact]
+    public void ScrollViewerKeyboardKeysMoveViewport()
+    {
+        var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.SetScrollContentSize(new Size(100, 400));
+        scroller.Focus();
+
+        scroller.DispatchTrusted(StandardEvents.CreateKeyDown(34));
+        Assert.Equal(100, scroller.VerticalOffset);
+        scroller.DispatchTrusted(StandardEvents.CreateKeyDown(35));
+        Assert.Equal(scroller.ScrollableHeight, scroller.VerticalOffset);
+        scroller.DispatchTrusted(StandardEvents.CreateKeyDown(36));
+        Assert.Equal(0, scroller.VerticalOffset);
+    }
+
+    [Fact]
+    public void ScrollViewerScrollToElementAccountsForViewportAndNestedScroll()
+    {
+        var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.Style.Set("overflow-x", "auto");
+        scroller.SetScrollContentSize(new Size(300, 400));
+        var child = new View { Geometry = new Rect(220, 260, 40, 40) };
+        scroller.Children.Add(child);
+
+        scroller.ScrollTo(child);
+
+        Assert.Equal(175, scroller.HorizontalOffset);
+        Assert.Equal(215, scroller.VerticalOffset);
+        scroller.ScrollIntoView(child);
+        Assert.Equal(175, scroller.HorizontalOffset);
+        Assert.Equal(215, scroller.VerticalOffset);
+    }
+
+    [Fact]
+    public void WheelEventPreservesPreciseAndInertialMetadata()
+    {
+        var wheel = StandardEvents.CreateWheel(1.25f, -2.5f, isPrecise: true, isInertial: true);
+
+        Assert.Equal(1.25f, wheel.DeltaX);
+        Assert.Equal(-2.5f, wheel.DeltaY);
+        Assert.True(wheel.IsPrecise);
+        Assert.True(wheel.IsInertial);
+    }
+
+    [Fact]
+    public void LongSelectDropdownUsesBoundedScrollableList()
+    {
+        var select = new Select
+        {
+            Geometry = new Rect(0, 0, 120, 30),
+            Options = Enumerable.Range(0, 12).Select(static i => $"Option {i}").ToArray()
+        };
+
+        select.HandlePointerDown(new Point(10, 10));
+        var popup = select.PopupBounds;
+        var list = Assert.IsAssignableFrom<List>(select.Children[0]);
+        var metrics = list.GetScrollbarMetrics();
+
+        var tree = new DisplayTree();
+        var root = new View { Geometry = new Rect(0, 0, 300, 400) };
+        root.Children.Add(select);
+        tree.BuildFrom(root);
+        var scrollbarTarget = tree.HitTestScrollbar(metrics.VerticalThumb.Center);
+
+        Assert.True(select.IsOpen);
+        Assert.Equal(258, popup.Height);
+        Assert.NotNull(scrollbarTarget);
+        Assert.IsAssignableFrom<List>(scrollbarTarget);
+        Assert.True(metrics.HasVertical);
+        Assert.True(metrics.VerticalThumb.Height > 0);
+
+        select.DispatchTrusted(StandardEvents.CreateWheel(0, 50));
+        list.AdvanceSmoothScroll(1);
+        Assert.True(list.VerticalOffset > 0);
+
+        list.ScrollTop = 128;
+        select.HandlePointerDown(new Point(popup.X + 10, popup.Y + 10));
+
+        Assert.Equal("Option 4", select.Value);
+        Assert.False(select.IsOpen);
     }
 }

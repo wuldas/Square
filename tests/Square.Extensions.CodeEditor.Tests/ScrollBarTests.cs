@@ -1,6 +1,7 @@
 using Square.Extensions.CodeEditor;
 using Square.Graphics;
 using Square.Platform;
+using Square.UI.Scrolling;
 using Xunit;
 
 namespace Square.Extensions.CodeEditor.Tests;
@@ -132,5 +133,42 @@ public class ScrollBarTests
         pad.HandlePointerDown(new Point(pad.Geometry.X + 30, lastRowY), extendSelection: true);
 
         Assert.True(pad.CaretIndex > 0, $"caret={pad.CaretIndex}");
+    }
+    [Fact]
+    public void CssScrollbarWidthNonePreservesRangeButSuppressesChrome()
+    {
+        var editor = CreateTall();
+        editor.Style.Set("scrollbar-width", "none");
+
+        Assert.True(editor.VerticalScrollRange > 0);
+        Assert.Equal(ScrollbarPart.None, editor.GetScrollbarPartAt(new Point(editor.Geometry.Right - 4, editor.Geometry.Y + 40)));
+    }
+
+    [Fact]
+    public void PageKeysUpdatePublicOffsetAndDispatchScroll()
+    {
+        var editor = CreateTall();
+        var events = 0;
+        editor.AddEventListener("scroll", _ => events++);
+
+        editor.HandleKey(34);
+
+        Assert.True(editor.VerticalScrollOffset > 0);
+        Assert.True(editor.VerticalScrollRange >= editor.VerticalScrollOffset);
+        Assert.Equal(new Point(editor.HorizontalScrollOffset, editor.VerticalScrollOffset), editor.EditorScrollOffset);
+        Assert.Equal(1, events);
+    }
+
+    [Fact]
+    public void ControlHomeAndEndRetainCaretMovementAndScrollToBounds()
+    {
+        var editor = CreateTall();
+        editor.HandleKey(35, control: true);
+        Assert.Equal(editor.Value.Length, editor.CaretIndex);
+        Assert.Equal(editor.VerticalScrollRange, editor.VerticalScrollOffset);
+
+        editor.HandleKey(36, control: true);
+        Assert.Equal(0, editor.CaretIndex);
+        Assert.Equal(0, editor.VerticalScrollOffset);
     }
 }

@@ -222,8 +222,16 @@ namespace Square.Hosting;
 
 public sealed record DevToolsPointerInput(Point Position, MouseAction Action, KeyModifiers Modifiers = KeyModifiers.None);
 public sealed record DevToolsKeyInput(int KeyCode, KeyAction Action, KeyModifiers Modifiers = KeyModifiers.None);
-public sealed record DevToolsWheelInput(Point Position, int Delta, KeyModifiers Modifiers = KeyModifiers.None);
+public sealed record DevToolsWheelInput(
+    Point Position,
+    float DeltaX,
+    float DeltaY,
+    bool IsPrecise = false,
+    bool IsInertial = false,
+    KeyModifiers Modifiers = KeyModifiers.None);
 ```
+
+`DevToolsWheelInput` 使用 DOM/content 方向：正 `DeltaX` 向右，正 `DeltaY` 向下。HTTP `/api/v1/input/wheel` 接受 `deltaX` / `deltaY`；仅提供旧版 `delta` 时按原生滚轮方向兼容转换。
 
 `DesktopApplication` 暴露 `InjectPointerAsync`、`InjectKeyAsync`、`InjectTextAsync`、`InjectWheelAsync` 和 `CaptureRendererBitmapAsync()` 供 DevTools 层跨线程投递输入与截图。`CaptureRendererBitmapAsync()` 优先读取活动渲染上下文的实时帧：若 RenderContext 实现 `IRenderBitmapSource` 且 `IsCaptureAvailable` 为 `true`（Vulkan 需设置 `SQUARE_VULKAN_READBACK=1`）则直接读回真实 GPU 输出；否则在 UI 线程将当前 DisplayTree 重放到离屏 Software bitmap。两种路径都不捕获平台窗口边框。
 
@@ -922,13 +930,16 @@ public sealed class PropertyStore
 
 ### ScrollViewer
 
-`ScrollViewer` 复用通用 CSS overflow 管线，默认 `overflow-x: hidden`、`overflow-y: auto`。滚轮默认动作会滚动最近仍可继续滚动的祖先容器；偏移变化派发不冒泡的 `scroll` 事件。
+`ScrollViewer` 复用通用 CSS overflow 管线，默认 `overflow-x: hidden`、`overflow-y: auto`。滚轮默认动作会滚动最近仍可继续滚动的祖先容器；偏移变化派发不冒泡的 `scroll` 事件。普通 `ScrollViewer` 可获得焦点，支持方向键、PageUp/PageDown、Home/End。
 
 滚动条作为 UA chrome 绘制，不会出现在 `Children` 中。桌面 profile 默认预留 15 DIP gutter，支持 thumb 拖拽、track 分页、按钮和按住重复；移动 profile 使用 4 DIP overlay thumb，不占用 viewport，并在滚动停止后淡出。`scrollbar-width`、`scrollbar-color` 和 `scrollbar-gutter: stable | stable both-edges` 可分别控制宽度、颜色和稳定预留空间；`stable` 在无溢出时只保留空 gutter，不绘制或命中 scrollbar chrome。
+
+`ScrollbarVisibility` 提供 `Auto`、`Always`、`Hover`、`Scroll` 和 `Hidden`。`Hidden` 只隐藏 chrome，不关闭滚动能力；`ScrollTo(Element)` / `ScrollIntoView(Element)` 会在当前容器内把后代元素滚动到可视区域。
 
 ```csharp
 public class ScrollViewer : View
 {
+    public ScrollbarVisibilityMode ScrollbarVisibility { get; set; }
     public float HorizontalOffset { get; }
     public float VerticalOffset { get; }
     public float ExtentWidth { get; }
@@ -939,12 +950,15 @@ public class ScrollViewer : View
     public float ScrollableHeight { get; }
 
     public void ScrollTo(float horizontalOffset, float verticalOffset);
+    public void ScrollTo(Element element);
+    public void ScrollIntoView(Element element);
     public void ScrollToTop();
     public void ScrollToBottom();
 }
 ```
 
 ```csharp
+public enum ScrollbarVisibilityMode { Auto, Always, Hover, Scroll, Hidden }
 public enum ScrollbarDeviceProfile { Auto, Desktop, Mobile }
 
 window.ScrollbarProfile = ScrollbarDeviceProfile.Mobile;
@@ -1820,12 +1834,6 @@ JPEG、TIFF 页面与 WebP EXIF Orientation 默认应用到像素。`Metadata.Or
 
 TIFF 每个 IFD 页面对应一个 `ImageItem`，页面可具有不同尺寸、源位深和 Orientation。页面元数据位于 `ImageItem.Metadata`，文档级 `Metadata` 对应主页面。当前 TIFF 支持 Chunky 的未压缩、LZW、Deflate、Adobe Deflate 与 PackBits Strip；8 位样本支持水平差分 `Predictor=2`。Tile、Planar Separate、CMYK、YCbCr、Lab 和 BigTIFF 尚未支持。
 
-WebP 当前支持静态 `VP8L`、静态 VP8 lossy 关键帧，以及 `ANIM`/`ANMF` 内嵌 VP8L、VP8 或 `ALPH+VP8` 动画帧，并保留完全透明像素的 RGB 分量。纯 C# VP8 解码器支持分割、1/2/4/8 token partition、Y2/WHT、16x16/8x8 与全部 4x4 帧内预测模式、系数概率更新、量化、simple/normal loop filter，并将规范 YUV420 平面通过确定性的 libwebp 标量公式转换为 BGRA。VP8 支持独立 `ALPH` chunk：method 0 原始平面、method 1 VP8L 压缩平面、None/Horizontal/Vertical/Gradient filter，以及 preprocessing 0/1；alpha 与颜色按 straight-alpha 合并。动画合成支持局部 frame rectangle、alpha-over/no-blend、dispose-to-background、ANIM BGRA 背景和单帧动画 loop metadata。扩展 WebP 支持 `EXIF` Orientation（可由 `ExifOrientationPolicy` 控制），并校验 `ICCP`、`ALPH`、`EXIF`、`XMP ` chunk 与 VP8X flag 的一致性、重复项、规范阶段顺序和累计元数据大小限制；VP8X 必须是扩展文件首块，ICCP 位于图像数据前，ALPH 紧邻并位于 VP8 前，EXIF/XMP 位于图像或动画帧后。
-
-解码限制分别覆盖编码输入、单项目尺寸与内存、文档项目数、全部项目累计解码内存，以及 Exif 元数据大小、标签数和 IFD 深度。
-
-实现只使用 BCL `ZLibStream` 和显式格式分派，无反射、动态代码、native library 或运行时 codec discovery，支持 trimming 与 NativeAOT。
-
 ---
 
 ## 7. Square.Platform — 平台宿主
@@ -1834,6 +1842,15 @@ WebP 当前支持静态 `VP8L`、静态 VP8 lossy 关键帧，以及 `ANIM`/`ANM
 
 ```csharp
 namespace Square.Platform;
+
+public readonly struct WheelInput
+{
+    public Point Position { get; }
+    public float DeltaX { get; }
+    public float DeltaY { get; }
+    public bool IsPrecise { get; }
+    public bool IsInertial { get; }
+}
 
 public interface IPlatformHost
 {
@@ -1844,8 +1861,8 @@ public interface IPlatformHost
     KeyModifiers Modifiers { get; }
 
     event Action<Size>? SizeChanged;
-    event Action<Point, MouseAction>? MouseEvent;
-    event Action<Point, int>? WheelEvent;
+    event Action<Point, MouseAction, MouseButton>? MouseEvent;
+    event Action<WheelInput>? WheelEvent;
     event Action<int, KeyAction>? KeyEvent;
     event Action<string>? TextInput;
     event Action? Tick;
@@ -1866,7 +1883,8 @@ public interface IPlatformHost
 | `ClientSize` | 窗口客户区逻辑像素尺寸 |
 | `DpiScale` | 当前 DPI 缩放 |
 | `Modifiers` | 当前键盘修饰键状态 |
-| `MouseEvent` | `(point, action)` 鼠标事件 |
+| `MouseEvent` | `(point, action, button)` 鼠标事件 |
+| `WheelEvent` | `WheelInput`；浮点 DeltaX/DeltaY 使用内容方向，附带精确滚动和惯性阶段标记 |
 | `KeyEvent` | `(keyCode, action)` 键盘事件 |
 | `TextInput` | `(text)` 文本输入（IME） |
 | `Tick` | 平台消息循环空闲回调 |
@@ -2483,7 +2501,7 @@ editor.Value = "public class App { }";
 <CodeEditor Language="json" ThemeId="default-dark" ShowLineNumbers="true" />
 ```
 
-核心能力包括 PieceTable 编辑模型、增量撤销/重做、视口虚拟化、多光标、查找替换、行装饰、overview ruler 与代码折叠。编辑器 scrollbar 复用核心 geometry/painter；Mobile profile 下 wheel 滚动后显示 overlay thumb，并在 500ms + 200ms 后淡出。语法高亮使用 `TextMateSharp` / `TextMateSharp.Grammars`；未知 languageId 回退为纯文本。
+核心能力包括 PieceTable 编辑模型、增量撤销/重做、视口虚拟化、多光标、查找替换、行装饰、overview ruler 与代码折叠。编辑器 scrollbar 复用核心 geometry/painter，支持 `ScrollbarVisibilityMode`、`scrollbar-width`、`scrollbar-color` 和 `scrollbar-gutter`；`ShowScrollBars` 仍可作为显式开关。`EditorScrollOffset`、`HorizontalScrollOffset` / `VerticalScrollOffset`、`HorizontalScrollRange` / `VerticalScrollRange` 暴露私有编辑器滚动状态，偏移变化派发不冒泡的 `scroll` 事件。Mobile profile 下 wheel 滚动后显示 overlay thumb，并在 500ms + 200ms 后淡出。语法高亮使用 `TextMateSharp` / `TextMateSharp.Grammars`；未知 languageId 回退为纯文本。
 
 `TextMateLanguageProvider.RegisterExtension(path)` 可加载包含 `package.json` 和 `syntaxes/*.tmLanguage.json` 的 VS Code 扩展目录。`LanguageRegistry.GuessLanguage(path)` 可按文件扩展名推断 languageId。
 
@@ -2541,9 +2559,10 @@ private void OnClick(Event e) { }
 | `Square.Runtime` | `Application`, `Dispatcher`, `IComponentLifecycle` |
 | `Square.Runtime.Binding` | `ObservableValue<T>`, `ObservableCollection<T>`, `PropAttribute` |
 | `Square.Runtime.Signals` | `Signal<T>`, `SignalHub` |
-| `Square.Events` | `EventTarget`, `Event`, `EventInit`, `EventPhase`, `StandardEvents`, `FrameRequestEvent` |
+| `Square.Events` | `EventTarget`, `Event`, `WheelEvent`, `KeyboardEvent`, `EventInit`, `EventPhase`, `StandardEvents`, `FrameRequestEvent` |
 | `Square.Directives` | `SqxDirectiveAttribute`（编译期指令发现） |
 | `Square.UI` | `Node`, `Element`, `UIElement`, `ElementState`, `Document`, `UIDocument`, `XMLDocument`, `Range`, `UIRootElement`, `UIHeadElement`, `UIBodyElement`, `HTMLElement`, `SlotCollection`, `RenderFragment` |
+| `Square.UI.Scrolling` | `ScrollbarGeometry`, `ScrollbarMetrics`, `ScrollbarVisibilityMode`, `ScrollbarDeviceProfile`, `ScrollbarPart` |
 | `Square.UI.Svg` | `SVGDocument`, `SVGElement`, `SVGSVGElement`, `SVGGElement`, `SVGPathElement`, `SVGRectElement`, `SVGCircleElement`, `SVGEllipseElement`, `SVGLineElement`, `SVGPolylineElement`, `SVGPolygonElement` |
 | `Square.UI.ElementApi` | `StyleAccessor`, `ClassListAccessor`, `ChildrenCollection` |
 | `Square.UI.Properties` | `PropertyStore` |
@@ -2554,7 +2573,7 @@ private void OnClick(Event e) { }
 | `Square.Images` | `ImageDecoder`, `ImageDocument`, `ImageItem`, `ImageAnimationInfo`, `ImageMetadata`, `ImageDecoderOptions`, `ImageFormat`, `ImageDocumentKind`, `ImageOrientation`, `ExifOrientationPolicy`, `PngCrcPolicy` |
 | `Square.Graphics.Codecs` | `BitmapPngEncoder`, `BmpPngConverter`, `Crc32` |
 | `Square.Rendering` | `LayoutEngine`, `ComputedStyle`, `DisplayMode`, `FlexDirection`, `DisplayTree`, `DisplayNode`, `TextFragment`, `TextCharacterFragment` |
-| `Square.Platform` | `IPlatformHost`, `IPlatformFactory`, `IPlatformScreenshotProvider`, `PlatformHostCreateInfo`, `PlatformRegistry`, `PlatformScreenshot` |
+| `Square.Platform` | `WheelInput`, `IPlatformHost`, `IPlatformFactory`, `IPlatformScreenshotProvider`, `PlatformHostCreateInfo`, `PlatformRegistry`, `PlatformScreenshot` |
 | `Square.Platform.Win32` | `Win32PlatformFactory` |
 | `Square.Platform.X11` | `X11PlatformFactory` |
 | `Square.Backends.Direct2D` | `Direct2DBackendFactory`, `Direct2DRegistration`, `UseDirect2DBackend` |

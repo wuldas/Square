@@ -175,6 +175,25 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         get => _scrollOffset.Y;
         set => SetScrollOffset(_scrollOffset.X, value);
     }
+    /// <summary>滚动条 chrome 的显示策略。</summary>
+    public ScrollbarVisibilityMode ScrollbarVisibility
+    {
+        get => GetProperty<ScrollbarVisibilityMode?>(nameof(ScrollbarVisibility)) ?? ScrollbarVisibilityMode.Auto;
+        set
+        {
+            var normalized = value is ScrollbarVisibilityMode.Auto or ScrollbarVisibilityMode.Always or
+                ScrollbarVisibilityMode.Hover or ScrollbarVisibilityMode.Scroll or ScrollbarVisibilityMode.Hidden
+                ? value
+                : ScrollbarVisibilityMode.Auto;
+            var previous = ScrollbarVisibility;
+            if (previous == normalized) return;
+            SetProperty(nameof(ScrollbarVisibility), normalized);
+            if (normalized is ScrollbarVisibilityMode.Hidden or ScrollbarVisibilityMode.Always or ScrollbarVisibilityMode.Hover ||
+                previous == ScrollbarVisibilityMode.Always &&
+                (normalized == ScrollbarVisibilityMode.Auto || normalized == ScrollbarVisibilityMode.Scroll))
+                CancelScrollbarFade();
+        }
+    }
 
     /// <summary>是否参与布局与命中（Square 扩展；可映射 CSS 可见性）。</summary>
     public bool IsVisible
@@ -225,9 +244,9 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>交互/伪类状态变化扩展点。</summary>
     protected virtual void OnStateChanged(ElementState flag, bool on) { }
 
-    /// <summary>状态切换是否直接影响元素自绘；外部自定义元素默认保持原有自动重绘行为。</summary>
     protected virtual bool RequiresStatePaintInvalidation(ElementState flag) =>
-        flag != ElementState.Hover || GetType().Assembly != typeof(Element).Assembly;
+        flag != ElementState.Hover || GetType().Assembly != typeof(Element).Assembly ||
+        ScrollbarVisibility is ScrollbarVisibilityMode.Hover or ScrollbarVisibilityMode.Scroll;
 
     /// <summary>可见性变化扩展点。</summary>
     protected virtual void OnIsVisibleChanged(bool isVisible) { }
@@ -695,6 +714,9 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         var axes = GetScrollAxes();
         var canExposeScrollbar = IsScrollLayoutContainer();
         var profile = AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto;
+        var width = GetScrollbarWidthMode();
+        if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
+            width = ScrollbarWidthMode.None;
         return ScrollbarGeometry.Calculate(
             Geometry,
             _scrollContentSize,
@@ -704,14 +726,53 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             alwaysShowVertical: IsAlwaysScrolling("overflow-y"),
             alwaysShowHorizontal: IsAlwaysScrolling("overflow-x"),
             profile,
-            GetScrollbarWidthMode(),
+            width,
             GetScrollbarGutterMode());
     }
-
     /// <summary>当前滚动内容可用的视口矩形；desktop gutter 已从中扣除。</summary>
     protected internal Rect GetScrollViewportRect() => GetScrollbarMetrics().ViewportRect;
 
-    internal float ScrollbarOpacity => GetScrollbarMetrics().IsOverlay ? _scrollbarOpacity : 1f;
+    /// <summary>当前 scrollbar chrome 是否应绘制。</summary>
+    internal bool IsScrollbarChromeVisible
+    {
+        get
+        {
+            var metrics = GetScrollbarMetrics();
+            if ((!metrics.HasVertical && !metrics.HasHorizontal) ||
+                GetScrollbarWidthMode() == ScrollbarWidthMode.None ||
+                ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
+                return false;
+
+            var hovered = HasState(ElementState.Hover) || ScrollbarHoverPart != ScrollbarPart.None;
+            return ScrollbarVisibility switch
+            {
+                ScrollbarVisibilityMode.Always => true,
+                ScrollbarVisibilityMode.Hover => hovered,
+                ScrollbarVisibilityMode.Scroll => hovered || _scrollbarOpacity > 0.001f,
+                _ => metrics.IsOverlay ? _scrollbarOpacity > 0.001f : true
+            };
+        }
+    }
+
+    /// <summary>当前 scrollbar chrome 的绘制不透明度。</summary>
+    internal float ScrollbarOpacity
+    {
+        get
+        {
+            var metrics = GetScrollbarMetrics();
+            if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden ||
+                GetScrollbarWidthMode() == ScrollbarWidthMode.None)
+                return 0;
+            if (ScrollbarVisibility == ScrollbarVisibilityMode.Always ||
+                ScrollbarVisibility == ScrollbarVisibilityMode.Auto && !metrics.IsOverlay)
+                return 1;
+            if (ScrollbarVisibility is ScrollbarVisibilityMode.Hover or ScrollbarVisibilityMode.Scroll &&
+                (HasState(ElementState.Hover) || ScrollbarHoverPart != ScrollbarPart.None))
+                return 1;
+            return Math.Clamp(_scrollbarOpacity, 0, 1);
+        }
+    }
+
     internal ScrollbarPart ScrollbarInteractionPart =>
         _scrollbarInteractionPart is ScrollbarPart.VerticalThumb or ScrollbarPart.HorizontalThumb ||
         _scrollbarRepeatPointerInside
@@ -1047,7 +1108,11 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
 
     private void ShowScrollbar()
     {
-        if (!GetScrollbarMetrics().IsOverlay) return;
+        var metrics = GetScrollbarMetrics();
+        if ((!metrics.HasVertical && !metrics.HasHorizontal) ||
+            ScrollbarVisibility is ScrollbarVisibilityMode.Hidden or ScrollbarVisibilityMode.Always or ScrollbarVisibilityMode.Hover ||
+            ScrollbarVisibility == ScrollbarVisibilityMode.Auto && !metrics.IsOverlay)
+            return;
         _scrollbarOpacity = 1f;
         _scrollbarFadeElapsed = 0;
         _scrollbarFadeLastTimestamp = Stopwatch.GetTimestamp();

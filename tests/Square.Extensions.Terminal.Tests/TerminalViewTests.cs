@@ -260,7 +260,7 @@ public sealed class TerminalViewTests
         public KeyModifiers Modifiers { get; set; }
         public event Action<Size>? SizeChanged { add { } remove { } }
         public event Action<Point, MouseAction, MouseButton>? MouseEvent { add { } remove { } }
-        public event Action<Point, int>? WheelEvent { add { } remove { } }
+        public event Action<WheelInput>? WheelEvent { add { } remove { } }
         public event Action<int, KeyAction>? KeyEvent { add { } remove { } }
         public event Action<string>? TextInput { add { } remove { } }
         public event Action? Tick { add { } remove { } }

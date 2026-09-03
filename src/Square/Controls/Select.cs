@@ -3,17 +3,26 @@ using Square.Events;
 using Square.Graphics;
 using Square.Rendering.Paint;
 using Square.UI;
+using Square.UI.Scrolling;
 
 namespace Square.Controls;
 
 /// <summary>下拉选择控件，类似 HTML <c>select</c>。</summary>
 public class Select : UIElement, IPopupElement, ITextSelectable
 {
+    private const float OptionHeight = 32;
+    private const float PopupBorder = 2;
+    private const float MaxDropdownHeight = 258;
+
     private static readonly string[] AuthorVerticalTextProperties =
     [
         "height", "font", "font-family", "font-size", "font-weight", "font-style", "line-height",
         "padding-top", "padding-bottom", "border-top-width", "border-bottom-width"
     ];
+
+    private readonly DropdownList _dropdownList;
+    private int _hoveredOption = -1;
+    private bool _forwardingDropdownWheel;
 
     /// <inheritdoc/>
     public bool IsLayoutOverlay => false;
@@ -33,7 +42,6 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     public bool DismissOnPointerDownOutside => true;
     /// <inheritdoc/>
     public bool CloseOnEscape => true;
-    private int _hoveredOption = -1;
 
     /// <inheritdoc/>
     public string SelectableText => string.IsNullOrEmpty(Value) ? Placeholder : Value;
@@ -50,6 +58,17 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     /// <summary>初始化 <see cref="Select"/> 的新实例。</summary>
     public Select()
     {
+        // Keep the list in the tree so normal wheel and scrollbar routing can find it.
+        // Its rows are painted in the popup layer to avoid duplicate normal-layer chrome.
+        _dropdownList = new DropdownList();
+        _dropdownList.Style.SetCascaded("position", "absolute", int.MinValue);
+        _dropdownList.Style.SetCascaded("background", "white", int.MinValue);
+        _dropdownList.IsVisible = false;
+        _dropdownList.AddEventListener(StandardEvents.Click, OnDropdownClick);
+        AddEventListener<WheelEvent>(StandardEvents.Wheel, OnDropdownWheel);
+
+        Children.Add(_dropdownList);
+
         AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
         {
             if (HandleKey(e.KeyCode, e.ShiftKey, e.ControlKey, e.AltKey))
@@ -113,12 +132,19 @@ public class Select : UIElement, IPopupElement, ITextSelectable
         var popup = GetDropDownRect();
         ctx.FillRect(popup, new SolidColorBrush(Color.White));
         ctx.DrawRect(popup, Pen.FromColor(Color.FromRgb(118, 118, 118)));
+
+        var metrics = _dropdownList.GetScrollbarMetrics();
+        var viewport = metrics.ViewportRect.IsEmpty ? popup : metrics.ViewportRect;
+        var rowWidth = Math.Max(0, viewport.Right - popup.X - PopupBorder);
         var selectedFill = Color.FromRgb(0xce, 0xce, 0xce);
         var hoverFill = Color.TryParse("Highlight", out var highlight) ? highlight : Color.FromRgb(0, 120, 215);
         var hoverText = Color.TryParse("HighlightText", out var highlightText) ? highlightText : Color.White;
+
+        ctx.PushClip(viewport);
         for (var i = 0; i < Options.Length; i++)
         {
-            var row = new Rect(popup.X + 1, popup.Y + 1 + i * 32, popup.Width - 2, 32);
+            var row = new Rect(popup.X + 1, popup.Y + 1 + i * OptionHeight - _dropdownList.VerticalOffset,
+                rowWidth, OptionHeight);
             var hovered = i == _hoveredOption;
             var selected = Options[i] == Value;
             if (hovered && !selected)
@@ -128,6 +154,8 @@ public class Select : UIElement, IPopupElement, ITextSelectable
             ControlDrawing.DrawText(ctx, this, Options[i], new Point(row.X + 8, row.Y + 7),
                 hovered && !selected ? hoverText : Color.Black, 14f, useStyledColor: false);
         }
+        ctx.PopClip();
+        ScrollbarPainter.Paint(ctx, _dropdownList);
     }
 
     /// <inheritdoc/>
@@ -138,7 +166,14 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     }
 
     /// <inheritdoc/>
-    public Element? HitTestPopup(Point point) => IsPopupOpen && PopupBounds.Contains(point) ? this : null;
+    public Element? HitTestPopup(Point point)
+    {
+        if (!IsPopupOpen || !PopupBounds.Contains(point)) return null;
+        // Preserve Select's popup hit contract; pointer selection remains handled below,
+        // while scrollbar hit testing walks the nested dropdown list separately.
+        return this;
+    }
+
     /// <inheritdoc/>
     public bool ContainsPopupInteraction(Point point) => Geometry.Contains(point) || PopupBounds.Contains(point);
     /// <inheritdoc/>
@@ -200,20 +235,17 @@ public class Select : UIElement, IPopupElement, ITextSelectable
             return;
         }
 
-        if (!IsOpen) return;
-        var popup = GetDropDownRect();
-        if (popup.Contains(point))
-        {
-            var index = Math.Clamp((int)((point.Y - popup.Y - 1) / 32), 0, Options.Length - 1);
-            SelectOption(index);
-        }
+        if (!IsOpen || !PopupBounds.Contains(point)) return;
+        if (_dropdownList.GetScrollbarMetrics().HitTest(point) != ScrollbarPart.None) return;
+        SelectOption(GetOptionAt(point));
     }
 
     /// <summary>处理指针移动事件，返回悬停项是否变化。</summary>
     public bool HandlePointerMove(Point point)
     {
-        var next = IsOpen && GetDropDownRect().Contains(point)
-            ? Math.Clamp((int)((point.Y - GetDropDownRect().Y - 1) / 32), 0, Options.Length - 1)
+        var next = IsOpen && PopupBounds.Contains(point) &&
+                   _dropdownList.GetScrollbarMetrics().ViewportRect.Contains(point)
+            ? GetOptionAt(point)
             : -1;
         if (_hoveredOption == next) return false;
         _hoveredOption = next;
@@ -226,9 +258,17 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     {
         if (!IsOpen) return;
         IsOpen = false;
+        _dropdownList.IsVisible = false;
         _hoveredOption = -1;
         Parent?.InvalidatePaint();
         InvalidatePaint();
+    }
+
+    protected override void OnPropertyChanged(string name)
+    {
+        base.OnPropertyChanged(name);
+        if (name == nameof(Options)) RebuildDropdownItems();
+        else if (name == nameof(Value)) UpdateDropdownSelection();
     }
 
     private void ToggleDropDown()
@@ -241,9 +281,52 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     private void OpenDropDown()
     {
         IsOpen = true;
+        _dropdownList.IsVisible = true;
+        SyncDropdownGeometry();
         _hoveredOption = GetSelectedOptionIndex();
+        EnsureHoveredOptionVisible();
         Parent?.InvalidatePaint();
         InvalidatePaint();
+    }
+
+    private void RebuildDropdownItems()
+    {
+        _dropdownList.Children.Clear();
+        foreach (var option in Options)
+        {
+            var item = new DropdownItem(option) { IsSelected = option == Value };
+            item.Style.SetCascaded("height", $"{OptionHeight}px", int.MinValue);
+            item.Style.SetCascaded("min-height", $"{OptionHeight}px", int.MinValue);
+            item.Style.SetCascaded("flex-shrink", "0", int.MinValue);
+            _dropdownList.Children.Add(item);
+        }
+        _dropdownList.ScrollToTop();
+        if (IsOpen) SyncDropdownGeometry();
+    }
+
+    private void UpdateDropdownSelection()
+    {
+        foreach (var item in _dropdownList.Children.OfType<DropdownItem>())
+            item.IsSelected = item.TextContent == Value;
+    }
+
+    private void SyncDropdownGeometry()
+    {
+        var popup = GetDropDownRect();
+        var relativeTop = Geometry.Height + 2;
+        _dropdownList.Style.SetCascaded("left", "0px", int.MinValue);
+        _dropdownList.Style.SetCascaded("top", $"{relativeTop}px", int.MinValue);
+        _dropdownList.Style.SetCascaded("width", $"{popup.Width}px", int.MinValue);
+        _dropdownList.Style.SetCascaded("height", $"{popup.Height}px", int.MinValue);
+        _dropdownList.Geometry = popup;
+        var rowWidth = Math.Max(0, popup.Width - PopupBorder);
+        for (var i = 0; i < _dropdownList.Children.Count; i++)
+            _dropdownList.Children[i].Geometry = new Rect(
+                popup.X + 1,
+                popup.Y + 1 + i * OptionHeight,
+                rowWidth,
+                OptionHeight);
+        _dropdownList.SetScrollContentSize(new Size(popup.Width, Options.Length * OptionHeight + PopupBorder));
     }
 
     private int GetSelectedOptionIndex()
@@ -262,7 +345,67 @@ public class Select : UIElement, IPopupElement, ITextSelectable
     {
         if (_hoveredOption == index) return;
         _hoveredOption = index;
+        EnsureHoveredOptionVisible();
         InvalidatePaint();
+    }
+
+    private void EnsureHoveredOptionVisible()
+    {
+        if (_hoveredOption < 0 || _hoveredOption >= Options.Length) return;
+        var metrics = _dropdownList.GetScrollbarMetrics();
+        var viewportHeight = metrics.ViewportRect.Height;
+        if (viewportHeight <= 0) viewportHeight = GetDropDownRect().Height;
+        var top = 1 + _hoveredOption * OptionHeight;
+        var bottom = top + OptionHeight;
+        if (top < _dropdownList.VerticalOffset)
+            _dropdownList.ScrollTop = top;
+        else if (bottom > _dropdownList.VerticalOffset + viewportHeight)
+            _dropdownList.ScrollTop = bottom - viewportHeight;
+    }
+
+    private int GetOptionAt(Point point)
+    {
+        var popup = GetDropDownRect();
+        return Math.Clamp((int)((point.Y - popup.Y - 1 + _dropdownList.VerticalOffset) / OptionHeight), 0, Options.Length - 1);
+    }
+
+    private void OnDropdownWheel(Event e)
+    {
+        if (_forwardingDropdownWheel || !IsPopupOpen || e is not WheelEvent wheel) return;
+        _forwardingDropdownWheel = true;
+        try
+        {
+            var forwarded = StandardEvents.CreateWheel(
+                wheel.DeltaX,
+                wheel.DeltaY,
+                wheel.IsPrecise,
+                wheel.IsInertial);
+            var accepted = _dropdownList.DispatchTrusted(forwarded);
+            if (!accepted || forwarded.DefaultPrevented)
+            {
+                e.PreventDefault();
+                e.StopPropagation();
+            }
+        }
+        finally
+        {
+            _forwardingDropdownWheel = false;
+        }
+    }
+
+    private void OnDropdownClick(Event e)
+    {
+        if (e.Target is not DropdownItem item || item.Parent != _dropdownList) return;
+        var index = 0;
+        foreach (var child in _dropdownList.Children)
+        {
+            if (ReferenceEquals(child, item))
+            {
+                SelectOption(index);
+                return;
+            }
+            index++;
+        }
     }
 
     private void SelectOption(int index)
@@ -275,7 +418,35 @@ public class Select : UIElement, IPopupElement, ITextSelectable
         if (changed) DispatchEvent(StandardEvents.CreateChange());
     }
 
-    private Rect GetDropDownRect() => new(Geometry.X, Geometry.Bottom + 2, Geometry.Width, Options.Length * 32 + 2);
+    private Rect GetDropDownRect() => new(Geometry.X, Geometry.Bottom + 2, Geometry.Width,
+        Math.Min(Options.Length * OptionHeight + PopupBorder, MaxDropdownHeight));
+
+    private sealed class DropdownList : List { }
+
+    private sealed class DropdownItem : ListItem
+    {
+        public DropdownItem(string text) : base(text) { Marker = ""; }
+
+        public override void Paint(IRenderContext ctx) { }
+
+        public override void Arrange(Rect finalRect)
+        {
+            if (Parent == null)
+            {
+                base.Arrange(finalRect);
+                return;
+            }
+
+            var index = 0;
+            foreach (var sibling in Parent.Children)
+            {
+                if (ReferenceEquals(sibling, this)) break;
+                index++;
+            }
+            Geometry = new Rect(Parent.Geometry.X + 1, Parent.Geometry.Y + 1 + index * OptionHeight,
+                Math.Max(0, Parent.Geometry.Width - 2), OptionHeight);
+        }
+    }
 }
 
 /// <summary>弹出层相对锚点的放置方位。</summary>

@@ -13,6 +13,21 @@ public enum ScrollbarDeviceProfile
     Mobile
 }
 
+/// <summary>滚动条 chrome 的显示策略。</summary>
+public enum ScrollbarVisibilityMode
+{
+    /// <summary>按设备 profile 选择默认行为。</summary>
+    Auto,
+    /// <summary>有滚动范围时始终显示。</summary>
+    Always,
+    /// <summary>仅指针悬停在滚动容器上或滚动条上时显示。</summary>
+    Hover,
+    /// <summary>滚动后显示并在空闲后淡出。</summary>
+    Scroll,
+    /// <summary>隐藏 chrome，但保留滚动能力。</summary>
+    Hidden
+}
+
 /// <summary>CSS scrollbar-width 的已解析值。</summary>
 public enum ScrollbarWidthMode
 {

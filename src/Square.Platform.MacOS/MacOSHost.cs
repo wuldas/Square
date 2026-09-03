@@ -19,6 +19,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     private IntPtr _colorSpace;
     private IRenderContext? _renderContext;
     private bool _running;
+    private bool _pointerCaptured;
     private bool _closed;
     private CursorKind _cursor;
     private KeyModifiers _modifiers;
@@ -81,7 +82,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     public event Action? Tick;
     public event Action? Closed;
     public event Action<Point, MouseAction, MouseButton>? MouseEvent;
-    public event Action<Point, int>? WheelEvent;
+    public event Action<WheelInput>? WheelEvent;
     public event Action<int, KeyAction>? KeyEvent;
     public event Action<string>? TextInput;
 
@@ -223,16 +224,52 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
         }
     }
 
+    private static bool HasSelector(IntPtr nativeObject, string name)
+    {
+        return nativeObject != IntPtr.Zero
+            && MacOSApi.RespondsToSelector(
+                nativeObject,
+                MacOSApi.Selector("respondsToSelector:"),
+                MacOSApi.Selector(name)) != 0;
+    }
+
+    private static float ReadScrollDelta(IntPtr nativeEvent, string selector)
+    {
+        return HasSelector(nativeEvent, selector)
+            ? (float)MacOSApi.SendDoubleResult(nativeEvent, MacOSApi.Selector(selector))
+            : 0;
+    }
+
+    private void CapturePointer()
+    {
+        if (_pointerCaptured || _window == IntPtr.Zero) return;
+        // AppKit retains the drag stream after the button-down event is delivered;
+        // keep moved events enabled so the existing native event loop receives it.
+        MacOSApi.SendByte(_window, MacOSApi.Selector("setAcceptsMouseMovedEvents:"), 1);
+        _pointerCaptured = true;
+    }
+
+    private void ReleasePointerCapture()
+    {
+        if (!_pointerCaptured) return;
+        _pointerCaptured = false;
+        // Re-assert normal event tracking after AppKit ends its drag stream.
+        if (_window != IntPtr.Zero)
+            MacOSApi.SendByte(_window, MacOSApi.Selector("setAcceptsMouseMovedEvents:"), 1);
+    }
+
     private bool DispatchEvent(IntPtr nativeEvent, nuint type)
     {
         _modifiers = MapModifiers(MacOSApi.SendNuintResult(nativeEvent, MacOSApi.Selector("modifierFlags")));
         switch (type)
         {
             case EventLeftMouseDown:
+                CapturePointer();
                 MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Down, MouseButton.Left);
                 return true;
             case EventLeftMouseUp:
                 MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Up, MouseButton.Left);
+                ReleasePointerCapture();
                 return true;
             case EventRightMouseDown:
                 MouseEvent?.Invoke(GetMousePosition(nativeEvent), MouseAction.Down, MouseButton.Right);
@@ -246,9 +283,17 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
                 return true;
             case EventScrollWheel:
             {
-                var delta = (int)Math.Round(
-                    MacOSApi.SendDoubleResult(nativeEvent, MacOSApi.Selector("scrollingDeltaY")) * 120);
-                if (delta != 0) WheelEvent?.Invoke(GetMousePosition(nativeEvent), delta);
+                var precise = HasSelector(nativeEvent, "hasPreciseScrollingDeltas")
+                    && MacOSApi.SendByteResult(nativeEvent, MacOSApi.Selector("hasPreciseScrollingDeltas")) != 0;
+                var scale = precise ? 1f : 120f;
+                var deltaX = ReadScrollDelta(nativeEvent, "scrollingDeltaX") * scale;
+                // NSEvent's positive vertical delta is toward the top; normalize to DOM direction.
+                var deltaY = -ReadScrollDelta(nativeEvent, "scrollingDeltaY") * scale;
+                var inertial = HasSelector(nativeEvent, "momentumPhase")
+                    && MacOSApi.SendNuintResult(nativeEvent, MacOSApi.Selector("momentumPhase")) != 0;
+                if (deltaX != 0 || deltaY != 0)
+                    WheelEvent?.Invoke(new WheelInput(
+                        GetMousePosition(nativeEvent), deltaX, deltaY, precise, inertial));
                 return true;
             }
             case EventKeyDown:
@@ -612,6 +657,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     public void Dispose()
     {
         _running = false;
+        ReleasePointerCapture();
         _renderContext?.Dispose();
         _renderContext = null;
         if (_window != IntPtr.Zero)

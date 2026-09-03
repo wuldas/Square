@@ -34,7 +34,7 @@ public sealed class SharedScrollbarTests
         var font = new Font { Family = "monospace", Size = 13 };
         var metrics = Assert.IsType<ScrollbarMetrics>(method.Invoke(editor, [font, 16f]));
         Assert.True(metrics.HasVertical);
-        Assert.Equal(6, metrics.ThumbThickness);
+        Assert.Equal(9, metrics.ThumbThickness);
     }
 
     [Fact]
@@ -548,7 +548,7 @@ public sealed class SharedScrollbarTests
         public KeyModifiers Modifiers => KeyModifiers.None;
         public event Action<Size>? SizeChanged { add { } remove { } }
         public event Action<Point, MouseAction, MouseButton>? MouseEvent { add { } remove { } }
-        public event Action<Point, int>? WheelEvent { add { } remove { } }
+        public event Action<WheelInput>? WheelEvent { add { } remove { } }
         public event Action<int, KeyAction>? KeyEvent { add { } remove { } }
         public event Action<string>? TextInput { add { } remove { } }
         public event Action? Tick { add { } remove { } }

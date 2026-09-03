@@ -499,6 +499,46 @@ public sealed class ScrollbarPaintTests
         Assert.DoesNotContain(context.Fills, fill => fill.Geometry is RoundedRectGeometry);
     }
 
+    [Fact]
+    public void ScrollVisibilityPaintsOnlyAfterScrollActivity()
+    {
+        var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.ScrollbarVisibility = ScrollbarVisibilityMode.Scroll;
+        scroller.SetScrollContentSize(new Size(100, 300));
+        var node = new DisplayNode { Element = scroller };
+        var context = new RecordingRenderContext();
+
+        node.Render(context);
+        Assert.DoesNotContain(context.Fills, fill => fill.Geometry is RoundedRectGeometry);
+
+        scroller.ScrollTop = 40;
+        context.Fills.Clear();
+        node.RebuildCommands();
+        node.Render(context);
+
+        Assert.Contains(context.Fills, fill => fill.Geometry is RoundedRectGeometry);
+    }
+
+    [Fact]
+    public void LongSelectDropdownPaintsSharedScrollbarThumb()
+    {
+        var select = new Select
+        {
+            Geometry = new Rect(0, 0, 100, 30),
+            Options = Enumerable.Range(0, 12).Select(static i => $"Option {i}").ToArray()
+        };
+        select.HandlePointerDown(new Point(10, 10));
+        var list = Assert.IsAssignableFrom<Square.Controls.List>(select.Children[0]);
+        var metrics = list.GetScrollbarMetrics();
+        var context = new RecordingRenderContext();
+
+        select.PaintPopup(context);
+
+        Assert.True(metrics.HasVertical);
+        Assert.Contains(context.Fills, fill =>
+            fill.Geometry is RoundedRectGeometry rounded && rounded.Rect == metrics.VerticalThumb);
+    }
+
     private static Rect InsetTrack(Rect rect) =>
         new(rect.X + 1, rect.Y + 1, rect.Width - 2, rect.Height - 2);
 

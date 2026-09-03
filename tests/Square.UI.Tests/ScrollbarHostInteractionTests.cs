@@ -819,7 +819,7 @@ public sealed class ScrollbarHostInteractionTests
         public KeyModifiers Modifiers => KeyModifiers.None;
         public event Action<Size>? SizeChanged { add { } remove { } }
         public event Action<Point, MouseAction, MouseButton>? MouseEvent { add { } remove { } }
-        public event Action<Point, int>? WheelEvent { add { } remove { } }
+        public event Action<WheelInput>? WheelEvent { add { } remove { } }
         public event Action<int, KeyAction>? KeyEvent { add { } remove { } }
         public event Action<string>? TextInput { add { } remove { } }
         public event Action? Tick { add { } remove { } }

@@ -65,6 +65,39 @@ public sealed class CodeEditor : UIElement, ITextEditor
     private ScrollBarHit _scrollbarRepeatHit;
     private Point _scrollbarRepeatPoint;
     private bool _scrollbarRepeatPointerInside;
+    private ScrollbarPart _scrollbarPressedPart;
+    private ScrollbarPart _scrollbarHoverPart;
+
+    private bool IsTransientScrollbar => ScrollbarVisibility == ScrollbarVisibilityMode.Scroll ||
+        ScrollbarVisibility == ScrollbarVisibilityMode.Auto && IsMobileScrollbar;
+
+    internal float ScrollbarOpacity
+    {
+        get
+        {
+            if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden || IsScrollbarCssHidden() ||
+                GetScrollbarWidthMode() == ScrollbarWidthMode.None || !ShowScrollBars)
+                return 0;
+            if (ScrollbarVisibility == ScrollbarVisibilityMode.Always ||
+                ScrollbarVisibility == ScrollbarVisibilityMode.Auto && !IsMobileScrollbar)
+                return 1f;
+            if (ScrollbarVisibility is ScrollbarVisibilityMode.Hover or ScrollbarVisibilityMode.Scroll &&
+                (HasState(ElementState.Hover) || _scrollbarHoverPart != ScrollbarPart.None))
+                return 1f;
+            return _scrollbarOpacity;
+        }
+    }
+
+    /// <summary>当前私有编辑器滚动偏移。</summary>
+    public Point EditorScrollOffset => new(_scrollX, _scrollY);
+    /// <summary>当前水平滚动偏移。</summary>
+    public float HorizontalScrollOffset => _scrollX;
+    /// <summary>当前垂直滚动偏移。</summary>
+    public float VerticalScrollOffset => _scrollY;
+    /// <summary>最大水平滚动偏移。</summary>
+    public float HorizontalScrollRange => GetScrollMetrics(ResolveFont(), GetLineHeight(ResolveFont())).MaxScrollX;
+    /// <summary>最大垂直滚动偏移。</summary>
+    public float VerticalScrollRange => GetScrollMetrics(ResolveFont(), GetLineHeight(ResolveFont())).MaxScrollY;
 
     /// <summary>初始化默认等宽样式。</summary>
     public CodeEditor()
@@ -86,7 +119,6 @@ public sealed class CodeEditor : UIElement, ITextEditor
         };
     }
 
-    internal float ScrollbarOpacity => IsMobileScrollbar ? _scrollbarOpacity : 1f;
 
     private bool IsMobileScrollbar =>
         (AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto) == ScrollbarDeviceProfile.Mobile;
@@ -403,9 +435,11 @@ public sealed class CodeEditor : UIElement, ITextEditor
         set
         {
             if (WordWrap == value) return;
+            var beforeScrollX = _scrollX;
             SetProperty(nameof(WordWrap), value);
             if (value) _scrollX = 0;
-            _viewLayout.Invalidate();
+            if (Math.Abs(beforeScrollX - _scrollX) > 0.01f)
+                DispatchEvent(StandardEvents.CreateScroll());
             InvalidateLayout();
         }
     }
@@ -624,22 +658,26 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
         context.PushClip(new Rect(Geometry.X + 1, Geometry.Y + 1, Math.Max(0, Geometry.Width - 2), Math.Max(0, Geometry.Height - 2)));
 
-        var contentTop = Geometry.Y + padding;
-        var contentLeft = Geometry.X + padding + leftGutter - (WordWrap ? 0f : _scrollX);
         var contentHeight = Math.Max(0, Geometry.Height - padding * 2);
         EnsureScroll(lineHeight, contentHeight, font, contentWidth);
         var scrollMetrics = GetScrollMetrics(font, lineHeight);
+        var leadingLeft = scrollMetrics.ViewportRect.Left - (Geometry.X + padding + leftGutter);
+        var leadingTop = scrollMetrics.ViewportRect.Top - (Geometry.Y + padding);
+        var contentTop = scrollMetrics.ViewportRect.Top;
+        var contentLeft = scrollMetrics.ViewportRect.Left - (WordWrap ? 0f : _scrollX);
         contentWidth = scrollMetrics.ViewportRect.Width;
         contentHeight = scrollMetrics.ViewportRect.Height;
         var contentRight = scrollMetrics.ViewportRect.Right - 1;
         var contentBottom = scrollMetrics.ViewportRect.Bottom - 1;
 
         // 文本区单独裁剪，避免横向滚动时画进 gutter / overview
+        var textClipLeft = Geometry.X + leftGutter + 1 + leadingLeft;
+        var textClipTop = Geometry.Y + 1 + leadingTop;
         context.PushClip(new Rect(
-            Geometry.X + leftGutter + 1,
-            Geometry.Y + 1,
-            Math.Max(0, contentRight - (Geometry.X + leftGutter + 1)),
-            Math.Max(0, contentBottom - (Geometry.Y + 1))));
+            textClipLeft,
+            textClipTop,
+            Math.Max(0, contentRight - textClipLeft),
+            Math.Max(0, contentBottom - textClipTop)));
 
         var firstRow = Math.Max(0, (int)MathF.Floor(_scrollY / lineHeight) - OverscanLines);
         var visibleCount = (int)MathF.Ceiling(contentHeight / lineHeight) + OverscanLines * 2 + 1;
@@ -657,14 +695,14 @@ public sealed class CodeEditor : UIElement, ITextEditor
             if (isActiveLine)
             {
                 context.FillRect(
-                    new Rect(Geometry.X + 1 + leftGutter, y,
-                        Math.Max(0, contentRight - (Geometry.X + leftGutter + 1)), lineHeight),
+                    new Rect(textClipLeft, y,
+                        Math.Max(0, contentRight - textClipLeft), lineHeight),
                     new SolidColorBrush(theme.EditorCurrentLineBackground));
             }
 
             if (row.IsFirstOfDocumentLine)
-                PaintDecorationLineBackground(context, line, Geometry.X + 1 + leftGutter, y,
-                    Math.Max(0, contentRight - (Geometry.X + leftGutter + 1)), lineHeight);
+                PaintDecorationLineBackground(context, line, textClipLeft, y,
+                    Math.Max(0, contentRight - textClipLeft), lineHeight);
 
             if (HighlightFindMatches && !string.IsNullOrEmpty(_findQuery))
                 PaintFindMatchesForRow(context, theme, font, row, contentLeft, y, lineHeight);
@@ -748,6 +786,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
         if (ShowScrollBars)
             PaintScrollBars(context, theme, font, lineHeight, padding, leftGutter, contentWidth, contentHeight);
+
 
         if (ShowOverviewRuler)
             PaintOverviewRuler(context, theme, font, lineHeight, rightGutter);
@@ -888,6 +927,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
         switch (keyCode)
         {
+            case 33:
+                ScrollEditorPage(-1);
+                return;
+            case 34:
+                ScrollEditorPage(1);
+                return;
             case 8 when CanEdit():
                 if (HasMultiCursors) ApplyEditToAllCursors("", isBackspace: true, isDelete: false);
                 else Backspace();
@@ -1030,17 +1075,21 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <inheritdoc/>
     public ScrollbarPart GetScrollbarPartAt(Point point) => ToScrollbarPart(HitTestScrollBar(point));
 
-    /// <inheritdoc/>
     public bool IsScrollbarInteractionUsable(ScrollbarPart part) =>
         IsEffectivelyVisible && IsCssDisplayedForScrollbar() && !IsScrollbarCssHidden() &&
-        !IsMobileScrollbar && ShowScrollBars && part != ScrollbarPart.None;
+        !IsMobileScrollbar && ShowScrollBars && GetScrollbarWidthMode() != ScrollbarWidthMode.None &&
+        ScrollbarVisibility != ScrollbarVisibilityMode.Hidden && part != ScrollbarPart.None;
 
     /// <inheritdoc/>
     public bool RepeatScrollbarInteraction()
     {
-        if (_scrollbarRepeatHit == ScrollBarHit.None || !_scrollbarRepeatPointerInside ||
-            !IsScrollbarInteractionUsable(ToScrollbarPart(_scrollbarRepeatHit)))
+        if (_scrollbarRepeatHit == ScrollBarHit.None || !_scrollbarRepeatPointerInside)
             return false;
+        if (!IsScrollbarInteractionUsable(ToScrollbarPart(_scrollbarRepeatHit)))
+        {
+            ClearScrollbarCapture();
+            return false;
+        }
         var beforeX = _scrollX;
         var beforeY = _scrollY;
         ApplyScrollbarPart(_scrollbarRepeatHit, _scrollbarRepeatPoint);
@@ -1051,7 +1100,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
     public bool UpdateScrollbarInteractionPointer(Point point)
     {
         if (_scrollbarRepeatHit == ScrollBarHit.None) return false;
-        var inside = ToScrollbarPart(HitTestScrollBar(point)) == ToScrollbarPart(_scrollbarRepeatHit);
+        var hitPart = ToScrollbarPart(HitTestScrollBar(point));
+        _scrollbarHoverPart = hitPart;
+        var inside = hitPart == ToScrollbarPart(_scrollbarRepeatHit);
         if (inside == _scrollbarRepeatPointerInside) return false;
         _scrollbarRepeatPointerInside = inside;
         InvalidatePaint();
@@ -1066,7 +1117,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
     {
         if (_draggingVScroll || _draggingHScroll)
         {
-            if (!IsEffectivelyVisible || !IsCssDisplayedForScrollbar() || IsScrollbarCssHidden() || IsMobileScrollbar || !ShowScrollBars)
+            if (!IsEffectivelyVisible || !IsCssDisplayedForScrollbar() || IsScrollbarCssHidden() ||
+                IsMobileScrollbar || !ShowScrollBars || GetScrollbarWidthMode() == ScrollbarWidthMode.None ||
+                ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
             {
                 ClearScrollbarCapture();
                 return;
@@ -1074,6 +1127,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
             HandleScrollBarDrag(point);
             return;
         }
+        _scrollbarHoverPart = ToScrollbarPart(HitTestScrollBar(point));
         if (!_dragging) return;
         var scrolled = AutoScrollDuringDrag(point);
         var next = HitTestOffset(point);
@@ -1090,6 +1144,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     {
         _scrollbarRepeatHit = ScrollBarHit.None;
         _scrollbarRepeatPointerInside = false;
+        _scrollbarPressedPart = ScrollbarPart.None;
         if (_draggingVScroll || _draggingHScroll)
         {
             _draggingVScroll = false;
@@ -2252,14 +2307,16 @@ public sealed class CodeEditor : UIElement, ITextEditor
         var content = _model.GetLineContent(row.DocumentLine);
         var localCol = Math.Clamp(col - row.Start, 0, Math.Max(0, row.End - row.Start));
         var rowText = content.Length == 0 ? "" : content[row.Start..Math.Min(row.End, content.Length)];
-        var x = Geometry.X + padding + gutter - (WordWrap ? 0f : _scrollX)
+        var x = metrics.ViewportRect.Left - (WordWrap ? 0f : _scrollX)
                 + CodeEditorMetrics.XAtColumn(rowText, font, TabSize, localCol);
-        var y = Geometry.Y + padding + rowIndex * lineHeight - _scrollY;
+        var y = metrics.ViewportRect.Top + rowIndex * lineHeight - _scrollY;
         return new Rect(MathF.Round(x), MathF.Round(y), 1, Math.Max(1, lineHeight));
     }
 
     private void EnsureCaretVisible()
     {
+        var beforeScrollX = _scrollX;
+        var beforeScrollY = _scrollY;
         EnsureFolds();
         var font = ResolveFont();
         var lineHeight = GetLineHeight(font);
@@ -2294,7 +2351,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
             _scrollX = 0;
         }
 
-        EnsureScroll(lineHeight, contentHeight, font, contentWidth);
+        EnsureScroll(lineHeight, contentHeight, font, contentWidth, beforeScrollX, beforeScrollY);
     }
 
     /// <summary>
@@ -2332,18 +2389,26 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
         var contentHeight = Math.Max(0, Geometry.Height - padding * 2);
         var contentWidth = GetContentWidth(padding);
-        EnsureScroll(lineHeight, contentHeight, font, contentWidth);
+        EnsureScroll(lineHeight, contentHeight, font, contentWidth, beforeX, beforeY);
         return Math.Abs(_scrollY - beforeY) > 0.01f || Math.Abs(_scrollX - beforeX) > 0.01f;
     }
 
-    private void EnsureScroll(float lineHeight, float contentHeight, Font? font = null, float? contentWidth = null)
+    private void EnsureScroll(
+        float lineHeight,
+        float contentHeight,
+        Font? font = null,
+        float? contentWidth = null,
+        float? previousScrollX = null,
+        float? previousScrollY = null)
     {
+        var beforeScrollX = previousScrollX ?? _scrollX;
+        var beforeScrollY = previousScrollY ?? _scrollY;
         EnsureFolds();
         font ??= ResolveFont();
         var metrics = GetScrollMetrics(font, lineHeight);
         var viewportHeight = metrics.ViewportRect.Height;
         var viewportWidth = metrics.ViewportRect.Width;
-        EnsureViewLayout(font, WordWrap ? Math.Max(1, viewportWidth) : Math.Max(1, viewportWidth));
+        EnsureViewLayout(font, Math.Max(1, viewportWidth));
 
         var maxScrollY = Math.Max(0, _viewLayout.RowCount * lineHeight - viewportHeight);
         _scrollY = Math.Clamp(_scrollY, 0, maxScrollY);
@@ -2362,8 +2427,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
         SetScrollContentSize(new Size(
             Geometry.Width + (WordWrap ? 0 : Math.Max(0, MeasureMaxContentWidth(font) - viewportWidth)),
             _viewLayout.RowCount * lineHeight + DefaultPadding * 2));
+        if (Math.Abs(_scrollX - beforeScrollX) > 0.01f || Math.Abs(_scrollY - beforeScrollY) > 0.01f)
+            DispatchEvent(StandardEvents.CreateScroll());
     }
-
     private float MeasureMaxContentWidth(Font font)
     {
         var max = 0f;
@@ -2486,7 +2552,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
     private void ShowEditorScrollbar()
     {
-        if (!IsMobileScrollbar || !ShowScrollBars) return;
+        if (!IsTransientScrollbar || !ShowScrollBars || ScrollbarVisibility == ScrollbarVisibilityMode.Hidden) return;
         var font = ResolveFont();
         var metrics = GetScrollMetrics(font, GetLineHeight(font));
         if (!metrics.HasVertical && !metrics.HasHorizontal) return;
@@ -2532,6 +2598,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
         _scrollbarRepeatHit = ScrollBarHit.None;
         _scrollbarRepeatPointerInside = false;
         InvalidatePaint();
+        _scrollbarPressedPart = ScrollbarPart.None;
     }
 
     private bool IsCssDisplayedForScrollbar()
@@ -2553,6 +2620,73 @@ public sealed class CodeEditor : UIElement, ITextEditor
         }
         return false;
     }
+    private ScrollbarWidthMode GetScrollbarWidthMode() =>
+        Style.Get("scrollbar-width")?.Trim().ToLowerInvariant() switch
+        {
+            "thin" => ScrollbarWidthMode.Thin,
+            "none" => ScrollbarWidthMode.None,
+            _ => ScrollbarWidthMode.Auto
+        };
+
+    private ScrollbarGutterMode GetScrollbarGutterMode() =>
+        Style.Get("scrollbar-gutter")?.Trim().ToLowerInvariant() switch
+        {
+            "stable" => ScrollbarGutterMode.Stable,
+            "stable both-edges" => ScrollbarGutterMode.StableBothEdges,
+            _ => ScrollbarGutterMode.Auto
+        };
+
+    private bool IsEditorScrollbarVisible(ScrollbarMetrics metrics)
+    {
+        if (!ShowScrollBars || !metrics.HasVertical && !metrics.HasHorizontal ||
+            GetScrollbarWidthMode() == ScrollbarWidthMode.None || IsScrollbarCssHidden() ||
+            !IsCssDisplayedForScrollbar() || ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
+            return false;
+        var hovered = HasState(ElementState.Hover) || _scrollbarHoverPart != ScrollbarPart.None;
+        return ScrollbarVisibility switch
+        {
+            ScrollbarVisibilityMode.Always => true,
+            ScrollbarVisibilityMode.Hover => hovered,
+            ScrollbarVisibilityMode.Scroll => hovered || _scrollbarOpacity > 0.001f,
+            _ => metrics.IsOverlay ? _scrollbarOpacity > 0.001f : true
+        };
+    }
+
+    private bool TryParseScrollbarColors(out Color thumb, out Color track)
+    {
+        thumb = default;
+        track = default;
+        var value = Style.Get("scrollbar-color")?.Trim();
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "auto", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var depth = 0;
+        var split = -1;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '(') depth++;
+            else if (value[i] == ')') depth = Math.Max(0, depth - 1);
+            else if (depth == 0 && char.IsWhiteSpace(value[i])) { split = i; break; }
+        }
+        if (split < 0) return false;
+        var first = value[..split].Trim();
+        var second = value[split..].Trim();
+        return first.Length > 0 && second.Length > 0 &&
+            Color.TryParse(first, out thumb) && Color.TryParse(second, out track);
+    }
+
+    private void ScrollEditorPage(int direction)
+    {
+        var beforeX = _scrollX;
+        var beforeY = _scrollY;
+        var font = ResolveFont();
+        var lineHeight = GetLineHeight(font);
+        var metrics = GetScrollMetrics(font, lineHeight);
+        var page = Math.Max(lineHeight, metrics.ViewportRect.Height * 0.9f);
+        _scrollY = Math.Clamp(_scrollY + direction * page, 0, metrics.MaxScrollY);
+        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width, beforeX, beforeY);
+        ShowEditorScrollbar();
+        InvalidatePaint();
+    }
 
     protected override void OnDetachedCore()
     {
@@ -2562,21 +2696,25 @@ public sealed class CodeEditor : UIElement, ITextEditor
         _scrollbarFadeActive = false;
         _scrollbarFadeElapsed = 0;
         _scrollbarOpacity = 0;
+        _scrollbarRepeatHit = ScrollBarHit.None;
+        _scrollbarRepeatPointerInside = false;
+        _scrollbarPressedPart = ScrollbarPart.None;
+        _scrollbarHoverPart = ScrollbarPart.None;
         base.OnDetachedCore();
     }
 
     private void OnWheel(Event e)
     {
         if (e is not WheelEvent wheel) return;
+        var beforeX = _scrollX;
+        var beforeY = _scrollY;
         var font = ResolveFont();
         var lineHeight = GetLineHeight(font);
         var metrics = GetScrollMetrics(font, lineHeight);
-        var beforeX = _scrollX;
-        var beforeY = _scrollY;
         _scrollY = Math.Max(0, _scrollY + wheel.DeltaY);
         if (!WordWrap && Math.Abs(wheel.DeltaX) > 0.01f)
             _scrollX = Math.Max(0, _scrollX + wheel.DeltaX);
-        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width);
+        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width, beforeX, beforeY);
         var changed = Math.Abs(_scrollY - beforeY) > 0.01f || Math.Abs(_scrollX - beforeX) > 0.01f;
         if (!changed) return;
         ShowEditorScrollbar();
@@ -2616,7 +2754,10 @@ public sealed class CodeEditor : UIElement, ITextEditor
         var contentHeight = _viewLayout.RowCount * lineHeight;
         var contentWidth = WordWrap ? baseWidth : MeasureMaxContentWidth(font);
 
-        var widthMode = ShowScrollBars ? ScrollbarWidthMode.Thin : ScrollbarWidthMode.None;
+        var widthMode = ShowScrollBars && ScrollbarVisibility != ScrollbarVisibilityMode.Hidden
+            ? GetScrollbarWidthMode()
+            : ScrollbarWidthMode.None;
+        var gutterMode = GetScrollbarGutterMode();
         var metrics = ScrollbarGeometry.Calculate(
             scrollBounds,
             new Size(contentWidth, contentHeight),
@@ -2624,7 +2765,8 @@ public sealed class CodeEditor : UIElement, ITextEditor
             verticalEnabled: ShowScrollBars,
             horizontalEnabled: ShowScrollBars && !WordWrap,
             profile: AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto,
-            width: widthMode);
+            width: widthMode,
+            gutter: gutterMode);
         if (WordWrap && ShowScrollBars && metrics.HasVertical &&
             metrics.ViewportRect.Width < scrollBounds.Width)
         {
@@ -2637,7 +2779,8 @@ public sealed class CodeEditor : UIElement, ITextEditor
                 verticalEnabled: ShowScrollBars,
                 horizontalEnabled: false,
                 profile: AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto,
-                width: widthMode);
+                width: widthMode,
+                gutter: gutterMode);
         }
 
         return metrics with { };
@@ -2654,11 +2797,16 @@ public sealed class CodeEditor : UIElement, ITextEditor
         float contentHeight)
     {
         var metrics = GetScrollMetrics(font, lineHeight);
-        if (!metrics.HasVertical && !metrics.HasHorizontal) return;
+        if (!IsEditorScrollbarVisible(metrics)) return;
 
         var track = theme.ScrollBarTrack.A > 0 ? theme.ScrollBarTrack : Color.FromRgba(80, 80, 80, 180);
         var thumb = theme.ScrollBarThumb.A > 0 ? theme.ScrollBarThumb : Color.FromRgba(140, 140, 140, 180);
         var thumbActive = theme.ScrollBarThumbActive.A > 0 ? theme.ScrollBarThumbActive : Color.FromRgba(180, 180, 180, 220);
+        if (TryParseScrollbarColors(out var cssThumb, out var cssTrack))
+        {
+            thumb = cssThumb;
+            track = cssTrack;
+        }
         ScrollbarPainter.Paint(
             context,
             metrics,
@@ -2666,15 +2814,16 @@ public sealed class CodeEditor : UIElement, ITextEditor
             track,
             Color.FromRgba(0, 0, 0, 110),
             ScrollbarOpacity,
-            pressedPart: _draggingVScroll
-                ? ScrollbarPart.VerticalThumb
-                : _draggingHScroll ? ScrollbarPart.HorizontalThumb : ScrollbarPart.None,
+            pressedPart: _scrollbarPressedPart,
+            hoverPart: _scrollbarHoverPart,
             pressedThumb: thumbActive);
     }
 
     private ScrollBarHit HitTestScrollBar(Point point)
     {
-        if (!ShowScrollBars) return ScrollBarHit.None;
+        if (!ShowScrollBars || ScrollbarVisibility == ScrollbarVisibilityMode.Hidden ||
+            IsScrollbarCssHidden() || !IsCssDisplayedForScrollbar() || GetScrollbarWidthMode() == ScrollbarWidthMode.None)
+            return ScrollBarHit.None;
         var font = ResolveFont();
         var lineHeight = GetLineHeight(font);
         var metrics = GetScrollMetrics(font, lineHeight);
@@ -2714,8 +2863,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
         {
             _scrollbarRepeatHit = ScrollBarHit.None;
             _scrollbarRepeatPointerInside = false;
+            _scrollbarPressedPart = ScrollbarPart.None;
             return false;
         }
+        _scrollbarPressedPart = ToScrollbarPart(hit);
+        _scrollbarHoverPart = _scrollbarPressedPart;
+        ShowEditorScrollbar();
         _scrollbarRepeatHit = hit is ScrollBarHit.VerticalThumb or ScrollBarHit.HorizontalThumb or ScrollBarHit.Corner
             ? ScrollBarHit.None
             : hit;
@@ -2740,6 +2893,8 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
     private void ApplyScrollbarPart(ScrollBarHit hit, Point point)
     {
+        var beforeX = _scrollX;
+        var beforeY = _scrollY;
         var font = ResolveFont();
         var lineHeight = GetLineHeight(font);
         var metrics = GetScrollMetrics(font, lineHeight);
@@ -2774,12 +2929,14 @@ public sealed class CodeEditor : UIElement, ITextEditor
                 break;
             }
         }
-        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width);
+        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width, beforeX, beforeY);
         InvalidatePaint();
     }
 
     private void HandleScrollBarDrag(Point point)
     {
+        var beforeX = _scrollX;
+        var beforeY = _scrollY;
         var font = ResolveFont();
         var lineHeight = GetLineHeight(font);
         var metrics = GetScrollMetrics(font, lineHeight);
@@ -2797,10 +2954,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
             _scrollX = Math.Clamp(_scrollDragOrigin + delta / travel * metrics.MaxScrollX, 0, metrics.MaxScrollX);
         }
 
-        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width);
+        EnsureScroll(lineHeight, metrics.ViewportRect.Height, font, metrics.ViewportRect.Width, beforeX, beforeY);
         InvalidatePaint();
     }
-
     private float MeasureLineNumberGutterWidth(Font font)
     {
         var digits = Math.Max(2, _model.LineCount.ToString().Length);
@@ -2933,9 +3089,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
         var content = _model.GetLineContent(row.DocumentLine);
         var localCol = Math.Clamp(col - row.Start, 0, Math.Max(0, row.End - row.Start));
         var rowText = content.Length == 0 ? "" : content[row.Start..Math.Min(row.End, content.Length)];
-        var x = Geometry.X + padding + gutter - (WordWrap ? 0f : _scrollX)
+        var x = metrics.ViewportRect.Left - (WordWrap ? 0f : _scrollX)
                 + CodeEditorMetrics.XAtColumn(rowText, font, TabSize, localCol);
-        var y = Geometry.Y + padding + rowIndex * lineHeight - _scrollY;
+        var y = metrics.ViewportRect.Top + rowIndex * lineHeight - _scrollY;
         return new Rect(MathF.Round(x), MathF.Round(y), 1, Math.Max(1, lineHeight));
     }
 

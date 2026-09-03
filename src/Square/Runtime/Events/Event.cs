@@ -121,18 +121,35 @@ public class Event
 /// <summary>滚轮事件（Square 对齐 DOM WheelEvent 的最小实现）。</summary>
 public sealed class WheelEvent : Event
 {
-    /// <summary>用横向/纵向增量与可选初始化选项创建滚轮事件。</summary>
-    public WheelEvent(float deltaX, float deltaY, EventInit? init = null)
+    /// <summary>用横向/纵向增量、精确性和惯性标记与可选初始化选项创建滚轮事件。</summary>
+    public WheelEvent(
+        float deltaX,
+        float deltaY,
+        bool isPrecise = false,
+        bool isInertial = false,
+        EventInit? init = null)
         : base(StandardEvents.Wheel, init ?? StandardEvents.GetDefaultInit(StandardEvents.Wheel))
     {
         DeltaX = deltaX;
         DeltaY = deltaY;
+        IsPrecise = isPrecise;
+        IsInertial = isInertial;
+    }
+
+    /// <summary>保留带初始化选项的旧构造形式。</summary>
+    public WheelEvent(float deltaX, float deltaY, EventInit? init)
+        : this(deltaX, deltaY, false, false, init)
+    {
     }
 
     /// <summary>横向滚动增量。</summary>
     public float DeltaX { get; }
     /// <summary>纵向滚动增量。</summary>
     public float DeltaY { get; }
+    /// <summary>是否来自精确滚动设备。</summary>
+    public bool IsPrecise { get; }
+    /// <summary>是否为惯性滚动阶段。</summary>
+    public bool IsInertial { get; }
 }
 
 /// <summary>指针事件（Square 对齐 DOM PointerEvent 的最小实现）。</summary>
