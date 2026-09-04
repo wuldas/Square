@@ -790,6 +790,33 @@ public sealed class ScrollbarPaintTests
     }
 
     [Fact]
+    public void DesktopScrollbarButtonGlyphsUseSeventyFiveDegreeTipAngle()
+    {
+        var scroller = new View { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.Style.Set("overflow", "auto");
+        scroller.SetScrollContentSize(new Size(300, 300));
+        var context = new RecordingRenderContext();
+
+        ScrollbarPainter.Paint(
+            context,
+            scroller.GetScrollbarMetrics(),
+            Color.FromRgb(128, 128, 128),
+            Color.FromRgb(211, 211, 211),
+            Color.Black);
+
+        Assert.Equal(4, context.FilledPaths.Count);
+        Assert.All(context.FilledPaths, path =>
+        {
+            var corners = path.Commands
+                .OfType<ArcToCmd>()
+                .Select(command => command.Oval.Center)
+                .ToArray();
+            Assert.Equal(3, corners.Length);
+            Assert.InRange(TriangleAngle(corners[2], corners[0], corners[1]), 74.99f, 75.01f);
+        });
+    }
+
+    [Fact]
     public void MobileFadeOpacityAffectsPaintAndEventuallyRemovesThumb()
     {
         var window = new AppWindow("mobile-scrollbar-fade")
@@ -862,6 +889,18 @@ public sealed class ScrollbarPaintTests
 
     private static Color FindRectColor(RecordingRenderContext context, Rect rect) =>
         Assert.Single(context.Fills, fill => fill.Geometry is RectGeometry geometry && geometry.Rect == rect).Color;
+
+    private static float TriangleAngle(Point vertex, Point first, Point second)
+    {
+        var firstX = first.X - vertex.X;
+        var firstY = first.Y - vertex.Y;
+        var secondX = second.X - vertex.X;
+        var secondY = second.Y - vertex.Y;
+        var cosine = (firstX * secondX + firstY * secondY) /
+                     (MathF.Sqrt(firstX * firstX + firstY * firstY) *
+                      MathF.Sqrt(secondX * secondX + secondY * secondY));
+        return MathF.Acos(Math.Clamp(cosine, -1, 1)) * 180 / MathF.PI;
+    }
 
     private sealed class PaintedView : View
     {

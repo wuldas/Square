@@ -32,6 +32,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
     private bool _skipPointerCapture;
 
     private const uint FrameTimerIntervalMs = 16;
+    private const int WheelDeltaUnit = 120;
 
     private static readonly Dictionary<IntPtr, Win32Host> Hosts = [];
     private static readonly object HostsGate = new();
@@ -656,14 +657,15 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
             case Win32Api.WM_MOUSEHWHEEL:
             {
                 var wheelDelta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                var precise = IsPreciseWheelDelta(wheelDelta);
                 var lParam64 = lParam.ToInt64();
                 var x = (short)(lParam64 & 0xFFFF);
                 var y = (short)((lParam64 >> 16) & 0xFFFF);
                 var screenPoint = new Win32Api.POINT { X = x, Y = y };
                 Win32Api.ScreenToClient(hWnd, ref screenPoint);
                 var input = msg == Win32Api.WM_MOUSEHWHEEL
-                    ? new WheelInput(host.ToLogicalPoint(screenPoint.X, screenPoint.Y), wheelDelta, 0)
-                    : new WheelInput(host.ToLogicalPoint(screenPoint.X, screenPoint.Y), 0, -wheelDelta);
+                    ? new WheelInput(host.ToLogicalPoint(screenPoint.X, screenPoint.Y), wheelDelta, 0, precise)
+                    : new WheelInput(host.ToLogicalPoint(screenPoint.X, screenPoint.Y), 0, -wheelDelta, precise);
                 host.WheelEvent?.Invoke(input);
             }
                 return IntPtr.Zero;
@@ -739,6 +741,9 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
 
         return Win32Api.DefWindowProc(hWnd, msg, wParam, lParam);
     }
+
+    internal static bool IsPreciseWheelDelta(short delta) =>
+        delta != 0 && Math.Abs((int)delta) % WheelDeltaUnit != 0;
 
     private IntPtr HitTestResizeBorder(IntPtr hWnd, IntPtr lParam)
     {

@@ -972,7 +972,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         _smoothScrollElapsed = 0;
         _smoothScrollLastTimestamp = Stopwatch.GetTimestamp();
         _smoothScrollActive = true;
-        DispatchEvent(StandardEvents.CreateRequestFrame());
+        DispatchEvent(StandardEvents.CreateRequestFrame(TimeSpan.Zero));
         return true;
     }
 
@@ -995,7 +995,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             return;
         }
 
-        DispatchEvent(StandardEvents.CreateRequestFrame());
+        DispatchEvent(StandardEvents.CreateRequestFrame(TimeSpan.Zero));
     }
 
     void IFrameScheduledElement.OnFrameDue() => OnFrameDueCore();
@@ -1466,7 +1466,11 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (e is not WheelEvent wheel) return;
         for (Element? current = this; current != null; current = current.Parent)
         {
-            if (!current.IsScrollContainer() || !current.ScrollBySmooth(wheel.DeltaX, wheel.DeltaY)) continue;
+            if (!current.IsScrollContainer()) continue;
+            var scrolled = wheel.IsPrecise || wheel.IsInertial
+                ? current.ScrollBy(wheel.DeltaX, wheel.DeltaY)
+                : current.ScrollBySmooth(wheel.DeltaX, wheel.DeltaY);
+            if (!scrolled) continue;
             e.PreventDefault();
             return;
         }

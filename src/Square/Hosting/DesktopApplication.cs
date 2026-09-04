@@ -892,7 +892,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             input.DeltaY,
             input.IsPrecise,
             input.IsInertial));
-        RenderFrame();
     }
 
     private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left)

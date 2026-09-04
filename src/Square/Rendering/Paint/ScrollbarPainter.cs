@@ -7,6 +7,9 @@ namespace Square.Rendering.Paint;
 
 public static class ScrollbarPainter
 {
+    private const float ButtonGlyphTipAngle = 75f;
+    private static readonly float ButtonGlyphLongAxisRatio =
+        1 / (2 * MathF.Tan(ButtonGlyphTipAngle * MathF.PI / 360f));
     private static readonly Color DefaultThumb = Color.FromRgba(128, 128, 128, 170);
     private static readonly Color DefaultMobileThumb = Color.FromRgba(128, 128, 128, 128);
     private static readonly Color DefaultTrack = Color.FromRgba(220, 220, 220, 80);
@@ -235,16 +238,17 @@ public static class ScrollbarPainter
         if (rect.IsEmpty || color.A == 0) return;
         var center = new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
         var size = Math.Min(rect.Width, rect.Height) * 0.28f;
+        var longAxisSize = size * ButtonGlyphLongAxisRatio;
         var path = up
             ? CreateRoundedTriangle(
-                new Point(center.X, center.Y - size),
-                new Point(center.X - size, center.Y + size),
-                new Point(center.X + size, center.Y + size),
+                new Point(center.X, center.Y - longAxisSize),
+                new Point(center.X - size, center.Y + longAxisSize),
+                new Point(center.X + size, center.Y + longAxisSize),
                 size * 0.32f)
             : CreateRoundedTriangle(
-                new Point(center.X, center.Y + size),
-                new Point(center.X + size, center.Y - size),
-                new Point(center.X - size, center.Y - size),
+                new Point(center.X, center.Y + longAxisSize),
+                new Point(center.X + size, center.Y - longAxisSize),
+                new Point(center.X - size, center.Y - longAxisSize),
                 size * 0.32f);
         context.FillPath(path, Brush.FromColor(color));
     }
@@ -254,16 +258,17 @@ public static class ScrollbarPainter
         if (rect.IsEmpty || color.A == 0) return;
         var center = new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
         var size = Math.Min(rect.Width, rect.Height) * 0.28f;
+        var longAxisSize = size * ButtonGlyphLongAxisRatio;
         var path = left
             ? CreateRoundedTriangle(
-                new Point(center.X - size, center.Y),
-                new Point(center.X + size, center.Y + size),
-                new Point(center.X + size, center.Y - size),
+                new Point(center.X - longAxisSize, center.Y),
+                new Point(center.X + longAxisSize, center.Y + size),
+                new Point(center.X + longAxisSize, center.Y - size),
                 size * 0.32f)
             : CreateRoundedTriangle(
-                new Point(center.X + size, center.Y),
-                new Point(center.X - size, center.Y - size),
-                new Point(center.X - size, center.Y + size),
+                new Point(center.X + longAxisSize, center.Y),
+                new Point(center.X - longAxisSize, center.Y - size),
+                new Point(center.X - longAxisSize, center.Y + size),
                 size * 0.32f);
         context.FillPath(path, Brush.FromColor(color));
     }

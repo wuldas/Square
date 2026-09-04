@@ -1417,6 +1417,65 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void SmoothWheelRequestsTheNextPlatformFrameWithoutExtraDelay()
+    {
+        var scroller = new View { Geometry = new Rect(0, 0, 100, 40) };
+        scroller.Style.Set("overflow-y", "auto");
+        scroller.SetScrollContentSize(new Size(100, 140));
+        var child = new Button { Geometry = new Rect(0, 80, 100, 20) };
+        scroller.Children.Add(child);
+        FrameRequestEvent? request = null;
+        scroller.AddEventListener(StandardEvents.RequestFrame, e => request = Assert.IsType<FrameRequestEvent>(e));
+
+        child.DispatchTrusted(StandardEvents.CreateWheel(0, 30));
+
+        Assert.NotNull(request);
+        Assert.Equal(TimeSpan.Zero, request!.Delay);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void PreciseOrInertialWheelUsesDirectPlatformDelta(bool isPrecise, bool isInertial)
+    {
+        var scroller = new View { Geometry = new Rect(0, 0, 100, 40) };
+        scroller.Style.Set("overflow-y", "auto");
+        scroller.SetScrollContentSize(new Size(100, 140));
+        var child = new Button { Geometry = new Rect(0, 80, 100, 20) };
+        scroller.Children.Add(child);
+        var wheel = StandardEvents.CreateWheel(0, 30, isPrecise, isInertial);
+
+        child.DispatchTrusted(wheel);
+
+        Assert.True(wheel.DefaultPrevented);
+        Assert.Equal(30, scroller.ScrollTop);
+        scroller.AdvanceSmoothScroll(1f);
+        Assert.Equal(30, scroller.ScrollTop);
+    }
+
+    [Fact]
+    public void PreciseWheelAtInnerBoundaryScrollsAncestor()
+    {
+        var outer = new View { Geometry = new Rect(0, 0, 100, 40) };
+        outer.Style.Set("overflow-y", "auto");
+        outer.SetScrollContentSize(new Size(100, 140));
+        var inner = new View { Geometry = new Rect(0, 0, 100, 40) };
+        inner.Style.Set("overflow-y", "auto");
+        inner.SetScrollContentSize(new Size(100, 140));
+        var child = new Button { Geometry = new Rect(0, 80, 100, 20) };
+        outer.Children.Add(inner);
+        inner.Children.Add(child);
+        inner.ScrollTop = 100;
+        var wheel = StandardEvents.CreateWheel(0, 30, isPrecise: true);
+
+        child.DispatchTrusted(wheel);
+
+        Assert.Equal(100, inner.ScrollTop);
+        Assert.Equal(30, outer.ScrollTop);
+        Assert.True(wheel.DefaultPrevented);
+    }
+
+    [Fact]
     public void SmoothWheelScrollingWorksForFrameScheduledControls()
     {
         var scroller = new Square.Controls.Image { Geometry = new Rect(0, 0, 100, 40) };

@@ -724,6 +724,56 @@ public sealed class ScrollbarHostInteractionTests
         Assert.True(scheduled.ContainsKey(scroller));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WheelBurstCoalescesWithoutSynchronousPresent(bool isPrecise)
+    {
+        var window = new AppWindow("smooth-wheel-present", 100, 100);
+        var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.Style.Set("overflow-y", "auto");
+        scroller.SetScrollContentSize(new Size(100, 600));
+        window.Load(scroller);
+        ((IComponentLifecycle)scroller).OnAttached();
+        var application = new DesktopApplication(window);
+        var context = new CountingRenderContext();
+        SetPrivateField(application, "_host", new TestHost());
+        SetPrivateField<IRenderContext>(application, "_renderContext", context);
+        var tree = Assert.IsType<DisplayTree>(GetPrivateField<DisplayTree>(application, "_displayTree"));
+        tree.BuildFrom(scroller);
+        scroller.AddEventListener(StandardEvents.RequestFrame, e => InvokeHandleFrameRequest(application, e));
+        var wheelEvents = 0;
+        scroller.AddEventListener(StandardEvents.Wheel, _ => wheelEvents++);
+        var scrollEvents = 0;
+        scroller.AddEventListener(StandardEvents.Scroll, _ => scrollEvents++);
+
+        for (var i = 0; i < 100; i++)
+            InvokeHandleWheel(application, new WheelInput(new Point(50, 50), 0, 4, isPrecise));
+
+        Assert.Equal(0, context.PresentCount);
+        Assert.Equal(100, wheelEvents);
+        var scheduled = GetPrivateField<Dictionary<Element, double>>(application, "_scheduledFrames")!;
+        if (isPrecise)
+        {
+            Assert.Equal(400, scroller.ScrollTop);
+            Assert.Equal(100, scrollEvents);
+            Assert.Empty(scheduled);
+        }
+        else
+        {
+            Assert.Equal(0, scroller.ScrollTop);
+            Assert.Single(scheduled);
+            Assert.True(scheduled.ContainsKey(scroller));
+            scroller.AdvanceSmoothScroll(1f);
+            Assert.Equal(400, scroller.ScrollTop);
+            Assert.Equal(1, scrollEvents);
+        }
+
+        InvokeHandleTick(application);
+
+        Assert.Equal(1, context.PresentCount);
+    }
+
     private static (DesktopApplication Application, ScrollViewer Scroller) CreateApplication()
     {
         var window = new AppWindow("scrollbar-host")
@@ -775,6 +825,13 @@ public sealed class ScrollbarHostInteractionTests
         var method = typeof(DesktopApplication).GetMethod("HandleTick", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
         method!.Invoke(application, null);
+    }
+
+    private static void InvokeHandleWheel(DesktopApplication application, WheelInput input)
+    {
+        var method = typeof(DesktopApplication).GetMethod("HandleWheel", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        method!.Invoke(application, [input]);
     }
 
     private static void InvokeUpdateScrollbarHover(DesktopApplication application, Point point)
@@ -830,6 +887,34 @@ public sealed class ScrollbarHostInteractionTests
         public void SetTextInputRect(Rect rect) { }
         public string GetClipboardText() => "";
         public void SetClipboardText(string text) { }
+        public void Dispose() { }
+    }
+
+    private sealed class CountingRenderContext : IRenderContext
+    {
+        public int PresentCount { get; private set; }
+        public Size CanvasSize => new(100, 100);
+        public float DpiScale => 1;
+        public void PushTransform(Matrix3x2 matrix) { }
+        public void PopTransform() { }
+        public void PushClip(Rect rect) { }
+        public void PushClip(Geometry geometry) { }
+        public void PopClip() { }
+        public void FillRect(Rect rect, Brush brush) { }
+        public void DrawRect(Rect rect, Pen pen) { }
+        public void FillPath(PathGeometry path, Brush brush) { }
+        public void DrawPath(PathGeometry path, Pen pen) { }
+        public void FillGeometry(Geometry geometry, Brush brush) { }
+        public void DrawGeometry(Geometry geometry, Pen pen) { }
+        public void DrawText(TextLayout text, Point origin, Brush brush) { }
+        public void DrawImage(Square.Graphics.Image image, Rect dest, Rect? source = null) { }
+        public void PushLayer(Rect bounds, float opacity) { }
+        public void PopLayer() { }
+        public void Clear(Color color) { }
+        public void Clear(Color color, Rect rect) { }
+        public void Flush() { }
+        public void Present() => PresentCount++;
+        public void Present(IReadOnlyList<Rect>? dirtyRects) => PresentCount++;
         public void Dispose() { }
     }
 

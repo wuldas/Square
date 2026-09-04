@@ -5,6 +5,22 @@ namespace Square.Platform.Tests;
 
 public sealed class Win32WindowPlacementTests
 {
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(120, false)]
+    [InlineData(-120, false)]
+    [InlineData(240, false)]
+    [InlineData(-240, false)]
+    [InlineData(1, true)]
+    [InlineData(-1, true)]
+    [InlineData(30, true)]
+    [InlineData(-60, true)]
+    [InlineData(121, true)]
+    public void WheelDeltaClassifiesHighResolutionInput(int delta, bool expectedPrecise)
+    {
+        Assert.Equal(expectedPrecise, Win32Host.IsPreciseWheelDelta((short)delta));
+    }
+
     [Fact]
     public void ChildWindowIsCenteredWithinOwnerBounds()
     {
