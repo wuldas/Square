@@ -1,6 +1,6 @@
 # 多目标渲染与宿主路线
 
-> Document Revision: 0.1
+> Document Revision: 0.2
 > 配套：`Architecture.md`、`Rendering.md`、`Graphics.md`、`Roadmap.md`
 
 本文规划 Square 从当前 Software Renderer 扩展到 WinUI XAML、HTML、Android UI、SVG、Godot 等目标时的架构边界和分阶段路线。目标不是立即实现所有目标，而是提前定义稳定的抽象，避免后续把“窗口宿主”“绘制后端”“原生 UI 输出”和“文件导出”混成一个不可维护的后端概念。
@@ -233,7 +233,9 @@ NativeUiNode
 
 ## 7. Android 路线
 
-Android 可以分为 View 方案和 Compose 方案：
+> 当前状态：**仅完成详细规划，尚未实现**。仓库目前没有 Android 平台项目、Sample、APK/AAB 或运行证据。完整任务与验收矩阵见 [Android-Platform-TODO.md](Android-Platform-TODO.md)。
+
+Android 长期仍分为绘制型宿主与原生 UI adapter 两条路线：
 
 ```text
 NativeUiNode -> Android View hierarchy
@@ -241,22 +243,52 @@ NativeUiNode -> Compose tree
 DisplayTree  -> custom View canvas
 ```
 
-建议阶段：
+首期冻结为绘制型宿主：
 
-1. `Square.Platform.Android`：Activity + 自定义 View 宿主，复用 Software 或 Android Canvas 绘制。
-2. `Square.Backends.AndroidCanvas`：DisplayTree 映射到 `Canvas` 绘制。
-3. `Square.Native.Android`：基础控件映射到 View 或 Compose。
+```text
+Activity / Looper / Choreographer
+  -> Square ApplicationSession
+  -> Element Tree / CSS / Layout / DisplayTree
+  -> Software RenderContext
+  -> Square BGRA Bitmap
+  -> Android Bitmap / custom View Canvas
+```
 
-优先策略：
+首期决策：
 
-- 游戏、嵌入、截图一致性：DisplayTree -> Canvas。
-- 应用 UI、输入、可访问性：NativeUiNode -> View/Compose。
+- 使用 .NET 10 for Android 和原生 Activity/View，不引入 MAUI。
+- 先从 `DesktopApplication` 抽出可被外部事件循环驱动的共享 `ApplicationSession`；Android 不实现虚假的阻塞 `PumpEvents()`。
+- 只新增 `Square.Platform.Android`，先复用 Software Renderer；不同时创建 AndroidCanvas、Skia/Vulkan Android surface 或 `Square.Native.Android`。
+- 首期只支持单 Activity、单 Square 根 View；触摸、移动滚动、Back、剪贴板、软键盘、字体和生命周期都属于平台支持闭环。
+- Android workload 项目使用独立 `Square.Android.slnx` 和 CI，避免现有三桌面 runner 被迫安装 Android workload。
+- 正式门禁使用 .NET for Android 支持的 Release trimming/AOT；官方仍标记实验的 Android NativeAOT 只做非阻断记录。
+
+稳定等级：
+
+| 等级 | 退出条件 |
+|---|---|
+| 启动 MVP | Activity 显示真实 SQV/SQX 组件，density/resize 和 tap 可验证 |
+| 交互 MVP | touch scroll/fling、Back、剪贴板、硬件键盘和基础软键盘输入可用 |
+| Beta | 中文 IME composition、arm64 Release APK/AAB、生命周期压力测试与真机 smoke 通过 |
+| Stable 候选 | accessibility 虚拟语义树、性能/内存阈值和多 API 设备 CI 通过 |
+
+后续路线必须由 profiling 或原生语义需求触发：
+
+1. 区域 Bitmap upload 或 `AndroidBitmap_lockPixels`。
+2. `Square.Backends.AndroidCanvas` 或直接 Skia surface。
+3. Android Vulkan surface 与真实设备 conformance。
+4. `Square.Native.Android`：优先评估 View adapter，再评估 Compose，并单独冻结 Square/native 布局权威关系。
 
 风险：
 
+- 当前应用运行时由同步桌面消息循环所有，必须先拆分外部事件循环 session。
+- 当前 pointer 契约缺少 touch id/type/cancel；drag、hover 和 click 不能直接复用鼠标语义。
 - IME、软键盘、焦点、生命周期和 Activity 重建复杂。
+- Software Renderer 的 Android 系统字体发现尚未实现。
+- Square BGRA Bitmap 到 Android Bitmap 可能发生全量 CPU copy，必须先测量再优化。
 - Android 的测量/布局协议与 Square layout 需要明确谁是权威。
-- NativeAOT、Mono/Android 和 trim 规则需要单独验证。
+- Canvas-only View 在实现虚拟 accessibility tree 前不能宣称完整无障碍支持。
+- NativeAOT、.NET for Android runtime、AOT 和 trim 规则需要分别验证并诚实报告。
 
 ---
 
@@ -500,12 +532,12 @@ public enum TargetSupportLevel
 
 ### P6：Android / Godot 嵌入路线
 
-- Android：先 custom View + Canvas/Software，再评估 View/Compose native adapter。
+- Android：详细方案已冻结，先抽外部事件循环 `ApplicationSession`，再实现 custom View + Software bitmap；完整任务见 [Android-Platform-TODO.md](Android-Platform-TODO.md)。
 - Godot：先 `SquareControl` + Software texture，再实现 DisplayTree -> Godot Canvas。
 
 退出标准：
 
-- Android 最小 Activity 可显示 Square UI。
+- Android 最小 Activity 可显示真实 SQV/SQX UI；这只是启动 MVP，不等于 Android Beta 或 Stable。
 - Godot 示例可在场景中嵌入 Square UI。
 
 ---
@@ -519,7 +551,7 @@ public enum TargetSupportLevel
 | 双布局冲突 | 每个 native adapter 明确 Square layout 或平台 layout 谁是权威 |
 | 文本渲染不一致 | SVG/HTML 默认保留文本，提供 glyph path/canvas fallback 精确模式 |
 | 输入法和文本编辑复杂 | Native UI 目标优先使用平台文本控件；绘制目标继续使用 Square 文本编辑 |
-| NativeAOT/trim 破坏目标注册 | 使用显式注册、条件项目引用和构建常量，不做运行时程序集扫描 |
+| NativeAOT/trim 破坏目标注册 | 使用显式注册、条件引用和构建常量，不做运行时程序集扫描；Android 官方实验 NativeAOT 不作为首期阻断门 |
 | Godot/Android 生命周期差异 | 为嵌入式宿主增加独立 facade，不强行复用桌面同步消息循环 |
 
 ---
@@ -540,6 +572,7 @@ Exporter         : SVG / PDF / PNG
 1. WinUI 平台宿主，继续显示 Software bitmap。
 2. SVG DisplayTree exporter，验证静态矢量导出。
 3. NativeUiNode 原型，给 WinUI/HTML/Android native adapter 留出正确入口。
-4. Godot 嵌入宿主，优先 Software texture，再演进到 Godot Canvas。
+4. Android Activity/custom View 宿主，优先 Software bitmap，并按 [Android-Platform-TODO.md](Android-Platform-TODO.md) 分级验收。
+5. Godot 嵌入宿主，优先 Software texture，再演进到 Godot Canvas。
 
 这样可以同时保留当前软件渲染的一致性，又为原生 UI、静态导出和游戏引擎嵌入留下清晰的演进空间。

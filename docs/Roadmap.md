@@ -1,6 +1,6 @@
 # 开发路线
 
-> Document Revision: 0.3
+> Document Revision: 0.4
 > 配套：`Architecture.md`、`Rendering-Targets.md`、`plan.md`、`rebuild-plan.md`
 
 ---
@@ -15,7 +15,7 @@
 | **M3 扩展控件 + 路由** | `Square.Extensions.Routing` 窗口路由、参数、通配符、嵌套 RouterView、守卫、KeepAlive；扩展控件 | 路由可前进/后退、守卫重定向并正确切换生命周期；各控件可交互 | ✅ 完成 |
 | **M4 图形后端扩展** | Vulkan / Skia 后端完善（`IRenderContext` 不变） | 同一 Demo 切换后端渲染一致 | 🔄 Vulkan、Skia 已落地；后端合规测试起步 |
 | **M5 跨平台桌面** | Linux(X11)、macOS 平台宿主；高 DPI/高刷新率打磨 | 三桌面平台 AOT 可执行均运行 | 🔄 X11 DPI/刷新率调度与 macOS Software MVP 已落地；macOS AOT/原生验收待完成 |
-| **M6 移动端与 WebAssembly** | Android / iOS / WASM 平台层（最小实现） | 目标平台可启动并渲染基础 UI | ⏳ 计划 |
+| **M6 移动端与 WebAssembly** | Android / iOS / WASM 平台层（最小实现） | 目标平台可启动并渲染基础 UI | ⏳ Android 详细 TODO 已形成但尚未实现；iOS/WASM 仍为计划 |
 | **M7 文本与 Canvas 完整** | BiDi、Font Fallback、Caret/Selection/HitTest 完整、标准 RichTextBox/WYSIWYG 富文本模型与渲染、Canvas `CanvasRenderingContext2D` 兼容层→DrawCommand | 复杂文本/富文本编辑与 Canvas 绘图可运行 | ⏳ 计划 |
 | **M8 工具链** | 完整 Source Generator 诊断、IDE 智能提示/补全、编译期检查、Debug Hot Reload | IDE 内 `.sqx` 报错可定位、可补全；桌面模板和组件样式可增量更新 | 🔄 桌面 Debug Hot Reload 已落地；补全与更多诊断继续推进 |
 | **M9 多目标输出** | WinUI 宿主、HTML、SVG 导出、Native UI adapter、Godot 嵌入等多目标路线 | Software、Native UI、Export、Embedded Host 四类目标边界清晰，至少两个目标形成闭环 | 🔄 Static HTML/Web Server 已形成首个 Native UI 输出闭环 |
@@ -133,6 +133,7 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 - M4 Vulkan 描边收尾：`LineCap` / `LineJoin` / `MiterLimit`、任意 Path dash 与复杂路径抗锯齿场景已落地；真实 GPU readback 自动测试已门控，需配置带 Vulkan GPU 的 self-hosted runner
 - Vulkan NativeAOT：Windows x64 原生发布、启动、GPU readback 与截图回归已有本地验证；持续 GPU 验收由独立工作流承接
 - M5 跨平台完善（Win32/X11/macOS Software NativeAOT 发布、启动和 renderer 截图回归已加入 CI；macOS 真实原生交互仍需持续验收；X11 已支持 Xft/物理 DPI fallback 与 XRandR 刷新率驱动调度，后续继续完善多显示器动态 DPI）
+- M6 Android：已冻结非 MAUI、Canvas-first、Software-first 和外部事件循环 `ApplicationSession` 路线；尚无 Android 平台代码、Sample 或 APK/AAB，实施与验收见 [Android-Platform-TODO.md](Android-Platform-TODO.md)
 - M9 多目标输出：WinUI host + Software bitmap、SVG exporter、NativeUiNode 原型、Godot 嵌入宿主（见 `docs/Rendering-Targets.md`）
 - M7 标准 RichTextBox/WYSIWYG：富文本 document model、per-range style、selection/run 映射；折叠选区已支持活动样式、相邻 run 样式继承及基础加粗/下划线/斜体操作，RichText 选区已映射到文档 DOM `Range`；BiDi 与复杂文本 shaping 仍待完成
 - `.sqv` 前端继续推进：语言无关 `TemplateDocument` IR 入口、基于 `[SlotContract]` 的类型化 scoped slot 解构、动态/缺失 slot contract 诊断及 Roslyn 模板语义诊断已落地；下一步继续把剩余 `SqxNode` 兼容节点迁移为完整 Template IR 节点，并扩展跨模板联合语义绑定（见 `docs/vue-plan.md` 里程碑 F–G）
@@ -146,3 +147,20 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 [~] 跨平台字形栅格化：Windows 走 GDI `GetGlyphOutline` ✓ / Linux 与 macOS 走 StbTrueTypeSharp（纯 C#，无 native 依赖）✓ / 字体回退按脚本（CJK/日/韩）映射到 Noto/Source Han ✓ / Fontconfig 集成待实现
 [~] macOS 平台宿主：AppKit 窗口、主线程事件泵、鼠标/键盘/滚轮、Software Renderer 上屏、动态尺寸/Retina scale、窗口状态、Unicode 剪贴板与基于 `NSTextView` 的 IME composition/candidate rect 已落地 ✓ / 真实 macOS 交互回归和多显示器动态 DPI 持续验收待完成
 [~] 高 DPI / 高刷新率打磨：X11 逻辑/物理坐标和 fractional DPI、刷新率 deadline 调度 ✓ / per-monitor DPI、呈现反馈与热插拔验收待完善
+
+---
+
+## 10. M6 Android 规划状态
+
+[x] 首期边界：.NET 10 for Android、非 MAUI、单 Activity / 单 Square View、Canvas/Software 绘制
+[x] 运行模型：先从 `DesktopApplication` 抽出外部事件循环可驱动的共享 `ApplicationSession`，不为 Android 伪造阻塞 `PumpEvents()`
+[x] 稳定等级：启动 MVP、交互 MVP、Beta、Stable 候选采用不同退出门，不以“能显示首帧”宣称完整支持
+[x] 发布约束：Android NativeAOT 在官方仍标记实验时只做非阻断记录，正式门禁使用平台支持的 Release trimming/AOT
+[ ] Phase 0：Android workload、emulator、arm64 设备与 BGRA Bitmap 呈现 spike
+[ ] Phase 1–2：ApplicationSession、按需帧调度和 pointer/touch 统一
+[ ] Phase 3–4：Android host、Activity/View、触摸滚动、Back 与剪贴板
+[ ] Phase 5–6：Android 字体、软键盘、中文 IME、生命周期和资源压力测试
+[ ] Phase 7：APK/AAB、Android CI、emulator/arm64 运行证据与 Beta 文档
+[ ] Phase 8：accessibility 与按 profiling 决定的 Canvas/Skia/Vulkan 优化
+
+完整任务、文件边界、风险和验收矩阵见 [Android-Platform-TODO.md](Android-Platform-TODO.md)。
