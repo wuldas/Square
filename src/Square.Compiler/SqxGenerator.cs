@@ -99,7 +99,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
             ValidateRefNames(context, input, document);
             ValidateSlotScopes(context, input, document, slotContracts);
             code = DirectiveValidator.Validate(context, input.Path, input.Content, document, catalog)
-                ? new ComponentEmitter(document, input.Namespace, catalog, eventContracts).Emit()
+                ? new ComponentEmitter(document, input.Namespace, catalog, eventContracts, compilation).Emit()
                 : "// Generator error: unsupported directive shape\n// Path: " + input.Path;
             if (input.Path.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase))
                 ReportSemanticDiagnostics(context, compilation, input, code, generatedTypes);

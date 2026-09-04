@@ -565,6 +565,38 @@ public class DocumentTests
     }
 
     [Fact]
+    public void MouseMoveWithoutTooltipRequestsFrameOnlyWhenTooltipStateChanges()
+    {
+        var window = new AppWindow("No tooltip", 320, 200);
+        var root = new View { Geometry = new Square.Graphics.Rect(0, 0, 320, 200) };
+        var button = new Button("Button")
+        {
+            Tooltip = "Button tooltip",
+            Geometry = new Square.Graphics.Rect(10, 10, 80, 30)
+        };
+        root.Children.Add(button);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        window.WindowDocument.Build();
+        GetPrivateField<DisplayTree>(application, "_displayTree")!.BuildFrom(application.Document.DocumentElement);
+        var tooltipPoint = new Square.Graphics.Point(20, 20);
+        var plainPoint = new Square.Graphics.Point(200, 150);
+
+        InvokeHandleMouse(application, plainPoint, MouseAction.Move, MouseButton.None);
+        ClearRenderRequest(application);
+        InvokeHandleMouse(application, plainPoint, MouseAction.Move, MouseButton.None);
+        Assert.False(IsRenderRequested(application));
+
+        InvokeHandleMouse(application, tooltipPoint, MouseAction.Move, MouseButton.None);
+        InvokeHandleMouse(application, plainPoint, MouseAction.Move, MouseButton.None);
+        ClearRenderRequest(application);
+        InvokeHandleMouse(application, plainPoint, MouseAction.Move, MouseButton.None);
+        Assert.False(IsRenderRequested(application));
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
     public void PopupAnchorBoundsFollowScrolledAncestor()
     {
         var scroll = new ScrollViewer

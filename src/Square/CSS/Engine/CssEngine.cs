@@ -14,6 +14,7 @@ namespace Square.CSS.Engine;
 public sealed class CssEngine
 {
     private readonly List<(CssRule Rule, CssCascadeOrigin Origin)> _rules = [];
+    private readonly List<CompoundSelector> _hoverSubjectCompounds = [];
     private readonly List<(CssStyleSheet Sheet, CssCascadeOrigin Origin)> _styleSheets = [];
     private readonly List<CssFontFaceDescriptor> _fontFaceDescriptors = [];
     private readonly Dictionary<(CssFontFaceDescriptor Descriptor, string Path), FontFace> _fontFaces = [];
@@ -96,6 +97,7 @@ public sealed class CssEngine
     private void RebuildRules()
     {
         _rules.Clear();
+        _hoverSubjectCompounds.Clear();
         HasSiblingCombinators = false;
         foreach (var (sheet, origin) in _styleSheets)
         {
@@ -120,10 +122,25 @@ public sealed class CssEngine
         foreach (var rule in rules)
         {
             _rules.Add((rule, origin));
+            foreach (var step in rule.Selector.Steps)
+                if (ContainsElementHoverPseudoClass(step.Selector))
+                    _hoverSubjectCompounds.Add(step.Selector);
             HasSiblingCombinators |= rule.Selector.Steps.Any(step =>
                 step.Combinator is Combinator.Adjacent or Combinator.GeneralSibling);
         }
     }
+
+    internal bool HasHoverStyleDependency(Element element)
+    {
+        foreach (var compound in _hoverSubjectCompounds)
+        {
+            var specificity = default(CssSpecificity);
+            if (MatchCompound(compound, element, ref specificity, ignoreHover: true)) return true;
+        }
+        return false;
+    }
+
+    internal bool HasHoverStyleRules => _hoverSubjectCompounds.Count > 0;
 
     private static CssFontFaceDescriptor? ParseFontFaceDescriptor(IReadOnlyList<Declaration> declarations)
     {
@@ -682,7 +699,11 @@ public sealed class CssEngine
         return index > 0 ? siblings[index - 1] : null;
     }
 
-    private static bool MatchCompound(CompoundSelector compound, Element Element, ref CssSpecificity specificity)
+    private static bool MatchCompound(
+        CompoundSelector compound,
+        Element Element,
+        ref CssSpecificity specificity,
+        bool ignoreHover = false)
     {
         var scrollbarPseudoIndex = compound.Parts.FindIndex(part =>
             part.Kind == SimpleSelectorKind.PseudoElement && ScrollbarPseudoElements.IsSupported(part.Name));
@@ -712,6 +733,11 @@ public sealed class CssEngine
                         specificity += new CssSpecificity(0, 1, 0);
                         break;
                     }
+                    if (ignoreHover && IsHoverPseudoClass(part.Name))
+                    {
+                        specificity += GetPseudoClassSpecificity(part.Name);
+                        break;
+                    }
                     if (!MatchPseudoClass(Element, part.Name)) return false;
                     specificity += GetPseudoClassSpecificity(part.Name);
                     break;
@@ -726,6 +752,25 @@ public sealed class CssEngine
             }
         }
         return true;
+    }
+
+    private static bool ContainsElementHoverPseudoClass(CompoundSelector compound)
+    {
+        var scrollbarPseudoIndex = compound.Parts.FindIndex(part =>
+            part.Kind == SimpleSelectorKind.PseudoElement && ScrollbarPseudoElements.IsSupported(part.Name));
+        var count = scrollbarPseudoIndex < 0 ? compound.Parts.Count : scrollbarPseudoIndex;
+        for (var i = 0; i < count; i++)
+            if (compound.Parts[i] is { Kind: SimpleSelectorKind.PseudoClass } part &&
+                IsHoverPseudoClass(part.Name))
+                return true;
+        return false;
+    }
+
+    private static bool IsHoverPseudoClass(string name)
+    {
+        if (name.Equals("hover", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!name.StartsWith("not(", StringComparison.OrdinalIgnoreCase) || !name.EndsWith(')')) return false;
+        return name[4..^1].Trim().Equals(":hover", StringComparison.OrdinalIgnoreCase);
     }
 
     private static CssSpecificity GetPseudoClassSpecificity(string name)

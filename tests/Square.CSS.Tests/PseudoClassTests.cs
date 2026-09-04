@@ -284,6 +284,47 @@ public class PseudoClassTests
     }
 
     [Fact]
+    public void HoverOutsideMatchingSelectorsDoesNotQueueStyleReplay()
+    {
+        var sheet = new CssParser(new CssTokenizer("Button:hover { background: blue; }").Tokenize()).Parse();
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(sheet);
+        var root = new Square.Controls.View();
+        var view = new Square.Controls.View();
+        root.Children.Add(view);
+        engine.ApplyStylesToTree(root);
+        CssStyleReconciler.Flush(root);
+
+        view.SetState(ElementState.Hover, true);
+
+        Assert.True(view.HasState(ElementState.Hover));
+        Assert.False(CssStyleReconciler.HasWorkForTree(root));
+    }
+
+    [Fact]
+    public void HoverStillRaisesPublicStyleInvalidatedEvent()
+    {
+        var view = new Square.Controls.View();
+        var observed = false;
+        void OnStyleInvalidated(Element element)
+        {
+            if (ReferenceEquals(element, view)) observed = true;
+        }
+
+        Element.StyleInvalidated += OnStyleInvalidated;
+        try
+        {
+            view.SetState(ElementState.Hover, true);
+        }
+        finally
+        {
+            Element.StyleInvalidated -= OnStyleInvalidated;
+        }
+
+        Assert.True(observed);
+    }
+
+    [Fact]
     public void ButtonHoverStillInvalidatesNativeHoverVisual()
     {
         var button = new Square.Controls.Button();

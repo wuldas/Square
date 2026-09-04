@@ -106,6 +106,18 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void GeneratedComponentHoverWithoutStyleDoesNotInvalidatePaint()
+    {
+        var component = new Main();
+        component.ClearPaintDirty();
+
+        component.SetState(ElementState.Hover, true);
+
+        Assert.True(component.HasState(ElementState.Hover));
+        Assert.False(component.NeedsPaint);
+    }
+
+    [Fact]
     public void GeneratedBootstrapButtonsReceiveAuthorBackgroundAndRadius()
     {
         var component = new BootstrapFormsPage();

@@ -62,6 +62,9 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>样式失效时触发的全局事件（Square 扩展）。</summary>
     public static event Action<Element>? StyleInvalidated;
 
+    internal static event Action<Element>? GeneralStyleInvalidated;
+    internal static event Action<Element>? HoverStyleInvalidated;
+
     private static int NextDebugId;
 
     /// <summary>调试用唯一标识（懒加载）。</summary>
@@ -237,7 +240,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         OnStateChanged(flag, on);
         if (flag == ElementState.Hover)
         {
-            InvalidateStyle();
+            InvalidateHoverStyle();
             if (RequiresStatePaintInvalidation(flag)) InvalidatePaint();
         }
         else
@@ -247,8 +250,11 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>交互/伪类状态变化扩展点。</summary>
     protected virtual void OnStateChanged(ElementState flag, bool on) { }
 
+    /// <summary>是否为只承载模板子树的编译器生成组件。</summary>
+    protected virtual bool IsGeneratedComponent => false;
+
     protected virtual bool RequiresStatePaintInvalidation(ElementState flag) =>
-        flag != ElementState.Hover || GetType().Assembly != typeof(Element).Assembly ||
+        flag != ElementState.Hover || (!IsGeneratedComponent && GetType().Assembly != typeof(Element).Assembly) ||
         ScrollbarVisibility is ScrollbarVisibilityMode.Hover or ScrollbarVisibilityMode.Scroll;
 
     /// <summary>可见性变化扩展点。</summary>
@@ -1379,7 +1385,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (_invalidationSuppressionDepth > 0) return;
 
         if ((invalidation & ElementInvalidation.Style) != 0)
-            StyleInvalidated?.Invoke(this);
+            InvalidateStyle();
 
         if ((invalidation & ElementInvalidation.Layout) != 0)
         {
@@ -1394,6 +1400,14 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     {
         if (_invalidationSuppressionDepth > 0) return;
         StyleInvalidated?.Invoke(this);
+        GeneralStyleInvalidated?.Invoke(this);
+    }
+
+    private void InvalidateHoverStyle()
+    {
+        if (_invalidationSuppressionDepth > 0) return;
+        StyleInvalidated?.Invoke(this);
+        HoverStyleInvalidated?.Invoke(this);
     }
 
     internal static IDisposable SuppressInvalidation()

@@ -1418,7 +1418,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         var target = FindTooltipTarget(hit);
         var text = target?.Tooltip;
-        if (ReferenceEquals(_tooltipTarget, target) && string.Equals(_tooltipPopup.Message, text, StringComparison.Ordinal))
+        if (ReferenceEquals(_tooltipTarget, target) &&
+            (target == null || string.Equals(_tooltipPopup.Message, text, StringComparison.Ordinal)))
             return;
 
         _tooltipTarget = target;

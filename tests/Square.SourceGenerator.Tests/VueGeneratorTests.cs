@@ -127,6 +127,49 @@ public class VueGeneratorTests
     }
 
     [Fact]
+    public void GeneratedComponentWithCustomPaintKeepsAutomaticHoverPaintInvalidation()
+    {
+        const string source = """
+            <template><View /></template>
+            <script>
+              public override void Paint(Square.Graphics.IRenderContext context) { }
+            </script>
+            """;
+
+        var generated = Assert.Single(RunGenerator(
+            new InMemoryAdditionalText("PaintedComponent.sqv", source)).GeneratedTrees)
+            .GetText().ToString();
+
+        Assert.Contains("protected override bool IsGeneratedComponent => false;", generated);
+    }
+
+    [Fact]
+    public void GeneratedComponentWithCodeBehindPaintKeepsAutomaticHoverPaintInvalidation()
+    {
+        const string source = "<template><View /></template><script namespace=\"TestApp\"></script>";
+        const string codeBehind = """
+            namespace TestApp;
+            public partial class PaintedComponent
+            {
+                public override void Paint(Square.Graphics.IRenderContext context) { }
+            }
+            """;
+        var compilation = CreateCompilation(codeBehind);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("PaintedComponent.sqv", source)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+
+        driver = driver.RunGenerators(compilation);
+        var generated = driver.GetRunResult().GeneratedTrees
+            .Where(tree => !tree.FilePath.EndsWith("SquareHotReload.g.cs", StringComparison.Ordinal))
+            .Select(tree => tree.GetText().ToString())
+            .Single(code => code.Contains("partial class PaintedComponent", StringComparison.Ordinal));
+
+        Assert.Contains("protected override bool IsGeneratedComponent => false;", generated);
+    }
+
+    [Fact]
     public void CompilationEmitsSingleMetadataUpdateHandler()
     {
         const string source = "<template><View /></template>";

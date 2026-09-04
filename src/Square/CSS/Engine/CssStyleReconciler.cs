@@ -15,7 +15,8 @@ public static class CssStyleReconciler
 
     static CssStyleReconciler()
     {
-        Element.StyleInvalidated += MarkDirty;
+        Element.GeneralStyleInvalidated += MarkDirty;
+        Element.HoverStyleInvalidated += MarkHoverDirty;
     }
 
     public static bool HasWork
@@ -312,6 +313,18 @@ public static class CssStyleReconciler
         if (_applying > 0) return;
         lock (Gate)
             DirtyElements.Add(element);
+    }
+
+    private static void MarkHoverDirty(Element element)
+    {
+        if (_applying > 0) return;
+        lock (Gate)
+        {
+            if (Scopes.Any(scope => scope.Engine.HasHoverStyleRules &&
+                                    AreInSameStyleBranch(scope.Root, element) &&
+                                    scope.Engine.HasHoverStyleDependency(element)))
+                DirtyElements.Add(element);
+        }
     }
 
     private static void ClearCascadedSubtree(Element element, ISet<Element>? scrollbarPseudoStyleChanges = null)
