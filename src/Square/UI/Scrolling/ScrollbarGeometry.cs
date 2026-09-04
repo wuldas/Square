@@ -59,6 +59,23 @@ public enum ScrollbarPart
     Corner
 }
 
+internal static class ScrollbarPseudoElements
+{
+    internal const string Scrollbar = "-webkit-scrollbar";
+    internal const string Button = "-webkit-scrollbar-button";
+    internal const string Track = "-webkit-scrollbar-track";
+    internal const string TrackPiece = "-webkit-scrollbar-track-piece";
+    internal const string Thumb = "-webkit-scrollbar-thumb";
+    internal const string Corner = "-webkit-scrollbar-corner";
+    internal const string Resizer = "-webkit-resizer";
+
+    internal static bool IsSupported(string name) => name.ToLowerInvariant() switch
+    {
+        Scrollbar or Button or Track or TrackPiece or Thumb or Corner or Resizer => true,
+        _ => false
+    };
+}
+
 /// <summary>一组同时供布局、绘制和命中测试使用的滚动条几何。</summary>
 public readonly record struct ScrollbarMetrics(
     Rect ViewportRect,
@@ -83,6 +100,15 @@ public readonly record struct ScrollbarMetrics(
     bool ReservesHorizontalGutter,
     bool IsOverlay)
 {
+    /// <summary>垂直 gutter 的实际厚度；未指定时等于 <see cref="ScrollbarThickness"/>。</summary>
+    public float VerticalScrollbarThickness { get; init; } = ScrollbarThickness;
+    /// <summary>水平 gutter 的实际厚度；未指定时等于 <see cref="ScrollbarThickness"/>。</summary>
+    public float HorizontalScrollbarThickness { get; init; } = ScrollbarThickness;
+    /// <summary>垂直 thumb 的实际厚度；未指定时等于 <see cref="ThumbThickness"/>。</summary>
+    public float VerticalThumbThickness { get; init; } = ThumbThickness;
+    /// <summary>水平 thumb 的实际厚度；未指定时等于 <see cref="ThumbThickness"/>。</summary>
+    public float HorizontalThumbThickness { get; init; } = ThumbThickness;
+
     /// <summary>按统一几何命中 scrollbar 部件；移动 overlay 不参与命中。</summary>
     public ScrollbarPart HitTest(Point point)
     {
@@ -125,12 +151,24 @@ public static class ScrollbarGeometry
         bool alwaysShowHorizontal = false,
         ScrollbarDeviceProfile profile = ScrollbarDeviceProfile.Desktop,
         ScrollbarWidthMode width = ScrollbarWidthMode.Auto,
-        ScrollbarGutterMode gutter = ScrollbarGutterMode.Auto)
+        ScrollbarGutterMode gutter = ScrollbarGutterMode.Auto,
+        bool hideButtons = false,
+        float? verticalThicknessOverride = null,
+        float? horizontalThicknessOverride = null,
+        bool hideThumb = false,
+        bool hideTrack = false,
+        bool hideCorner = false)
     {
         var resolvedProfile = ResolveProfile(profile);
         var isOverlay = resolvedProfile == ScrollbarDeviceProfile.Mobile;
-        var thickness = ResolveThickness(isOverlay, width);
-        var thumbThickness = ResolveThumbThickness(isOverlay, width);
+        var defaultThickness = ResolveThickness(isOverlay, width);
+        var verticalThickness = ResolveThicknessOverride(verticalThicknessOverride, defaultThickness);
+        var horizontalThickness = ResolveThicknessOverride(horizontalThicknessOverride, defaultThickness);
+        var defaultThumbThickness = ResolveThumbThickness(isOverlay, width);
+        var verticalThumbThickness = verticalThicknessOverride.HasValue ? verticalThickness : defaultThumbThickness;
+        var horizontalThumbThickness = horizontalThicknessOverride.HasValue ? horizontalThickness : defaultThumbThickness;
+        var thickness = verticalEnabled ? verticalThickness : horizontalEnabled ? horizontalThickness : defaultThickness;
+        var thumbThickness = verticalEnabled ? verticalThumbThickness : horizontalEnabled ? horizontalThumbThickness : defaultThumbThickness;
         var minimumThumbLength = ResolveMinimumThumbLength(isOverlay, width);
         var hidden = width == ScrollbarWidthMode.None;
         var bothEdges = !isOverlay && gutter == ScrollbarGutterMode.StableBothEdges;
@@ -150,9 +188,9 @@ public static class ScrollbarGeometry
             for (var i = 0; i < 3; i++)
             {
                 var viewportWidth = Math.Max(0, safeBounds.Width -
-                    (reservesVertical ? thickness * (bothEdges ? 2 : 1) : 0));
+                    (reservesVertical ? verticalThickness * (bothEdges ? 2 : 1) : 0));
                 var viewportHeight = Math.Max(0, safeBounds.Height -
-                    (reservesHorizontal ? thickness * (bothEdges ? 2 : 1) : 0));
+                    (reservesHorizontal ? horizontalThickness * (bothEdges ? 2 : 1) : 0));
                 var nextVertical = !hidden && verticalEnabled &&
                     (alwaysShowVertical || safeContent.Height > viewportHeight);
                 var nextHorizontal = !hidden && horizontalEnabled &&
@@ -169,32 +207,42 @@ public static class ScrollbarGeometry
         }
 
         var viewport = new Rect(
-            safeBounds.X + (!isOverlay && bothEdges && reservesVertical ? thickness : 0),
-            safeBounds.Y + (!isOverlay && bothEdges && reservesHorizontal ? thickness : 0),
-            Math.Max(0, safeBounds.Width - (!isOverlay && reservesVertical ? thickness * (bothEdges ? 2 : 1) : 0)),
-            Math.Max(0, safeBounds.Height - (!isOverlay && reservesHorizontal ? thickness * (bothEdges ? 2 : 1) : 0)));
+            safeBounds.X + (!isOverlay && bothEdges && reservesVertical ? verticalThickness : 0),
+            safeBounds.Y + (!isOverlay && bothEdges && reservesHorizontal ? horizontalThickness : 0),
+            Math.Max(0, safeBounds.Width - (!isOverlay && reservesVertical ? verticalThickness * (bothEdges ? 2 : 1) : 0)),
+            Math.Max(0, safeBounds.Height - (!isOverlay && reservesHorizontal ? horizontalThickness * (bothEdges ? 2 : 1) : 0)));
         var maxScrollX = Math.Max(0, safeContent.Width - viewport.Width);
         var maxScrollY = Math.Max(0, safeContent.Height - viewport.Height);
         var scrollX = ClampFinite(offset.X, 0, maxScrollX);
         var scrollY = ClampFinite(offset.Y, 0, maxScrollY);
 
         if (isOverlay)
-            return CreateOverlayMetrics(
+        {
+            var overlayMetrics = CreateOverlayMetrics(
                 safeBounds, safeContent, scrollX, scrollY, thickness, minimumThumbLength,
-                hasVertical, hasHorizontal, maxScrollX, maxScrollY);
+                hasVertical, hasHorizontal, maxScrollX, maxScrollY,
+                verticalThickness, horizontalThickness);
+            return hideThumb
+                ? overlayMetrics with { VerticalThumb = Rect.Empty, HorizontalThumb = Rect.Empty }
+                : overlayMetrics;
+        }
 
         var verticalGutter = hasVertical
-            ? new Rect(viewport.Right, viewport.Top, thickness, viewport.Height)
+            ? new Rect(viewport.Right, viewport.Top, verticalThickness, viewport.Height)
             : Rect.Empty;
         var horizontalGutter = hasHorizontal
-            ? new Rect(viewport.Left, viewport.Bottom, viewport.Width, thickness)
+            ? new Rect(viewport.Left, viewport.Bottom, viewport.Width, horizontalThickness)
             : Rect.Empty;
         var corner = hasVertical && hasHorizontal
-            ? new Rect(viewport.Right, viewport.Bottom, thickness, thickness)
+            ? new Rect(viewport.Right, viewport.Bottom, verticalThickness, horizontalThickness)
             : Rect.Empty;
 
-        var verticalButtonLength = hasVertical ? Math.Min(DesktopButtonLength * (thickness / DesktopThickness), verticalGutter.Height / 2) : 0;
-        var horizontalButtonLength = hasHorizontal ? Math.Min(DesktopButtonLength * (thickness / DesktopThickness), horizontalGutter.Width / 2) : 0;
+        var verticalButtonLength = hasVertical && !hideButtons
+            ? Math.Min(DesktopButtonLength * (verticalThickness / DesktopThickness), verticalGutter.Height / 2)
+            : 0;
+        var horizontalButtonLength = hasHorizontal && !hideButtons
+            ? Math.Min(DesktopButtonLength * (horizontalThickness / DesktopThickness), horizontalGutter.Width / 2)
+            : 0;
         var verticalBack = hasVertical
             ? new Rect(verticalGutter.X, verticalGutter.Y, verticalGutter.Width, verticalButtonLength)
             : Rect.Empty;
@@ -220,20 +268,37 @@ public static class ScrollbarGeometry
         var verticalThumbY = Position(verticalTrack.Y, verticalTrack.Height, verticalThumbLength, scrollY, maxScrollY);
         var horizontalThumbX = Position(horizontalTrack.X, horizontalTrack.Width, horizontalThumbLength, scrollX, maxScrollX);
         var verticalThumb = hasVertical
-            ? new Rect(verticalGutter.X + (verticalGutter.Width - thumbThickness) / 2, verticalThumbY,
-                thumbThickness, verticalThumbLength)
+            ? new Rect(verticalGutter.X + (verticalGutter.Width - verticalThumbThickness) / 2, verticalThumbY,
+                verticalThumbThickness, verticalThumbLength)
             : Rect.Empty;
         var horizontalThumb = hasHorizontal
-            ? new Rect(horizontalThumbX, horizontalGutter.Y + (horizontalGutter.Height - thumbThickness) / 2,
-                horizontalThumbLength, thumbThickness)
+            ? new Rect(horizontalThumbX, horizontalGutter.Y + (horizontalGutter.Height - horizontalThumbThickness) / 2,
+                horizontalThumbLength, horizontalThumbThickness)
             : Rect.Empty;
+        if (hideThumb)
+        {
+            verticalThumb = Rect.Empty;
+            horizontalThumb = Rect.Empty;
+        }
+        if (hideTrack)
+        {
+            verticalTrack = Rect.Empty;
+            horizontalTrack = Rect.Empty;
+        }
+        if (hideCorner) corner = Rect.Empty;
 
         return new ScrollbarMetrics(
             viewport, verticalGutter, horizontalGutter,
             verticalBack, verticalTrack, verticalThumb, verticalForward,
             horizontalBack, horizontalTrack, horizontalThumb, horizontalForward,
             corner, thickness, thumbThickness, maxScrollX, maxScrollY,
-            hasVertical, hasHorizontal, reservesVertical, reservesHorizontal, false);
+            hasVertical, hasHorizontal, reservesVertical, reservesHorizontal, false)
+        {
+            VerticalScrollbarThickness = verticalThickness,
+            HorizontalScrollbarThickness = horizontalThickness,
+            VerticalThumbThickness = verticalThumbThickness,
+            HorizontalThumbThickness = horizontalThumbThickness
+        };
     }
 
     private static ScrollbarMetrics CreateOverlayMetrics(
@@ -246,25 +311,36 @@ public static class ScrollbarGeometry
         bool hasVertical,
         bool hasHorizontal,
         float maxScrollX,
-        float maxScrollY)
+        float maxScrollY,
+        float verticalThickness,
+        float horizontalThickness)
     {
         var verticalLength = ThumbLength(bounds.Height, bounds.Height, contentSize.Height, minimumThumbLength);
         var horizontalLength = ThumbLength(bounds.Width, bounds.Width, contentSize.Width, minimumThumbLength);
         var verticalY = Position(bounds.Y, bounds.Height, verticalLength, scrollY, maxScrollY);
         var horizontalX = Position(bounds.X, bounds.Width, horizontalLength, scrollX, maxScrollX);
         var verticalThumb = hasVertical
-            ? new Rect(bounds.Right - thickness, verticalY, thickness, verticalLength)
+            ? new Rect(bounds.Right - verticalThickness, verticalY, verticalThickness, verticalLength)
             : Rect.Empty;
         var horizontalThumb = hasHorizontal
-            ? new Rect(horizontalX, bounds.Bottom - thickness, horizontalLength, thickness)
+            ? new Rect(horizontalX, bounds.Bottom - horizontalThickness, horizontalLength, horizontalThickness)
             : Rect.Empty;
         return new ScrollbarMetrics(
             bounds, Rect.Empty, Rect.Empty,
             Rect.Empty, Rect.Empty, verticalThumb, Rect.Empty,
             Rect.Empty, Rect.Empty, horizontalThumb, Rect.Empty,
             Rect.Empty, thickness, thickness, maxScrollX, maxScrollY,
-            hasVertical, hasHorizontal, false, false, true);
+            hasVertical, hasHorizontal, false, false, true)
+        {
+            VerticalScrollbarThickness = verticalThickness,
+            HorizontalScrollbarThickness = horizontalThickness,
+            VerticalThumbThickness = verticalThickness,
+            HorizontalThumbThickness = horizontalThickness
+        };
     }
+
+    private static float ResolveThicknessOverride(float? value, float fallback) =>
+        value is { } custom && float.IsFinite(custom) && custom >= 0 ? custom : fallback;
 
     private static float ResolveThickness(bool isOverlay, ScrollbarWidthMode width) =>
         isOverlay ? MobileThickness : width == ScrollbarWidthMode.Thin ? 10 : DesktopThickness;

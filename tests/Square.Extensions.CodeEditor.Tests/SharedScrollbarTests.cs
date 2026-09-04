@@ -1,5 +1,8 @@
 using System.Numerics;
 using System.Reflection;
+using Square.CSS.Engine;
+using Square.CSS.Tokenizer;
+using Square.Controls;
 using Square.Extensions.CodeEditor;
 using Square.Events;
 using Square.Graphics;
@@ -35,6 +38,72 @@ public sealed class SharedScrollbarTests
         var metrics = Assert.IsType<ScrollbarMetrics>(method.Invoke(editor, [font, 16f]));
         Assert.True(metrics.HasVertical);
         Assert.Equal(9, metrics.ThumbThickness);
+    }
+
+    [Fact]
+    public void CodeEditorWebKitPseudoStylesStyleOwnChrome()
+    {
+        var editor = new CodeEditor
+        {
+            Geometry = new Rect(0, 0, 300, 120),
+            Value = string.Join("\n", Enumerable.Range(0, 80).Select(static i => $"line-{i}")),
+            ShowScrollBars = true,
+            ShowFolding = false,
+            WordWrap = false
+        };
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            CodeEditor::-webkit-scrollbar { width: 12px; }
+            CodeEditor::-webkit-scrollbar-thumb { background: #123456; }
+            """).Tokenize()).Parse());
+        engine.ApplyStyles(editor);
+
+        var metrics = GetEditorScrollMetrics(editor);
+        Assert.Equal(12, metrics.ScrollbarThickness);
+        var paintMethod = typeof(CodeEditor).GetMethod("PaintScrollBars", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(paintMethod);
+        var context = new RecordingRenderContext();
+        paintMethod!.Invoke(editor,
+        [
+            context,
+            new CodeEditorTheme
+            {
+                ScrollBarThumb = Color.FromRgb(200, 200, 200),
+                ScrollBarTrack = Color.FromRgb(80, 80, 80)
+            },
+            new Font { Family = "monospace", Size = 13 }, 16f, 0f, 0f, 0f, 0f
+        ]);
+
+        Assert.Contains(context.Fills, fill =>
+            fill.Geometry is RoundedRectGeometry && fill.Color == Color.Parse("#123456"));
+    }
+
+    [Fact]
+    public void DisplayTreeHitTestsOwnedCodeEditorScrollbarForHoverRouting()
+    {
+        var editor = new CodeEditor
+        {
+            Geometry = new Rect(0, 0, 300, 120),
+            Value = string.Join("\n", Enumerable.Range(0, 80).Select(static i => $"line-{i}")),
+            ShowScrollBars = true,
+            ShowFolding = false,
+            WordWrap = false
+        };
+        var root = new View { Geometry = new Rect(0, 0, 300, 120) };
+        root.Children.Add(editor);
+        var displayTree = new DisplayTree();
+        displayTree.BuildFrom(root);
+        var metrics = GetEditorScrollMetrics(editor);
+        var point = metrics.VerticalThumb.Center;
+
+        var ownedHitTest = typeof(DisplayTree).GetMethod(
+            "HitTestOwnedScrollbar", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Assert.Same(editor, ownedHitTest.Invoke(displayTree, [point]));
+        Assert.True(editor.UpdateScrollbarHover(point));
+        Assert.Equal(ScrollbarPart.VerticalThumb,
+            typeof(CodeEditor).GetField("_scrollbarHoverPart", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(editor));
+        editor.ClearScrollbarHover();
     }
 
     [Fact]

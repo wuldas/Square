@@ -85,7 +85,8 @@ Scrollbar 是 Square 的 UA chrome 扩展，不是完整 CSS scrollbar 模块或
 | `scrollbar-width` | 🟢 **已实现并测试** | `auto`、`thin`、`none`；不是浏览器完整 used-value/平台主题实现。 |
 | `scrollbar-color` | 🟢 **已实现并测试** | `auto` 或两个 `Color.TryParse` 可消费的 thumb/track 颜色；继承和后代绘制失效已支持，hsl/hsla 暂不接受。 |
 | `scrollbar-gutter` | 🟢 **已实现并测试** | 支持 `auto`、desktop `stable` 和 `stable both-edges`；无溢出时仅预留空 gutter，Mobile overlay 不占 gutter。 |
-| WebKit 私有伪元素、RTL 左侧条、系统自动隐藏、完整触摸惯性 | ⚪ **明确 deferred** | 不支持，不应通过字符串样式声明推断为已实现。 |
+| WebKit 私有滚动条伪元素 | 🟡 **已支持子集** | 支持 `::-webkit-scrollbar`、`::-webkit-scrollbar-button`、`::-webkit-scrollbar-track`、`::-webkit-scrollbar-track-piece`、`::-webkit-scrollbar-thumb`、`::-webkit-scrollbar-corner`、`::-webkit-resizer`；可用 `display`、`width`/`height`（px）、背景色、`border-radius`、`opacity`，以及 thumb/track 的 `:hover`/`:active` 状态。它们映射到 UA chrome，不会创建 DOM 子节点；未覆盖图片/渐变、完整 border/background 语义和其它 WebKit 状态伪类。 |
+| RTL 左侧条、系统自动隐藏、完整触摸惯性 | ⚪ **明确 deferred** | 不支持，不应通过字符串样式声明推断为已实现。 |
 
 本地 harness 的明确限制：
 
@@ -214,7 +215,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 | 36 | [媒体查询](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Media_queries) | viewport/media feature、无障碍偏好、打印和 matchMedia | 🟡 **部分支持**：`@media screen`/`print`/`all` 可求值并可通过 `CssEngine.SetMediaType` 切换；无 viewport/features、无障碍偏好和 `matchMedia()`。 |
 | 50 | [Scroll anchoring](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Scroll_anchoring) | 滚动位置稳定、anchor node、`overflow-anchor` | ⚪ **未支持**。 |
 | 51 | [CSS 滚动吸附](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Scroll_snap) | snap container、snap position、snap event | ⚪ **未支持**。 |
-| 53 | [CSS Scrollbars](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Scrollbars_styling) | scrollbar color/width/gutter 和平台样式 | 🟡 **部分支持**：🟢 `scrollbar-width: auto | thin | none`、`scrollbar-color` 颜色对和 `scrollbar-gutter: auto | stable | stable both-edges`；⚪ 无 WebKit 私有伪元素、RTL 左侧条、系统自动隐藏或完整平台主题。 |
+| 53 | [CSS Scrollbars](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Scrollbars_styling) | scrollbar color/width/gutter 和平台样式 | 🟡 **部分支持**：🟢 `scrollbar-width: auto | thin | none`、`scrollbar-color` 颜色对、`scrollbar-gutter: auto | stable | stable both-edges`，以及常用 WebKit scrollbar 伪元素的背景、尺寸、圆角、opacity 和有限状态；⚪ 无图片/渐变、完整 border/background 语义、RTL 左侧条、系统自动隐藏或完整平台主题。 |
 | 66 | [WebXR DOM overlays](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/WebXR_DOM_overlays) | XR DOM overlay、沉浸式呈现和 overlay 交互 | ⚪ **未支持**。 |
 
 ### 1.7 图片、分段、Shadow DOM 和其他模块

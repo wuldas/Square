@@ -49,8 +49,11 @@ public static class CssStyleReconciler
         lock (ApplyGate)
         {
             RegisterScope(engine, root);
-            engine.ApplyStylesToTreeCore(root);
+            var scrollbarPseudoStyleChanges = new HashSet<Element>();
+            engine.ApplyStylesToTreeCore(root, scrollbarPseudoStyleChanges);
             foreach (var changed in CssEngine.FinalizePseudoElements(root))
+                changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+            foreach (var changed in scrollbarPseudoStyleChanges)
                 changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
             RefreshAnimations(engine, root);
         }
@@ -125,13 +128,14 @@ public static class CssStyleReconciler
                     .Select(element => GetStyleReplayRoot(element, expandToParent)));
                 var styleSnapshots = styleRoots.Select(CaptureStyleSnapshot).ToArray();
                 var pseudoElementChanges = new HashSet<Element>();
+                var scrollbarPseudoStyleChanges = new HashSet<Element>();
 
                 using (Element.SuppressInvalidation())
                 {
                     foreach (var styleRoot in styleRoots)
                     {
                         styleRoot.Style.ClearComputedStylesRecursive();
-                        ClearCascadedSubtree(styleRoot);
+                        ClearCascadedSubtree(styleRoot, scrollbarPseudoStyleChanges);
                     }
 
                     foreach (var styleRoot in styleRoots)
@@ -140,7 +144,7 @@ public static class CssStyleReconciler
                         {
                             var target = IsAncestorOrSelf(scope.Root, styleRoot) ? styleRoot : scope.Root;
                             if (AreInSameStyleBranch(target, styleRoot))
-                                scope.Engine.ApplyStylesToTreeCore(target);
+                                scope.Engine.ApplyStylesToTreeCore(target, scrollbarPseudoStyleChanges);
                         }
                     }
                     foreach (var scopeRoot in MinimizeRoots(scopes.Select(scope => scope.Root)))
@@ -152,6 +156,8 @@ public static class CssStyleReconciler
                 foreach (var snapshot in styleSnapshots)
                     ApplyStyleDifferences(snapshot);
                 foreach (var changed in pseudoElementChanges)
+                    changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+                foreach (var changed in scrollbarPseudoStyleChanges)
                     changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
             }
             finally
@@ -191,19 +197,22 @@ public static class CssStyleReconciler
 
             var styleSnapshot = CaptureStyleSnapshot(root);
             IReadOnlyCollection<Element> pseudoElementChanges;
+            var scrollbarPseudoStyleChanges = new HashSet<Element>();
             using (Element.SuppressInvalidation())
             {
                 root.Style.ClearComputedStylesRecursive();
-                ClearCascadedSubtree(root);
+                ClearCascadedSubtree(root, scrollbarPseudoStyleChanges);
                 foreach (var scope in scopes)
                 {
-                    scope.Engine.ApplyStylesToTreeCore(scope.Root);
+                    scope.Engine.ApplyStylesToTreeCore(scope.Root, scrollbarPseudoStyleChanges);
                     scope.Animations.Attach(scope.Root);
                 }
                 pseudoElementChanges = CssEngine.FinalizePseudoElements(root);
             }
             ApplyStyleDifferences(styleSnapshot);
             foreach (var changed in pseudoElementChanges)
+                changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+            foreach (var changed in scrollbarPseudoStyleChanges)
                 changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
         }
     }
@@ -305,11 +314,13 @@ public static class CssStyleReconciler
             DirtyElements.Add(element);
     }
 
-    private static void ClearCascadedSubtree(Element element)
+    private static void ClearCascadedSubtree(Element element, ISet<Element>? scrollbarPseudoStyleChanges = null)
     {
         element.Style.ClearCascaded();
+        if (element.ClearScrollbarPseudoStyles())
+            scrollbarPseudoStyleChanges?.Add(element);
         foreach (var child in element.Children.ToArray())
-            if (ReferenceEquals(child.Parent, element)) ClearCascadedSubtree(child);
+            if (ReferenceEquals(child.Parent, element)) ClearCascadedSubtree(child, scrollbarPseudoStyleChanges);
     }
 
     private static Element FindTreeRoot(Element element)

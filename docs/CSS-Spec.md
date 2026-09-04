@@ -7,7 +7,7 @@
 
 ## 1. 目标
 
-尽可能兼容现代 CSS 语义与 **CSSOM Web API** 表面，不兼容浏览器私有扩展。
+尽可能兼容现代 CSS 语义与 **CSSOM Web API** 表面；浏览器私有扩展仅支持本文明确列出的 WebKit scrollbar 伪元素子集。
 
 CSS 是框架的重要组成部分，与 `.sqx` 的 `<style>` 段和 `style`/`class` 属性联动。
 
@@ -156,7 +156,9 @@ await face.LoadAsync();
 
 滚动容器还支持 `scrollbar-width: auto | thin | none`、继承的 `scrollbar-color: auto | <thumb-color> <track-color>` 和 `scrollbar-gutter: auto | stable | stable both-edges`。颜色值限于当前 `Color.TryParse` 可消费的 hex、rgb/rgba、transparent 与已支持命名色；暂不接受 hsl/hsla。`stable` 会在 desktop profile 的可滚动轴上保留 gutter，即使当前内容没有溢出，但无溢出时不绘制或命中 scrollbar chrome；`stable both-edges` 会在对应轴的两侧预留空间。Mobile profile 使用 overlay scrollbar，因此 stable gutter 不占布局。scrollbar 是 UA chrome，不会作为隐藏子元素加入 Element Tree：desktop profile 使用 15 DIP gutter（`thin` 为 10 DIP），支持 track、thumb、按钮、分页、拖拽和按住重复；mobile profile 使用不占布局的 4 DIP overlay thumb，滚动后显示并在空闲后淡出。宿主可通过 `AppWindow.ScrollbarProfile` 选择 `Auto`、`Desktop` 或 `Mobile`。
 
-当前边界：不支持 `::-webkit-scrollbar*` 私有伪元素、RTL 左侧 scrollbar、系统自动隐藏偏好和完整触摸滚动/惯性；这些不是已实现的 CSS 兼容能力。
+WebKit 私有 scrollbar 伪元素以 UA chrome 样式规则的形式支持：`::-webkit-scrollbar`、`::-webkit-scrollbar-button`、`::-webkit-scrollbar-track`、`::-webkit-scrollbar-track-piece`、`::-webkit-scrollbar-thumb`、`::-webkit-scrollbar-corner` 和 `::-webkit-resizer`。首期支持 `display`、`width`/`height` 的 px 值、背景色、`border-radius`、`opacity`，以及 thumb/track 的 `:hover`/`:active` 状态；样式不会生成 Element Tree 子节点。图片/渐变、完整 border/background 语义和其它 WebKit 状态伪类暂不支持。
+
+当前边界：不支持 RTL 左侧 scrollbar、系统自动隐藏偏好和完整触摸滚动/惯性；这些不是已实现的 CSS 兼容能力。
 
 `box-shadow` 支持逗号分隔的多个外阴影：`offset-x offset-y [blur-radius] [spread-radius] color`。支持 `px`、十六进制颜色、`rgb()` 和 `rgba()`；列表首项绘制在后续阴影之上。暂不支持 `inset` 和 `text-shadow`。全部阴影均不参与布局，但会共同扩展 DisplayTree 的视觉边界和脏矩形。Popup、Menu、ContextMenu 与 Dialog 默认使用 `0 4px 8px 2px rgba(0,0,0,0.48)` elevation 阴影，可通过 `box-shadow: none` 覆盖。
 
@@ -312,7 +314,7 @@ Text {
 
 ## 14. 不支持范围
 
-- 浏览器私有扩展（`-webkit-` 等）
+- 未在本文明确列出的浏览器私有扩展（`-webkit-` 等）
 - `@media` 全量（M3+ 考虑 Container Query 替代）
 - `@supports`
 - CSS Houdini

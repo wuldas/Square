@@ -380,28 +380,34 @@ public sealed class DisplayTree
 
     /// <summary>命中 UA scrollbar chrome；滚动条不作为文档树节点返回。</summary>
     public Element? HitTestScrollbar(Point point)
+        => HitTestScrollbar(point, includeOwnedChrome: false);
+
+    internal Element? HitTestOwnedScrollbar(Point point)
+        => HitTestScrollbar(point, includeOwnedChrome: true);
+
+    private Element? HitTestScrollbar(Point point, bool includeOwnedChrome)
     {
         for (var i = _popups.Count - 1; i >= 0; i--)
         {
             var popup = _popups[i];
             if (!IsVisibleOpenPopup(popup) || popup.HitTestPopup(point) == null) continue;
-            return HitTestPopupScrollbar(popup, point);
+            return HitTestPopupScrollbar(popup, point, includeOwnedChrome: includeOwnedChrome);
         }
         for (var i = _fixedRoots.Count - 1; i >= 0; i--)
         {
             var root = _fixedRoots[i];
-            var scrollbar = HitTestScrollbarLayer(root, point, allowFixedRoot: true);
+            var scrollbar = HitTestScrollbarLayer(root, point, allowFixedRoot: true, includeOwnedChrome: includeOwnedChrome);
             if (scrollbar != null) return scrollbar;
             if (HitTestLayer(root, point, allowFixedRoot: true) != null) return null;
         }
-        return HitTestScrollbarLayer(_root, point, allowFixedRoot: false);
+        return HitTestScrollbarLayer(_root, point, allowFixedRoot: false, includeOwnedChrome: includeOwnedChrome);
     }
 
-    private static Element? HitTestPopupScrollbar(IPopupElement popup, Point point)
+    private static Element? HitTestPopupScrollbar(IPopupElement popup, Point point, bool includeOwnedChrome)
     {
         if (popup is not Element element || !popup.PopupBounds.Contains(point)) return null;
         var localPoint = popup.MapPointToContent(point);
-        if (element.GetScrollbarMetrics().HitTest(localPoint) != ScrollbarPart.None)
+        if (IsScrollbarHit(element, localPoint, includeOwnedChrome))
             return element;
         var childPoint = element.MapsScrollOffsetForChildren()
             ? new Point(localPoint.X + element.ScrollLeft, localPoint.Y + element.ScrollTop)
@@ -409,7 +415,7 @@ public sealed class DisplayTree
         foreach (var child in EnumerateChildrenTopmostFirst(element))
         {
             if (child.HitTest(childPoint) == null) continue;
-            return HitTestScrollbarSubtree(child, childPoint);
+            return HitTestScrollbarSubtree(child, childPoint, includeOwnedChrome: includeOwnedChrome);
         }
         return null;
     }
@@ -421,12 +427,11 @@ public sealed class DisplayTree
             .ThenByDescending(item => item.Index)
             .Select(item => item.Child);
 
-    private static Element? HitTestScrollbarSubtree(Element element, Point point)
+    private static Element? HitTestScrollbarSubtree(Element element, Point point, bool includeOwnedChrome)
     {
         if (!element.IsVisible || !element.IsCssDisplayed() ||
             element is IPopupElement) return null;
-        if (element is not ITextEditor { OwnsScrollbarChrome: true } &&
-            !element.IsCssVisibilityHidden() && element.GetScrollbarMetrics().HitTest(point) != ScrollbarPart.None)
+        if (IsScrollbarHit(element, point, includeOwnedChrome))
             return element;
 
         var overflowClip = element.GetOverflowClipRect();
@@ -437,9 +442,17 @@ public sealed class DisplayTree
         foreach (var child in EnumerateChildrenTopmostFirst(element))
         {
             if (child.HitTest(childPoint) == null) continue;
-            return HitTestScrollbarSubtree(child, childPoint);
+            return HitTestScrollbarSubtree(child, childPoint, includeOwnedChrome: includeOwnedChrome);
         }
         return null;
+    }
+
+    private static bool IsScrollbarHit(Element element, Point point, bool includeOwnedChrome)
+    {
+        if (element.IsCssVisibilityHidden()) return false;
+        if (element is ITextEditor { OwnsScrollbarChrome: true } editor)
+            return includeOwnedChrome && editor.GetScrollbarPartAt(point) != ScrollbarPart.None;
+        return element.GetScrollbarMetrics().HitTest(point) != ScrollbarPart.None;
     }
 
     private static bool IsVisibleOpenPopup(IPopupElement popup) =>
@@ -447,15 +460,15 @@ public sealed class DisplayTree
         popup is not Element { IsVisible: false } &&
         (popup is not Element element || element.IsCssDisplayed() && !element.IsCssVisibilityHidden());
 
-    private Element? HitTestScrollbarLayer(DisplayNode node, Point point, bool allowFixedRoot)
+    private Element? HitTestScrollbarLayer(
+        DisplayNode node, Point point, bool allowFixedRoot, bool includeOwnedChrome)
     {
         if (!allowFixedRoot && _fixedRootSet.Contains(node) || node.Element == null ||
             !node.Element.IsVisible || !node.Element.IsCssDisplayed() ||
             node.Element is IPopupElement { IsLayoutOverlay: true }) return null;
 
         var element = node.Element;
-        if (element is not ITextEditor { OwnsScrollbarChrome: true } &&
-            !element.IsCssVisibilityHidden() && element.GetScrollbarMetrics().HitTest(point) != ScrollbarPart.None)
+        if (IsScrollbarHit(element, point, includeOwnedChrome))
             return element;
 
         var overflowClip = element.GetOverflowClipRect();
@@ -466,7 +479,7 @@ public sealed class DisplayTree
         for (var i = node.Children.Count - 1; i >= 0; i--)
         {
             var child = node.Children[i];
-            var scrollbar = HitTestScrollbarLayer(child, childPoint, allowFixedRoot: false);
+            var scrollbar = HitTestScrollbarLayer(child, childPoint, allowFixedRoot: false, includeOwnedChrome: includeOwnedChrome);
             if (scrollbar != null) return scrollbar;
             if (HitTestLayer(child, childPoint, allowFixedRoot: false) != null) return null;
         }

@@ -242,6 +242,8 @@ public sealed class StyleAccessor
         return result;
     }
 
+    internal string? ResolveValue(string value) => ResolveVariables(value, []);
+
     /// <summary>移除内联属性。</summary>
     public void Remove(string property) => RemoveProperty(property);
 

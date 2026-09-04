@@ -89,6 +89,7 @@ public sealed class TemplateCompletionServiceTests
     [Theory]
     [InlineData("<template><View /></template><style>Button:hov</style>", "hover", TemplateCompletionKind.CssPseudoClass)]
     [InlineData("<template><View /></template><style>Text::be</style>", "before", TemplateCompletionKind.CssPseudoElement)]
+    [InlineData("<template><View /></template><style>View::-webkit-scrollbar-th</style>", "-webkit-scrollbar-thumb", TemplateCompletionKind.CssPseudoElement)]
     public void CssSelectorCompletesSupportedPseudoSelectors(
         string source,
         string expected,

@@ -144,7 +144,13 @@ public static class CssCompletionService
         "first-child", "last-child", "only-child", "root", "nth-child()", "not()"
     };
 
-    private static readonly string[] PseudoElements = { "before", "after", "marker", "selection" };
+    private static readonly string[] PseudoElements =
+    {
+        "before", "after", "marker", "selection",
+        "-webkit-scrollbar", "-webkit-scrollbar-button", "-webkit-scrollbar-track",
+        "-webkit-scrollbar-track-piece", "-webkit-scrollbar-thumb", "-webkit-scrollbar-corner",
+        "-webkit-resizer"
+    };
     private static readonly string[] AtRules = { "@import", "@media", "@keyframes", "@theme" };
     private static readonly string[] GlobalValues = { "inherit", "initial", "unset", "var()" };
 

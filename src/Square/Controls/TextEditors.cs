@@ -48,6 +48,10 @@ public interface ITextEditor
     bool IsScrollbarInteractionAt(Point point) => false;
     /// <summary>返回编辑器私有 scrollbar 在指定局部坐标处的部件。</summary>
     ScrollbarPart GetScrollbarPartAt(Point point) => ScrollbarPart.None;
+    /// <summary>更新编辑器私有 scrollbar 的 hover 部件。</summary>
+    bool UpdateScrollbarHover(Point point) => false;
+    /// <summary>清除编辑器私有 scrollbar 的 hover 部件。</summary>
+    void ClearScrollbarHover() { }
     /// <summary>是否由编辑器自行绘制 scrollbar chrome。</summary>
     bool OwnsScrollbarChrome => false;
     /// <summary>当前私有 scrollbar capture 是否仍可使用。</summary>

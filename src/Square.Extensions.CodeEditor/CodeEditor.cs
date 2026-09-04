@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Square.Controls;
@@ -71,12 +72,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
     private bool IsTransientScrollbar => ScrollbarVisibility == ScrollbarVisibilityMode.Scroll ||
         ScrollbarVisibility == ScrollbarVisibilityMode.Auto && IsMobileScrollbar;
 
-    internal float ScrollbarOpacity
+    internal new float ScrollbarOpacity
     {
         get
         {
             if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden || IsScrollbarCssHidden() ||
-                GetScrollbarWidthMode() == ScrollbarWidthMode.None || !ShowScrollBars)
+                GetScrollbarWidthMode() == ScrollbarWidthMode.None || IsScrollbarPseudoDisplayNone() || !ShowScrollBars)
                 return 0;
             if (ScrollbarVisibility == ScrollbarVisibilityMode.Always ||
                 ScrollbarVisibility == ScrollbarVisibilityMode.Auto && !IsMobileScrollbar)
@@ -1075,13 +1076,32 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <inheritdoc/>
     public ScrollbarPart GetScrollbarPartAt(Point point) => ToScrollbarPart(HitTestScrollBar(point));
 
+    /// <inheritdoc/>
+    public new bool UpdateScrollbarHover(Point point)
+    {
+        var next = ToScrollbarPart(HitTestScrollBar(point));
+        if (next == _scrollbarHoverPart) return false;
+        _scrollbarHoverPart = next;
+        InvalidatePaint();
+        return true;
+    }
+
+    /// <inheritdoc/>
+    public new void ClearScrollbarHover()
+    {
+        if (_scrollbarHoverPart == ScrollbarPart.None) return;
+        _scrollbarHoverPart = ScrollbarPart.None;
+        InvalidatePaint();
+    }
+
     public bool IsScrollbarInteractionUsable(ScrollbarPart part) =>
         IsEffectivelyVisible && IsCssDisplayedForScrollbar() && !IsScrollbarCssHidden() &&
-        !IsMobileScrollbar && ShowScrollBars && GetScrollbarWidthMode() != ScrollbarWidthMode.None &&
+        !IsMobileScrollbar && ShowScrollBars && !IsScrollbarPseudoDisplayNone() &&
+        GetScrollbarWidthMode() != ScrollbarWidthMode.None &&
         ScrollbarVisibility != ScrollbarVisibilityMode.Hidden && part != ScrollbarPart.None;
 
     /// <inheritdoc/>
-    public bool RepeatScrollbarInteraction()
+    public new bool RepeatScrollbarInteraction()
     {
         if (_scrollbarRepeatHit == ScrollBarHit.None || !_scrollbarRepeatPointerInside)
             return false;
@@ -1097,7 +1117,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     }
 
     /// <inheritdoc/>
-    public bool UpdateScrollbarInteractionPointer(Point point)
+    public new bool UpdateScrollbarInteractionPointer(Point point)
     {
         if (_scrollbarRepeatHit == ScrollBarHit.None) return false;
         var hitPart = ToScrollbarPart(HitTestScrollBar(point));
@@ -1110,7 +1130,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
     }
 
     /// <inheritdoc/>
-    public void EndScrollbarInteraction() => ClearScrollbarCapture();
+    public new void EndScrollbarInteraction() => ClearScrollbarCapture();
 
     /// <inheritdoc/>
     public void HandlePointerMove(Point point)
@@ -1118,7 +1138,8 @@ public sealed class CodeEditor : UIElement, ITextEditor
         if (_draggingVScroll || _draggingHScroll)
         {
             if (!IsEffectivelyVisible || !IsCssDisplayedForScrollbar() || IsScrollbarCssHidden() ||
-                IsMobileScrollbar || !ShowScrollBars || GetScrollbarWidthMode() == ScrollbarWidthMode.None ||
+                IsMobileScrollbar || !ShowScrollBars || IsScrollbarPseudoDisplayNone() ||
+                GetScrollbarWidthMode() == ScrollbarWidthMode.None ||
                 ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
             {
                 ClearScrollbarCapture();
@@ -1127,7 +1148,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
             HandleScrollBarDrag(point);
             return;
         }
-        _scrollbarHoverPart = ToScrollbarPart(HitTestScrollBar(point));
+        UpdateScrollbarHover(point);
         if (!_dragging) return;
         var scrolled = AutoScrollDuringDrag(point);
         var next = HitTestOffset(point);
@@ -2529,7 +2550,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
         AdvanceScrollbarFade(deltaSeconds);
     }
 
-    internal void AdvanceScrollbarFade(float deltaSeconds)
+    internal new void AdvanceScrollbarFade(float deltaSeconds)
     {
         if (!_scrollbarFadeActive) return;
         _scrollbarFadeElapsed += Math.Max(0, float.IsFinite(deltaSeconds) ? deltaSeconds : 0);
@@ -2674,6 +2695,82 @@ public sealed class CodeEditor : UIElement, ITextEditor
             Color.TryParse(first, out thumb) && Color.TryParse(second, out track);
     }
 
+    private bool IsScrollbarPseudoDisplayNone(string pseudoElement = ScrollbarPseudoElements.Scrollbar) =>
+        string.Equals(GetScrollbarPseudoStyle(pseudoElement, "", "display")?.Trim(),
+            "none", StringComparison.OrdinalIgnoreCase);
+
+    private static float? ParseScrollbarLength(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (text.EndsWith("px", StringComparison.OrdinalIgnoreCase)) text = text[..^2].Trim();
+        return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) &&
+               float.IsFinite(result) && result >= 0
+            ? result
+            : null;
+    }
+
+    private Color ResolvePseudoColor(
+        string pseudoElement,
+        ScrollbarPart part,
+        ScrollbarPart pressedPart,
+        ScrollbarPart hoverPart,
+        Color fallback) =>
+        TryResolvePseudoColor(pseudoElement, part, pressedPart, hoverPart, out var color)
+            ? color
+            : fallback;
+
+    private bool TryResolvePseudoColor(
+        string pseudoElement,
+        ScrollbarPart part,
+        ScrollbarPart pressedPart,
+        ScrollbarPart hoverPart,
+        out Color color)
+    {
+        var state = GetScrollbarPseudoState(pressedPart, hoverPart, part);
+        foreach (var property in new[] { "background-color", "background" })
+        {
+            var value = state.Length == 0 ? null : GetScrollbarPseudoStyle(pseudoElement, state, property);
+            value ??= GetScrollbarPseudoStyle(pseudoElement, "", property);
+            if (TryParsePseudoColor(value, out color)) return true;
+        }
+        color = default;
+        return false;
+    }
+
+    private static string GetScrollbarPseudoState(
+        ScrollbarPart pressedPart,
+        ScrollbarPart hoverPart,
+        ScrollbarPart part) =>
+        pressedPart == part ? "active" : hoverPart == part ? "hover" : "";
+
+    private bool TryParsePseudoColor(string? value, out Color color)
+    {
+        if (string.Equals(value?.Trim(), "currentcolor", StringComparison.OrdinalIgnoreCase))
+            return Color.TryParse(Style.Get("color"), out color);
+        return Color.TryParse(value, out color);
+    }
+
+    private static float ParseScrollbarOpacity(string? value) =>
+        float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var opacity) &&
+        float.IsFinite(opacity)
+            ? Math.Clamp(opacity, 0, 1)
+            : 1;
+
+    private static float? ParseScrollbarRadius(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (text.EndsWith("px", StringComparison.OrdinalIgnoreCase)) text = text[..^2].Trim();
+        return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var radius) &&
+               float.IsFinite(radius) && radius >= 0
+            ? radius
+            : null;
+    }
+
+    private static Color WithOpacity(Color color, float opacity) =>
+        Color.FromRgba(color.R, color.G, color.B, (byte)Math.Clamp(color.A * opacity, 0, 255));
+
     private void ScrollEditorPage(int direction)
     {
         var beforeX = _scrollX;
@@ -2757,7 +2854,14 @@ public sealed class CodeEditor : UIElement, ITextEditor
         var widthMode = ShowScrollBars && ScrollbarVisibility != ScrollbarVisibilityMode.Hidden
             ? GetScrollbarWidthMode()
             : ScrollbarWidthMode.None;
+        if (IsScrollbarPseudoDisplayNone())
+            widthMode = ScrollbarWidthMode.None;
         var gutterMode = GetScrollbarGutterMode();
+        var verticalThickness = ParseScrollbarLength(
+            GetScrollbarPseudoStyle(ScrollbarPseudoElements.Scrollbar, "", "width"));
+        var horizontalThickness = ParseScrollbarLength(
+            GetScrollbarPseudoStyle(ScrollbarPseudoElements.Scrollbar, "", "height"));
+        var hideButtons = IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Button);
         var metrics = ScrollbarGeometry.Calculate(
             scrollBounds,
             new Size(contentWidth, contentHeight),
@@ -2766,7 +2870,14 @@ public sealed class CodeEditor : UIElement, ITextEditor
             horizontalEnabled: ShowScrollBars && !WordWrap,
             profile: AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto,
             width: widthMode,
-            gutter: gutterMode);
+            gutter: gutterMode,
+            hideButtons: hideButtons,
+            verticalThicknessOverride: verticalThickness,
+            horizontalThicknessOverride: horizontalThickness,
+            hideThumb: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Thumb),
+            hideTrack: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Track) ||
+                IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.TrackPiece),
+            hideCorner: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Corner));
         if (WordWrap && ShowScrollBars && metrics.HasVertical &&
             metrics.ViewportRect.Width < scrollBounds.Width)
         {
@@ -2780,7 +2891,14 @@ public sealed class CodeEditor : UIElement, ITextEditor
                 horizontalEnabled: false,
                 profile: AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto,
                 width: widthMode,
-                gutter: gutterMode);
+                gutter: gutterMode,
+                hideButtons: hideButtons,
+                verticalThicknessOverride: verticalThickness,
+                horizontalThicknessOverride: horizontalThickness,
+                hideThumb: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Thumb),
+                hideTrack: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Track) ||
+                    IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.TrackPiece),
+                hideCorner: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Corner));
         }
 
         return metrics with { };
@@ -2807,22 +2925,106 @@ public sealed class CodeEditor : UIElement, ITextEditor
             thumb = cssThumb;
             track = cssTrack;
         }
+        var activePart = _scrollbarPressedPart;
+        var hoverPart = _scrollbarHoverPart;
+        var hasThumbStyles = HasScrollbarPseudoStylesFor(ScrollbarPseudoElements.Thumb);
+        var hasTrackStyles = HasScrollbarPseudoStylesFor(ScrollbarPseudoElements.Track) ||
+            HasScrollbarPseudoStylesFor(ScrollbarPseudoElements.TrackPiece);
+        var scrollbarBackground = TryResolvePseudoColor(
+            ScrollbarPseudoElements.Scrollbar, ScrollbarPart.None, activePart, hoverPart, out var scrollbarColor)
+            ? scrollbarColor
+            : (Color?)null;
+        var verticalThumb = ResolvePseudoColor(
+            ScrollbarPseudoElements.Thumb, ScrollbarPart.VerticalThumb, activePart, hoverPart, thumb);
+        var horizontalThumb = ResolvePseudoColor(
+            ScrollbarPseudoElements.Thumb, ScrollbarPart.HorizontalThumb, activePart, hoverPart, thumb);
+        var verticalTrack = ResolvePseudoColor(
+            ScrollbarPseudoElements.Track, ScrollbarPart.VerticalTrack, activePart, hoverPart,
+            scrollbarBackground ?? track);
+        verticalTrack = ResolvePseudoColor(
+            ScrollbarPseudoElements.TrackPiece, ScrollbarPart.VerticalTrack, activePart, hoverPart, verticalTrack);
+        var horizontalTrack = ResolvePseudoColor(
+            ScrollbarPseudoElements.Track, ScrollbarPart.HorizontalTrack, activePart, hoverPart,
+            scrollbarBackground ?? track);
+        horizontalTrack = ResolvePseudoColor(
+            ScrollbarPseudoElements.TrackPiece, ScrollbarPart.HorizontalTrack, activePart, hoverPart, horizontalTrack);
+        var buttonBackground = TryResolvePseudoColor(
+            ScrollbarPseudoElements.Button, ScrollbarPart.None, activePart, hoverPart, out var buttonColor)
+            ? buttonColor
+            : (Color?)null;
+        Color? cornerBackground = null;
+        if (TryResolvePseudoColor(
+                ScrollbarPseudoElements.Corner, ScrollbarPart.Corner, activePart, hoverPart, out var cornerColor) ||
+            TryResolvePseudoColor(
+                ScrollbarPseudoElements.Resizer, ScrollbarPart.Corner, activePart, hoverPart, out cornerColor))
+            cornerBackground = cornerColor;
+        if (IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Thumb))
+        {
+            verticalThumb = Color.Transparent;
+            horizontalThumb = Color.Transparent;
+        }
+        if (IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Track) ||
+            IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.TrackPiece))
+        {
+            verticalTrack = Color.Transparent;
+            horizontalTrack = Color.Transparent;
+        }
+        verticalThumb = WithOpacity(verticalThumb, ParseScrollbarOpacity(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Thumb,
+            GetScrollbarPseudoState(activePart, hoverPart, ScrollbarPart.VerticalThumb), "opacity")));
+        horizontalThumb = WithOpacity(horizontalThumb, ParseScrollbarOpacity(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Thumb,
+            GetScrollbarPseudoState(activePart, hoverPart, ScrollbarPart.HorizontalThumb), "opacity")));
+        verticalTrack = WithOpacity(verticalTrack, ParseScrollbarOpacity(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Track,
+            GetScrollbarPseudoState(activePart, hoverPart, ScrollbarPart.VerticalTrack), "opacity")));
+        horizontalTrack = WithOpacity(horizontalTrack, ParseScrollbarOpacity(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Track,
+            GetScrollbarPseudoState(activePart, hoverPart, ScrollbarPart.HorizontalTrack), "opacity")));
+        if (buttonBackground.HasValue)
+            buttonBackground = WithOpacity(buttonBackground.Value, ParseScrollbarOpacity(
+                GetScrollbarPseudoStyle(ScrollbarPseudoElements.Button, "", "opacity")));
+        var cornerOpacity = GetScrollbarPseudoStyle(ScrollbarPseudoElements.Corner, "", "opacity") ??
+            GetScrollbarPseudoStyle(ScrollbarPseudoElements.Resizer, "", "opacity");
+        if (cornerBackground.HasValue || cornerOpacity != null)
+            cornerBackground = WithOpacity(cornerBackground ?? track, ParseScrollbarOpacity(cornerOpacity));
+        var buttonGlyph = WithOpacity(Color.FromRgba(0, 0, 0, 110), ParseScrollbarOpacity(
+            GetScrollbarPseudoStyle(ScrollbarPseudoElements.Button, "", "opacity")));
+        var verticalThumbRadius = ParseScrollbarRadius(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Thumb,
+            GetScrollbarPseudoState(activePart, hoverPart, ScrollbarPart.VerticalThumb), "border-radius"));
+        var horizontalThumbRadius = ParseScrollbarRadius(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Thumb,
+            GetScrollbarPseudoState(activePart, hoverPart, ScrollbarPart.HorizontalThumb), "border-radius"));
+        var chromeOpacity = ScrollbarOpacity * ParseScrollbarOpacity(GetScrollbarPseudoStyle(
+            ScrollbarPseudoElements.Scrollbar, "", "opacity"));
         ScrollbarPainter.Paint(
             context,
             metrics,
             thumb,
             track,
-            Color.FromRgba(0, 0, 0, 110),
-            ScrollbarOpacity,
-            pressedPart: _scrollbarPressedPart,
-            hoverPart: _scrollbarHoverPart,
-            pressedThumb: thumbActive);
+            buttonGlyph,
+            chromeOpacity,
+            pressedPart: activePart,
+            hoverPart: hoverPart,
+            pressedThumb: hasThumbStyles ? null : thumbActive,
+            verticalThumbRadius: verticalThumbRadius,
+            horizontalThumbRadius: horizontalThumbRadius,
+            buttonBackground: buttonBackground,
+            cornerBackground: cornerBackground,
+            applyThumbStateColors: !hasThumbStyles,
+            applyTrackStateColors: !hasTrackStyles,
+            verticalThumbColor: hasThumbStyles ? verticalThumb : null,
+            horizontalThumbColor: hasThumbStyles ? horizontalThumb : null,
+            verticalTrackColor: hasTrackStyles ? verticalTrack : null,
+            horizontalTrackColor: hasTrackStyles ? horizontalTrack : null);
     }
 
     private ScrollBarHit HitTestScrollBar(Point point)
     {
         if (!ShowScrollBars || ScrollbarVisibility == ScrollbarVisibilityMode.Hidden ||
-            IsScrollbarCssHidden() || !IsCssDisplayedForScrollbar() || GetScrollbarWidthMode() == ScrollbarWidthMode.None)
+            IsScrollbarCssHidden() || !IsCssDisplayedForScrollbar() || IsScrollbarPseudoDisplayNone() ||
+            GetScrollbarWidthMode() == ScrollbarWidthMode.None)
             return ScrollBarHit.None;
         var font = ResolveFont();
         var lineHeight = GetLineHeight(font);

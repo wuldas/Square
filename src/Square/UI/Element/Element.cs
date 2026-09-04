@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Square.Events;
 using Square.Graphics;
 using Square.Runtime;
@@ -47,6 +48,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private Point _scrollbarRepeatPoint;
     private Point _scrollbarDragStartPoint;
     private Point _scrollbarDragStartOffset;
+    private Dictionary<string, ScrollbarPseudoStyleEntry>? _scrollbarPseudoStyles;
+    private static long _scrollbarPseudoStyleSequence;
     private int _zIndex;
     private HitTestEntry[]? _hitTestChildren;
     private readonly List<IDisposable> _bindings = [];
@@ -715,8 +718,12 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         var canExposeScrollbar = IsScrollLayoutContainer();
         var profile = AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto;
         var width = GetScrollbarWidthMode();
-        if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
+        if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden || IsScrollbarPseudoDisplayNone())
             width = ScrollbarWidthMode.None;
+        var verticalThickness = ParseScrollbarLength(
+            GetScrollbarPseudoStyle(ScrollbarPseudoElements.Scrollbar, "", "width"));
+        var horizontalThickness = ParseScrollbarLength(
+            GetScrollbarPseudoStyle(ScrollbarPseudoElements.Scrollbar, "", "height"));
         return ScrollbarGeometry.Calculate(
             Geometry,
             _scrollContentSize,
@@ -727,7 +734,14 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             alwaysShowHorizontal: IsAlwaysScrolling("overflow-x"),
             profile,
             width,
-            GetScrollbarGutterMode());
+            GetScrollbarGutterMode(),
+            hideButtons: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Button),
+            verticalThicknessOverride: verticalThickness,
+            horizontalThicknessOverride: horizontalThickness,
+            hideThumb: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Thumb),
+            hideTrack: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Track) ||
+                IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.TrackPiece),
+            hideCorner: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Corner));
     }
     /// <summary>当前滚动内容可用的视口矩形；desktop gutter 已从中扣除。</summary>
     protected internal Rect GetScrollViewportRect() => GetScrollbarMetrics().ViewportRect;
@@ -740,7 +754,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             var metrics = GetScrollbarMetrics();
             if ((!metrics.HasVertical && !metrics.HasHorizontal) ||
                 GetScrollbarWidthMode() == ScrollbarWidthMode.None ||
-                ScrollbarVisibility == ScrollbarVisibilityMode.Hidden)
+                ScrollbarVisibility == ScrollbarVisibilityMode.Hidden ||
+                IsScrollbarPseudoDisplayNone())
                 return false;
 
             var hovered = HasState(ElementState.Hover) || ScrollbarHoverPart != ScrollbarPart.None;
@@ -761,7 +776,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         {
             var metrics = GetScrollbarMetrics();
             if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden ||
-                GetScrollbarWidthMode() == ScrollbarWidthMode.None)
+                GetScrollbarWidthMode() == ScrollbarWidthMode.None || IsScrollbarPseudoDisplayNone())
                 return 0;
             if (ScrollbarVisibility == ScrollbarVisibilityMode.Always ||
                 ScrollbarVisibility == ScrollbarVisibilityMode.Auto && !metrics.IsOverlay)
@@ -791,11 +806,112 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         var metrics = GetScrollbarMetrics();
         if (metrics.IsOverlay) return (0, 0, 0, 0);
         var bothEdges = GetScrollbarGutterMode() == ScrollbarGutterMode.StableBothEdges;
-        var left = metrics.ReservesVerticalGutter && bothEdges ? metrics.ScrollbarThickness : 0;
-        var top = metrics.ReservesHorizontalGutter && bothEdges ? metrics.ScrollbarThickness : 0;
-        var right = metrics.ReservesVerticalGutter ? metrics.ScrollbarThickness : 0;
-        var bottom = metrics.ReservesHorizontalGutter ? metrics.ScrollbarThickness : 0;
+        var left = metrics.ReservesVerticalGutter && bothEdges ? metrics.VerticalScrollbarThickness : 0;
+        var top = metrics.ReservesHorizontalGutter && bothEdges ? metrics.HorizontalScrollbarThickness : 0;
+        var right = metrics.ReservesVerticalGutter ? metrics.VerticalScrollbarThickness : 0;
+        var bottom = metrics.ReservesHorizontalGutter ? metrics.HorizontalScrollbarThickness : 0;
         return (left, top, right, bottom);
+    }
+
+    internal bool ClearScrollbarPseudoStyles()
+    {
+        if (_scrollbarPseudoStyles is not { Count: > 0 }) return false;
+        _scrollbarPseudoStyles.Clear();
+        return true;
+    }
+
+    internal bool SetScrollbarPseudoStyle(
+        string pseudoElement,
+        string state,
+        string property,
+        string value,
+        CssSpecificity specificity,
+        bool important,
+        CssCascadeOrigin origin)
+    {
+        if (!ScrollbarPseudoElements.IsSupported(pseudoElement)) return false;
+        property = StyleAccessor.NormalizePropertyName(property);
+        value = value.Trim();
+        if (property.Length == 0 || value.Length == 0) return false;
+        var candidate = new ScrollbarPseudoStyleEntry(
+            value,
+            specificity,
+            important,
+            origin,
+            Interlocked.Increment(ref _scrollbarPseudoStyleSequence));
+        var key = ScrollbarPseudoStyleKey(pseudoElement, state, property);
+        _scrollbarPseudoStyles ??= new(StringComparer.Ordinal);
+        if (_scrollbarPseudoStyles.TryGetValue(key, out var current) && current.ComparePriority(candidate) > 0)
+            return false;
+        if (_scrollbarPseudoStyles.TryGetValue(key, out current) && current.SameValueAndPriority(candidate))
+            return false;
+        _scrollbarPseudoStyles[key] = candidate;
+        return true;
+    }
+
+    internal string? GetScrollbarPseudoStyle(string pseudoElement, string state, string property)
+    {
+        if (_scrollbarPseudoStyles == null) return null;
+        var states = state.ToLowerInvariant() switch
+        {
+            "active" => new[] { "active", "hover", "" },
+            "hover" => new[] { "hover", "" },
+            _ => new[] { state.ToLowerInvariant() }
+        };
+        ScrollbarPseudoStyleEntry? best = null;
+        foreach (var candidateState in states)
+        {
+            var key = ScrollbarPseudoStyleKey(pseudoElement, candidateState, property);
+            if (!_scrollbarPseudoStyles.TryGetValue(key, out var candidate)) continue;
+            if (best == null || candidate.ComparePriority(best.Value) > 0)
+                best = candidate;
+        }
+        return best is { } entry ? Style.ResolveValue(entry.Value) : null;
+    }
+
+    internal bool HasScrollbarPseudoStyles => _scrollbarPseudoStyles is { Count: > 0 };
+
+    internal bool HasScrollbarPseudoStylesFor(string pseudoElement) =>
+        _scrollbarPseudoStyles?.Keys.Any(key => key.StartsWith(
+            $"{pseudoElement.ToLowerInvariant()}\u001f", StringComparison.Ordinal)) == true;
+
+    private bool IsScrollbarPseudoDisplayNone(string pseudoElement = ScrollbarPseudoElements.Scrollbar) =>
+        string.Equals(GetScrollbarPseudoStyle(pseudoElement, "", "display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase);
+
+    private static float? ParseScrollbarLength(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (text.EndsWith("px", StringComparison.OrdinalIgnoreCase)) text = text[..^2].Trim();
+        return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) &&
+               float.IsFinite(result) && result >= 0
+            ? result
+            : null;
+    }
+
+    private static string ScrollbarPseudoStyleKey(string pseudoElement, string state, string property) =>
+        $"{pseudoElement.ToLowerInvariant()}\u001f{state.ToLowerInvariant()}\u001f{StyleAccessor.NormalizePropertyName(property)}";
+
+    private readonly record struct ScrollbarPseudoStyleEntry(
+        string Value,
+        CssSpecificity Specificity,
+        bool Important,
+        CssCascadeOrigin Origin,
+        long Sequence)
+    {
+        public int ComparePriority(ScrollbarPseudoStyleEntry other)
+        {
+            var important = Important.CompareTo(other.Important);
+            if (important != 0) return important;
+            var origin = Origin.CompareTo(other.Origin);
+            if (origin != 0) return origin;
+            var specificity = Specificity.CompareTo(other.Specificity);
+            return specificity != 0 ? specificity : Sequence.CompareTo(other.Sequence);
+        }
+
+        public bool SameValueAndPriority(ScrollbarPseudoStyleEntry other) =>
+            Value == other.Value && Important == other.Important && Origin == other.Origin &&
+            Specificity == other.Specificity;
     }
 
     private ScrollbarWidthMode GetScrollbarWidthMode() =>

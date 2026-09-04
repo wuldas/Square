@@ -1,8 +1,10 @@
 using Square.CSS.Ast;
+using Square.CSS.Properties;
 using Square.Graphics;
 using Square.Text.Fonts;
 using Square.UI;
 using Square.UI.ElementApi;
+using Square.UI.Scrolling;
 using System.Globalization;
 using System.Text;
 
@@ -52,6 +54,7 @@ public sealed class CssEngine
         }
         RebuildRules();
         foreach (var kf in sheet.KeyFrames) _keyFrames[kf.Name] = kf;
+        CssStyleReconciler.InvalidateScopes(this);
     }
 
     /// <summary>
@@ -435,12 +438,17 @@ public sealed class CssEngine
     /// <param name="Element">目标元素。</param>
     public void ApplyStyles(Element Element)
     {
-        ApplyStylesCore(Element);
+        var scrollbarPseudoStyleChanges = new HashSet<Element>();
+        if (Element.ClearScrollbarPseudoStyles())
+            scrollbarPseudoStyleChanges.Add(Element);
+        ApplyStylesCore(Element, scrollbarPseudoStyleChanges);
         foreach (var changed in FinalizePseudoElements(Element))
+            changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+        foreach (var changed in scrollbarPseudoStyleChanges)
             changed.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
     }
 
-    private void ApplyStylesCore(Element Element)
+    private void ApplyStylesCore(Element Element, ISet<Element>? scrollbarPseudoStyleChanges = null)
     {
         if (Element is CssGeneratedPseudoElement) return;
         ApplyInheritedProperties(Element);
@@ -463,7 +471,8 @@ public sealed class CssEngine
 
         foreach (var (rule, origin, specificity, _, pseudoElement) in matched)
         {
-            if (pseudoElement is "before" or "after" or "marker" or "invalid") continue;
+            if (pseudoElement is "before" or "after" or "marker" or "invalid" ||
+                pseudoElement != null && ScrollbarPseudoElements.IsSupported(pseudoElement)) continue;
             var isSelectionRule = string.Equals(pseudoElement, "selection", StringComparison.OrdinalIgnoreCase) ||
                                   IsLegacySelectionRule(rule.Selector);
             foreach (var decl in rule.Declarations)
@@ -475,6 +484,7 @@ public sealed class CssEngine
         }
 
         ApplyThemeVariables(Element);
+        ApplyScrollbarPseudoStyles(Element, matched, scrollbarPseudoStyleChanges);
 
         foreach (var pseudoElement in new[] { "marker", "before", "after" })
         {
@@ -512,11 +522,11 @@ public sealed class CssEngine
     public IDisposable ApplyGeneratedStylesToTree(Element element) =>
         CssStyleReconciler.ApplyOwnedScope(this, element);
 
-    internal void ApplyStylesToTreeCore(Element Element)
+    internal void ApplyStylesToTreeCore(Element Element, ISet<Element>? scrollbarPseudoStyleChanges = null)
     {
-        ApplyStylesCore(Element);
+        ApplyStylesCore(Element, scrollbarPseudoStyleChanges);
         foreach (var child in Element.Children.ToArray())
-            ApplyStylesToTreeCore(child);
+            ApplyStylesToTreeCore(child, scrollbarPseudoStyleChanges);
     }
 
     /// <summary>根据元素的动画属性创建动画时间线。</summary>
@@ -674,8 +684,11 @@ public sealed class CssEngine
 
     private static bool MatchCompound(CompoundSelector compound, Element Element, ref CssSpecificity specificity)
     {
-        foreach (var part in compound.Parts)
+        var scrollbarPseudoIndex = compound.Parts.FindIndex(part =>
+            part.Kind == SimpleSelectorKind.PseudoElement && ScrollbarPseudoElements.IsSupported(part.Name));
+        for (var partIndex = 0; partIndex < compound.Parts.Count; partIndex++)
         {
+            var part = compound.Parts[partIndex];
             switch (part.Kind)
             {
                 case SimpleSelectorKind.Type:
@@ -694,6 +707,11 @@ public sealed class CssEngine
                 case SimpleSelectorKind.Universal:
                     break;
                 case SimpleSelectorKind.PseudoClass:
+                    if (scrollbarPseudoIndex >= 0 && partIndex > scrollbarPseudoIndex && IsScrollbarPseudoState(part.Name))
+                    {
+                        specificity += new CssSpecificity(0, 1, 0);
+                        break;
+                    }
                     if (!MatchPseudoClass(Element, part.Name)) return false;
                     specificity += GetPseudoClassSpecificity(part.Name);
                     break;
@@ -839,7 +857,68 @@ public sealed class CssEngine
         name.Equals("before", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("after", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("marker", StringComparison.OrdinalIgnoreCase) ||
-        name.Equals("selection", StringComparison.OrdinalIgnoreCase);
+        name.Equals("selection", StringComparison.OrdinalIgnoreCase) ||
+        ScrollbarPseudoElements.IsSupported(name);
+
+    private static bool IsScrollbarPseudoState(string name) =>
+        name.Equals("hover", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("active", StringComparison.OrdinalIgnoreCase);
+
+    private static void ApplyScrollbarPseudoStyles(
+        Element Element,
+        List<(CssRule rule, CssCascadeOrigin origin, CssSpecificity specificity, int order, string? pseudoElement)> matched,
+        ISet<Element>? changes)
+    {
+        foreach (var match in matched)
+        {
+            if (match.pseudoElement is not { } pseudoElement ||
+                !ScrollbarPseudoElements.IsSupported(pseudoElement)) continue;
+            var state = GetScrollbarPseudoState(match.rule.Selector);
+            foreach (var declaration in match.rule.Declarations)
+            {
+                var property = StyleAccessor.NormalizePropertyName(declaration.Property);
+                if (!CssPropertyRegistry.IsValid(property, declaration.Value)) continue;
+                SetScrollbarPseudoStyle(Element, pseudoElement, state, property, declaration.Value,
+                    match.specificity, declaration.Important, match.origin, changes);
+                if (!CssShorthandExpander.IsShorthand(property) ||
+                    !CssShorthandExpander.TryExpand(property, declaration.Value, out var assignments)) continue;
+                foreach (var assignment in assignments)
+                    SetScrollbarPseudoStyle(Element, pseudoElement, state, assignment.Property, assignment.Value,
+                        match.specificity, declaration.Important, match.origin, changes);
+            }
+        }
+    }
+
+    private static void SetScrollbarPseudoStyle(
+        Element Element,
+        string pseudoElement,
+        string state,
+        string property,
+        string value,
+        CssSpecificity specificity,
+        bool important,
+        CssCascadeOrigin origin,
+        ISet<Element>? changes)
+    {
+        if (!CssPropertyRegistry.IsValid(property, value) || !Element.SetScrollbarPseudoStyle(
+                pseudoElement, state, property, value, specificity, important, origin)) return;
+        if (changes != null)
+            changes.Add(Element);
+        else
+            Element.Invalidate(ElementInvalidation.Layout | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest);
+    }
+
+    private static string GetScrollbarPseudoState(ComplexSelector selector)
+    {
+        var parts = selector.Steps[^1].Selector.Parts;
+        var pseudoIndex = parts.FindIndex(part =>
+            part.Kind == SimpleSelectorKind.PseudoElement && ScrollbarPseudoElements.IsSupported(part.Name));
+        if (pseudoIndex < 0) return "";
+        return parts.Skip(pseudoIndex + 1)
+            .Where(part => part.Kind == SimpleSelectorKind.PseudoClass && IsScrollbarPseudoState(part.Name))
+            .Select(part => part.Name.ToLowerInvariant())
+            .FirstOrDefault() ?? "";
+    }
 
     private static List<Element> SelectorChildren(Element parent) =>
         parent.Children.Where(child => child is not CssGeneratedPseudoElement).ToList();

@@ -769,18 +769,23 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void UpdateScrollbarHover(Point point)
     {
-        var next = _displayTree.HitTestScrollbar(point);
+        var next = _displayTree.HitTestOwnedScrollbar(point);
         var changed = false;
         if (!ReferenceEquals(next, _hoveringScrollbar))
         {
             if (_hoveringScrollbar != null)
             {
-                _hoveringScrollbar.ClearScrollbarHover();
+                if (_hoveringScrollbar is ITextEditor { OwnsScrollbarChrome: true } previousEditor)
+                    previousEditor.ClearScrollbarHover();
+                else
+                    _hoveringScrollbar.ClearScrollbarHover();
                 changed = true;
             }
             _hoveringScrollbar = next;
         }
-        if (_hoveringScrollbar?.UpdateScrollbarHover(MapPointerPoint(_hoveringScrollbar, point)) == true)
+        if (_hoveringScrollbar is ITextEditor { OwnsScrollbarChrome: true } editor)
+            changed |= editor.UpdateScrollbarHover(MapPointerPoint(_hoveringScrollbar, point));
+        else if (_hoveringScrollbar?.UpdateScrollbarHover(MapPointerPoint(_hoveringScrollbar, point)) == true)
             changed = true;
         if (changed) RequestRender();
     }
