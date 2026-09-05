@@ -56,6 +56,10 @@ public sealed class CodeEditor : UIElement, ITextEditor
     private bool _findMatchCase;
     private int _foldModelVersion = -1;
     private int _contentVersion;
+    private float _cachedMaxContentWidth;
+    private bool _maxContentWidthValid;
+    private Font? _maxContentWidthFont;
+    private int _maxContentWidthTabSize;
     private float _caretOpacity = 1f;
     private float _caretBlinkTarget;
     private double _nextCaretTransitionSeconds;
@@ -1890,6 +1894,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
             InvalidateTokensFromCaret();
             ScheduleFoldRecompute();
         }
+        if (!IsAttached)
+            return;
+
         EnsureCaretNotInHidden();
         EnsureCaretVisible();
         ResetCaretBlink();
@@ -2482,15 +2489,24 @@ public sealed class CodeEditor : UIElement, ITextEditor
     }
     private float MeasureMaxContentWidth(Font font)
     {
+        if (_maxContentWidthValid &&
+            ReferenceEquals(_maxContentWidthFont, font) &&
+            _maxContentWidthTabSize == TabSize)
+            return _cachedMaxContentWidth;
+
         var max = 0f;
-        // sample visible-ish bound: scan all document lines (ok for moderate docs)
         for (var line = 0; line < _model.LineCount; line++)
         {
             if (_folding.IsLineHidden(line)) continue;
             var content = _model.GetLineContent(line);
             max = Math.Max(max, CodeEditorMetrics.MeasureLineWidth(content, font, TabSize));
         }
-        return max + 24f;
+
+        _cachedMaxContentWidth = max + 24f;
+        _maxContentWidthValid = true;
+        _maxContentWidthFont = font;
+        _maxContentWidthTabSize = TabSize;
+        return _cachedMaxContentWidth;
     }
 
     private void EnsureViewLayout(Font font, float contentWidth)
@@ -2517,7 +2533,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
         EnsureViewLayout(font, contentWidth);
     }
 
-    private void ScheduleFoldRecompute() => _foldModelVersion = -1; // dirty
+    private void ScheduleFoldRecompute()
+    {
+        if (!ShowFolding)
+            return;
+        _foldModelVersion = -1;
+    }
 
     private void EnsureFolds()
     {
@@ -3707,6 +3728,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
                 ClampSelection();
             _tokens?.Reset();
             _contentVersion++;
+            _maxContentWidthValid = false;
             _viewLayout.Invalidate();
             ScheduleFoldRecompute();
             InvalidateLayout();
@@ -3727,12 +3749,34 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
             ClampSelection();
         }
-
         _contentVersion++;
+        UpdateMaxContentWidthCache(e);
         _viewLayout.Invalidate();
         InvalidateTokensFromCaret();
         ScheduleFoldRecompute();
         InvalidateLayout();
+    }
+
+    private void UpdateMaxContentWidthCache(ContentChangedEventArgs e)
+    {
+        if (!_maxContentWidthValid || e.Edits.Count != 1)
+        {
+            _maxContentWidthValid = false;
+            return;
+        }
+
+        var edit = e.Edits[0];
+        if (edit.Length > 0 || edit.Text.Contains('\n'))
+        {
+            _maxContentWidthValid = false;
+            return;
+        }
+
+        var font = ResolveFont();
+        var line = _model.GetLineNumberAt(Math.Min(_model.Length, edit.Offset + edit.Text.Length));
+        var width = CodeEditorMetrics.MeasureLineWidth(_model.GetLineContent(line), font, TabSize) + 24f;
+        if (width > _cachedMaxContentWidth)
+            _cachedMaxContentWidth = width;
     }
 
     private static int MapOffset(int offset, IReadOnlyList<TextEdit> edits)

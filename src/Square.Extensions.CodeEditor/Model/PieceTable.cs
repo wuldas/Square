@@ -93,7 +93,33 @@ internal sealed class PieceTable
         DeleteRange(offset, deleteLength);
         if (insert.Length > 0)
             Insert(offset, insert);
-        RebuildLineStarts();
+        UpdateLineStarts(offset, deleteLength, insert);
+    }
+
+    private void UpdateLineStarts(int offset, int deleted, string inserted)
+    {
+        var delta = inserted.Length - deleted;
+        var prefix = new List<int>(_lineStarts.Length);
+        var suffix = new List<int>();
+        foreach (var start in _lineStarts)
+        {
+            if (start <= offset)
+                prefix.Add(start);
+            else if (start > offset + deleted)
+                suffix.Add(start + delta);
+        }
+
+        if (prefix.Count == 0 || prefix[0] != 0)
+            prefix.Insert(0, 0);
+
+        for (var i = 0; i < inserted.Length; i++)
+        {
+            if (inserted[i] == '\n')
+                prefix.Add(offset + i + 1);
+        }
+
+        prefix.AddRange(suffix);
+        _lineStarts = prefix.ToArray();
     }
 
     private void Insert(int offset, string text)
