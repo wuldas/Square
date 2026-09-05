@@ -44,17 +44,20 @@ public sealed class ApplicationSessionTests
         Assert.Equal(1, host.ShowAfterFirstFrameCount);
     }
     [Fact]
-    public void FailedExternalAttachDisposesSuppliedHost()
+    public async Task FailedExternalAttachDisposesSuppliedHost()
     {
         var window = new AppWindow("session", 64, 48);
         window.Load(new TextControl("session"));
         var host = new FakeHost { ThrowOnCreateRenderContext = true };
         using var session = new ApplicationSession(window, host);
+        var capture = window.CaptureRendererBitmapAsync();
 
-        Assert.Throws<InvalidOperationException>(session.Attach);
+        var failure = Assert.Throws<InvalidOperationException>(session.Attach);
         Assert.True(session.IsDetached);
         Assert.Equal(1, host.DisposeCount);
         Assert.Equal(0, host.PumpEventsCount);
+        Assert.True(capture.IsCompleted);
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => capture));
     }
     [Fact]
     public void DispatcherSignalsOnlyWhenQueueBecomesNonEmpty()
@@ -194,6 +197,62 @@ public sealed class ApplicationSessionTests
         Assert.False(session.HasPendingFrame);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DetachFaultsOutstandingCaptures(bool attached, bool dispatched)
+    {
+        var window = new AppWindow("capture", 64, 48);
+        using var session = new ApplicationSession(window, new FakeHost());
+        if (attached) session.Attach();
+        var capture = window.CaptureRendererBitmapAsync();
+        if (dispatched) window.Dispatcher.Run();
+
+        session.Detach();
+
+        Assert.True(capture.IsCompleted);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => capture);
+    }
+
+    [Fact]
+    public async Task CaptureAfterDetachFailsWithoutPumpingDispatcher()
+    {
+        var window = new AppWindow("capture", 64, 48);
+        using var session = new ApplicationSession(window, new FakeHost());
+        session.Attach();
+        session.Detach();
+
+        var capture = window.CaptureRendererBitmapAsync();
+
+        Assert.True(capture.IsCompleted);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => capture);
+    }
+
+    [Fact]
+    public async Task FailedPresentationFaultsCaptureAndNextFrameCanRecover()
+    {
+        var window = new AppWindow("capture", 64, 48);
+        window.Load(new View { Style = { CssText = "background: #1a73e8;" } });
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        session.Attach();
+        var failure = new InvalidOperationException("presentation failure");
+        host.PresentationFailure = failure;
+        var capture = window.CaptureRendererBitmapAsync();
+
+        Assert.Same(failure, Assert.Throws<InvalidOperationException>(session.ProcessFrame));
+        Assert.True(capture.IsCompleted);
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => capture));
+
+        host.PresentationFailure = null;
+        var recoveredCapture = window.CaptureRendererBitmapAsync();
+        session.ProcessFrame();
+        Assert.True(recoveredCapture.IsCompleted);
+        using var bitmap = await recoveredCapture;
+        Assert.Equal(new byte[] { 232, 115, 26, 255 }, bitmap.GetPixel(10, 10).ToArray());
+    }
+
     [Fact]
     public void PendingControlFrameSurvivesSuspendAndResume()
     {
@@ -293,6 +352,7 @@ public sealed class ApplicationSessionTests
         public int DisposeCount { get; private set; }
         public bool ThrowOnCreateRenderContext { get; init; }
         public Bitmap? LastFrame { get; private set; }
+        public Exception? PresentationFailure { get; set; }
 
         public event Action<Size>? SizeChanged;
         public event Action<Point, MouseAction, MouseButton>? MouseEvent
@@ -345,7 +405,11 @@ public sealed class ApplicationSessionTests
             {
                 CanvasSize = ClientSize,
                 DpiScale = DpiScale,
-                PresentFrame = (bitmap, _) => LastFrame = bitmap
+                PresentFrame = (bitmap, _) =>
+                {
+                    if (PresentationFailure is { } failure) throw failure;
+                    LastFrame = bitmap;
+                }
             });
         }
 

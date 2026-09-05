@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Square.Backends;
 using Square.Controls;
@@ -25,7 +26,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private readonly LayoutEngine _layout = new();
     private readonly DisplayTree _displayTree = new();
     private readonly Dictionary<Element, double> _scheduledFrames = [];
-    private readonly Queue<TaskCompletionSource<Bitmap>> _pendingRendererCaptures = new();
+    private readonly ConcurrentQueue<TaskCompletionSource<Bitmap>> _pendingRendererCaptures = new();
+    private bool _rendererCapturesClosed;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private double _lastAnimationTickSeconds;
     private IPlatformHost? _host;
@@ -228,6 +230,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (_sessionPrepared) return;
         _sessionPrepared = true;
         _firstFrameShown = false;
+        lock (_pendingRendererCaptures) _rendererCapturesClosed = false;
         _lastAnimationTickSeconds = _clock.Elapsed.TotalSeconds;
 
         BackendRegistration.RegisterDefaults();
@@ -302,6 +305,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     internal void DetachSession()
     {
+        lock (_pendingRendererCaptures) _rendererCapturesClosed = true;
+        FailRendererCaptures(new InvalidOperationException("The application session ended before renderer capture completed."));
         if (!_sessionPrepared && _host == null && _textLayoutScope == null) return;
 
         Exception? cleanupException = null;
@@ -325,8 +330,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         Cleanup(() => _root.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest));
         Cleanup(() => _document.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest));
         _scheduledFrames.Clear();
-        while (_pendingRendererCaptures.TryDequeue(out var capture))
-            capture.SetException(new InvalidOperationException("The application session ended before renderer capture completed."));
         if (_root.IsLoaded) Cleanup(() => ((IComponentLifecycle)_root).OnUnloaded());
         if (_root.IsAttached) Cleanup(() => ((IComponentLifecycle)_root).OnDetached());
         Cleanup(() => CssStyleReconciler.UnregisterScopesForTree(_root));
@@ -362,7 +365,15 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (_host == null) return false;
         var size = _host.ClientSize;
         if (size.Width <= 0 || size.Height <= 0) return false;
-        _renderContext = _host.CreateRenderContext();
+        try
+        {
+            _renderContext = _host.CreateRenderContext();
+        }
+        catch (Exception exception)
+        {
+            FailRendererCaptures(exception);
+            throw;
+        }
         return true;
     }
 
@@ -672,25 +683,41 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     public Task<Bitmap> CaptureRendererBitmapAsync()
     {
         var completion = new TaskCompletionSource<Bitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_pendingRendererCaptures)
+        {
+            if (_rendererCapturesClosed)
+            {
+                completion.SetException(new InvalidOperationException("Renderer capture is unavailable after the application session ends."));
+                return completion.Task;
+            }
+            _pendingRendererCaptures.Enqueue(completion);
+        }
         Dispatcher.Invoke(() =>
         {
+            if (completion.Task.IsCompleted) return;
             if (_host == null || _renderContext == null)
             {
-                completion.SetException(new InvalidOperationException(
+                completion.TrySetException(new InvalidOperationException(
                     "The application must be running before renderer capture is available."));
-                return;
             }
-
-            // Dispatcher work runs before painting, including immediately after a surface resize.
-            _pendingRendererCaptures.Enqueue(completion);
         });
         return completion.Task;
+    }
+
+    private void FailRendererCaptures(Exception exception)
+    {
+        lock (_pendingRendererCaptures)
+        {
+            while (_pendingRendererCaptures.TryDequeue(out var completion))
+                completion.TrySetException(exception);
+        }
     }
 
     private void CompleteRendererCaptures()
     {
         while (_pendingRendererCaptures.TryDequeue(out var completion))
         {
+            if (completion.Task.IsCompleted) continue;
             try
             {
                 // Read the active backend's completed frame, including real GPU output.
@@ -794,6 +821,19 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             : null);
 
     private void RenderFrame()
+    {
+        try
+        {
+            RenderFrameCore();
+        }
+        catch (Exception exception)
+        {
+            FailRendererCaptures(exception);
+            throw;
+        }
+    }
+
+    private void RenderFrameCore()
     {
         FlushPendingSplitterMove();
         var hadPendingTextSelection = _pendingTextSelectionPoint.HasValue;
