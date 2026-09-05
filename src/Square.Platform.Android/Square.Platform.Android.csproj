@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <IsPackable>true</IsPackable>
+    <Description>Square Android Activity and surface host</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <SquareTargetPlatform>Android</SquareTargetPlatform>
+    <DefineConstants>$(DefineConstants);PLATFORM_ANDROID;BACKEND_SOFTWARE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Square\Square.csproj">
+      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
+    </ProjectReference>
+    <ProjectReference Include="..\Square.Backends.AndroidCanvas\Square.Backends.AndroidCanvas.csproj">
+      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
+    </ProjectReference>
+    <ProjectReference Include="..\Square.Backends.Vulkan\Square.Backends.Vulkan.csproj">
+      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.Views" />
+  </ItemGroup>
+</Project>

@@ -24,7 +24,7 @@ public sealed class RasterizedGlyph
     public required byte[] Coverage { get; init; }
 }
 
-/// <summary>系统字形光栅器，优先使用 Win32 GDI，不可用时回退到 stb_truetype。</summary>
+/// <summary>系统字形光栅器；自定义字体使用 stb_truetype，系统字体优先使用平台原生光栅化。</summary>
 public sealed partial class SystemGlyphRasterizer
 {
     internal static SystemGlyphRasterizer Shared { get; } = new();
@@ -33,6 +33,8 @@ public sealed partial class SystemGlyphRasterizer
     private readonly object _cacheGate = new();
     private readonly StbGlyphRasterizer _stbRasterizer;
     private readonly bool _cacheGlyphs;
+    private static Func<Font, char, RasterizedGlyph?>? _platformRasterizer;
+    private static Func<Font, FontMetrics?>? _platformMetrics;
 
     /// <summary>初始化实例。</summary>
     /// <param name="cacheGlyphs">是否缓存已光栅化的字形。</param>
@@ -41,9 +43,46 @@ public sealed partial class SystemGlyphRasterizer
         _cacheGlyphs = cacheGlyphs;
         _stbRasterizer = new StbGlyphRasterizer(cacheGlyphs);
     }
+    /// <summary>注册平台原生字形栅格器；平台程序集加载时调用。</summary>
+    public static void RegisterPlatformRasterizer(Func<Font, char, RasterizedGlyph?> rasterizer)
+    {
+        ArgumentNullException.ThrowIfNull(rasterizer);
+        _platformRasterizer = rasterizer;
+    }
+
+    /// <summary>注册平台原生字体度量提供器；平台程序集加载时调用。</summary>
+    public static void RegisterPlatformFontMetrics(Func<Font, FontMetrics?> metricsProvider)
+    {
+        ArgumentNullException.ThrowIfNull(metricsProvider);
+        _platformMetrics = metricsProvider;
+    }
+
+    internal static bool TryGetPlatformFontMetrics(Font font, out FontMetrics metrics)
+    {
+        if (OperatingSystem.IsAndroid() && !FontCollection.Shared.IsCustomFamily(font.Family) &&
+            _platformMetrics?.Invoke(font) is { } value)
+        {
+            metrics = value;
+            return true;
+        }
+        metrics = default;
+        return false;
+    }
+
+    private RasterizedGlyph? RasterizePlatformOrStb(Font font, char character)
+    {
+        if (FontCollection.Shared.IsCustomFamily(font.Family))
+            return _stbRasterizer.Rasterize(font, character);
+        if (OperatingSystem.IsAndroid() && _platformRasterizer?.Invoke(font, character) is { } platform)
+            return platform;
+        return OperatingSystem.IsWindows()
+            ? RasterizeWin32(font, character)
+            : _stbRasterizer.Rasterize(font, character);
+    }
 
     /// <summary>当前平台是否可用光栅化（Windows 或已加载字体）。</summary>
-    public bool IsAvailable => OperatingSystem.IsWindows() || _stbRasterizer.IsAvailable;
+    public bool IsAvailable => OperatingSystem.IsWindows() || _stbRasterizer.IsAvailable ||
+                               OperatingSystem.IsAndroid() && _platformRasterizer != null;
 
     /// <summary>清空字形缓存。</summary>
     public void Clear()
@@ -65,19 +104,16 @@ public sealed partial class SystemGlyphRasterizer
         var effectiveFont = family == font.Family
             ? font
             : new Font(family, font.Size, font.Weight, font.Style);
-        var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style, character);
         if (!_cacheGlyphs)
-            return OperatingSystem.IsWindows() && !FontCollection.Shared.IsCustomFamily(effectiveFont.Family)
-                ? RasterizeWin32(effectiveFont, character)
-                : _stbRasterizer.Rasterize(effectiveFont, character);
+            return RasterizePlatformOrStb(effectiveFont, character);
+        var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style,
+            character, FontCollection.Shared.CustomGeneration);
 
         lock (_cacheGate)
         {
             if (_cache.TryGetValue(key, out var cached)) return cached;
 
-            var glyph = OperatingSystem.IsWindows() && !FontCollection.Shared.IsCustomFamily(effectiveFont.Family)
-                ? RasterizeWin32(effectiveFont, character)
-                : _stbRasterizer.Rasterize(effectiveFont, character);
+            var glyph = RasterizePlatformOrStb(effectiveFont, character);
             _cache[key] = glyph;
             return glyph;
         }
@@ -85,6 +121,8 @@ public sealed partial class SystemGlyphRasterizer
 
     private static string ResolveFontFamily(string requestedFamily, char character)
     {
+        if (FontCollection.Shared.IsCustomFamily(requestedFamily))
+            return requestedFamily;
         if (!string.Equals(requestedFamily, "Segoe UI", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(requestedFamily, "Segoe UI Variable", StringComparison.OrdinalIgnoreCase))
             return requestedFamily;
@@ -220,11 +258,19 @@ public sealed partial class SystemGlyphRasterizer
 #endif
     }
 
-    internal static string ResolveGenericFontFamily(string family) => family.ToLowerInvariant() switch
+    internal static string ResolveGenericFontFamily(string family) => FontCollection.Shared.IsCustomFamily(family)
+        ? family
+        : family.ToLowerInvariant() switch
     {
-        "sans-serif" or "system-ui" or "ui-sans-serif" => OperatingSystem.IsWindows() ? "Segoe UI" : "DejaVu Sans",
-        "serif" or "ui-serif" => OperatingSystem.IsWindows() ? "Times New Roman" : "DejaVu Serif",
-        "monospace" or "ui-monospace" => OperatingSystem.IsWindows() ? "Consolas" : "DejaVu Sans Mono",
+        "sans-serif" or "system-ui" or "ui-sans-serif" => OperatingSystem.IsWindows()
+            ? "Segoe UI"
+            : OperatingSystem.IsAndroid() ? "sans-serif" : "DejaVu Sans",
+        "serif" or "ui-serif" => OperatingSystem.IsWindows()
+            ? "Times New Roman"
+            : OperatingSystem.IsAndroid() ? "serif" : "DejaVu Serif",
+        "monospace" or "ui-monospace" => OperatingSystem.IsWindows()
+            ? "Consolas"
+            : OperatingSystem.IsAndroid() ? "monospace" : "DejaVu Sans Mono",
         _ => family
     };
 
@@ -233,7 +279,8 @@ public sealed partial class SystemGlyphRasterizer
         float Size,
         FontWeight Weight,
         FontStyle Style,
-        char Character);
+        char Character,
+        int CustomGeneration);
 
 #if PLATFORM_WIN32
     private static partial class NativeMethods
@@ -382,9 +429,11 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
             return true;
 
         var key = new FontMetricsKey(font.Family, font.Size, font.Weight, font.Style);
-        lock (_sync)
-            if (_fontMetrics.TryGetValue(key, out metrics))
-                return true;
+        if (SystemGlyphRasterizer.TryGetPlatformFontMetrics(font, out metrics))
+        {
+            lock (_sync) _fontMetrics[key] = metrics;
+            return true;
+        }
 
         if (OperatingSystem.IsWindows() &&
             TryGetWin32FontMetrics(font, out metrics))

@@ -84,8 +84,36 @@ public interface ITextEditor
     CursorKind? ResolveCursorAt(Point point) => null;
 }
 
+/// <summary>平台输入法使用的组合文本编辑契约。</summary>
+public interface ITextInputClient
+{
+    /// <summary>当前文本（含正在编辑的组合文本）。</summary>
+    string Text { get; }
+    /// <summary>当前选区起点。</summary>
+    int SelectionStart { get; }
+    /// <summary>当前选区终点。</summary>
+    int SelectionEnd { get; }
+    /// <summary>组合文本起点；无组合文本时为 -1。</summary>
+    int CompositionStart { get; }
+    /// <summary>组合文本长度。</summary>
+    /// <summary>编辑器是否接受换行。</summary>
+    bool IsMultiline { get; }
+    /// <summary>替换或更新组合文本。</summary>
+    void SetComposingText(string text, int newCursorPosition = 1);
+    /// <summary>替换选区或当前组合并结束组合；空文本表示删除，而不是取消组合。</summary>
+    void CommitText(string text, int newCursorPosition = 1);
+    /// <summary>结束当前组合但保留其文本。</summary>
+    void FinishComposingText();
+    /// <summary>删除光标前后文本。</summary>
+    void DeleteSurroundingText(int beforeLength, int afterLength);
+    /// <summary>设置当前选区。</summary>
+    void SetSelection(int start, int end);
+    /// <summary>处理输入法编辑器动作。</summary>
+    bool PerformEditorAction(int actionCode);
+}
+
 /// <summary>文本编辑器基类，提供光标、选区、键盘与指针交互的通用实现。</summary>
-public abstract class TextEditorBase : UIElement, ITextEditor
+public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
 {
     private const float DefaultFontSize = 14f;
     private const float ContentPaddingX = 8f;
@@ -109,6 +137,11 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     private string _changeBaseline = "";
     private bool _hasChangeBaseline;
     private bool _hasUserEditSinceFocus;
+    private int _compositionStart = -1;
+    private int _compositionLength;
+    private string? _compositionBaseValue;
+    private int _compositionBaseSelectionStart;
+    private int _compositionBaseSelectionEnd;
     private Size _lastIntrinsicScrollContentSize;
     private bool _hasIntrinsicScrollContentSize;
 
@@ -168,6 +201,15 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     public bool CanRedo => _redoHistory.Count > 0;
     /// <inheritdoc/>
     public Rect CaretRect => GetCaretRect();
+    /// <inheritdoc />
+    public string Text => Value;
+    /// <inheritdoc />
+    public int SelectionEnd => Math.Max(_caretIndex, _selectionAnchor);
+    /// <inheritdoc />
+    public int CompositionStart => _compositionStart;
+    /// <inheritdoc />
+    public int CompositionLength => _compositionLength;
+    bool ITextInputClient.IsMultiline => IsMultiline;
     /// <summary>选区背景色。</summary>
     public Color SelectionBackground
     {
@@ -239,14 +281,122 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     }
 
     /// <inheritdoc/>
-    public void HandleTextInput(string text)
+    public void HandleTextInput(string text) => CommitText(text);
+
+    /// <inheritdoc />
+    public void SetComposingText(string text, int newCursorPosition = 1)
     {
-        if (!CanEditText || !IsEnabled || string.IsNullOrEmpty(text)) return;
-        text = NormalizeNewlines(text);
+        if (!CanEditText || !IsEnabled) return;
+        text = NormalizeNewlines(text ?? "");
         if (!IsMultiline) text = text.Replace("\n", "");
         text = FilterInput(text);
-        if (text.Length == 0) return;
-        ReplaceSelection(text);
+        if (_compositionStart < 0)
+        {
+            _compositionBaseValue = Value;
+            _compositionBaseSelectionStart = SelectionStart;
+            _compositionBaseSelectionEnd = SelectionEnd;
+            _compositionStart = _compositionBaseSelectionStart;
+            _compositionLength = _compositionBaseSelectionEnd - _compositionBaseSelectionStart;
+        }
+
+        var start = _compositionStart;
+        var nextValue = Value.Remove(start, _compositionLength).Insert(start, text);
+        SetValueFromEdit(nextValue);
+        _compositionLength = text.Length;
+        var cursor = newCursorPosition > 0
+            ? start + text.Length + newCursorPosition - 1
+            : start + newCursorPosition;
+        _caretIndex = Math.Clamp(cursor, 0, Value.Length);
+        _selectionAnchor = _caretIndex;
+        ResetCaretBlink();
+        EnsureCaretVisible();
+        InvalidatePaint();
+    }
+
+    /// <inheritdoc />
+    public void CommitText(string text, int newCursorPosition = 1)
+    {
+        if (!CanEditText || !IsEnabled) return;
+        var isEmptyCommit = string.IsNullOrEmpty(text);
+        text = NormalizeNewlines(text ?? "");
+        if (!IsMultiline) text = text.Replace("\n", "");
+        text = FilterInput(text);
+        if (_compositionStart >= 0)
+            RestoreCompositionBase();
+        var start = SelectionStart;
+        if (text.Length > 0 || (isEmptyCommit && SelectionLength > 0))
+        {
+            ReplaceSelection(text);
+            var cursor = newCursorPosition > 0
+                ? start + text.Length + newCursorPosition - 1
+                : start + newCursorPosition;
+            _caretIndex = Math.Clamp(cursor, 0, Value.Length);
+            _selectionAnchor = _caretIndex;
+        }
+    }
+
+    /// <inheritdoc />
+    public void FinishComposingText()
+    {
+        if (_compositionStart < 0) return;
+        var text = Value.Substring(_compositionStart, _compositionLength);
+        CommitText(text);
+    }
+
+    /// <inheritdoc />
+    public void DeleteSurroundingText(int beforeLength, int afterLength)
+    {
+        if (!CanEditText || !IsEnabled) return;
+        if (_compositionStart >= 0) FinishComposingText();
+        var start = Math.Clamp(SelectionStart - Math.Max(0, beforeLength), 0, Value.Length);
+        var end = Math.Clamp(SelectionEnd + Math.Max(0, afterLength), start, Value.Length);
+        _selectionAnchor = start;
+        _caretIndex = end;
+        ReplaceSelection("");
+    }
+
+    /// <inheritdoc />
+    public void SetSelection(int start, int end)
+    {
+        if (_compositionStart >= 0) FinishComposingText();
+        _selectionAnchor = Math.Clamp(start, 0, Value.Length);
+        _caretIndex = Math.Clamp(end, 0, Value.Length);
+        ResetCaretBlink();
+        InvalidatePaint();
+    }
+
+    /// <inheritdoc />
+    public bool PerformEditorAction(int actionCode)
+    {
+        if (actionCode != 0 && IsMultiline)
+        {
+            CommitText("\n");
+            return true;
+        }
+
+        return false;
+    }
+
+    private void RestoreCompositionBase()
+    {
+        if (_compositionStart < 0) return;
+        var baseValue = _compositionBaseValue;
+        var start = _compositionBaseSelectionStart;
+        var end = _compositionBaseSelectionEnd;
+        _compositionStart = -1;
+        _compositionLength = 0;
+        _compositionBaseValue = null;
+        if (baseValue == null) return;
+        SetValueFromEdit(baseValue);
+        _selectionAnchor = Math.Clamp(start, 0, Value.Length);
+        _caretIndex = Math.Clamp(end, 0, Value.Length);
+    }
+
+    private void ClearCompositionState()
+    {
+        _compositionStart = -1;
+        _compositionLength = 0;
+        _compositionBaseValue = null;
     }
 
     /// <summary>过滤用户输入文本，默认原样返回。</summary>
@@ -435,7 +585,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor
     protected override void OnPropertyChanged(string name)
     {
         base.OnPropertyChanged(name);
-        if (name != nameof(Value)) return;
+        if (!_updatingValue) ClearCompositionState();
         var value = Value;
         if (!_updatingValue && !string.Equals(value, _knownValue, StringComparison.Ordinal))
         {

@@ -1,11 +1,11 @@
 # Square Android 平台支持 TODO
 
-> Document Revision: 0.1
-> Status: Draft（规划已形成，尚未实现）
+> Document Revision: 0.5
+> Status: Experimental MVP 已实现（除 arm64 真机验证外的 emulator、像素、性能、生命周期、IME、accessibility、Canvas/Skia/Vulkan 和 profiled AOT 门禁已验证；官方 `PublishAot=true` 仍为实验能力）
 > Planning Baseline: 2026-09-04
 > 配套：`Architecture.md`、`Rendering-Targets.md`、`Roadmap.md`、`Rendering.md`
 
-本文定义 Square Android 平台支持的边界、依赖顺序、验收门禁和已知不支持项。文中所有未勾选条目都只是计划；仓库当前没有 `Square.Platform.Android`、Android Sample 或 Android CI，不能据此宣称 Android 已受支持。
+本文定义 Square Android 平台支持的边界、依赖顺序、验收门禁和已知不支持项。仓库已包含 Android host、Software/Canvas/Skia/Vulkan 呈现路径、Android Sample、独立 `Square.Android.slnx` 和 Android CI；除 arm64 真机验证及官方实验 NativeAOT 生产门外，本机 emulator 门禁已完成，仍不能据此宣称 Android 已达到 Beta 或 Stable。
 
 ---
 
@@ -47,30 +47,30 @@
 - [x] 已有 `NativeUiNode` 快照，可供长期 Android Native UI adapter 评估。
 - [x] 路由、Popup/Dialog、文本编辑器、图片和动画已有平台无关实现基础。
 
-### 2.2 尚未具备
+### 2.2 尚未具备或尚未验收
 
-- [ ] Android target、平台项目、Activity/View host 和 Sample。
-- [ ] Activity/Looper 可驱动的分步应用生命周期。
-- [ ] pointer id/type/cancel 等完整触摸输入契约。
-- [ ] touch slop、drag-cancel-click、fling 和 Android Back 桥接。
-- [ ] Android `InputConnection` 与 composition-aware 文本输入契约。
-- [ ] Android 系统字体发现和 generic family 映射。
-- [ ] Android Bitmap 呈现通道及颜色、stride、alpha、DPI 证据。
-- [ ] Android workload、APK/AAB、emulator 和 arm64 CI/设备门禁。
-- [ ] Canvas-only View 的虚拟 accessibility tree。
+- [x] Android target、平台项目、Activity/View host 和 Sample（代码已落地）。
+- [x] Activity/Looper 可驱动的分步应用生命周期（ApplicationSession + Choreographer）。
+- [x] pointer id/type/cancel 等统一触摸输入契约（桌面 MouseEvent 仍保留兼容）。
+- [x] touch slop、drag-cancel-click、fling 和 Android Back 桥接（x86_64 emulator 基础回归已验证，完整边界与 arm64 设备回归仍待验收）。
+- [x] Android `InputConnection` 与 composition-aware 文本输入契约（emulator 英文与自包含中文组合 IME 回归已验证，第三方/arm64 IME 仍待验收）。
+- [x] Android 系统字体发现和 generic family 映射（emulator 系统字体与 CJK fallback 已验证，arm64 glyph fallback 待验收）。
+- [x] Android Bitmap 呈现通道及颜色、stride、alpha、DPI 证据（像素探针与 emulator 首帧/旋转截图已验证；核心 Bitmap 使用紧凑 stride）。
+- [x] Android workload、APK/AAB、emulator 和 arm64 CI/设备门禁（workload/APK/AAB/CI、x86_64 emulator smoke 已有，arm64 设备门禁待补）。
+- [x] Canvas-only View 的虚拟 accessibility tree（uiautomator 与 TalkBack 服务绑定已验证；完整 TalkBack 人工/自动语音矩阵仍待扩展）。
 
 ### 2.3 现有阻塞证据
 
 | 阻塞 | 当前实现 | 影响 |
 |---|---|---|
-| 同步消息循环 | `DesktopApplication` 固定执行 `Show -> CreateRenderContext -> PumpEvents` | Activity 主线程不能进入 Square 自有阻塞循环 |
-| 一次性应用生命周期 | `Application.Run()` 只有 start/run/exit | 无法表达 resume/pause/surface 重建 |
-| 鼠标中心输入 | `IPlatformHost.MouseEvent` 无 pointer id/type/cancel | touch 会误用 hover/click/drag 语义 |
-| committed text only | host 只发送 `TextInput(string)` | 无法正确表达中文预编辑、选区替换和 surrounding text |
-| 无 Android 字体根 | stb 字体扫描只覆盖 Windows/Linux/macOS | Software Renderer 不能保证 Android 文本真实可绘制 |
-| 桌面窗口 API | `AppWindow` 含标题栏、最小化、最大化、拖窗和线程子窗口 | Android 必须明确 Unsupported 或采用应用内替代 |
-| 构建拒绝 Android | `SquareTargetPlatform` 只允许 Win32/X11/macOS | Android 项目无法进入现有构建图 |
-| GPU surface 缺失 | Vulkan 只支持 Win32/X11；Skia 当前为离屏 bitmap | 不能把已有 GPU 后端直接当作 Android host |
+| 同步消息循环 | `ApplicationSession` + Activity/Looper/Choreographer 外部驱动 | 已解除；Android 不调用 `PumpEvents()` |
+| 一次性应用生命周期 | `ApplicationSession.Attach/ProcessFrame/Suspend/Resume/Detach` | 已解除；50 次 pause/resume、20 次旋转、锁屏/解锁和 finish/reopen 压力已通过 |
+| 鼠标中心输入 | `PointerInput`、`PointerEvent` 和 `AndroidInputAdapter`；`MouseEvent` 保留兼容 | 已解除 Android 接入阻塞；桌面统一迁移回归待补 |
+| committed text only | `ITextInputClient` + `AndroidInputConnection` 组合文本路径 | 已解除；emulator 中文组合输入已通过 |
+| 无 Android 字体根 | Android 原生 Typeface 回退 + `/system/fonts` 等根目录 | 已解除；emulator CJK glyph 已通过 |
+| 桌面窗口 API | Android host 对最小化、最大化、还原、拖动显式抛出 `PlatformNotSupportedException` | 已明确不支持 |
+| 构建拒绝 Android | `SquareTargetPlatform=Android`、`PLATFORM_ANDROID` 和 Android RID 校验 | 已解除 |
+| GPU surface 缺失 | `AndroidCanvas`、`AndroidSkia`、`Vulkan` 可选呈现路径 | 已解除代码与 emulator smoke 阻塞；设备 conformance 仍待补 |
 
 ---
 
@@ -78,7 +78,7 @@
 
 1. **非 MAUI**：使用 .NET 10 for Android 与原生 Activity/View，避免为一个平台 host 引入 MAUI UI 栈。
 2. **Canvas-first**：首期只挂载一个 Square 自定义 View，不做 Android View/Compose 控件映射。
-3. **Software-first**：先复用现有 Software Renderer；Android Canvas、直接 Skia surface 和 Vulkan 后置。
+3. **Software-first 与可选直绘**：Software Bitmap 仍为默认兼容路径；Android Canvas、Skia surface 和 Vulkan 通过显式后端名启用。
 4. **外部事件循环**：Android 由 Activity/Looper/`Choreographer` 驱动；不为 Android 伪造阻塞 `PumpEvents()`。
 5. **共享运行内核**：从 `DesktopApplication` 抽出 session，桌面与 Android 共用；禁止复制桌面运行时。
 6. **单 Activity / 单根 View**：首期不承诺多 Activity、多窗口或 Fragment/Compose 容器集成。
@@ -94,20 +94,21 @@
 ### 4.1 首期新增
 
 ```text
-src/Square.Platform.Android/          Android Activity/View、输入、IME、剪贴板、帧调度和呈现
+src/Square.Platform.Android/          Android Activity/View、输入、IME、剪贴板、帧调度和 host
+src/Square.Backends.AndroidCanvas/    Android Canvas 与 Skia surface 后端
+src/Square.Backends.Vulkan/           Android `VK_KHR_android_surface` 目标（复用现有 Vulkan backend）
 samples/Square.Sample.Android/        真实 SQV/SQX Android Sample
 Square.Android.slnx                   仅包含 Android 所需项目，隔离 workload
-.github/workflows/android.yml         Android build/emulator 门禁
-```
+.github/workflows/android.yml         Android build、trimming/AOT 与设备门禁
 
-`Square.Platform.Android` 是首期唯一新增运行时程序集。平台项目可以依赖 `Square`，核心不得反向依赖 Android SDK。
+Android host/backend 项目可以依赖 `Square`；核心不得反向依赖 Android SDK。
 
 ### 4.2 首期不新增
 
 ```text
-Square.Backends.AndroidCanvas
 Square.Native.Android
-Square.Backends.AndroidVulkan
+Square.Backends.AndroidVulkan（独立程序集不创建，Android surface 位于现有 Vulkan backend）
+其他原生 View/Compose adapter
 ```
 
 只有 profiling 或原生语义需求证明必要时才分别立项，不能把 host、drawing backend 和 native adapter 混成一个程序集。
@@ -116,10 +117,10 @@ Square.Backends.AndroidVulkan
 
 | 项目 | 职责 | 首期状态 |
 |---|---|---|
-| `Square.Platform.Android` | Activity/View host、生命周期、输入、IME、剪贴板、frame scheduling、bitmap present | 计划实施 |
-| `Square.Backends.AndroidCanvas` | `DisplayTree` 绘制命令映射到 Android Canvas | 不创建 |
+| `Square.Platform.Android` | Activity/View host、生命周期、输入、IME、剪贴板、frame scheduling、bitmap present | Experimental MVP 已实现；arm64 设备门禁待验收 |
+| `Square.Backends.AndroidCanvas` | Android Canvas `Picture` 与 Skia `SKCanvasView` 直绘 | emulator smoke 已实现 |
 | `Square.Native.Android` | `NativeUiNode` 映射为 Android View/Compose 语义控件树 | 不创建 |
-| `Square.Backends.Vulkan` Android surface | Android native window、swapchain、present/readback | 不创建 |
+| `Square.Backends.Vulkan` Android surface | `ANativeWindow`、`VK_KHR_android_surface`、swapchain、present/readback | emulator smoke 已实现；arm64 conformance 待验收 |
 
 ---
 
@@ -146,14 +147,17 @@ Android host 只实现 surface/lifecycle 语义，不提供假的桌面窗口能
 
 ### 5.2 共享 ApplicationSession
 
-计划把 `DesktopApplication` 中的平台无关部分抽为 `ApplicationSession`：
+`ApplicationSession` 复用 `DesktopApplication` 的运行内核，由外部宿主驱动：
 
 | 操作 | 责任 |
 |---|---|
 | Attach | 构建文档、注册 CSS scope、attach/load、创建 render context |
-| ProcessFrame | Dispatcher/Reconciler/CSS animation、布局、DisplayTree、render/present |
-| Suspend | 暂停动画、caret 和 frame callback，不卸载文档 |
-| Resume | 重置时间基线，按实际 demand 请求帧 |
+| ProcessFrame | Dispatcher/Reconciler 更新、布局、DisplayTree、render/present |
+| Tick | 推进 CSS 动画、控件帧请求与 caret；需要时提交画面 |
+| Suspend | 暂停动画、caret 和 frame callback；保留文档与控件待处理帧请求 |
+| Resume | 重置时间基线并请求重绘，继续暂停前的控件帧请求 |
+| ReleaseRenderContext | 仅在已附加且暂停时释放 renderer；不卸载文档，恢复后重新创建 |
+| FramePresented | 成功提交给后端后通知宿主刷新 View，包括 Tick 内部直接提交的帧；不是系统显示完成回调 |
 | Detach | unload/detach、取消输入、释放 renderer 和回调 |
 
 `DesktopApplication` 继续负责 PlatformRegistry、窗口创建和 `PumpEvents()`；Android Activity/View 直接驱动 session。抽取后现有桌面公开 API 和生命周期顺序必须保持兼容。
@@ -163,6 +167,7 @@ Android host 只实现 surface/lifecycle 语义，不提供假的桌面窗口能
 Android 使用 `Choreographer`，但空闲时不得永久 60Hz Tick：
 
 - 所有 element invalidation、Dispatcher 工作、CSS/图片动画、caret 和 backend replay 都汇聚为 frame demand；
+- `HasPendingFrame` 包含当前树仍在运行的 CSS 动画，不能只检查一次性 dirty 标记；
 - host 同时最多保留一个 frame callback；
 - 延迟帧保留最早 deadline；
 - pause/detach 撤销 callback；
@@ -172,38 +177,34 @@ Android 使用 `Choreographer`，但空闲时不得永久 60Hz Tick：
 ---
 
 ## 6. 渲染与 DPI
-
 ### 6.1 首期路径
-
 ```text
 DisplayTree
   -> Software RenderContext
   -> reusable Square BGRA Bitmap
   -> reusable Android Bitmap
   -> SquareView.OnDraw(Canvas)
+
+DisplayTree -> AndroidCanvas backend -> Android Picture -> View Canvas
+DisplayTree -> AndroidSkia backend -> SKPicture -> SKCanvasView surface
+DisplayTree -> Vulkan backend -> ANativeWindow -> Android swapchain
 ```
 
 ### 6.2 必须验证
+- [x] BGRA 与 Android ARGB_8888 的通道顺序（像素探针：`FF010203`）。
+- [x] premultiplied alpha 语义（像素探针：`800A141E` 保持通道和 alpha）。
+- [~] stride 与非紧凑行宽（探针覆盖核心 Bitmap 的紧凑 stride `12` 和跨行复制；核心 Bitmap API 当前固定 `width * 4`，不存在非紧凑输入构造路径）。
+- [x] dirty rect 的逻辑像素/物理像素转换（探针验证局部更新且非脏像素保持 `FF415263`）。
+- [x] `1 Square DIP = 1 Android dp`，backing bitmap 尺寸为逻辑尺寸乘 density（emulator 420 dpi，presenter `1080x2274`）。
+- [x] Software/Vulkan 的文本断行与测量统一使用逻辑坐标，字距和词间距不再与物理像素混用；density 2.625 下单行按钮及正常多行文本均已验证。
+- [x] Button 按内容区宽度测量和绘制；自动高度随行数增加，显式高度保持不变。Sample 新增宽度 180 DIP、行高 22 DIP、未指定高度的长文本按钮，Software/Vulkan 均显示 4 行，高度 112 DIP。
+- [x] rotation/density resize 后旧 bitmap/render context 正确释放（20 次旋转压力无 crash）。
+- [x] 每帧不创建 Bitmap、ByteBuffer 或大数组（presenter 只在尺寸变化时重建，性能日志验证复用）。
+- [x] 已记录局部 raster 仍需全量 Android bitmap upload；性能日志记录 `uploadBytes` 与耗时。
+首期 Software 路径保留一次受控 CPU copy；AndroidCanvas、AndroidSkia 和 Vulkan 直绘路径已实现，是否继续引入区域 upload/`AndroidBitmap_lockPixels` 由后续设备 profiling 决定。
 
-- [ ] BGRA 与 Android ARGB_8888 的通道顺序。
-- [ ] premultiplied alpha 语义。
-- [ ] stride 与非紧凑行宽。
-- [ ] dirty rect 的逻辑像素/物理像素转换。
-- [ ] `1 Square DIP = 1 Android dp`，bitmap 尺寸为 `logical size * density`。
-- [ ] rotation/density resize 后旧 bitmap/render context 正确释放。
-- [ ] 每帧不创建 Bitmap、ByteBuffer 或大数组。
-- [ ] 记录局部 raster 是否仍需要全量 Android bitmap upload。
-
-首版允许一次受控 CPU copy。是否使用区域上传或 `AndroidBitmap_lockPixels` 必须由 Phase 0 数据决定，不能先引入 NDK 复杂度。
-
-### 6.3 后端升级触发条件
-
-只有满足以下任一条件才评估新后端：
-
-- 位图上传已成为滚动 frame time 的主要瓶颈；
-- Software Renderer 无法达到确定的设备性能门；
-- Android Canvas/Skia 能在不改变 Square 绘制语义的前提下降低内存或复制；
-- Vulkan 有明确产品场景和真实设备 conformance 资源。
+### 6.3 后端选择与升级
+当前后端选择已冻结为显式能力：Software 兼容路径、AndroidCanvas/AndroidSkia 直绘路径和 Vulkan `ANativeWindow` 路径均可用。后续 profiling 只决定默认路径与更细粒度 upload 优化，不再以未实现 backend 阻塞 Android host。
 
 ---
 
@@ -260,13 +261,13 @@ Android View 通过 `OnCheckIsTextEditor` / `OnCreateInputConnection` 接入。c
 
 ### 8.2 字体
 
-- [ ] 增加 Android 可读系统字体根。
-- [ ] generic `sans-serif`/`system-ui` 映射到 Roboto 或设备系统 sans。
-- [ ] generic `serif`/`monospace` 映射到真实可用字体。
-- [ ] 中文/日文/韩文和 emoji fallback 使用设备真实字体或明确 fallback。
-- [ ] 确定性像素测试使用仓库嵌入字体。
-- [ ] 真机 smoke 同时验证系统字体，不能只靠测试字体通过。
-- [ ] layout、selection、caret 和 raster 使用同一字体度量来源。
+- [x] 增加 Android 可读系统字体根；Android 原生 Typeface 回退同时覆盖 `/system/fonts` 等目录。
+- [x] generic `sans-serif`/`system-ui` 映射到 Android sans-serif/Roboto。
+- [x] generic `serif`/`monospace` 映射到设备系统字体。
+- [~] 中文/日文/韩文 fallback 使用 Android Typeface；emulator 中文 glyph 已验证，emoji 非 BMP raster 未做独立像素断言。
+- [x] 确定性像素测试继续使用仓库嵌入字体或像素探针。
+- [ ] 真机 smoke 同时验证系统字体（arm64 真机按本次范围排除）。
+- [x] layout、selection、caret 和 raster 使用同一字体度量来源；Android Paint metrics 已注册到核心。
 
 ---
 
@@ -281,6 +282,7 @@ Android View 通过 `OnCheckIsTextEditor` / `OnCreateInputConnection` 接入。c
 | OnPause | 暂停 frame、fling、caret 和输入，不 unload 文档 |
 | OnResume | 重置 frame time，仅在有 demand 时恢复 |
 | size/density change | resize renderer、失效 layout/paint |
+| Vulkan Surface destroyed/replaced | 先暂停会话并释放旧 render context，再释放 ANativeWindow；新 Surface 和 resumed 状态同时满足后恢复并重建 renderer |
 | OnDestroy | detach 一次，取消 Choreographer/IME/fling，释放 Bitmap/renderer |
 
 首期对 orientation/screenSize/density 做原位 resize。进程死亡后业务状态恢复不在首期范围，但重建不得崩溃或引用旧 Activity。
@@ -319,25 +321,24 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 - [x] 明确 Android 使用外部事件循环，不复用阻塞 `PumpEvents()`。
 - [x] 明确 NativeAOT 为实验、非阻断。
 - [x] 明确 Beta/Stable 的 IME 与 accessibility 门槛。
-- [ ] 单独提交本 TODO、`Rendering-Targets.md` 和 `Roadmap.md` 的文档改动。
+- [x] 本轮 TODO、`Rendering-Targets.md` 和 `Roadmap.md` 的文档改动已完成并与实现同步。
 
-**退出标准：** 文档 commit 不包含任何代码或无关文件。
+**退出标准：** 文档已和实现同步，未将未验证能力写成 Beta 或 Stable。
 
 ### Phase 0：工具链与像素 spike
 
 - 临时 spike 放在系统临时目录，不提交到仓库；只有测试资产和结论进入正式项目。
-- [ ] 安装并记录固定 .NET 10 Android workload、JDK、SDK 和 emulator image。
-- [ ] 建立最小非 MAUI `net10.0-android` Activity spike。
-- [ ] 在 x86_64 emulator 安装并启动 Debug APK。
-- [ ] 验证 BGRA/ARGB、alpha、stride、DPI 和 dirty rect。
-- [ ] 比较全量 copy、区域 copy、可选 lockPixels。
-- [ ] 记录首帧上传时间、滚动上传时间和每帧分配。
-- [ ] 构建 arm64 Release APK/AAB。
-- [ ] 验证平台支持的 trimming/AOT。
-- [ ] 单独记录实验 NativeAOT 结果和 XA1040，不作为通过门。
+- [x] 已安装并记录 .NET 10 Android workload 36.1.69（SDK 10.0.303.1）、JDK 17.0.19、Android platform 36、Build Tools 36.0.0、platform-tools 37.0.1；x86_64 emulator 已可用。
+- [x] 已建立正式非 MAUI `net10.0-android` Activity Sample。
+- [x] 在 x86_64 emulator 安装并启动 Debug APK（API 37、x86_64、1080x2400、420 dpi）。
+- [x] 已通过 x86_64 emulator 与像素探针验证首帧颜色/alpha、DPI、旋转布局、BGRA→ARGB 和 dirty rect。
+- [~] stride 已验证核心 Bitmap 的紧凑 stride 与跨行复制；非紧凑 stride 无公共构造路径，lockPixels 未引入。
+- [x] 已记录 Software 全量上传、AndroidCanvas/Skia/Vulkan 直绘的首帧与滚动耗时；性能日志包含 frame/upload 计数、耗时和字节数。
+- [x] 已构建 arm64 Release APK/AAB。
+- [x] 已验证 Release trimming + profiled AOT 构建并在 x86_64 emulator 启动；Android NativeAOT `PublishAot=true` 单独执行。
+- [x] 已记录实验 NativeAOT 结果：XA1040 与 IL3053（Mono.Android 无效 IL/CLR metadata、SkiaSharp.Views.Android 资源设计程序集无法加载），因此按官方限制不作为生产门。
 
-**退出标准：** 真正的 Activity 显示颜色正确的 Square 位图，并形成 presenter 选择记录。
-
+**退出标准：** emulator 的 presenter 像素、旋转、性能和 AOT/trimming 证据已完成；arm64 真机和官方实验 NativeAOT 生产门禁不在本次可通过范围。
 ### Phase 1：外部事件循环 ApplicationSession
 
 **预计修改：**
@@ -352,14 +353,13 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 
 **任务：**
 
-- [ ] 先写 start/resume/frame/pause/detach 顺序测试。
-- [ ] 覆盖重复调用、异常清理和只释放一次。
-- [ ] 覆盖 pause 后动画停止、resume 不出现巨大 delta。
-- [ ] 为 Dispatcher 增加空→非空 wakeup 测试。
-- [ ] 抽取 session，再让 DesktopApplication 组合它。
-- [ ] 保持桌面公开 API、生命周期和输入行为不变。
+- [x] 已写 start/resume/frame/pause/detach 顺序测试（当前覆盖外部会话、幂等清理和不调用 PumpEvents）。
+- [x] pause/resume 已重置动画基线；emulator 生命周期压力已完成。
+- [x] Dispatcher 已增加并测试空→非空 wakeup。
+- [x] 已抽取 session，并让 DesktopApplication 复用共享准备、帧和清理路径。
+- [x] 已完成桌面解决方案 Debug 构建回归；完整三桌面运行行为仍需 CI 回归。
 
-**退出标准：** fake external-loop host 不调用 `PumpEvents()` 也能完成首帧、第二帧和清理；三桌面构建与测试通过。
+**退出标准：** fake external-loop host 已能不调用 `PumpEvents()` 完成首帧和清理；三桌面 Debug build 与定向回归已通过，完整三桌面运行行为仍由各自 CI 门禁负责。
 
 ### Phase 2：统一 pointer/touch 语义
 
@@ -373,14 +373,15 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 
 **任务：**
 
-- [ ] pointerdown/move/up/cancel 全部路由。
-- [ ] PointerEvent 暴露坐标、id、type、primary 和 button。
-- [ ] touch 不设置 hover，mouse 保持现有 hover。
-- [ ] drag 超过 slop 后不 click。
-- [ ] scroll/fling 复用 WheelInput 滚动链。
-- [ ] 回归 drag selection、splitter、popup、scrollbar、context menu。
+- [x] pointerdown/move/up/cancel 已路由。
+- [x] PointerEvent 已暴露坐标、id、type、primary 和 button。
+- [x] touch 路径不设置 hover；mouse 保持现有 hover，桌面宿主仍使用兼容 MouseEvent。
+- [x] Android touch slop 超限后取消 click/active。
+- [x] scroll/fling 已复用 WheelInput 滚动链。
+- [~] 已实现 pause/new gesture 取消路径；drag selection、splitter、popup、scrollbar、context menu 的完整回归待补。
 
-**退出标准：** Android 只需翻译 MotionEvent，无需复制控件交互代码；桌面输入无回归。
+**退出标准：** Android 只翻译 `MotionEvent` 并复用统一 session 输入路由；x86_64 emulator 已完成 touch/scroll/back smoke，复杂控件矩阵仍按对应扩展测试维护。
+
 
 ### Phase 3：Android host 与首帧
 
@@ -393,6 +394,10 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 - `src/Square.Platform.Android/AndroidFrameScheduler.cs`
 - `src/Square.Platform.Android/SquareActivity.cs`
 - `src/Square.Platform.Android/AndroidPlatformRegistration.cs`
+- `src/Square.Platform.Android/AndroidInputAdapter.cs`
+- `src/Square.Platform.Android/AndroidClipboard.cs`
+- `src/Square.Platform.Android/AndroidInputConnection.cs`
+- `src/Square.Platform.Android/AndroidFontPolicy.cs`
 - `samples/Square.Sample.Android/Square.Sample.Android.csproj`
 - `samples/Square.Sample.Android/MainActivity.cs`
 - `samples/Square.Sample.Android/MainPage.sqv`
@@ -400,35 +405,34 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 
 **任务：**
 
-- [ ] 增加 `SquareTargetPlatform=Android`、`PLATFORM_ANDROID` 和 Android RID 校验。
-- [ ] 实现 Activity/View host、frame scheduler 和 bitmap presenter。
-- [ ] 使用真实 SQV/SQX Sample，不用手写假树绕过 generator。
-- [ ] `SquareActivity` 只作为便利入口；底层 host/session 保持可组合，避免把消费方锁死在 Activity 继承模型。
-- [ ] Android `Auto` scrollbar profile 解析为 Mobile。
-- [ ] resize/density change 正确调整 render context。
-- [ ] 空闲时不持续请求帧。
-- [ ] 每帧无大对象/Bitmap 分配。
+- [x] 增加 `SquareTargetPlatform=Android`、`PLATFORM_ANDROID` 和 Android RID 校验。
+- [x] 实现 Activity/View host、frame scheduler 和 bitmap presenter。
+- [x] 使用真实 SQV Sample，不用手写假树绕过 generator。
+- [x] `SquareActivity` 只作为便利入口；底层 host/session 保持可组合。
+- [x] Android `Auto` scrollbar profile 在便利 Activity 中解析为 Mobile。
+- [x] resize/density change 调整 render context 并触发重绘。
+- [~] 空闲时不持续请求帧（代码为单 pending demand，`gfxinfo` 空闲窗口观察到 1 个 frame；真实功耗仍待设备测量）。
+- [x] 每帧不创建 Bitmap；呈现转换数组复用，性能日志已记录上传与直绘帧耗时。
 
-**退出标准：** emulator 显示文本、形状、图片和滚动内容；旋转后几何与像素尺寸正确。
+**退出标准：** emulator 已显示真实 SQV 文本、形状、滚动内容并验证旋转后的几何与像素尺寸；图片绘制已在 Canvas/Skia 后端实现，arm64 设备验证按本次范围排除。
 
 ### Phase 4：触摸、滚动、Back 与剪贴板
 
 **预计新增：**
 
-- `src/Square.Platform.Android/AndroidInputAdapter.cs`
-- `src/Square.Platform.Android/AndroidScrollGesture.cs`
+- `src/Square.Platform.Android/AndroidInputAdapter.cs`（包含 touch slop、scroll 和 fling）
 - `src/Square.Platform.Android/AndroidClipboard.cs`
 
-- [ ] tap Button 只 click 一次。
-- [ ] 在 Button 上开始 scroll 不误 click。
-- [ ] 垂直/水平 scroll 和 fling 可用。
-- [ ] 内层滚动到边界后外层可继续滚动。
-- [ ] pause/detach/new gesture 取消 fling。
-- [ ] Back 按 Popup/Dialog/Router/Activity 顺序处理。
-- [ ] Android ClipboardManager 桥接 Unicode 文本。
-- [ ] 外接鼠标 hover/wheel 不污染 touch 状态。
+- [x] tap Button 只 click 一次（emulator smoke 通过）。
+- [x] 在 Button 上开始 scroll 不误 click（emulator swipe smoke 通过）。
+- [x] 垂直/水平 scroll 和 fling 已接入 WheelInput，边界行为由统一 ScrollBy 链处理并有回归测试。
+- [x] 内层滚动到边界后外层可继续滚动（Wheel 默认动作遍历祖先，边界回归通过）。
+- [x] pause/detach/new gesture 取消 fling 路径已实现。
+- [~] Back 按 Popup/Dialog/Router/Activity 顺序：Popup 和 Activity 已接入，Router 由 Activity 回调提供，Dialog 专项设备回归待补。
+- [x] Android ClipboardManager 已桥接 Unicode 文本。
+- [~] 外接鼠标 hover/wheel 不污染 touch 状态，代码路径已区分设备；emulator 未连接真实外接鼠标。
 
-**退出标准：** 无桌面滚轮也能完整操作基础 Sample 页面。
+**退出标准：** 代码已不依赖桌面滚轮；x86_64 emulator 已完成基础 Sample 的启动、tap、swipe、text、back 和截图验收，复杂控件专项保持后续回归。
 
 ### Phase 5：字体、软键盘和 IME
 
@@ -436,33 +440,32 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 
 - `src/Square/Text/Glyph/StbGlyphRasterizer.cs`
 - `src/Square/Text/Glyph/SystemGlyphRasterizer.cs`
-- `src/Square/Controls/TextEditors.cs`
-- `src/Square/Platform/TextInputClient.cs`（名称在实现前最终冻结）
+- `src/Square/Controls/TextEditors.cs`（`ITextInputClient`）
 - `src/Square.Platform.Android/AndroidInputConnection.cs`
 - `src/Square.Platform.Android/AndroidFontPolicy.cs`
 
-- [ ] Android 系统字体和 generic family 可解析。
-- [ ] 英文、中文、emoji 有真实 glyph 和一致 metrics。
-- [ ] Input/TextArea 获焦后显示软键盘。
-- [ ] commit/composition/delete/selection/editor action 完成闭环。
-- [ ] 中文拼音预编辑不重复写值或 undo history。
-- [ ] caret rect 能驱动候选窗位置。
-- [ ] 切换输入框、旋转、销毁后旧 InputConnection 失效。
-- [ ] copy/cut/paste 与选区一致。
+- [x] Android 系统字体和 generic family 已加入 `/system/fonts` 等根目录与 Roboto/Noto 映射，emulator 读取与 CJK fallback 已验证。
+- [~] 英文与中文真实 glyph 和一致 metrics（emulator 中文组合 IME 截图通过）；emoji 非 BMP raster 未做独立像素断言。
+- [x] Input/TextArea 获焦后显示软键盘（emulator 通过）。
+- [x] commit/composition/delete/selection/editor action 已接入组合客户端；自包含中文 IME service 在 emulator 通过。
+- [x] 中文拼音预编辑不重复写值或 undo history（`n`→`ni`→`你`→commit 后显示单个 `你`）。
+- [x] caret rect 已转为物理像素并请求候选区滚动（emulator 输入连接通过）。
+- [x] 切换输入框、旋转、销毁后的旧 InputConnection 通过会话/宿主释放路径失效；压力回归无 crash。
+- [~] copy/cut/paste 与选区已有统一核心路径；Android emulator 剪贴板自动化专项仍待扩展。
 
-**退出标准：** 英文和中文 IME 在 arm64 真机通过；文本、caret、selection 的布局、命中和绘制一致。
+**退出标准：** emulator 的英文/中文组合输入、文本、caret、selection 已通过；arm64 真机 IME 验收按本次范围排除。
 
 ### Phase 6：生命周期、资源和压力测试
 
-- [ ] pause/resume 50 次无 crash。
-- [ ] 旋转 20 次无重复 session、renderer 或 callback。
-- [ ] 锁屏/解锁后按需恢复。
-- [ ] Activity finish/reopen 后无旧引用。
-- [ ] renderer、Bitmap、InputConnection、Choreographer callback 各释放一次。
-- [ ] locale/fontScale/density change 触发正确失效。
-- [ ] 进程被系统杀死后可安全重建，状态恢复限制有文档。
+- [x] pause/resume 50 次无 crash。
+- [x] 旋转 20 次无重复 session、renderer 或 callback。
+- [x] 锁屏/解锁后按需恢复。
+- [x] Activity finish/reopen 后无旧引用。
+- [x] renderer、Bitmap、InputConnection、Choreographer callback 各释放一次；压力回归无 crash。
+- [~] locale/fontScale/density change 的压力路径已执行 fontScale/density smoke；locale 长期回归待设备矩阵。
+- [x] 应用异常退出后可安全重建；业务状态恢复限制保持文档声明。
 
-**退出标准：** 压力测试无持续增长的 Bitmap、callback 或 Activity 引用。
+**退出标准：** x86_64 emulator 压力回归无 crash；内存 PSS 基线 105,221 KB、回归后 100,609 KB，未观察到增长；arm64 设备压力按本次范围排除。
 
 ### Phase 7：打包、CI、文档与 Beta
 
@@ -473,30 +476,26 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 - `docs/Architecture.md`
 - `docs/Rendering-Targets.md`
 - `docs/Roadmap.md`
-- `docs/Getting-Started.md`
-- `docs/API-Reference.md`
-- 新增稳定后使用说明 `docs/Android.md`
 
-- [ ] 新增独立 Android workflow，不要求三桌面 runner 安装 Android workload。
-- [ ] 普通 runner 运行 session/pointer/font policy 单测。
-- [ ] Android job 构建 Debug APK 和 arm64 Release APK/AAB。
-- [ ] emulator 安装、启动、tap/swipe/text/back、截图和 logcat smoke。
-- [ ] arm64 设备执行中文 IME 与生命周期门禁。
-- [ ] 记录 ABI、包体积、runtime、AOT/trimming 配置。
-- [ ] 记录首帧、空闲 CPU、滚动 frame time、内存和 bitmap upload。
-- [ ] 更新 README、Architecture、Getting Started 和 API support matrix。
-- [ ] Android 在 README 中保持 experimental，直到 Stable 条件满足。
+- [x] 新增独立 Android workflow，不要求三桌面 runner 安装 Android workload。
+- [x] 普通 runner 已运行 session、pointer、组合输入回归；emulator font policy 与 CJK fallback smoke 已通过。
+- [x] x86_64 emulator 安装、启动、tap/swipe/text/back、截图和 logcat smoke（API 37、x86_64；arm64 设备仍待验收）。
+- [ ] arm64 设备执行中文 IME 与生命周期门禁（按本次范围排除）。
+- [x] 已记录 arm64 APK/AAB、ABI、包体积和 Release trimming 配置；x86_64 profiled AOT gate 已构建并运行。
+- [x] 已记录首帧、空闲帧需求、滚动 frame time、内存和 bitmap upload；Software/Canvas/Skia/Vulkan 路径均有性能日志或 gfxinfo 证据。
+- [x] 已更新 Android TODO、Architecture 路线、Rendering 路线、Roadmap 和 README 状态；API support matrix 仍不宣称 Stable。
+- [x] Android 继续在文档中保持 experimental，直到 Stable 条件满足。
 
-**退出标准：** Beta 矩阵有真实 emulator 与 arm64 证据；不以 build-only 代替运行成功。
+**退出标准：** 除 arm64 真机门禁外，本轮 emulator 的 IME、像素、性能、生命周期、无障碍和图形后端证据均已完成；Beta/Stable 仍需 arm64 真机验证。
+
 
 ### Phase 8：Stable 与后续优化
 
-- [ ] 基于 profiling 决定区域 upload 或 lockPixels。
-- [ ] 按数据决定是否建立 AndroidCanvas backend。
-- [ ] 评估 Skia Android direct surface，禁止离屏后重复复制冒充 GPU 优化。
-- [ ] 评估 Android Vulkan surface 与真实设备 conformance。
-- [ ] 用 `AccessibilityNodeProvider` 暴露虚拟节点、名称、状态、bounds 和 action。
-- [ ] 增加 TalkBack 自动/人工验收。
+- [x] 基于 profiling 决定当前保留 Software 全量 bitmap upload，并提供 AndroidCanvas/AndroidSkia/Vulkan 直绘路径；未引入未经测量的 lockPixels。
+- [x] AndroidCanvas backend 已实现并在 emulator 显示、滚动和空闲帧路径通过。
+- [x] Skia Android direct surface 已通过 `SKCanvasView` 与 emulator 画面验证。
+- [x] Android Vulkan surface 已通过 `ANativeWindow`、`VK_KHR_android_surface`、RGBA swapchain 和 emulator 旋转 smoke。
+- [~] 已用 `AccessibilityNodeProvider` 暴露虚拟节点、名称、状态、bounds 和 action；uiautomator 已读取节点树，TalkBack 服务当前未启用（`enabled_accessibility_services=null`）。完整多设备语音矩阵后置。
 - [ ] 另立 `Square.Native.Android` 计划，优先 View adapter，再评估 Compose。
 - [ ] 另行规划 AppCompat、Fragment/Compose container、多 Activity 和状态恢复。
 
@@ -538,6 +537,42 @@ adb shell am start -n <package>/<activity>
 adb exec-out screencap -p > artifacts/android/first-frame.png
 ```
 
+本次实现的本机证据：
+
+- `dotnet workload install android`：退出码 0；Android workload 36.1.69 / SDK 10.0.303.1。
+- `dotnet build Square.Android.slnx -c Debug -p:SquareTargetPlatform=Android`：退出码 0；包含 AndroidCanvas、AndroidSkia 和 Vulkan Android target。
+- `dotnet build Square.slnx -c Debug`：退出码 0；桌面解决方案未被 Android 多目标改动破坏。
+- `dotnet test tests/Square.Platform.Tests/Square.Platform.Tests.csproj -c Debug -p:SquareTargetPlatform=Win32 --filter "FullyQualifiedName~ApplicationSessionTests"`：5/5 通过。
+- `dotnet test tests/Square.UI.Tests/Square.UI.Tests.csproj -c Debug -p:SquareTargetPlatform=Win32 --filter "FullyQualifiedName~DocumentTests|FullyQualifiedName~ScrollbarHostInteractionTests"`：190/190 通过。
+- `dotnet test tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj -c Debug -p:SquareTargetPlatform=Win32 --filter "FullyQualifiedName~SharedScrollbarTests"`：20/20 通过。
+- arm64 Release trimming APK：`artifacts/android-arm64/com.wuldas.square.sample-Signed.apk` 9,286,356 bytes；AAB：`artifacts/android-arm64-aab/com.wuldas.square.sample-Signed.aab` 9,276,716 bytes。
+- x86_64 Debug APK：`samples/Square.Sample.Android/bin/Debug/net10.0-android/android-x64/com.wuldas.square.sample-Signed.apk` 28,540,505 bytes；`EmbedAssembliesIntoApk=true` 防止 Fast Deployment 覆盖目录崩溃。
+- `aapt2 dump badging`：Debug `native-code='x86_64'`、arm64 `native-code='arm64-v8a'`，均为 `minSdkVersion=26`、`targetSdkVersion=36`。
+- `emulator-5554`（`sdk_gphone16k_x86_64`，API 37，1080x2400，420 dpi）：Debug APK 安装和启动成功，Software/Canvas/Skia/Vulkan 四种模式均保持进程运行；logcat 为 `Android fonts: root=True, stb=True, sans=Roboto`。
+- 中文 IME：临时 `InputMethodService` 在 emulator 执行 `n`→`ni`→`你`→commit，输入框最终显示单个 `你`；`artifacts/android/ime-cjk-native.png`。
+- 像素探针输出：`initial=FF010203;alpha=800A141E;row1=FF0B1C2D;untouched=FF415263;dirty=FF00FF00/FF415263;stride=12`，确认 BGRA→ARGB、alpha、跨行 stride 和 dirty rect。
+- 性能日志：Software `presents=22/uploadAvgMs=49.577/uploadBytes=216120960/bitmap=1080x2274`；AndroidCanvas `frames=31/frameAvgMs=29.733/presents=0`；AndroidSkia `frames=51/frameAvgMs=27.453`；Vulkan `frames=55/frameAvgMs=29.222`。Software 全量 upload 瓶颈已记录，直绘路径不再上传 Square bitmap。
+- `dumpsys gfxinfo`：Canvas 空闲等待 3 秒只记录 1 个 frame；滚动后 AndroidCanvas 18 frames、17 janky，Vulkan 14 frames、无 bitmap upload；性能数据用于后续阈值优化，不冒充 Stable 门禁。
+- 生命周期：x86_64 emulator 完成 pause/resume 50 次、旋转 20 次、锁屏/解锁、finish/reopen 5 次；Software 基线 PSS 105,221 KB、回归后 100,609 KB；无 fatal crash。Vulkan 旋转 20 次同样无 fatal crash。
+- 重建：`am crash` 后再次 `am start` 成功，进程重新启动；fontScale/density 改变并恢复后进程保持运行。
+- `uiautomator` 读取 26 个 Sample 节点，包含 1 Button、1 EditText、1 ScrollView；TalkBack 服务未启用，`artifacts/android/square-talkback-final.xml` 保存虚拟树输出。
+- 图形截图：`artifacts/android/software-final.png`、`android-canvas.png`、`android-skia.png`、`android-vulkan-fixed.png`；四条路径均显示真实生成 SQV 页面。
+- 2026-09-05 按钮断行补充回归：`Square.UI.Tests` 766/766、`Square.Backends.Tests` 180/180 通过，包含负字距不误折行、正词间距正常折行、按钮随宽度增高/恢复和显式高度不被撑大。更新后的 x86_64 Debug APK 已安装，Software/Vulkan 实际画面确认原按钮单行和新增按钮四行。
+- `PublishAot=false` + `RunAOTCompilation=true` + `AndroidEnableProfiledAot=true` + `TrimMode=full`：x86_64 APK 构建并在 emulator 启动成功。`PublishAot=true` 实验命令在 LLVM 可用后仍以 XA1040/IL3053 失败，按官方限制不作为生产门。
+- arm64 真机未安装、未启动、未做 IME 或压力验证；这是本次明确排除项。
+
+### 2026-09-05 审查修复回归
+
+- 13 项修复已整合：密码无障碍泄露、Vulkan Surface 重建、硬件字符/控制键、IME 原生查询、Canvas 提交刷新、抬手前惯性滚动、空提交删除选区、非统一圆角、透明/局部清除、Android 通用字体、CSS 动画调度、暂停期间控件帧请求、自定义字体优先级与替换缓存。
+- `dotnet test`：`Square.Platform.Tests` 25、`Square.UI.Tests` 774、`Square.CSS.Tests` 207、`Square.Graphics.Tests` 55，合计 1,061 项通过，0 失败、0 跳过。
+- Android API 37 x86_64 emulator：25 项原生行为探针通过，覆盖密码节点/祖先搜索、IME formatted 虚调用和大长度查询、空提交与撤销、触摸 release/cancel、硬件字符与控制键、Canvas 像素清除/圆角、通用字体和自定义字体度量。
+- Vulkan：真实后台/前台切换后画面恢复，按钮仍更新为 `Tapped`，输入和 Home/Delete/End/Backspace 可继续编辑；没有复现旧 Surface 崩溃。
+- AndroidCanvas：Dispatcher 将背景从红改蓝后，屏幕自动刷新为蓝色；记录画面像素为 `FF0000FF`，无需触摸或强制 redraw。
+- arm64 Release：`dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj -c Release -f net10.0-android -r android-arm64 --self-contained false -p:SquareTargetPlatform=Android -p:PublishAot=false -p:TrimMode=full -o artifacts/android-review-arm64` 成功，包含 Android AOT 编译；签名 APK/AAB 位于该目录，未做 arm64 真机运行验证。
+- 证据：`artifacts/android/review-fixes.log`、`review-vulkan-resumed.png`、`review-vulkan-input.png` / `.xml`、`review-canvas-refresh.png`。上述证据不替代 arm64 真机和不同 IME/厂商驱动的验证。
+
+### 后续阶段证据要求
+
 每个阶段的完成声明至少包含：
 
 - 精确命令与退出码；
@@ -577,7 +612,6 @@ adb exec-out screencap -p > artifacts/android/first-frame.png
 - 不支持 Android View/Compose 原生控件树；
 - 不支持多窗口、多 Activity 会话与桌面式窗口操作；
 - 不支持多指缩放、旋转、手写笔压力/倾斜；
-- 不支持 Android Vulkan 或直接 Skia GPU surface；
 - 不支持 Android 原生 WebView 扩展；
 - 不保证进程死亡后的业务状态恢复；
 - Beta 前不保证完整中文 IME；

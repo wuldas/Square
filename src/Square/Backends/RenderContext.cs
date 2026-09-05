@@ -1863,25 +1863,17 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     private void RenderSystemText(TextLayout textLayout, Point origin, Color color)
     {
         var lineHeight = TextMetrics.GetLineHeight(textLayout.Font, textLayout.LineHeight) * _dpiScale;
-        var maxWidth = textLayout.MaxSize.Width * _dpiScale;
         var physicalFont = textLayout.Font.WithSize(textLayout.Font.Size * _dpiScale);
         var baselineOffset = TextMetrics.GetBaselineOffset(physicalFont, lineHeight);
-        var glyphs = new Dictionary<int, RasterizedGlyph?>();
-        var lines = TextWrapping.Wrap(textLayout.Text, maxWidth, (offset, rune) =>
-        {
-            if (!rune.IsBmp) return TextLayout.MeasureRuneAdvance(rune, textLayout.Font) * _dpiScale;
-            var character = (char)rune.Value;
-            var glyph = _glyphRasterizer.Rasterize(physicalFont, character);
-            var advance = TextLayout.MeasureRuneAdvance(rune, textLayout.Font) * _dpiScale;
-            glyphs[offset] = glyph;
-            return advance;
-        }, textLayout.WrappingOptions);
+        // Match measurement in logical coordinates; scale only glyph rasterization and placement.
+        var lines = TextWrapping.Wrap(textLayout.Text, textLayout.MaxSize.Width, (_, rune) =>
+            TextLayout.MeasureRuneAdvance(rune, textLayout.Font), textLayout.WrappingOptions);
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
             var indent = textLayout.GetLineIndent(lineIndex);
-            var x = origin.X + (indent + GetTextAlignmentOffset(textLayout, line.Width / _dpiScale + indent)) * _dpiScale;
+            var x = origin.X + (indent + GetTextAlignmentOffset(textLayout, line.Width + indent)) * _dpiScale;
             var y = origin.Y + lineIndex * lineHeight + baselineOffset;
             foreach (var visualRune in textLayout.EnumerateVisualRunes(line))
             {
@@ -1889,11 +1881,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 var advance = visualRune.Advance * _dpiScale;
                 RasterizedGlyph? glyph = null;
                 if (rune.IsBmp)
-                {
-                    glyph = visualRune.Glyph == visualRune.Rune && glyphs.TryGetValue(visualRune.StartOffset, out var cached)
-                        ? cached
-                        : _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
-                }
+                    glyph = _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
                 if (glyph != null)
                 {
                     var glyphX = (int)MathF.Round(x);

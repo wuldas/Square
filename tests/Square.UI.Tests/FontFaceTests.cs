@@ -1,9 +1,12 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Square.Text.Fonts;
 using Square.Graphics;
+using Square.Resources;
+using Square.Text.Glyph;
 using Square.UI;
 using Xunit;
 
@@ -125,6 +128,47 @@ public class FontFaceTests
         Assert.Equal(FontWeight.Bold, face.Weight);
         Assert.Equal(FontStyle.Italic, face.Style);
         Assert.True(Square.Text.FontManager.Instance.IsFamilyKnown("SquareDescriptorFace"));
+    }
+
+    [Fact]
+    public async Task CustomFontUsesLoadedGlyphsAndMetricsAfterReplacingFace()
+    {
+        const string family = "SquareCustomGlyphMetrics";
+        var bytes = ApplicationResource.ReadAllBytes("iconfont/iconfont.ttf", typeof(UIDocument).Assembly);
+        await new FontFace(family, bytes).LoadAsync();
+        var font = new Font(family, 32);
+        var rasterizer = new SystemGlyphRasterizer();
+        var provider = new Square.Text.Glyph.SystemTextMetricsProvider(rasterizer);
+        var glyph = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, '\ue669'));
+
+        // The embedded icon face uses a 1024-unit em, 1024-unit advances,
+        // 896-unit ascent and -128-unit descent, and has no Latin glyphs.
+        Assert.Equal(32f, glyph.AdvanceX);
+        Assert.Null(rasterizer.Rasterize(font, 'A'));
+        Assert.True(provider.TryGetFontMetrics(font, out var metrics));
+        Assert.Equal(-28f, metrics.Ascent);
+        Assert.Equal(4f, metrics.Descent);
+        var reference = Assert.IsType<RasterizedGlyph>(new StbGlyphRasterizer().Rasterize(font, '\ue669'));
+        Assert.Equal(reference.Coverage, glyph.Coverage);
+
+        // Replacing the same face must replace cached glyphs as well as metrics.
+        var replacement = (byte[])bytes.Clone();
+        var tableCount = BinaryPrimitives.ReadUInt16BigEndian(replacement.AsSpan(4));
+        for (var i = 0; i < tableCount; i++)
+        {
+            var record = 12 + i * 16;
+            if (BinaryPrimitives.ReadUInt32BigEndian(replacement.AsSpan(record)) != 0x68656164) continue; // head
+            var offset = checked((int)BinaryPrimitives.ReadUInt32BigEndian(replacement.AsSpan(record + 8)));
+            BinaryPrimitives.WriteUInt16BigEndian(replacement.AsSpan(offset + 18), 2048);
+            break;
+        }
+        await new FontFace(family, replacement).LoadAsync();
+
+        var replacedGlyph = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, '\ue669'));
+        Assert.Equal(16f, replacedGlyph.AdvanceX);
+        Assert.True(provider.TryGetFontMetrics(font, out metrics));
+        Assert.Equal(-14f, metrics.Ascent);
+        Assert.Equal(2f, metrics.Descent);
     }
 
     [Fact]

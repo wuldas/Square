@@ -826,6 +826,121 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void EmptyTextCommitDeletesSelectionAndCanBeUndone()
+    {
+        var input = new Input { Value = "abcDEF" };
+        ITextInputClient client = input;
+        client.SetSelection(0, input.Value.Length);
+        var inputEvents = 0;
+        input.AddEventListener("input", () => inputEvents++);
+
+        client.CommitText("");
+
+        Assert.Equal("", input.Value);
+        Assert.Equal(0, client.SelectionStart);
+        Assert.Equal(0, client.SelectionEnd);
+        Assert.Equal(1, inputEvents);
+        Assert.True(input.Undo());
+        Assert.Equal("abcDEF", input.Value);
+        Assert.False(input.CanUndo);
+    }
+
+    [Fact]
+    public void EmptyTextCommitWithoutSelectionPreservesCaretAndRedo()
+    {
+        var input = new Input { Value = "abc" };
+        ITextInputClient client = input;
+        client.CommitText("DEF");
+        Assert.True(input.Undo());
+        client.SetSelection(1, 1);
+        var inputEvents = 0;
+        input.AddEventListener("input", () => inputEvents++);
+
+        client.CommitText("");
+
+        Assert.Equal("abc", input.Value);
+        Assert.Equal(1, input.CaretIndex);
+        Assert.Equal(0, input.SelectionLength);
+        Assert.Equal(0, inputEvents);
+        Assert.False(input.CanUndo);
+        Assert.True(input.Redo());
+        Assert.Equal("abcDEF", input.Value);
+    }
+
+    [Fact]
+    public void EmptyTextCommitDeletesCompositionInsteadOfRestoringSelectedText()
+    {
+        var input = new Input { Value = "abcDEF" };
+        ITextInputClient client = input;
+        client.SetSelection(1, 4);
+        client.SetComposingText("你");
+        Assert.Equal("a你EF", input.Value);
+
+        client.CommitText("");
+
+        Assert.Equal("aEF", input.Value);
+        Assert.Equal(-1, client.CompositionStart);
+        Assert.Equal(1, input.CaretIndex);
+        Assert.Equal(0, input.SelectionLength);
+        Assert.True(input.Undo());
+        Assert.Equal("abcDEF", input.Value);
+        Assert.False(input.CanUndo);
+    }
+
+    [Fact]
+    public void EmptyTextCommitRemovesInsertedCompositionWithoutCreatingUndoEntry()
+    {
+        var input = new Input { Value = "abc" };
+        ITextInputClient client = input;
+        client.SetSelection(1, 1);
+        client.SetComposingText("你");
+        Assert.Equal("a你bc", input.Value);
+
+        client.CommitText("");
+
+        Assert.Equal("abc", input.Value);
+        Assert.Equal(-1, client.CompositionStart);
+        Assert.Equal(1, input.CaretIndex);
+        Assert.Equal(0, input.SelectionLength);
+        Assert.False(input.CanUndo);
+    }
+
+    [Fact]
+    public void FinishingEmptyCompositionPreservesItsDeletionAsOneUndoableEdit()
+    {
+        var textArea = new TextArea { Value = "first\nsecond" };
+        ITextInputClient client = textArea;
+        client.SetSelection(5, 12);
+        client.SetComposingText("");
+        Assert.Equal("first", textArea.Value);
+
+        client.FinishComposingText();
+
+        Assert.Equal("first", textArea.Value);
+        Assert.Equal(-1, client.CompositionStart);
+        Assert.Equal(5, textArea.CaretIndex);
+        Assert.True(textArea.Undo());
+        Assert.Equal("first\nsecond", textArea.Value);
+        Assert.False(textArea.CanUndo);
+    }
+
+    [Theory]
+    [InlineData("number", "123", "invalid")]
+    [InlineData("text", "abc", "\r\n")]
+    public void FilteredNonemptyTextCommitDoesNotDeleteSelection(string type, string value, string text)
+    {
+        var input = new Input { Type = type, Value = value };
+        ITextInputClient client = input;
+        client.SetSelection(0, value.Length);
+
+        client.CommitText(text);
+
+        Assert.Equal(value, input.Value);
+        Assert.Equal(value, input.SelectedText);
+        Assert.False(input.CanUndo);
+    }
+
+    [Fact]
     public void TextAreaUndoRestoresSelectionReplacementAndDeletion()
     {
         var textArea = new TextArea { Value = "first\nsecond" };

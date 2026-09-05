@@ -31,15 +31,15 @@ public sealed class FontManager
         ["Consolas"] = "Consolas",
         ["Cascadia Code"] = "Cascadia Code",
         ["Cascadia Mono"] = "Cascadia Mono",
-        ["sans-serif"] = "Segoe UI",
-        ["serif"] = "Times New Roman",
-        ["monospace"] = "Consolas",
+        ["sans-serif"] = OperatingSystem.IsAndroid() ? "sans-serif" : "Segoe UI",
+        ["serif"] = OperatingSystem.IsAndroid() ? "serif" : "Times New Roman",
+        ["monospace"] = OperatingSystem.IsAndroid() ? "monospace" : "Consolas",
         ["cursive"] = "Segoe Script",
-        ["fantasy"] = "Segoe UI",
-        ["system-ui"] = "Segoe UI",
-        ["ui-sans-serif"] = "Segoe UI",
-        ["ui-serif"] = "Times New Roman",
-        ["ui-monospace"] = "Consolas",
+        ["fantasy"] = OperatingSystem.IsAndroid() ? "sans-serif" : "Segoe UI",
+        ["system-ui"] = OperatingSystem.IsAndroid() ? "sans-serif" : "Segoe UI",
+        ["ui-sans-serif"] = OperatingSystem.IsAndroid() ? "sans-serif" : "Segoe UI",
+        ["ui-serif"] = OperatingSystem.IsAndroid() ? "serif" : "Times New Roman",
+        ["ui-monospace"] = OperatingSystem.IsAndroid() ? "monospace" : "Consolas",
     };
 
     /// <summary>已知/已缓存的族名列表（含已加载自定义族）。</summary>

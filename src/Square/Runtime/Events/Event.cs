@@ -155,21 +155,44 @@ public sealed class WheelEvent : Event
 /// <summary>指针事件（Square 对齐 DOM PointerEvent 的最小实现）。</summary>
 public sealed class PointerEvent : Event
 {
-    /// <summary>创建带客户区坐标和按键编号的指针事件。</summary>
+    /// <summary>使用鼠标兼容参数创建指针事件。</summary>
     public PointerEvent(string type, float clientX, float clientY, int button = 0, EventInit? init = null)
+        : this(type, clientX, clientY, 0, Square.Platform.PointerDeviceKind.Mouse, button, true, init)
+    {
+    }
+
+    /// <summary>创建带完整设备信息的指针事件。</summary>
+    public PointerEvent(
+        string type,
+        float clientX,
+        float clientY,
+        int pointerId,
+        Square.Platform.PointerDeviceKind pointerType,
+        int button = 0,
+        bool isPrimary = true,
+        EventInit? init = null)
         : base(type, init ?? StandardEvents.GetDefaultInit(type))
     {
         ClientX = clientX;
         ClientY = clientY;
+        PointerId = pointerId;
+        PointerType = pointerType;
         Button = button;
+        IsPrimary = isPrimary;
     }
 
     /// <summary>客户区横坐标。</summary>
     public float ClientX { get; }
     /// <summary>客户区纵坐标。</summary>
     public float ClientY { get; }
+    /// <summary>设备内指针 ID。</summary>
+    public int PointerId { get; }
+    /// <summary>指针设备种类。</summary>
+    public Square.Platform.PointerDeviceKind PointerType { get; }
     /// <summary>触发按键编号：0 主键，1 中键，2 次键。</summary>
     public int Button { get; }
+    /// <summary>是否为主指针。</summary>
+    public bool IsPrimary { get; }
 }
 
 /// <summary>键盘事件（Square 对齐 DOM KeyboardEvent 的最小实现）。</summary>

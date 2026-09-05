@@ -31,6 +31,17 @@ public static class CssStyleReconciler
             return DirtyElements.Any(element => ReferenceEquals(FindTreeRoot(element), root));
     }
 
+    internal static bool HasRunningAnimationsForTree(Element root)
+    {
+        lock (Gate)
+        {
+            foreach (var scope in Scopes)
+                if (scope.Animations.HasRunningAnimations && ReferenceEquals(FindTreeRoot(scope.Root), root))
+                    return true;
+        }
+        return false;
+    }
+
     internal static void RegisterScope(CssEngine engine, Element root)
     {
         _ = HasWork; // Ensures the static constructor subscribed to Element.StyleInvalidated.

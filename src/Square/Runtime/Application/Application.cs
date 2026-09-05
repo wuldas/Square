@@ -18,6 +18,7 @@ public abstract class Application
     /// <summary>应用退出时触发。</summary>
     public event Action? Exited;
 
+    private bool _externalRunEntered;
     /// <summary>构造应用并将当前线程设为当前实例。</summary>
     protected Application()
     {
@@ -45,6 +46,39 @@ public abstract class Application
                 IsRunning = false;
                 Exited?.Invoke();
             }
+        }
+    }
+
+    /// <summary>为外部事件循环进入应用运行状态。</summary>
+    internal void EnterExternalRun()
+    {
+        if (IsRunning) throw new InvalidOperationException("Application already running");
+        IsRunning = true;
+        _externalRunEntered = true;
+        try
+        {
+            OnStart();
+        }
+        catch
+        {
+            ExitExternalRun();
+            throw;
+        }
+    }
+
+    /// <summary>退出由外部事件循环进入的应用运行状态。</summary>
+    internal void ExitExternalRun()
+    {
+        if (!_externalRunEntered) return;
+        _externalRunEntered = false;
+        try
+        {
+            OnExit();
+        }
+        finally
+        {
+            IsRunning = false;
+            Exited?.Invoke();
         }
     }
 

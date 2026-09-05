@@ -116,6 +116,29 @@ dotnet run --project samples/Square.Sample.RichText/Square.Sample.RichText.cspro
 dotnet test Square.slnx
 ```
 
+## Android Experimental
+
+Android 首期使用 .NET 10 for Android、单 Activity 和单 `SquareView`，通过 `ApplicationSession` 由 Activity/Looper/Choreographer 驱动。默认路径为 Software BGRA bitmap 到 Android `ARGB_8888` bitmap；也可通过 Activity extra 选择 `AndroidCanvas`、`AndroidSkia` 或 `Vulkan` 直绘路径。Android 不引入 MAUI、原生 View/Compose 控件树或桌面窗口操作。
+
+```bash
+dotnet workload restore Square.Android.slnx
+dotnet restore Square.Android.slnx -p:SquareTargetPlatform=Android
+dotnet build Square.Android.slnx -c Debug -p:SquareTargetPlatform=Android
+dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj \
+  -c Release -f net10.0-android -r android-arm64 --self-contained false \
+  -p:SquareTargetPlatform=Android -p:PublishAot=false -p:TrimMode=full
+```
+
+```bash
+adb shell am start -n <package>/<activity> --es backend AndroidCanvas
+adb shell am start -n <package>/<activity> --es backend AndroidSkia
+adb shell am start -n <package>/<activity> --es backend Vulkan
+```
+
+Release 的 x86_64 Android 门禁使用 trimming + profiled Mono AOT：`PublishAot=false`、`RunAOTCompilation=true`、`AndroidEnableProfiledAot=true`。当前 arm64 APK/AAB 产物使用 Release trimming；`PublishAot=true` 仍会触发官方 XA1040 实验性限制，不作为生产支持声明。
+
+当前 Android 支持等级为 Experimental：代码、x86_64 emulator 的 IME/像素/性能/生命周期/虚拟 accessibility tree smoke、Canvas/Skia/Vulkan 路径以及 APK/AAB 构建已落地；arm64 真机验证、稳定版多设备门禁和官方 NativeAOT 仍未完成。详细边界与验收矩阵见 [Android 平台 TODO](docs/Android-Platform-TODO.md)。
+
 ## NativeAOT 发布
 
 Hot Reload 仅用于框架依赖运行时的 Debug 构建，不适用于 Release、trimming 或 NativeAOT 发布。

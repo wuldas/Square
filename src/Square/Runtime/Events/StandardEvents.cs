@@ -11,6 +11,8 @@ public static class StandardEvents
     public const string PointerUp = "pointerup";
     /// <summary>指针移动。</summary>
     public const string PointerMove = "pointermove";
+    /// <summary>指针取消。</summary>
+    public const string PointerCancel = "pointercancel";
     /// <summary>滚轮。</summary>
     public const string Wheel = "wheel";
     /// <summary>滚动位置变化。</summary>
@@ -47,8 +49,8 @@ public static class StandardEvents
         [PointerDown] = BubblingCancelable(),
         [PointerUp] = BubblingCancelable(),
         [PointerMove] = BubblingCancelable(),
+        [PointerCancel] = BubblingCancelable(),
         [Wheel] = BubblingCancelable(),
-        [Scroll] = None(),
         [KeyDown] = BubblingCancelable(),
         [KeyUp] = BubblingCancelable(),
         [TextInput] = Bubbling(),
@@ -76,12 +78,35 @@ public static class StandardEvents
         return new Event(type, init);
     }
 
-    /// <summary>创建 pointerdown 事件。</summary>
-    public static Event CreatePointerDown() => Create(PointerDown);
-    /// <summary>创建 pointerup 事件。</summary>
-    public static Event CreatePointerUp() => Create(PointerUp);
-    /// <summary>创建 pointermove 事件。</summary>
-    public static Event CreatePointerMove() => Create(PointerMove);
+    /// <summary>创建无坐标兼容 pointerdown 事件。</summary>
+    public static Event CreatePointerDown() => CreatePointer(PointerDown, default);
+    /// <summary>创建无坐标兼容 pointerup 事件。</summary>
+    public static Event CreatePointerUp() => CreatePointer(PointerUp, default);
+    /// <summary>创建无坐标兼容 pointermove 事件。</summary>
+    public static Event CreatePointerMove() => CreatePointer(PointerMove, default);
+    /// <summary>创建无坐标兼容 pointercancel 事件。</summary>
+    public static PointerEvent CreatePointerCancel() => CreatePointer(PointerCancel, default);
+    /// <summary>创建带平台输入载荷的 pointerdown 事件。</summary>
+    public static PointerEvent CreatePointerDown(Square.Platform.PointerInput input) =>
+        CreatePointer(PointerDown, input);
+    /// <summary>创建带平台输入载荷的 pointerup 事件。</summary>
+    public static PointerEvent CreatePointerUp(Square.Platform.PointerInput input) =>
+        CreatePointer(PointerUp, input);
+    /// <summary>创建带平台输入载荷的 pointermove 事件。</summary>
+    public static PointerEvent CreatePointerMove(Square.Platform.PointerInput input) =>
+        CreatePointer(PointerMove, input);
+    /// <summary>创建带平台输入载荷的 pointercancel 事件。</summary>
+    public static PointerEvent CreatePointerCancel(Square.Platform.PointerInput input) =>
+        CreatePointer(PointerCancel, input);
+    private static PointerEvent CreatePointer(string type, Square.Platform.PointerInput input) =>
+        new(type, input.Position.X, input.Position.Y, input.PointerId, input.DeviceKind,
+            input.Button switch
+            {
+                Square.Platform.MouseButton.Left => 0,
+                Square.Platform.MouseButton.Middle => 1,
+                Square.Platform.MouseButton.Right => 2,
+                _ => 0
+            }, input.IsPrimary);
     /// <summary>创建 contextmenu 事件。</summary>
     public static PointerEvent CreateContextMenu(float x, float y) => new(ContextMenu, x, y, 2);
     /// <summary>创建 wheel 事件。</summary>

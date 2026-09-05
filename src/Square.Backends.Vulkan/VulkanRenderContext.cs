@@ -80,7 +80,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         _pipeline = new VulkanPipeline(_device, _swapchain);
         _batchRenderer = new VulkanBatchRenderer(_device, _pipeline);
         _atlas = new VulkanTextureAtlas(_device, _pipeline);
-        _readback = new VulkanReadbackBuffer(_device);
+        _readback = new VulkanReadbackBuffer(_device, _swapchain.UsesBgraFormat);
         _minimized = _swapchain.Extent.Width < 1 || _swapchain.Extent.Height < 1;
         if (_readbackEnabled)
             _readback.EnsureSize(_swapchain.Extent.Width, _swapchain.Extent.Height);
@@ -624,14 +624,15 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight) * DpiScale;
         var physicalFont = text.Font.WithSize(text.Font.Size * DpiScale);
         var baselineOffset = TextMetrics.GetBaselineOffset(physicalFont, lineHeight);
-        var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width * DpiScale, (offset, rune) =>
-            TextLayout.MeasureRuneAdvance(rune, text.Font) * DpiScale, text.WrappingOptions);
+        // Match measurement in logical coordinates; scale only glyph rasterization and placement.
+        var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width, (_, rune) =>
+            TextLayout.MeasureRuneAdvance(rune, text.Font), text.WrappingOptions);
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
             var indent = text.GetLineIndent(lineIndex);
-            var x = physicalOrigin.X + (indent + GetTextAlignmentOffset(text, line.Width / DpiScale + indent)) * DpiScale;
+            var x = physicalOrigin.X + (indent + GetTextAlignmentOffset(text, line.Width + indent)) * DpiScale;
             var y = physicalOrigin.Y + lineIndex * lineHeight + baselineOffset;
             foreach (var visualRune in text.EnumerateVisualRunes(line))
             {

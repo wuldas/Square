@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <Description>Square Android platform sample</Description>
+    <ApplicationId>com.wuldas.square.sample</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <SquareTargetPlatform>Android</SquareTargetPlatform>
+    <DefineConstants>$(DefineConstants);PLATFORM_ANDROID;BACKEND_SOFTWARE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Square\Square.csproj">
+      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Square.Platform.Android\Square.Platform.Android.csproj">
+      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      SetTargetFramework="TargetFramework=netstandard2.0"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetPlatformIdentifier" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="**\*.sqv" />
+  </ItemGroup>
+</Project>

@@ -92,6 +92,43 @@ public class FlexSizingTests
     }
 
     [Fact]
+    public void WrappedButtonAutoHeightTracksWidthAndRespectsExplicitHeight()
+    {
+        var root = new View();
+        root.Style.CssText = "display: flex; flex-direction: column;";
+        var button = new Button("Tap this button to check that wrapped text increases its height");
+        button.Style.CssText = "width: 800px; box-sizing: border-box; padding: 10px 12px; " +
+            "border: 2px solid black; font-size: 16px; line-height: 22px; white-space: normal;";
+        root.Children.Add(button);
+        new CssEngine().ApplyStylesToTree(root);
+        Layout(root, new Size(900, 600));
+        Assert.Equal(46, button.Geometry.Height);
+
+        button.Style.Set("width", "180px");
+        Layout(root, new Size(900, 600));
+        var font = Square.Text.FontManager.Instance.FromCss(button.Style.Get("font-family"), "16px", null, null, 16);
+        var text = new TextLayout(button.TextContent, font)
+        {
+            MaxSize = new Size(152, float.MaxValue),
+            LineHeight = 22f / 16
+        };
+        var lineCount = text.GetVisualLines().Count;
+        Assert.True(lineCount > 1);
+        Assert.Equal(lineCount * 22 + 24, button.Geometry.Height);
+        Assert.Equal(lineCount * 22, button.SelectableTextBounds.Height);
+        Assert.True(button.SelectableTextBounds.Width <= 152);
+
+        button.Style.Set("height", "48px");
+        Layout(root, new Size(900, 600));
+        Assert.Equal(48, button.Geometry.Height);
+
+        button.Style.Set("height", "auto");
+        button.Style.Set("width", "800px");
+        Layout(root, new Size(900, 600));
+        Assert.Equal(46, button.Geometry.Height);
+    }
+
+    [Fact]
     public void TextDirectlyInsideRowKeepsIntrinsicSingleLineWidth()
     {
         var root = new View();

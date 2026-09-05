@@ -52,7 +52,7 @@ public class Button : UIElement, ITextSelectable
         get
         {
             var letterSpacing = GetDefaultWidgetLetterSpacing();
-            var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
+            var paintMaxSize = GetPaintMaxSize(letterSpacing);
             var layoutSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize, letterSpacing);
             return GetTextBounds(layoutSize, paintMaxSize, letterSpacing);
         }
@@ -61,12 +61,21 @@ public class Button : UIElement, ITextSelectable
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
     {
-        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f);
-        if (Style.Get("appearance") == null)
+        var hasAppearance = Style.Get("appearance") != null;
+        var availableWidth = Math.Max(0, availableSize.Width - (hasAppearance ? 0 : 32));
+        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f,
+            new Size(availableWidth, float.MaxValue), GetDefaultWidgetLetterSpacing());
+        if (!hasAppearance)
             return new Size(textSize.Width + 32, Math.Max(36, textSize.Height + 12));
-        return UsesDefaultWidgetTextMetrics()
-            ? new Size(MathF.Round(ControlDrawing.MeasureFontFileTextWidth(this, TextContent, 14f)), 15)
-            : textSize;
+        if (UsesDefaultWidgetTextMetrics())
+        {
+            var font = ControlDrawing.ResolveFont(this, 14f);
+            var lineHeight = ControlDrawing.GetStyledLineHeight(this, font.Size);
+            // Preserve the native single-line widget size, but let wrapped labels grow.
+            if (textSize.Height <= lineHeight)
+                return new Size(MathF.Round(ControlDrawing.MeasureFontFileTextWidth(this, TextContent, 14f)), 15);
+        }
+        return textSize;
     }
 
     /// <inheritdoc/>
@@ -77,7 +86,7 @@ public class Button : UIElement, ITextSelectable
             "color",
             IsEnabled ? Color.Black : Color.FromRgb(235, 235, 235));
         var letterSpacing = GetDefaultWidgetLetterSpacing();
-        var paintMaxSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
+        var paintMaxSize = GetPaintMaxSize(letterSpacing);
         var textSize = ControlDrawing.MeasureText(this, TextContent, 14f, paintMaxSize, letterSpacing);
         var textBounds = GetTextBounds(textSize, paintMaxSize, letterSpacing);
         var textPosition = new Point(textBounds.X, textBounds.Y);
@@ -106,6 +115,18 @@ public class Button : UIElement, ITextSelectable
             Style.Set("background-color", ToCssColor(Background));
         else if (name == nameof(Foreground))
             Style.Set("color", ToCssColor(Foreground));
+    }
+
+    private Size GetPaintMaxSize(float letterSpacing)
+    {
+        var textSize = ControlDrawing.MeasureText(this, TextContent, 14f, additionalLetterSpacing: letterSpacing);
+        var contentWidth = Math.Max(0, Geometry.Width -
+            ControlDrawing.GetStyledFloat(this, "border-left-width", 0) -
+            ControlDrawing.GetStyledFloat(this, "border-right-width", 0) -
+            ControlDrawing.GetStyledFloat(this, "padding-left", 0) -
+            ControlDrawing.GetStyledFloat(this, "padding-right", 0) -
+            (Style.Get("appearance") == null ? 32 : 0));
+        return new Size(Math.Min(textSize.Width, contentWidth), float.MaxValue);
     }
 
     private Rect GetTextBounds(Size textSize, Size paintMaxSize, float letterSpacing)

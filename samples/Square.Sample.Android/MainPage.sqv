@@ -1,0 +1,48 @@
+<template>
+  <View class="page">
+    <Text class="title" text="Square Android" />
+    <Text class="description" text="Software renderer / Canvas-first platform host" />
+    <Button class="action" @click="OnTap">Tap the button</Button>
+    <Button class="wrapped-action" @click="OnTap">Tap this button to check that wrapped text increases its height</Button>
+    <Text class="status" :text="Status" />
+    <Input class="input" placeholder="Tap to open the keyboard" />
+    <ScrollViewer class="scroll">
+      <View class="scroll-content">
+        <Text class="scroll-title" text="Touch scrolling" />
+        <Text class="scroll-copy" text="Swipe this area to scroll. The Android host translates touch motion into Square wheel input and keeps the click target from firing after a drag." />
+        <Text class="scroll-copy" text="The same retained Element Tree, CSS layout and Software RenderContext are used on desktop and Android." />
+        <Text class="scroll-copy" text="Line 1" />
+        <Text class="scroll-copy" text="Line 2" />
+        <Text class="scroll-copy" text="Line 3" />
+        <Text class="scroll-copy" text="Line 4" />
+        <Text class="scroll-copy" text="Line 5" />
+        <Text class="scroll-copy" text="Line 6" />
+        <Text class="scroll-copy" text="Line 7" />
+        <Text class="scroll-copy" text="Line 8" />
+        <Text class="scroll-copy" text="Line 9" />
+        <Text class="scroll-copy" text="Line 10" />
+      </View>
+    </ScrollViewer>
+  </View>
+</template>
+<script lang="csharp">
+  public ObservableValue<string> Status = new("Ready");
+
+  private void OnTap()
+  {
+    Status.Value = "Tapped";
+  }
+</script>
+<style>
+  .page { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #f7f8fa; }
+  .title { color: #172b4d; font-size: 24px; }
+  .description { color: #475467; font-size: 14px; }
+  .action { height: 48px; background: #1769e0; color: #ffffff; }
+  .wrapped-action { width: 180px; padding: 10px 12px; font-size: 16px; line-height: 22px; white-space: normal; background: #1769e0; color: #ffffff; }
+  .status { color: #067647; font-size: 14px; }
+  .input { height: 48px; color: #202124; }
+  .scroll { height: 300px; overflow-y: auto; background: #ffffff; border: 1px solid #d0d5dd; }
+  .scroll-content { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+  .scroll-title { color: #202124; font-size: 18px; }
+  .scroll-copy { color: #344054; font-size: 14px; }
+</style>

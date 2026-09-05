@@ -12,6 +12,8 @@ public interface IPlatformHost : IDisposable
     float DpiScale { get; }
     /// <summary>是否正在运行。</summary>
     bool IsRunning { get; }
+    /// <summary>是否使用移动端 overlay scrollbar profile。</summary>
+    bool UsesMobileScrollbarProfile => false;
     /// <summary>窗口状态。</summary>
     AppWindowState State => AppWindowState.Normal;
     /// <summary>窗口标题。</summary>
@@ -21,6 +23,12 @@ public interface IPlatformHost : IDisposable
     /// <summary>当前修饰键状态。</summary>
     KeyModifiers Modifiers { get; }
 
+    /// <summary>统一指针事件；桌面宿主可继续使用兼容的鼠标事件。</summary>
+    event Action<PointerInput>? PointerEvent
+    {
+        add { }
+        remove { }
+    }
     /// <summary>尺寸变化事件。</summary>
     event Action<Size>? SizeChanged;
     /// <summary>鼠标事件。</summary>

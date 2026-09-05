@@ -7,6 +7,8 @@ public enum NativeRenderTargetKind
     Win32Vulkan,
     /// <summary>X11 Vulkan 渲染目标。</summary>
     X11Vulkan,
+    /// <summary>Android Vulkan 原生窗口渲染目标。</summary>
+    AndroidVulkan,
     /// <summary>通用 Win32 窗口渲染目标。</summary>
     Win32
 }
@@ -51,4 +53,17 @@ public sealed record X11VulkanRenderTarget(IntPtr DisplayHandle, IntPtr WindowHa
 {
     /// <inheritdoc/>
     public NativeRenderTargetKind Kind => NativeRenderTargetKind.X11Vulkan;
+}
+
+/// <summary>Android Vulkan 原生窗口渲染目标。</summary>
+public sealed record AndroidVulkanRenderTarget(IntPtr NativeWindowHandle) : INativeRenderTarget
+{
+    /// <inheritdoc/>
+    public NativeRenderTargetKind Kind => NativeRenderTargetKind.AndroidVulkan;
+    /// <inheritdoc/>
+    public IntPtr WindowHandle => NativeWindowHandle;
+    /// <inheritdoc/>
+    public IntPtr DisplayHandle => IntPtr.Zero;
+    /// <inheritdoc/>
+    public int Screen => 0;
 }

@@ -4,6 +4,7 @@ using Silk.NET.Core;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.EXT;
+using VulkanResult = Silk.NET.Vulkan.Result;
 using Square.Graphics;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 using Buffer = Silk.NET.Vulkan.Buffer;
@@ -55,7 +56,8 @@ internal sealed unsafe class VulkanDevice : IDisposable
 
         var extensions = new List<string> { KhrSurface.ExtensionName };
         // Add platform-specific surface extensions
-        if (OperatingSystem.IsWindows()) extensions.Add("VK_KHR_win32_surface");
+        if (OperatingSystem.IsAndroid()) extensions.Add(KhrAndroidSurface.ExtensionName);
+        else if (OperatingSystem.IsWindows()) extensions.Add("VK_KHR_win32_surface");
         else extensions.Add("VK_KHR_xlib_surface");
 
         var available = GetAvailableInstanceExtensions();
@@ -347,9 +349,9 @@ internal sealed unsafe class VulkanDevice : IDisposable
         return result;
     }
 
-    internal static void ThrowIfFailed(Result result, string operation)
+    internal static void ThrowIfFailed(VulkanResult result, string operation)
     {
-        if (result != Result.Success)
+        if (result != VulkanResult.Success)
             throw new VulkanException($"{operation} failed: {result}");
     }
 

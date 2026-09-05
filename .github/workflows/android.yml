@@ -1,0 +1,73 @@
+name: Android
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+jobs:
+  build:
+    name: Android build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Restore Android workload
+        run: dotnet workload restore Square.Android.slnx
+
+      - name: Restore Android solution
+        run: dotnet restore Square.Android.slnx -p:SquareTargetPlatform=Android
+
+      - name: Build Android solution
+        run: dotnet build Square.Android.slnx --configuration Debug -p:SquareTargetPlatform=Android
+
+      - name: Build x86_64 Debug APK
+        run: >-
+          dotnet build samples/Square.Sample.Android/Square.Sample.Android.csproj
+          --configuration Debug --framework net10.0-android
+          --runtime android-x64 --self-contained false
+          -p:SquareTargetPlatform=Android
+
+      - name: Publish arm64 Release APK/AAB
+        run: >-
+          dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj
+          --configuration Release --framework net10.0-android
+          --runtime android-arm64 --self-contained false
+          -p:SquareTargetPlatform=Android -p:PublishAot=false -p:TrimMode=full
+          -o artifacts/android-arm64
+      - name: Publish Android supported profiled AOT gate
+        run: >-
+          dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj
+          --configuration Release --framework net10.0-android
+          --runtime android-x64 --self-contained false
+          -p:SquareTargetPlatform=Android -p:PublishAot=false
+          -p:RunAOTCompilation=true -p:AndroidEnableProfiledAot=true
+          -p:TrimMode=full -p:AndroidPackageFormats=apk
+          -o artifacts/android-aot
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: square-android
+          path: artifacts/android-arm64
+          if-no-files-found: error

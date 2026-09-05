@@ -1,6 +1,8 @@
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
+using VulkanImageView = Silk.NET.Vulkan.ImageView;
+using VulkanResult = Silk.NET.Vulkan.Result;
 
 namespace Square.Backends.Vulkan;
 
@@ -18,16 +20,17 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     public ColorSpaceKHR ImageColorSpace { get; private set; }
     public Extent2D Extent { get; private set; }
     public Silk.NET.Vulkan.Image[] Images { get; private set; } = [];
-    public ImageView[] ImageViews { get; private set; } = [];
+    public VulkanImageView[] ImageViews { get; private set; } = [];
     public Framebuffer[] Framebuffers { get; private set; } = [];
     public RenderPass RenderPass { get; private set; }
     public uint ImageCount { get; private set; }
     public bool VSync { get; }
     public bool SupportsReadback { get; }
+    public bool UsesBgraFormat { get; private set; }
 
     private Silk.NET.Vulkan.Image _multisampleImage;
     private DeviceMemory _multisampleImageMemory;
-    private ImageView _multisampleImageView;
+    private VulkanImageView _multisampleImageView;
 
     private Semaphore[] _imageAvailableSemaphores = [];
     private Semaphore[] _renderFinishedSemaphores = [];
@@ -57,6 +60,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         var surfaceFormat = SelectFormat(device.PhysicalDevice);
         ImageFormat = surfaceFormat.Format;
         ImageColorSpace = surfaceFormat.ColorSpace;
+        UsesBgraFormat = ImageFormat is Format.B8G8R8A8Unorm or Format.B8G8R8A8Srgb;
         CreateRenderPass();
         _renderPassSampleCount = _device.ColorSampleCount;
         Recreate(width, height);
@@ -118,7 +122,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             OldSwapchain = Swapchain
         };
 
-        Result result;
+        VulkanResult result;
         SwapchainKHR swapchain;
         if (_device.GraphicsQueueFamily == _device.PresentQueueFamily)
         {
@@ -162,7 +166,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         ImageCount = count;
         Images = images;
 
-        ImageViews = new ImageView[count];
+        ImageViews = new VulkanImageView[count];
         for (var i = 0; i < count; i++)
         {
             var viewInfo = new ImageViewCreateInfo(StructureType.ImageViewCreateInfo)
@@ -198,12 +202,22 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         }
         foreach (var fmt in formats)
         {
-            if (fmt.Format == Format.B8G8R8A8Srgb || fmt.Format == Format.B8G8R8A8Unorm)
+            if (fmt.Format is Format.B8G8R8A8Srgb or Format.B8G8R8A8Unorm)
+                return fmt;
+        }
+        foreach (var fmt in formats)
+        {
+            if (fmt.Format == Format.R8G8B8A8Unorm && fmt.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr)
+                return fmt;
+        }
+        foreach (var fmt in formats)
+        {
+            if (fmt.Format is Format.R8G8B8A8Srgb or Format.R8G8B8A8Unorm)
                 return fmt;
         }
         if (formats.Length == 1 && formats[0].Format == Format.Undefined)
             return new SurfaceFormatKHR(Format.B8G8R8A8Unorm, formats[0].ColorSpace);
-        throw new VulkanException("The Vulkan surface does not expose a BGRA8 format required by renderer capture.");
+        throw new VulkanException("The Vulkan surface does not expose a supported 32-bit RGBA format.");
     }
 
     private static CompositeAlphaFlagsKHR SelectCompositeAlpha(CompositeAlphaFlagsKHR supported)
@@ -396,7 +410,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     {
         DestroyFramebuffers();
         Framebuffers = new Framebuffer[ImageViews.Length];
-        var attachments = stackalloc ImageView[2];
+        var attachments = stackalloc VulkanImageView[2];
         for (var i = 0; i < ImageViews.Length; i++)
         {
             var attachmentCount = 1u;
@@ -484,14 +498,14 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         {
             uint imageIndex;
             var result = _khrSwapchain.AcquireNextImage(_device.Device, Swapchain, ulong.MaxValue, semaphore, default, &imageIndex);
-            if (result == Result.ErrorOutOfDateKhr)
+            if (result == VulkanResult.ErrorOutOfDateKhr)
             {
                 Recreate(_requestedWidth, _requestedHeight);
                 if (Extent.Width < 1 || Extent.Height < 1)
                     return false;
                 continue;
             }
-            if (result == Result.SuboptimalKhr)
+            if (result == VulkanResult.SuboptimalKhr)
                 _recreateAfterPresent = true;
             else
                 VulkanDevice.ThrowIfFailed(result, "vkAcquireNextImageKHR");
@@ -524,7 +538,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         };
 
         var result = _khrSwapchain.QueuePresent(_device.PresentQueue, in presentInfo);
-        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr)
+        if (result == VulkanResult.ErrorOutOfDateKhr || result == VulkanResult.SuboptimalKhr)
             _recreateAfterPresent = true;
         else
             VulkanDevice.ThrowIfFailed(result, "vkQueuePresentKHR");

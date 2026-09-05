@@ -33,7 +33,8 @@ internal sealed class StbGlyphRasterizer
             ? font
             : new Font(entry.Family, font.Size, font.Weight, font.Style);
         if (!_cacheGlyphs) return RasterizeStb(entry, effectiveFont, character);
-        var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style, character);
+        var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style,
+            character, _fonts.CustomGeneration);
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
         var glyph = RasterizeStb(entry, effectiveFont, character);
@@ -105,7 +106,8 @@ internal sealed class StbGlyphRasterizer
         float Size,
         FontWeight Weight,
         FontStyle Style,
-        char Character);
+        char Character,
+        int CustomGeneration);
 }
 
 /// <summary>已加载或延迟加载的字体条目，封装 stbtt_fontinfo 与字体数据来源。</summary>
@@ -420,7 +422,8 @@ internal sealed class FontCollection
 
         foreach (var root in roots)
         {
-            if (!Directory.Exists(root) || remaining.Count == 0) break;
+            if (remaining.Count == 0) break;
+            if (!Directory.Exists(root)) continue;
 
             IEnumerable<string> files;
             try
@@ -498,6 +501,25 @@ internal sealed class FontCollection
             ];
         }
 
+        if (OperatingSystem.IsAndroid())
+        {
+            return
+            [
+                "Roboto",
+                "Roboto Medium",
+                "Roboto Bold",
+                "Noto Sans",
+                "NotoSans",
+                "Noto Sans CJK SC",
+                "NotoSansCJK",
+                "Noto Serif",
+                "DroidSerif",
+                "RobotoMono",
+                "NotoSansMono",
+                "DroidSansMono",
+                "Noto Color Emoji"
+            ];
+        }
         if (OperatingSystem.IsLinux())
         {
             return
@@ -564,16 +586,26 @@ internal sealed class FontCollection
         }
         else
         {
-            // Prefer modern UI fonts with metrics closer to Segoe UI when available.
-            var sans = FirstAvailable("Ubuntu", "UbuntuSans", "NotoSans", "DejaVuSans");
-            var serif = FirstAvailable("NotoSerif", "DejaVuSerif");
-            var mono = FirstAvailable("UbuntuMono", "UbuntuSansMono", "NotoSansMono", "DejaVuSansMono");
+            // Prefer platform UI fonts with metrics close to the native system font.
+            var sans = OperatingSystem.IsAndroid()
+                ? FirstAvailable("Roboto", "NotoSans", "Noto Sans", "DejaVuSans")
+                : FirstAvailable("Ubuntu", "UbuntuSans", "NotoSans", "DejaVuSans");
+            var serif = OperatingSystem.IsAndroid()
+                ? FirstAvailable("NotoSerif", "DroidSerif")
+                : FirstAvailable("NotoSerif", "DejaVuSerif");
+            var mono = OperatingSystem.IsAndroid()
+                ? FirstAvailable("DroidSansMono", "NotoSansMono", "RobotoMono")
+                : FirstAvailable("UbuntuMono", "UbuntuSansMono", "NotoSansMono", "DejaVuSansMono");
             Alias("Segoe UI", sans);
             Alias("sans-serif", sans);
+            Alias("system-ui", sans);
+            Alias("ui-sans-serif", sans);
             Alias("Arial", sans);
             Alias("serif", serif);
+            Alias("ui-serif", serif);
             Alias("Times New Roman", serif);
             Alias("monospace", mono);
+            Alias("ui-monospace", mono);
             Alias("Consolas", mono);
         }
     }
@@ -618,6 +650,16 @@ internal sealed class FontCollection
             return [Path.Combine(winDir, "Fonts")];
         }
 
+        if (OperatingSystem.IsAndroid())
+        {
+            return
+            [
+                "/system/fonts",
+                "/product/fonts",
+                "/system_ext/fonts",
+                "/vendor/fonts"
+            ];
+        }
         if (OperatingSystem.IsLinux())
         {
             return

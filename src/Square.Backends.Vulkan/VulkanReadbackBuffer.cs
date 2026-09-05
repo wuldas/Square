@@ -14,12 +14,13 @@ namespace Square.Backends.Vulkan;
 /// Swapchain image ownership transfers to the presentation engine after vkQueuePresentKHR,
 /// so the image cannot be read back out-of-band. Instead, every submitted frame copies the
 /// color attachment into this buffer inside the frame's command buffer, before present.
-/// The swapchain format is B8G8R8A8 (Unorm/Srgb), whose in-memory byte order (B,G,R,A) matches
-/// <see cref="Bitmap"/>'s BGRA layout, so the copy needs no channel swizzle.
+/// Swapchain BGRA formats already match Square's BGRA bytes; RGBA formats are swizzled
+/// while copying into the public Square bitmap.
 /// </remarks>
 internal sealed unsafe class VulkanReadbackBuffer : IDisposable
 {
     private readonly VulkanDevice _device;
+    private readonly bool _usesBgraFormat;
     private Buffer _buffer;
     private DeviceMemory _memory;
     private void* _mapped;
@@ -29,9 +30,10 @@ internal sealed unsafe class VulkanReadbackBuffer : IDisposable
     private bool _hasContent;
     private bool _disposed;
 
-    public VulkanReadbackBuffer(VulkanDevice device)
+    public VulkanReadbackBuffer(VulkanDevice device, bool usesBgraFormat)
     {
         _device = device;
+        _usesBgraFormat = usesBgraFormat;
     }
 
     /// <summary>(Re)create the buffer to hold a <paramref name="width"/>x<paramref name="height"/> frame.</summary>
@@ -164,7 +166,22 @@ internal sealed unsafe class VulkanReadbackBuffer : IDisposable
 
         var size = (int)(_width * _height * 4);
         var bitmap = new Bitmap((int)_width, (int)_height);
-        new ReadOnlySpan<byte>(_mapped, size).CopyTo(bitmap.Pixels.AsSpan());
+        if (_usesBgraFormat)
+        {
+            new ReadOnlySpan<byte>(_mapped, size).CopyTo(bitmap.Pixels.AsSpan());
+        }
+        else
+        {
+            var source = new ReadOnlySpan<byte>(_mapped, size);
+            var destination = bitmap.Pixels.AsSpan();
+            for (var i = 0; i < size; i += 4)
+            {
+                destination[i] = source[i + 2];
+                destination[i + 1] = source[i + 1];
+                destination[i + 2] = source[i];
+                destination[i + 3] = source[i + 3];
+            }
+        }
         return bitmap;
     }
 

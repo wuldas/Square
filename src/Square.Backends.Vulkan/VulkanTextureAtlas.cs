@@ -1,5 +1,7 @@
 using Silk.NET.Vulkan;
 using Buffer = Silk.NET.Vulkan.Buffer;
+using VulkanFilter = Silk.NET.Vulkan.Filter;
+using VulkanImageView = Silk.NET.Vulkan.ImageView;
 
 namespace Square.Backends.Vulkan;
 
@@ -18,7 +20,7 @@ internal sealed unsafe class VulkanTextureAtlas : IDisposable
 
     private Silk.NET.Vulkan.Image _image;
     private DeviceMemory _imageMemory;
-    private ImageView _imageView;
+    private VulkanImageView _imageView;
     private Sampler _sampler;
     private DescriptorPool _descriptorPool;
     private Buffer _stagingBuffer;
@@ -255,8 +257,8 @@ internal sealed unsafe class VulkanTextureAtlas : IDisposable
     {
         var samplerInfo = new SamplerCreateInfo(StructureType.SamplerCreateInfo)
         {
-            MagFilter = Filter.Linear,
-            MinFilter = Filter.Linear,
+            MagFilter = VulkanFilter.Linear,
+            MinFilter = VulkanFilter.Linear,
             AddressModeU = SamplerAddressMode.ClampToEdge,
             AddressModeV = SamplerAddressMode.ClampToEdge,
             AddressModeW = SamplerAddressMode.ClampToEdge,

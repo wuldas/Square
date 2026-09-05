@@ -16,6 +16,7 @@ internal static unsafe class VulkanSurface
             Win32VulkanRenderTarget win32 => CreateWin32(device, win32),
             Win32RenderTarget win32 => CreateWin32(device, win32.WindowHandle, win32.InstanceHandle),
             X11VulkanRenderTarget x11 => CreateX11(device, x11),
+            AndroidVulkanRenderTarget android => CreateAndroid(device, android),
             _ => throw new VulkanException($"Unsupported native render target '{target.Kind}'.")
         };
     }
@@ -52,6 +53,20 @@ internal static unsafe class VulkanSurface
 
         var result = ext.CreateXlibSurface(device.Instance, in createInfo, null, out var surface);
         VulkanDevice.ThrowIfFailed(result, "vkCreateXlibSurfaceKHR");
+        return surface;
+    }
+
+    private static SurfaceKHR CreateAndroid(VulkanDevice device, AndroidVulkanRenderTarget target)
+    {
+        if (!device.Api.TryGetInstanceExtension(device.Instance, out KhrAndroidSurface ext))
+            throw new VulkanException("VK_KHR_android_surface extension not available.");
+
+        var createInfo = new AndroidSurfaceCreateInfoKHR(StructureType.AndroidSurfaceCreateInfoKhr)
+        {
+            Window = (nint*)target.NativeWindowHandle
+        };
+        var result = ext.CreateAndroidSurface(device.Instance, in createInfo, null, out var surface);
+        VulkanDevice.ThrowIfFailed(result, "vkCreateAndroidSurfaceKHR");
         return surface;
     }
 

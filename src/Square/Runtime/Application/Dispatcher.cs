@@ -28,11 +28,20 @@ public sealed class Dispatcher
             throw new InvalidOperationException("The Dispatcher queue can only be drained by its owning thread.");
     }
 
+    /// <summary>队列从空变为非空时触发；回调在队列锁外执行。</summary>
+    public event Action? WorkAvailable;
+
     /// <summary>将委托入队，等待所属线程执行。</summary>
     public void Invoke(Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        lock (_lock) _queue.Enqueue(action);
+        var wasEmpty = false;
+        lock (_lock)
+        {
+            wasEmpty = _queue.Count == 0;
+            _queue.Enqueue(action);
+        }
+        if (wasEmpty) WorkAvailable?.Invoke();
     }
 
     /// <summary>异步执行委托；若已在所属线程则同步执行。</summary>

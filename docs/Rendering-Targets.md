@@ -233,7 +233,7 @@ NativeUiNode
 
 ## 7. Android 路线
 
-> 当前状态：**仅完成详细规划，尚未实现**。仓库目前没有 Android 平台项目、Sample、APK/AAB 或运行证据。完整任务与验收矩阵见 [Android-Platform-TODO.md](Android-Platform-TODO.md)。
+> 当前状态：**Experimental MVP 代码已实现**。仓库已有 `Square.Platform.Android`、`Square.Sample.Android`、`Square.Android.slnx`、Debug APK、arm64 Release APK/AAB 和独立 Android workflow；x86_64 emulator 已完成 IME、像素、性能、生命周期、虚拟 accessibility tree、Android Canvas、Skia surface 与 Vulkan smoke，arm64 真机验证仍待补。完整任务与验收矩阵见 [Android-Platform-TODO.md](Android-Platform-TODO.md)。
 
 Android 长期仍分为绘制型宿主与原生 UI adapter 两条路线：
 
@@ -249,16 +249,17 @@ DisplayTree  -> custom View canvas
 Activity / Looper / Choreographer
   -> Square ApplicationSession
   -> Element Tree / CSS / Layout / DisplayTree
-  -> Software RenderContext
-  -> Square BGRA Bitmap
-  -> Android Bitmap / custom View Canvas
+  -> Software RenderContext -> Square BGRA Bitmap -> Android Bitmap -> View Canvas
+  -> AndroidCanvas backend -> Android Picture -> View Canvas
+  -> AndroidSkia backend -> SKPicture -> SKCanvasView surface
+  -> Vulkan backend -> ANativeWindow -> Android swapchain
 ```
 
 首期决策：
 
 - 使用 .NET 10 for Android 和原生 Activity/View，不引入 MAUI。
 - 先从 `DesktopApplication` 抽出可被外部事件循环驱动的共享 `ApplicationSession`；Android 不实现虚假的阻塞 `PumpEvents()`。
-- 只新增 `Square.Platform.Android`，先复用 Software Renderer；不同时创建 AndroidCanvas、Skia/Vulkan Android surface 或 `Square.Native.Android`。
+- Software bitmap 是默认兼容路径；按 profiling 结果，AndroidCanvas、AndroidSkia 和 Vulkan 作为显式后端提供直绘能力，不混入核心 `IRenderContext`。
 - 首期只支持单 Activity、单 Square 根 View；触摸、移动滚动、Back、剪贴板、软键盘、字体和生命周期都属于平台支持闭环。
 - Android workload 项目使用独立 `Square.Android.slnx` 和 CI，避免现有三桌面 runner 被迫安装 Android workload。
 - 正式门禁使用 .NET for Android 支持的 Release trimming/AOT；官方仍标记实验的 Android NativeAOT 只做非阻断记录。
@@ -281,14 +282,14 @@ Activity / Looper / Choreographer
 
 风险：
 
-- 当前应用运行时由同步桌面消息循环所有，必须先拆分外部事件循环 session。
-- 当前 pointer 契约缺少 touch id/type/cancel；drag、hover 和 click 不能直接复用鼠标语义。
-- IME、软键盘、焦点、生命周期和 Activity 重建复杂。
-- Software Renderer 的 Android 系统字体发现尚未实现。
-- Square BGRA Bitmap 到 Android Bitmap 可能发生全量 CPU copy，必须先测量再优化。
-- Android 的测量/布局协议与 Square layout 需要明确谁是权威。
+- 外部事件循环已由 `ApplicationSession` 提供；Android Activity 不调用阻塞 `PumpEvents()`。
+- `PointerInput` 已补齐 touch id/type/cancel；Android 通过 `AndroidInputAdapter` 处理 touch slop、click 取消和 fling，桌面仍保留 MouseEvent 兼容路径。
+- IME、软键盘、焦点、生命周期和 Activity 重建仍需真实设备压力验证。
+- Software Renderer 已扫描 Android 系统字体根并映射 Roboto/Noto；真实 CJK/emoji glyph 与 metrics 仍需设备验证。
+- Square BGRA Bitmap 到 Android ARGB_8888 使用可复用数组的一次 CPU 转换；是否需要区域上传必须由 profiling 决定。
+- Android 的测量/布局以 Square logical DIP 为权威，View 像素尺寸按 density 转换。
 - Canvas-only View 在实现虚拟 accessibility tree 前不能宣称完整无障碍支持。
-- NativeAOT、.NET for Android runtime、AOT 和 trim 规则需要分别验证并诚实报告。
+- NativeAOT、.NET for Android runtime、AOT 和 trim 规则需要分别验证；当前已完成 Release trimming 构建，未宣称 NativeAOT 生产支持。
 
 ---
 

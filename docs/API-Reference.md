@@ -140,6 +140,26 @@ private void Cancel()
 - 子窗口继承 owner 的渲染后端、背景、渲染模式、标题栏样式和边框样式。
 - 每个子窗口拥有独立 `UIDocument`、Dispatcher、渲染上下文和原生消息线程。
 
+### ApplicationSession — 外部事件循环宿主
+
+`new ApplicationSession(AppWindow window, IPlatformHost host)` 复用桌面运行内核，由 Android Activity/Looper 等宿主驱动，不调用 `PumpEvents()`。
+
+| 成员 | 契约 |
+|---|---|
+| `Window` / `IsAttached` / `IsSuspended` / `IsDetached` | 窗口及会话生命周期状态 |
+| `Attach()` | 附加、加载并提交首帧；重复调用不重复附加；Detach 后不可重新 Attach |
+| `ProcessFrame()` | 处理更新与必要的布局、绘制和提交；暂停或未附加时不执行 |
+| `Tick()` | 推进动画、控件帧请求和 caret，需要时直接提交；暂停或未附加时不执行 |
+| `HasPendingFrame` | 当前树的更新、绘制、CSS 动画及控件帧需求；暂停时返回 `false` |
+| `Suspend()` / `Resume()` | 保留文档与控件待处理帧请求；恢复时重置动画时间基线并请求重绘 |
+| `ReleaseRenderContext()` | 释放失效原生目标的渲染上下文，不卸载文档或释放 host；已附加且未暂停时抛 `InvalidOperationException`，未附加时不执行 |
+| `FramePresented` | `event Action?`；每次成功提交到后端后通知宿主刷新原生 View，不表示系统已将帧显示到屏幕 |
+| `HasTextEditorFocus` / `FocusedTextInputClient` | 焦点编辑器状态及 `ITextInputClient`；未附加或暂停时客户端为 `null` |
+| `BackRequested` / `HandleBack()` | Popup 优先，然后调用应用路由后退；返回是否消费 Back |
+| `Detach()` / `Dispose()` | 幂等卸载、分离并释放会话拥有的资源 |
+
+Vulkan Surface 更换顺序：暂停调度和会话 → `ReleaseRenderContext()` → 释放旧原生窗口并更新 host 目标及上下文缓存 → 新 Surface 就绪且 Activity resumed → `Resume()` 并处理帧。不能把已销毁的 Surface 或 renderer 留给后续 `Present()`。
+
 ---
 
 ## 1.1. Square.DevTools — 本地调试与自动化服务

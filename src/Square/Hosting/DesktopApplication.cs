@@ -58,6 +58,16 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private bool _inspectorModeEnabled;
     private bool _inspectorOverlayDirty;
     private int _hotReloadPending;
+    private IDisposable? _textLayoutScope;
+    private bool _sessionPrepared;
+    private bool _sessionSuspended;
+    private bool _firstFrameShown;
+    private int _activePointerId = -1;
+    private Point _touchDownPoint;
+    private bool _touchMoved;
+    private Element? _touchDownTarget;
+
+    internal event Action? FramePresented;
 
     /// <summary>主窗口。</summary>
     public AppWindow MainWindow { get; }
@@ -193,10 +203,36 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void RunRegisteredApplication()
     {
+        try
+        {
+            PrepareSession();
+            _hostCreateInfo.Title = MainWindow.Title;
+            _hostCreateInfo.RenderBackend = MainWindow.RenderBackend;
+            _hostCreateInfo.TitleStyle = MainWindow.TitleStyle;
+            _hostCreateInfo.BorderStyle = MainWindow.BorderStyle;
+            var host = PlatformRegistry.Get().CreateHost(_hostCreateInfo);
+            AttachSessionHost(host);
+            host.Show();
+            ProcessSessionFrame();
+            host.PumpEvents();
+        }
+        finally
+        {
+            DetachSession();
+        }
+    }
+
+    internal void PrepareSession()
+    {
+        if (_sessionPrepared) return;
+        _sessionPrepared = true;
+        _firstFrameShown = false;
+        _lastAnimationTickSeconds = _clock.Elapsed.TotalSeconds;
+
         BackendRegistration.RegisterDefaults();
         Square.Controls.ControlRegistration.RegisterDefaults();
         var renderBackend = MainWindow.RenderBackend;
-        using var textLayoutScope = RenderBackendRegistry.Get(renderBackend) is ITextLayoutProviderSource source
+        _textLayoutScope = RenderBackendRegistry.Get(renderBackend) is ITextLayoutProviderSource source
             ? TextLayoutProviderContext.Push(source.TextLayoutProvider)
             : null;
 
@@ -208,48 +244,234 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _root.AddEventListener(StandardEvents.RequestFrame, HandleFrameRequest);
         _document.AddEventListener(StandardEvents.RequestFrame, HandleFrameRequest);
         lifecycle.OnAttached();
-        try
-        {
-            _hostCreateInfo.Title = MainWindow.Title;
-            _hostCreateInfo.RenderBackend = renderBackend;
-            _hostCreateInfo.TitleStyle = MainWindow.TitleStyle;
-            _hostCreateInfo.BorderStyle = MainWindow.BorderStyle;
-            _host = PlatformRegistry.Get().CreateHost(_hostCreateInfo);
-            MainWindow.Attach(_host);
-            AttachHostEvents(_host);
+    }
 
-            _host.Show();
-            _renderContext = _host.CreateRenderContext();
-            lifecycle.OnLoaded();
-            RenderFrame();
-            _host.ShowAfterFirstFrame();
-            _host.PumpEvents();
-        }
-        finally
+
+    internal void AttachSessionHost(IPlatformHost host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        if (!_sessionPrepared) throw new InvalidOperationException("The application session is not prepared.");
+        if (_host != null) throw new InvalidOperationException("The application host is already attached.");
+        _host = host;
+        MainWindow.Attach(host);
+        AttachHostEvents(host);
+    }
+
+    internal bool ProcessSessionFrame()
+    {
+        if (_sessionSuspended) return false;
+        if (!EnsureRenderer()) return false;
+        if (!_root.IsLoaded) ((IComponentLifecycle)_root).OnLoaded();
+        RenderFrame();
+        if (!_firstFrameShown)
         {
-            _root.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest);
-            _document.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest);
-            _scheduledFrames.Clear();
-            if (_root.IsLoaded) lifecycle.OnUnloaded();
-            lifecycle.OnDetached();
-            CssStyleReconciler.UnregisterScopesForTree(_root);
-            _renderContext?.Dispose();
-            _renderContext = null;
-            if (_host != null) MainWindow.Detach(_host);
-            _host?.Dispose();
-            _host = null;
+            _host?.ShowAfterFirstFrame();
+            _firstFrameShown = true;
         }
+        return true;
+    }
+    internal void ProcessSessionTick()
+    {
+        if (_sessionSuspended) return;
+        HandleTick();
+    }
+
+    internal void SuspendSession()
+    {
+        if (_sessionSuspended) return;
+        _sessionSuspended = true;
+    }
+
+    internal void ResumeSession()
+    {
+        if (!_sessionSuspended) return;
+        _sessionSuspended = false;
+        _lastAnimationTickSeconds = _clock.Elapsed.TotalSeconds;
+        RequestRender();
+    }
+
+    internal void ReleaseSessionRenderContext()
+    {
+        var context = _renderContext;
+        _renderContext = null;
+        context?.Dispose();
+        _root.InvalidateLayout();
+        RequestRender();
+    }
+
+    internal void DetachSession()
+    {
+        if (!_sessionPrepared && _host == null && _textLayoutScope == null) return;
+
+        Exception? cleanupException = null;
+        void Cleanup(Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception exception)
+            {
+                cleanupException ??= exception;
+            }
+        }
+
+        var host = _host;
+        if (host != null)
+            Cleanup(() => DetachHostEvents(host));
+        Cleanup(ClearTransientInteractionState);
+
+        Cleanup(() => _root.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest));
+        Cleanup(() => _document.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest));
+        _scheduledFrames.Clear();
+        if (_root.IsLoaded) Cleanup(() => ((IComponentLifecycle)_root).OnUnloaded());
+        if (_root.IsAttached) Cleanup(() => ((IComponentLifecycle)_root).OnDetached());
+        Cleanup(() => CssStyleReconciler.UnregisterScopesForTree(_root));
+        if (_renderContext != null)
+        {
+            var renderContext = _renderContext;
+            _renderContext = null;
+            Cleanup(renderContext.Dispose);
+        }
+        if (host != null)
+        {
+            Cleanup(() => MainWindow.Detach(host));
+            _host = null;
+            Cleanup(host.Dispose);
+        }
+        _firstFrameShown = false;
+        if (_textLayoutScope != null)
+        {
+            var textLayoutScope = _textLayoutScope;
+            _textLayoutScope = null;
+            Cleanup(textLayoutScope.Dispose);
+        }
+        _sessionSuspended = false;
+        _sessionPrepared = false;
+        FramePresented = null;
+        if (cleanupException != null) throw cleanupException;
+    }
+    internal bool HasSessionHost => _host != null;
+
+    private bool EnsureRenderer()
+    {
+        if (_renderContext != null) return true;
+        if (_host == null) return false;
+        var size = _host.ClientSize;
+        if (size.Width <= 0 || size.Height <= 0) return false;
+        _renderContext = _host.CreateRenderContext();
+        return true;
+    }
+
+    private void HandleHostSizeChanged(Size size)
+    {
+        if (_host == null || _sessionSuspended || size.Width <= 0 || size.Height <= 0) return;
+        if (_renderContext is IDpiResizableRenderContext dpiResizable)
+            dpiResizable.Resize(size, _host.DpiScale);
+        else if (_renderContext is IResizableRenderContext resizable)
+            resizable.Resize(size);
+        RequestRender();
+        ProcessSessionFrame();
     }
 
     private void AttachHostEvents(IPlatformHost host)
     {
-        host.SizeChanged += _ => RenderFrame();
+        host.SizeChanged += HandleHostSizeChanged;
+        host.PointerEvent += HandlePointerInput;
         host.WheelEvent += HandleWheel;
-        host.MouseEvent += HandleMouse;
+        host.MouseEvent += HandleMouseFromHost;
         host.KeyEvent += HandleKey;
         host.TextInput += HandleTextInput;
-        host.Tick += HandleTick;
+        host.Tick += ProcessSessionTick;
         host.RenderRequested += RequestRender;
+    }
+
+    private void DetachHostEvents(IPlatformHost host)
+    {
+        host.SizeChanged -= HandleHostSizeChanged;
+        host.PointerEvent -= HandlePointerInput;
+        host.WheelEvent -= HandleWheel;
+        host.MouseEvent -= HandleMouseFromHost;
+        host.KeyEvent -= HandleKey;
+        host.TextInput -= HandleTextInput;
+        host.Tick -= ProcessSessionTick;
+        host.RenderRequested -= RequestRender;
+    }
+
+    private void HandlePointerInput(PointerInput input)
+    {
+        if (_sessionSuspended || _host == null) return;
+        if (input.DeviceKind == PointerDeviceKind.Mouse)
+        {
+            var action = input.Action switch
+            {
+                PointerAction.Down => MouseAction.Down,
+                PointerAction.Move => MouseAction.Move,
+                PointerAction.Up or PointerAction.Cancel => MouseAction.Up,
+                _ => MouseAction.Move
+            };
+            HandleMouseWithPointer(input.Position, action, input.Button, input);
+            return;
+        }
+
+        if (!input.IsPrimary) return;
+        if (input.Action == PointerAction.Down)
+        {
+            if (_activePointerId >= 0) return;
+            _activePointerId = input.PointerId;
+            _touchDownPoint = input.Position;
+            _touchMoved = false;
+            _touchDownTarget = HitTest(input.Position);
+            HandleMouseWithPointer(input.Position, MouseAction.Down, input.Button, input);
+            UpdateHoverPath(null);
+            return;
+        }
+
+        if (_activePointerId != input.PointerId) return;
+        switch (input.Action)
+        {
+            case PointerAction.Move:
+            {
+                if (!_touchMoved)
+                {
+                    var dx = input.Position.X - _touchDownPoint.X;
+                    var dy = input.Position.Y - _touchDownPoint.Y;
+                    _touchMoved = dx * dx + dy * dy > 64;
+                    if (!_touchMoved)
+                    {
+                        _touchDownTarget?.DispatchTrusted(StandardEvents.CreatePointerMove(input));
+                        return;
+                    }
+
+                    _pointerDownTarget = null;
+                    ClearActivePath();
+                    _touchDownTarget?.DispatchTrusted(StandardEvents.CreatePointerCancel(input));
+                }
+
+                HandleMouseWithPointer(input.Position, MouseAction.Move, input.Button, input);
+                UpdateHoverPath(null);
+                return;
+            }
+            case PointerAction.Up:
+                HandleMouseWithPointer(input.Position, MouseAction.Up, input.Button, input);
+                UpdateHoverPath(null);
+                ClearTouchPointerState();
+                return;
+            case PointerAction.Cancel:
+                _pointerDownTarget = null;
+                _touchDownTarget?.DispatchTrusted(StandardEvents.CreatePointerCancel(input));
+                HandleMouse(input.Position, MouseAction.Up, MouseButton.None);
+                UpdateHoverPath(null);
+                ClearTouchPointerState();
+                return;
+        }
+    }
+
+    private void ClearTouchPointerState()
+    {
+        _activePointerId = -1;
+        _touchMoved = false;
+        _touchDownTarget = null;
     }
 
     private void HandleFrameRequest(Event e)
@@ -263,8 +485,27 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             if (!_scheduledFrames.TryGetValue(target, out var current) || requestedTime < current)
                 _scheduledFrames[target] = requestedTime;
         }
-
         e.StopPropagation();
+    }
+
+    internal bool HasPendingSessionFrame =>
+        _sessionPrepared && !_sessionSuspended && _host != null &&
+        _host.ClientSize.Width > 0 && _host.ClientSize.Height > 0 &&
+        (Volatile.Read(ref _renderRequested) || Dispatcher.HasWork ||
+         _document.Context.Reconciler.HasWork || CssStyleReconciler.HasWorkForTree(_root) ||
+         CssStyleReconciler.HasRunningAnimationsForTree(_root) ||
+         _scheduledFrames.Count > 0 || HasVisualInvalidation(_root));
+    internal bool HasFocusedTextEditor => _focusedEditor != null;
+    internal Square.Controls.ITextInputClient? FocusedTextInputClient => _focusedEditor as Square.Controls.ITextInputClient;
+
+    internal bool HandleBackSession()
+    {
+        if (_host == null || _sessionSuspended) return false;
+        if (!_displayTree.DismissTopmostPopupOnEscape()) return false;
+        SyncFocusedInputFromTree();
+        RequestRender();
+        ProcessSessionFrame();
+        return true;
     }
 
     /// <inheritdoc/>
@@ -379,6 +620,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _tooltipPopup.Close();
         _hoveringScrollbar?.ClearScrollbarHover();
         _hoveringScrollbar = null;
+        ClearTouchPointerState();
         _scheduledFrames.Clear();
         _inspectorHighlightDebugId = null;
         _inspectorOverlayDirty = true;
@@ -642,6 +884,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (_focusedEditor != null)
             _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+        FramePresented?.Invoke();
     }
 
     private ElementInspectionNode CreateInspectionNode(Element element, bool includeSourcePaths,
@@ -885,8 +1128,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleWheel(WheelInput input)
     {
+        if (_sessionSuspended) return;
         var hit = HitTest(input.Position);
-        UpdateHoverPath(hit);
+        if (input.DeviceKind != PointerDeviceKind.Touch)
+            UpdateHoverPath(hit);
         hit?.DispatchTrusted(StandardEvents.CreateWheel(
             input.DeltaX,
             input.DeltaY,
@@ -894,9 +1139,15 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             input.IsInertial));
     }
 
-    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left)
+    private void HandleMouseFromHost(Point point, MouseAction action, MouseButton button) =>
+        HandleMouse(point, action, button);
+    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left) =>
+        HandleMouseWithPointer(point, action, button);
+
+    private void HandleMouseWithPointer(Point point, MouseAction action, MouseButton button = MouseButton.Left,
+        PointerInput? pointerInput = null)
     {
-        if (_host == null) return;
+        if (_sessionSuspended || _host == null) return;
         if (action == MouseAction.Move || button == MouseButton.Left) UpdateScrollbarHover(point);
 
         if (_draggingScrollbar is { } dragging &&
@@ -1050,6 +1301,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
 
         var hit = HitTest(point);
+        if (pointerInput is { Action: PointerAction.Move } moveInput && hit != null)
+            hit.DispatchTrusted(StandardEvents.CreatePointerMove(moveInput));
         if (_inspectorModeEnabled)
         {
             if (action == MouseAction.Move)
@@ -1145,6 +1398,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 UpdateHoverPath(hit);
             }
 
+            if (pointerInput is { Action: PointerAction.Up } upInput)
+                hit?.DispatchTrusted(StandardEvents.CreatePointerUp(upInput));
             if (_pointerDownTarget != null && hit == _pointerDownTarget)
                 hit?.DispatchTrusted(StandardEvents.CreateClick());
             _pointerDownTarget = null;
@@ -1174,7 +1429,9 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             UpdateHoverPath(hit);
             UpdateActivePath(hit);
-            hit?.DispatchTrusted(StandardEvents.CreatePointerDown());
+            hit?.DispatchTrusted(pointerInput is { } downInput
+                ? StandardEvents.CreatePointerDown(downInput)
+                : StandardEvents.CreatePointerDown());
         }
         _draggingSplitter = FindAncestor<Splitter>(hit);
         _pendingSplitterPoint = null;
@@ -1507,7 +1764,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleKey(int keyCode, KeyAction action)
     {
-        if (_host == null) return;
+        if (_sessionSuspended || _host == null) return;
 
         MainWindow.RaiseGlobalKeyEvent(keyCode, action);
 
@@ -1592,6 +1849,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleTextInput(string text)
     {
+        if (_sessionSuspended) return;
         SyncFocusedInputFromTree();
         _focusedEditor?.HandleTextInput(text);
         RenderFrame();

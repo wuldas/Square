@@ -580,6 +580,53 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void HighDpiNegativeLetterSpacingDoesNotWrapFittingText()
+    {
+        if (!new SystemGlyphRasterizer().IsAvailable) return;
+        var layout = new TextLayout("Tap the button", new Font("Segoe UI", 14))
+        {
+            LetterSpacing = -0.5f,
+            Alignment = TextAlignment.Center
+        };
+        layout.MaxSize = layout.Measure();
+        Assert.Single(layout.GetVisualLines());
+        using var actual = new RenderContext(new Bitmap(1050, 252), new Size(400, 96), 2.625f);
+        using var expected = new RenderContext(new Bitmap(1050, 252), new Size(400, 96), 2.625f);
+        actual.Clear(Color.White);
+        expected.Clear(Color.White);
+
+        actual.DrawText(layout, new Point(4, 4), Brush.FromColor(Color.Black));
+        layout.WhiteSpace = TextWhiteSpaceMode.Nowrap;
+        expected.DrawText(layout, new Point(4, 4), Brush.FromColor(Color.Black));
+
+        Assert.Equal(expected.GetBitmap().Pixels, actual.GetBitmap().Pixels);
+    }
+
+    [Fact]
+    public void HighDpiWordSpacingWrapsAtLogicalWidth()
+    {
+        if (!new SystemGlyphRasterizer().IsAvailable) return;
+        var layout = new TextLayout("MMMM MMMM", new Font("Segoe UI", 20))
+        {
+            WordSpacing = 8,
+            Alignment = TextAlignment.Right
+        };
+        layout.MaxSize = new Size(layout.Measure().Width - 1, 80);
+        Assert.Equal(2, layout.GetVisualLines().Count);
+        using var actual = new RenderContext(new Bitmap(1050, 252), new Size(400, 96), 2.625f);
+        using var expected = new RenderContext(new Bitmap(1050, 252), new Size(400, 96), 2.625f);
+        actual.Clear(Color.White);
+        expected.Clear(Color.White);
+
+        actual.DrawText(layout, new Point(4, 4), Brush.FromColor(Color.Black));
+        layout.Text = "MMMM \nMMMM";
+        layout.WhiteSpace = TextWhiteSpaceMode.Pre;
+        expected.DrawText(layout, new Point(4, 4), Brush.FromColor(Color.Black));
+
+        Assert.Equal(expected.GetBitmap().Pixels, actual.GetBitmap().Pixels);
+    }
+
+    [Fact]
     public void FallbackGlyphsAreNotHorizontallyMirrored()
     {
         Assert.True(RenderContext.IsFallbackGlyphPixelSet('C', 2, 0));
