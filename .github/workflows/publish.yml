@@ -1,0 +1,107 @@
+name: Publish NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version for build-only verification (does not publish)'
+        required: true
+        default: '0.1.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+
+jobs:
+  package:
+    name: Build and verify release packages
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Restore Android workload
+        run: dotnet workload restore Square.Android.slnx
+
+      - name: Run release regression tests
+        run: dotnet test Square.slnx -c Release -p:SquareTargetPlatform=Win32 --filter "Category!=ChromiumIntegration"
+
+      - name: Pack and validate release versions
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          if ($env:GITHUB_EVENT_NAME -eq 'push') { $version = $version.Substring(1) }
+          tools/Pack-Release.ps1 -Version $version
+          "RELEASE_PACKAGE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build and run NuGet package consumer
+        shell: pwsh
+        run: |
+          $feed = (Resolve-Path artifacts/packages).Path
+          dotnet build tests/Square.PackageConsumer/Square.PackageConsumer.csproj -c Release "-p:Version=$env:RELEASE_PACKAGE_VERSION" -p:SquareTargetPlatform=Win32 --source $feed --source https://api.nuget.org/v3/index.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet tests/Square.PackageConsumer/bin/Release/net10.0/Square.PackageConsumer.dll
+
+      - name: Upload verified NuGet packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nuget-packages
+          path: artifacts/packages/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish through NuGet Trusted Publishing
+    needs: package
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download verified NuGet packages
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: nuget-packages
+          path: packages
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: NuGet login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        id: login
+        with:
+          user: wuldas
+
+      - name: Push packages and symbols
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push 'packages/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

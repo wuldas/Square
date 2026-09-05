@@ -41,8 +41,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="buildTransitive\Square.Compiler.props" Pack="true" PackagePath="buildTransitive" Visible="false" />
-    <None Include="buildTransitive\Square.Compiler.targets" Pack="true" PackagePath="buildTransitive" Visible="false" />
+    <None Include="buildTransitive\Square.Compiler.props" Pack="true" PackagePath="buildTransitive\$(PackageId).props" Visible="false" />
+    <None Include="buildTransitive\Square.Compiler.targets" Pack="true" PackagePath="buildTransitive\$(PackageId).targets" Visible="false" />
   </ItemGroup>
 
   <Target Name="PackSquareCompilerAnalyzer" Condition="'$(TargetFramework)' == 'netstandard2.0'">

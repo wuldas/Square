@@ -12,6 +12,7 @@
     <Product>Square Framework</Product>
     <Copyright>Copyright © 2026 Wuldas</Copyright>
     <Version>0.1.0</Version>
+    <PackageId>Wuldas.$(MSBuildProjectName)</PackageId>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/wuldas/Square</PackageProjectUrl>
     <RepositoryUrl>https://github.com/wuldas/Square.git</RepositoryUrl>

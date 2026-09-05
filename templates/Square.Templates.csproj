@@ -10,10 +10,11 @@
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <IncludeSymbols>false</IncludeSymbols>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TemplateContentRoot Condition="'$(TemplateContentRoot)' == ''">$(MSBuildProjectDirectory)\content</TemplateContentRoot>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="content\**\*"
-             Exclude="content\**\bin\**;content\**\obj\**"
+    <Content Include="$(TemplateContentRoot)\**\*"
+             Exclude="$(TemplateContentRoot)\**\bin\**;$(TemplateContentRoot)\**\obj\**"
              PackagePath="content\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

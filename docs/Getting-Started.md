@@ -22,7 +22,7 @@ dotnet --version
 
 ### 2.1 安装模板与本地包
 
-`Square.Templates` 提供 `square` 应用模板和 `square-component` 组件模板。生成的应用只引用 NuGet 包，不依赖 Square 仓库的 `Directory.Build.*` 或源码项目路径。
+`Wuldas.Square.Templates` 提供 `square` 应用模板和 `square-component` 组件模板。NuGet 包统一使用 `Wuldas.Square` / `Wuldas.Square.*`，程序集与 C# 命名空间仍为 `Square`。生成的应用只引用 NuGet 包，不依赖 Square 仓库的 `Directory.Build.*` 或源码项目路径。
 
 当前可先从源码打包到本地源，不要求这些版本已经发布到 NuGet.org。以下命令在 Square 仓库根目录执行，以 Windows 为例：
 
@@ -31,7 +31,7 @@ dotnet pack src/Square/Square.csproj -c Release -o artifacts/template-feed
 dotnet pack src/Square.Compiler/Square.Compiler.csproj -c Release -o artifacts/template-feed
 dotnet pack src/Square.Platform.Win32/Square.Platform.Win32.csproj -c Release -o artifacts/template-feed
 dotnet pack templates/Square.Templates.csproj -c Release -o artifacts/template-feed
-dotnet new install ./artifacts/template-feed/Square.Templates.0.1.0.nupkg
+dotnet new install ./artifacts/template-feed/Wuldas.Square.Templates.0.1.0.nupkg
 dotnet new square -n MyApp -o ../MyApp
 cd ../MyApp
 ```
@@ -107,7 +107,7 @@ public static class SquareProgram
 
 平台包自动注册匹配当前 OS 的桌面宿主，不需要调用 `PlatformRegistry.Register(...)`。`AppWindow` 管理内容、尺寸、标题和渲染配置；`DesktopApplication` 管理桌面消息循环。
 
-`Square` 包含运行时、控件、CSS、路由、布局和软件渲染。Skia、Vulkan、Windows-only Direct2D、Extensions 与 DevTools 按需单独引用。Windows 应用引用 `Square.Backends.Direct2D` 后，可在运行前显式选择：
+`Square` 包含运行时、控件、CSS、路由、布局和软件渲染。Skia、Vulkan、Windows-only Direct2D、Extensions 与 DevTools 按需单独引用。Windows 应用引用 `Wuldas.Square.Backends.Direct2D` 后，可在运行前显式选择：
 
 ```csharp
 using Square.Backends.Direct2D;

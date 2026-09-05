@@ -4,14 +4,14 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Square" Version="0.1.0" />
-    <PackageVersion Include="Square.Compiler" Version="0.1.0" />
-    <PackageVersion Include="Square.Images" Version="0.1.0" />
-    <PackageVersion Include="Square.Platform.Win32" Version="0.1.0" />
-    <PackageVersion Include="Square.Platform.X11" Version="0.1.0" />
-    <PackageVersion Include="Square.Platform.MacOS" Version="0.1.0" />
-    <PackageVersion Include="Square.Native.Html" Version="0.1.0" />
-    <PackageVersion Include="Square.Hosting.Web" Version="0.1.0" />
+    <PackageVersion Include="Wuldas.Square" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Compiler" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Images" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Platform.Win32" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Platform.X11" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Platform.MacOS" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Native.Html" Version="$(Version)" />
+    <PackageVersion Include="Wuldas.Square.Hosting.Web" Version="$(Version)" />
     <PackageVersion Include="WebView2Aot" Version="1.5.0" />
     <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageVersion Include="DirectNAot" Version="1.6.1" />

@@ -41,12 +41,12 @@ try {
 <configuration>
   <packageSources><clear /><add key="local" value="$escapedFeed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources>
   <packageSourceMapping>
-    <packageSource key="local"><package pattern="Square" /><package pattern="Square.*" /></packageSource>
+    <packageSource key="local"><package pattern="Wuldas.Square" /><package pattern="Wuldas.Square.*" /></packageSource>
     <packageSource key="nuget.org"><package pattern="*" /></packageSource>
   </packageSourceMapping>
 </configuration>
 "@ | Set-Content (Join-Path $work 'NuGet.Config')
-    Invoke-DotNet @('new', 'install', (Join-Path $feed 'Square.Templates.0.1.0.nupkg'), '--debug:custom-hive', $hive)
+    Invoke-DotNet @('new', 'install', (Join-Path $feed 'Wuldas.Square.Templates.0.1.0.nupkg'), '--debug:custom-hive', $hive)
     foreach ($markup in @('sqv', 'sqx')) {
         $name = if ($markup -eq 'sqv') { 'TemplateSqv' } else { 'TemplateSqx' }
         $app = Join-Path $work $name

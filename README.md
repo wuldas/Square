@@ -75,10 +75,10 @@ new DesktopApplication(window).Run();
 
 ## 创建独立应用
 
-`templates/` 提供可打包的 `Square.Templates`：
+`templates/` 提供可打包的 `Wuldas.Square.Templates`：
 
 ```bash
-dotnet new install ./artifacts/template-feed/Square.Templates.0.1.0.nupkg
+dotnet new install ./artifacts/template-feed/Wuldas.Square.Templates.0.1.0.nupkg
 dotnet new square -n MyApp
 dotnet new square -n MyMobileApp --platforms desktop,android --markup sqx
 dotnet new square-component -n UserCard -o MyApp/Components --namespace MyApp.Components
@@ -198,6 +198,35 @@ Square 适合框架设计验证、实验和贡献开发，暂不建议用于生�
 当前程序集与 NuGet 包统一使用 `0.1.0`。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
 
 贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告。
+
+## NuGet 发布
+
+NuGet 包 ID 统一为 `Wuldas.Square` / `Wuldas.Square.*`，避免与已存在的 Square 支付 SDK 冲突。程序集、C# 命名空间、源码项目名及 `dotnet new square` 命令不变。
+
+`.github/workflows/publish.yml` 使用 NuGet Trusted Publishing，无需长期 API Key。NuGet.org 的策略应绑定 `wuldas/Square`、工作流文件名 `publish.yml`、包所有者 `wuldas`，允许发布新包及新版本；Environment 留空。包匹配范围必须改为以下两行：
+
+```text
+Wuldas.Square
+Wuldas.Square.*
+```
+
+先在 GitHub Actions 手动运行 **Publish NuGet**，输入版本号。这只构建、验证并上传工作流产物，不向 NuGet.org 发布。本地也可以验证（需要 .NET 10、Android workload 与 JDK 17）：
+
+```powershell
+pwsh -File tools/Pack-Release.ps1 -Version 0.1.0 -OutputDirectory artifacts/packages
+```
+
+输出目录必须为空。脚本打包全部 20 个框架及模板包，检查内部依赖闭环和版本一致性，并让模板中的包引用使用发布版本；不会修改模板源码。正式发布前应确认该提交的 CI 和 Android 工作流通过，并确认账号有权使用所有目标包 ID。
+
+推送 `v` 开头的版本标签会正式发布，例如：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+标签去掉 `v` 后成为统一包版本，也支持 `v0.2.0-preview.1`。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。
+
 
 ## License
 

@@ -45,12 +45,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Square" Version="0.1.0" />
-    <PackageReference Include="Square.Compiler" Version="0.1.0" PrivateAssets="all" />
-    <PackageReference Include="Square.Platform.Win32" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
-    <PackageReference Include="Square.Platform.X11" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'X11'" />
-    <PackageReference Include="Square.Platform.MacOS" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
-    <PackageReference Include="Square.Platform.Android" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'Android'" />
+    <PackageReference Include="Wuldas.Square" Version="0.1.0" />
+    <PackageReference Include="Wuldas.Square.Compiler" Version="0.1.0" PrivateAssets="all" />
+    <PackageReference Include="Wuldas.Square.Platform.Win32" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
+    <PackageReference Include="Wuldas.Square.Platform.X11" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <PackageReference Include="Wuldas.Square.Platform.MacOS" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
+    <PackageReference Include="Wuldas.Square.Platform.Android" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'Android'" />
   </ItemGroup>
 
   <ItemGroup>

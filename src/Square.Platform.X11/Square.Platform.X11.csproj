@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="buildTransitive\Square.Platform.X11.props" Pack="true" PackagePath="buildTransitive" />
+    <None Include="buildTransitive\Square.Platform.X11.props" Pack="true" PackagePath="buildTransitive\$(PackageId).props" />
     <None Include="buildTransitive\Square.Platform.X11.Registration.cs" Pack="true" PackagePath="buildTransitive" />
   </ItemGroup>
 

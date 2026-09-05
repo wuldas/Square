@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="buildTransitive\Square.Platform.Win32.props" Pack="true" PackagePath="buildTransitive" />
+    <None Include="buildTransitive\Square.Platform.Win32.props" Pack="true" PackagePath="buildTransitive\$(PackageId).props" />
     <None Include="buildTransitive\Square.Platform.Win32.Registration.cs" Pack="true" PackagePath="buildTransitive" />
   </ItemGroup>
 
