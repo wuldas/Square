@@ -206,6 +206,20 @@ public class SizeTests
 
 public class TextLayoutTests
 {
+    [Theory]
+    [InlineData(11f, 10)]
+    [InlineData(10.96875f, 9)]
+    public void WrappingToleratesAdvanceRoundingButPreservesRealOverflow(float maxWidth, int firstLineEnd)
+    {
+        var lines = TextWrapping.Wrap("abcdefghij", maxWidth, (_, _) => 1f,
+            new TextWrappingOptions { LetterSpacing = 0.1f });
+
+        Assert.Equal(0, lines[0].StartOffset);
+        Assert.Equal(firstLineEnd, lines[0].EndOffset);
+        Assert.Equal(10, lines[^1].EndOffset);
+        Assert.Equal(firstLineEnd == 10 ? 1 : 2, lines.Count);
+    }
+
     [Fact]
     public void CssTextSpacingAndTransformAffectMeasuredWidth()
     {

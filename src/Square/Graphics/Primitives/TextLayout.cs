@@ -452,6 +452,9 @@ public readonly record struct TextVisualRune(
 
 public static class TextWrapping
 {
+    // Match DirectWrite's layout precision so accumulated advances do not wrap a fitting line.
+    private const float LayoutWidthEpsilon = 1f / 64f;
+
     public static IReadOnlyList<TextLineRange> Wrap(
         string text,
         float maxWidth,
@@ -602,7 +605,7 @@ public static class TextWrapping
 
                 var advance = tokens[index].Advance;
                 var allowWrap = options.WhiteSpace is not (TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.Nowrap);
-                if (allowWrap && constrainWidth && width > 0 && width + advance > maxWidth)
+                if (allowWrap && constrainWidth && width > 0 && width + advance > maxWidth + LayoutWidthEpsilon)
                 {
                     var lineEnd = lastBreak > lineStart ? lastBreak : index;
                     var lineWidth = lastBreak > lineStart ? widthAtBreak : width;

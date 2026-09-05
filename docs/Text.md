@@ -104,6 +104,7 @@ public sealed class TextLayout
 ### 5.2 多行（M1 基础）
 
 - 按宽度自动换行
+- 换行宽度比较采用与 DirectWrite 一致的 `1/64px` 容差，避免字形 advance 和字距的浮点累加误差导致刚好容纳的文本意外换行。
 - 行高 = `font.Size * line-height`
 - 对齐：left / center / right
 

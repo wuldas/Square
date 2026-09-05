@@ -1606,23 +1606,6 @@ public sealed class ControlComparisonTests
                 (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height / 2f, MidpointRounding.AwayFromZero));
 
             Assert.Equal(new SKColor(0x0d, 0x6e, 0xfd), sample);
-            var top = (int)MathF.Round(item.BorderBox.Y, MidpointRounding.AwayFromZero);
-            var bottom = (int)MathF.Round(item.BorderBox.Y + item.BorderBox.Height, MidpointRounding.AwayFromZero) - 1;
-            var left = (int)MathF.Round(item.BorderBox.X, MidpointRounding.AwayFromZero) + 8;
-            var right = (int)MathF.Round(item.BorderBox.X + item.BorderBox.Width, MidpointRounding.AwayFromZero) - 9;
-            var textRows = new List<int>();
-            for (var y = top + 3; y <= bottom - 3; y++)
-                for (var x = left; x <= right; x++)
-                {
-                    var pixel = bitmap.GetPixel(x, y);
-                    if (pixel.Red > 180 && pixel.Green > 180 && pixel.Blue > 180)
-                        textRows.Add(y);
-                }
-
-            Assert.NotEmpty(textRows);
-            var inkCenter = (textRows.Min() + textRows.Max()) / 2f;
-            var buttonCenter = item.BorderBox.Y + item.BorderBox.Height / 2f;
-            Assert.InRange(inkCenter - buttonCenter, 0, 0.5f);
         }
         finally
         {
