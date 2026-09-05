@@ -1,11 +1,12 @@
 using Square.Graphics;
 using Square.Hosting;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Square.Platform.Win32;
 
-internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
+internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatformCloseRequestSource
 {
     private IntPtr _hwnd;
     private bool _running;
@@ -229,18 +230,18 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
             owner.Top + (owner.Height - window.Height) / 2
         );
 
+    public event EventHandler<CancelEventArgs>? Closing;
+
     public void Close()
     {
-        _running = false;
-        ReleasePresentResources();
         if (_hwnd != IntPtr.Zero)
         {
-            Win32Api.DestroyWindow(_hwnd);
-            _hwnd = IntPtr.Zero;
+            Win32Api.SendMessage(_hwnd, (uint)Win32Api.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            return;
         }
 
+        _running = false;
         SignalClosed();
-        Win32Api.PostQuitMessage(0);
     }
 
     public void Minimize()
@@ -726,10 +727,17 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
             }
                 return IntPtr.Zero;
             case Win32Api.WM_CLOSE:
+            {
+                var closing = new CancelEventArgs();
+                host.Closing?.Invoke(host, closing);
+                if (closing.Cancel)
+                    return IntPtr.Zero;
+
                 Win32Api.KillTimer(hWnd, new UIntPtr(1));
                 host._running = false;
                 Win32Api.DestroyWindow(hWnd);
                 return IntPtr.Zero;
+            }
             case Win32Api.WM_DESTROY:
                 Win32Api.KillTimer(hWnd, new UIntPtr(1));
                 host.ReleasePresentResources();

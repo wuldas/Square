@@ -9,10 +9,19 @@ public interface ICodeEditorTextModel
     /// <summary>行数（至少 1）。</summary>
     int LineCount { get; }
 
+    /// <summary>每次有效事务严格递增的版本。</summary>
+    long Version { get; }
+
+    /// <summary>当前撤销历史节点，供保存点比较。</summary>
+    long HistoryStateId { get; }
+
     /// <summary>整篇文本。</summary>
     string GetValue();
 
-    /// <summary>加载或替换整篇文本，并清空 undo/redo 历史。</summary>
+    /// <summary>读取一段文本；offset/length 越界抛出。</summary>
+    string GetText(int offset, int length);
+
+    /// <summary>加载或替换整篇文本，并清空 undo/redo 历史。不能用于普通替换全部。</summary>
     void SetValue(string text);
 
     /// <summary>获取一行（不含换行符）。</summary>
@@ -30,7 +39,7 @@ public interface ICodeEditorTextModel
     /// <summary>(line, column) → offset。</summary>
     int GetOffsetAt(int line, int column);
 
-    /// <summary>应用编辑（可多段，按 offset 从后往前安全）。</summary>
+    /// <summary>应用编辑（校验全部范围后一次性提交）。</summary>
     void ApplyEdits(IReadOnlyList<TextEdit> edits);
 
     /// <summary>单次替换。</summary>
@@ -40,24 +49,26 @@ public interface ICodeEditorTextModel
     event EventHandler<ContentChangedEventArgs>? Changed;
 }
 
-/// <summary>文本替换。</summary>
+/// <summary>文本替换。Offset/Length 指向该次编辑应用前正文。</summary>
 public readonly record struct TextEdit(int Offset, int Length, string Text);
 
-/// <summary>内容变更参数。</summary>
+/// <summary>一次模型事务通知。</summary>
 public sealed class ContentChangedEventArgs : EventArgs
 {
-    /// <summary>初始化。</summary>
-    public ContentChangedEventArgs(int offset, int oldLength, int newLength)
+    /// <summary>初始化事务消息。</summary>
+    public ContentChangedEventArgs(long version, IReadOnlyList<TextEdit> edits, bool isReset)
     {
-        Offset = offset;
-        OldLength = oldLength;
-        NewLength = newLength;
+        Version = version;
+        Edits = edits ?? Array.Empty<TextEdit>();
+        IsReset = isReset;
     }
 
-    /// <summary>起点。</summary>
-    public int Offset { get; }
-    /// <summary>旧长度。</summary>
-    public int OldLength { get; }
-    /// <summary>新长度。</summary>
-    public int NewLength { get; }
+    /// <summary>事务完成后的模型版本。</summary>
+    public long Version { get; }
+
+    /// <summary>按实际应用次序排列的编辑。</summary>
+    public IReadOnlyList<TextEdit> Edits { get; }
+
+    /// <summary>是否为 SetValue 加载/重载。</summary>
+    public bool IsReset { get; }
 }

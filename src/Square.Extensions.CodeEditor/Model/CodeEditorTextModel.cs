@@ -1,13 +1,19 @@
 namespace Square.Extensions.CodeEditor;
 
 /// <summary>基于 PieceTable 的文本模型，带增量 undo/redo。</summary>
-internal sealed class CodeEditorTextModel : ICodeEditorTextModel
+public sealed class CodeEditorTextModel : ICodeEditorTextModel
 {
     private readonly PieceTable _table = new();
     private readonly EditStack _undo = new();
+    private readonly Stack<long> _undoStates = new();
+    private readonly Stack<long> _redoStates = new();
     private bool _suppressHistory;
-    /// <summary>下一次 Replace 记录到历史时使用的编辑前光标（可选）。</summary>
     private int? _pendingPreCaret;
+    private long _version;
+    private long _historyStateId;
+    private long _nextHistoryId = 1;
+    private object? _coalesceOwner;
+    private object? _activeEditView;
 
     public CodeEditorTextModel()
     {
@@ -16,10 +22,21 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
 
     public int Length => _table.Length;
     public int LineCount => _table.LineCount;
+    public long Version => _version;
+    public long HistoryStateId => _historyStateId;
     public bool CanUndo => _undo.CanUndo;
     public bool CanRedo => _undo.CanRedo;
 
     public string GetValue() => _table.GetValue();
+
+    public string GetText(int offset, int length)
+    {
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length));
+        if (offset > Length || (long)offset + length > Length)
+            throw new ArgumentOutOfRangeException(nameof(length));
+        return _table.GetText(offset, length);
+    }
 
     public void SetValue(string text)
     {
@@ -28,10 +45,12 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         if (oldLength == normalized.Length && _table.GetValue() == normalized) return;
 
         _table.SetValue(normalized);
-        // SetValue is document loading/replacement, not an edit transaction.
-        // Keeping the old and new full-document snapshots defeats the PieceTable.
         _undo.Clear();
-        Changed?.Invoke(this, new ContentChangedEventArgs(0, oldLength, _table.Length));
+        _undoStates.Clear();
+        _redoStates.Clear();
+        _coalesceOwner = null;
+        _historyStateId = _nextHistoryId++;
+        RaiseChanged(Array.Empty<TextEdit>(), isReset: true);
     }
 
     public string GetLineContent(int lineNumber) => _table.GetLineContent(lineNumber);
@@ -54,15 +73,24 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         return start + column;
     }
 
-    public void ApplyEdits(IReadOnlyList<TextEdit> edits)
+    public void ApplyEdits(IReadOnlyList<TextEdit> edits) => ReplaceMany(edits);
+
+    public void SetNextPreCaret(int caret) => _pendingPreCaret = caret;
+
+    public void BeginViewEdit(object view)
     {
-        if (edits == null || edits.Count == 0) return;
-        foreach (var edit in edits.OrderByDescending(e => e.Offset))
-            Replace(edit.Offset, edit.Length, edit.Text ?? "");
+        ArgumentNullException.ThrowIfNull(view);
+        if (!ReferenceEquals(_coalesceOwner, view))
+            _undo.EndCoalesce();
+        _coalesceOwner = view;
+        _activeEditView = view;
     }
 
-    /// <summary>设置下一次 <see cref="Replace"/> 写入历史时的编辑前光标。</summary>
-    public void SetNextPreCaret(int caret) => _pendingPreCaret = caret;
+    public void EndViewEdit() => _activeEditView = null;
+
+    public bool IsActiveEditView(object view) => ReferenceEquals(_activeEditView, view);
+
+    public void EndCoalesce() => _undo.EndCoalesce();
 
     public void Replace(int offset, int length, string text)
     {
@@ -74,9 +102,11 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         var deleted = length > 0 ? _table.GetText(offset, length) : "";
         var preCaret = _pendingPreCaret ?? (text.Length == 0 ? offset + length : offset);
         _pendingPreCaret = null;
-        PushHistory(offset, deleted, text, preCaret);
+        var kind = PushHistory(offset, deleted, text, preCaret);
+        if (kind == HistoryPushKind.NewNode)
+            AssignNewHistoryState();
         _table.Replace(offset, length, text);
-        Changed?.Invoke(this, new ContentChangedEventArgs(offset, length, text.Length));
+        RaiseChanged([new TextEdit(offset, length, text)], isReset: false);
     }
 
     public bool Undo(out int caretOffset) => Undo(out caretOffset, out _);
@@ -86,31 +116,14 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         caretOffset = 0;
         caretOffsets = [];
         if (!_undo.TryUndoItem(out var item)) return false;
+        _redoStates.Push(_historyStateId);
+        _historyStateId = _undoStates.Count > 0 ? _undoStates.Pop() : 0;
         _suppressHistory = true;
         try
         {
-            switch (item)
-            {
-                case SingleHistory single:
-                    ApplyInverse(single.Entry);
-                    caretOffset = Math.Clamp(single.Entry.PreCaret, 0, Length);
-                    caretOffsets = [caretOffset];
-                    return true;
-                case CompoundHistory compound:
-                    foreach (var entry in compound.Entries.OrderBy(e => e.Offset))
-                        ApplyInverse(entry);
-                    caretOffsets = compound.Entries
-                        .Select(e => Math.Clamp(e.PreCaret, 0, Length))
-                        .Distinct()
-                        .OrderBy(c => c)
-                        .ToArray();
-                    if (caretOffsets.Length == 0)
-                        caretOffsets = [0];
-                    caretOffset = caretOffsets[^1];
-                    return true;
-                default:
-                    return false;
-            }
+            var edits = ApplyHistory(item, forward: false, out caretOffset, out caretOffsets);
+            RaiseChanged(edits, isReset: false);
+            return true;
         }
         finally
         {
@@ -125,25 +138,14 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         caretOffset = 0;
         caretOffsets = [];
         if (!_undo.TryRedoItem(out var item)) return false;
+        _undoStates.Push(_historyStateId);
+        _historyStateId = _redoStates.Count > 0 ? _redoStates.Pop() : _historyStateId;
         _suppressHistory = true;
         try
         {
-            switch (item)
-            {
-                case SingleHistory single:
-                    ApplyForward(single.Entry);
-                    caretOffset = Math.Clamp(single.Entry.Offset + single.Entry.NewText.Length, 0, Length);
-                    caretOffsets = [caretOffset];
-                    return true;
-                case CompoundHistory compound:
-                    foreach (var entry in compound.Entries.OrderByDescending(e => e.Offset))
-                        ApplyForward(entry);
-                    caretOffsets = MapCaretsAfterForwardCompound(compound.Entries);
-                    caretOffset = caretOffsets.Length > 0 ? caretOffsets[^1] : 0;
-                    return true;
-                default:
-                    return false;
-            }
+            var edits = ApplyHistory(item, forward: true, out caretOffset, out caretOffsets);
+            RaiseChanged(edits, isReset: false);
+            return true;
         }
         finally
         {
@@ -151,39 +153,25 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         }
     }
 
-    private void ApplyInverse(EditEntry entry)
-    {
-        _table.Replace(entry.Offset, entry.NewText.Length, entry.OldText);
-        Changed?.Invoke(this, new ContentChangedEventArgs(entry.Offset, entry.NewText.Length, entry.OldText.Length));
-    }
-
-    private void ApplyForward(EditEntry entry)
-    {
-        _table.Replace(entry.Offset, entry.OldText.Length, entry.NewText);
-        Changed?.Invoke(this, new ContentChangedEventArgs(entry.Offset, entry.OldText.Length, entry.NewText.Length));
-    }
-
-    /// <summary>
-    /// 批量替换（预编辑坐标），并作为一次 undo 提交。
-    /// <paramref name="preCarets"/> 与 edits 对应的编辑前光标（用于撤销恢复多光标）。
-    /// </summary>
     public void ReplaceMany(IReadOnlyList<TextEdit> edits, IReadOnlyList<int>? preCarets = null)
     {
         if (edits == null || edits.Count == 0) return;
-        var ordered = edits.OrderByDescending(e => e.Offset).ToArray();
-        if (ordered.Length == 1)
+        var prepared = PrepareEdits(edits);
+        if (prepared.Count == 0) return;
+        if (prepared.Count == 1)
         {
             if (preCarets is { Count: > 0 })
                 SetNextPreCaret(preCarets[0]);
-            Replace(ordered[0].Offset, ordered[0].Length, ordered[0].Text ?? "");
+            var single = prepared[0];
+            Replace(single.Offset, single.Length, single.Text);
             return;
         }
 
-        var history = new List<EditEntry>(ordered.Length);
+        var history = new List<EditEntry>(prepared.Count);
+        var applied = new List<TextEdit>(prepared.Count);
         _suppressHistory = true;
         try
         {
-            // map preCarets by matching offset when provided
             var preByOffset = new Dictionary<int, int>();
             if (preCarets != null)
             {
@@ -191,21 +179,15 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
                     preByOffset[edits[i].Offset] = preCarets[i];
             }
 
-            foreach (var edit in ordered)
+            foreach (var edit in prepared.OrderByDescending(e => e.Offset))
             {
-                var text = Normalize(edit.Text ?? "");
-                var offset = edit.Offset;
-                var length = edit.Length;
-                if (offset < 0 || offset > Length) throw new ArgumentOutOfRangeException(nameof(edits));
-                if (length < 0 || offset + length > Length) throw new ArgumentOutOfRangeException(nameof(edits));
-                if (length == 0 && text.Length == 0) continue;
-                var deleted = length > 0 ? _table.GetText(offset, length) : "";
-                var pre = preByOffset.TryGetValue(offset, out var p)
+                var deleted = edit.Length > 0 ? _table.GetText(edit.Offset, edit.Length) : "";
+                var pre = preByOffset.TryGetValue(edit.Offset, out var p)
                     ? p
-                    : (text.Length == 0 ? offset + length : offset);
-                history.Add(new EditEntry(offset, deleted, text, pre));
-                _table.Replace(offset, length, text);
-                Changed?.Invoke(this, new ContentChangedEventArgs(offset, length, text.Length));
+                    : (edit.Text.Length == 0 ? edit.Offset + edit.Length : edit.Offset);
+                history.Add(new EditEntry(edit.Offset, deleted, edit.Text, pre));
+                _table.Replace(edit.Offset, edit.Length, edit.Text);
+                applied.Add(edit);
             }
         }
         finally
@@ -213,16 +195,129 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
             _suppressHistory = false;
         }
 
-        if (history.Count > 0)
-            _undo.PushCompound(history);
+        _undo.PushCompound(history);
+        AssignNewHistoryState();
+        RaiseChanged(applied, isReset: false);
     }
 
     public event EventHandler<ContentChangedEventArgs>? Changed;
 
-    private void PushHistory(int offset, string oldText, string newText, int preCaret)
+    private List<TextEdit> PrepareEdits(IReadOnlyList<TextEdit> edits)
     {
-        if (_suppressHistory) return;
-        _undo.Push(new EditEntry(offset, oldText, newText, preCaret));
+        var prepared = new List<TextEdit>(edits.Count);
+        foreach (var edit in edits)
+        {
+            var text = Normalize(edit.Text ?? "");
+            if (edit.Offset < 0 || edit.Offset > Length)
+                throw new ArgumentOutOfRangeException(nameof(edits));
+            if (edit.Length < 0 || edit.Offset + edit.Length > Length)
+                throw new ArgumentOutOfRangeException(nameof(edits));
+            if (edit.Length == 0 && text.Length == 0)
+                continue;
+            prepared.Add(edit with { Text = text });
+        }
+
+        var ordered = prepared.OrderBy(e => e.Offset).ThenBy(e => e.Length).ToArray();
+        for (var i = 1; i < ordered.Length; i++)
+        {
+            var previous = ordered[i - 1];
+            var current = ordered[i];
+            var previousEnd = previous.Offset + previous.Length;
+            if (previous.Length == 0 && current.Length == 0 && previous.Offset == current.Offset)
+                throw new ArgumentException("Duplicate insertion points are not allowed.", nameof(edits));
+            if (previousEnd > current.Offset)
+                throw new ArgumentException("Overlapping edits are not allowed.", nameof(edits));
+        }
+
+        return prepared;
+    }
+
+    private IReadOnlyList<TextEdit> ApplyHistory(
+        HistoryItem item,
+        bool forward,
+        out int caretOffset,
+        out int[] caretOffsets)
+    {
+        switch (item)
+        {
+            case SingleHistory single:
+                var entry = single.Entry;
+                if (forward)
+                    ApplyForward(entry);
+                else
+                    ApplyInverse(entry);
+                caretOffset = Math.Clamp(
+                    forward ? entry.Offset + entry.NewText.Length : entry.PreCaret,
+                    0,
+                    Length);
+                caretOffsets = [caretOffset];
+                return
+                [
+                    forward
+                        ? new TextEdit(entry.Offset, entry.OldText.Length, entry.NewText)
+                        : new TextEdit(entry.Offset, entry.NewText.Length, entry.OldText)
+                ];
+            case CompoundHistory compound:
+                var applied = new List<TextEdit>(compound.Entries.Count);
+                if (forward)
+                {
+                    foreach (var historyEntry in compound.Entries.OrderByDescending(e => e.Offset))
+                    {
+                        ApplyForward(historyEntry);
+                        applied.Add(new TextEdit(historyEntry.Offset, historyEntry.OldText.Length, historyEntry.NewText));
+                    }
+
+                    caretOffsets = MapCaretsAfterForwardCompound(compound.Entries);
+                }
+                else
+                {
+                    foreach (var historyEntry in compound.Entries.OrderBy(e => e.Offset))
+                    {
+                        ApplyInverse(historyEntry);
+                        applied.Add(new TextEdit(historyEntry.Offset, historyEntry.NewText.Length, historyEntry.OldText));
+                    }
+
+                    caretOffsets = compound.Entries
+                        .Select(e => Math.Clamp(e.PreCaret, 0, Length))
+                        .Distinct()
+                        .OrderBy(c => c)
+                        .ToArray();
+                }
+
+                if (caretOffsets.Length == 0)
+                    caretOffsets = [0];
+                caretOffset = caretOffsets[^1];
+                return applied;
+            default:
+                caretOffset = 0;
+                caretOffsets = [0];
+                return [];
+        }
+    }
+
+    private void ApplyInverse(EditEntry entry) =>
+        _table.Replace(entry.Offset, entry.NewText.Length, entry.OldText);
+
+    private void ApplyForward(EditEntry entry) =>
+        _table.Replace(entry.Offset, entry.OldText.Length, entry.NewText);
+
+    private HistoryPushKind PushHistory(int offset, string oldText, string newText, int preCaret)
+    {
+        if (_suppressHistory) return HistoryPushKind.Coalesced;
+        return _undo.Push(new EditEntry(offset, oldText, newText, preCaret));
+    }
+
+    private void AssignNewHistoryState()
+    {
+        _undoStates.Push(_historyStateId);
+        _redoStates.Clear();
+        _historyStateId = _nextHistoryId++;
+    }
+
+    private void RaiseChanged(IReadOnlyList<TextEdit> edits, bool isReset)
+    {
+        _version++;
+        Changed?.Invoke(this, new ContentChangedEventArgs(_version, edits, isReset));
     }
 
     private int[] MapCaretsAfterForwardCompound(IReadOnlyList<EditEntry> entries)
@@ -237,8 +332,10 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
                 if (e.Offset < pre[i])
                     c += e.NewText.Length - e.OldText.Length;
             }
+
             result[i] = Math.Clamp(c, 0, Length);
         }
+
         Array.Sort(result);
         return result.Distinct().ToArray();
     }
@@ -247,7 +344,6 @@ internal sealed class CodeEditorTextModel : ICodeEditorTextModel
         text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 }
 
-/// <param name="PreCaret">编辑前光标位置（撤销后应恢复到此）。</param>
 internal readonly record struct EditEntry(int Offset, string OldText, string NewText, int PreCaret);
 
 internal abstract record HistoryItem;
@@ -255,6 +351,12 @@ internal abstract record HistoryItem;
 internal sealed record SingleHistory(EditEntry Entry) : HistoryItem;
 
 internal sealed record CompoundHistory(IReadOnlyList<EditEntry> Entries) : HistoryItem;
+
+internal enum HistoryPushKind
+{
+    Coalesced,
+    NewNode
+}
 
 internal sealed class EditStack
 {
@@ -273,10 +375,11 @@ internal sealed class EditStack
         _coalesce = null;
     }
 
-    public void Push(EditEntry entry)
+    public void EndCoalesce() => FlushCoalesce();
+
+    public HistoryPushKind Push(EditEntry entry)
     {
         _redo.Clear();
-        // coalesce consecutive single-char inserts (typing) — keep first PreCaret
         if (_coalesce.HasValue &&
             entry.OldText.Length == 0 && entry.NewText.Length == 1 &&
             _coalesce.Value.OldText.Length == 0 &&
@@ -288,10 +391,9 @@ internal sealed class EditStack
                 _coalesce.Value.NewText + entry.NewText,
                 _coalesce.Value.PreCaret);
             _coalesceTime = DateTime.UtcNow;
-            return;
+            return HistoryPushKind.Coalesced;
         }
 
-        // coalesce consecutive single-char Delete (same offset) — keep first PreCaret
         if (_coalesce.HasValue &&
             entry.NewText.Length == 0 && entry.OldText.Length == 1 &&
             _coalesce.Value.NewText.Length == 0 &&
@@ -304,10 +406,9 @@ internal sealed class EditStack
                 "",
                 _coalesce.Value.PreCaret);
             _coalesceTime = DateTime.UtcNow;
-            return;
+            return HistoryPushKind.Coalesced;
         }
 
-        // coalesce consecutive single-char Backspace — keep original PreCaret (rightmost / first)
         if (_coalesce.HasValue &&
             entry.NewText.Length == 0 && entry.OldText.Length == 1 &&
             _coalesce.Value.NewText.Length == 0 &&
@@ -320,7 +421,7 @@ internal sealed class EditStack
                 "",
                 _coalesce.Value.PreCaret);
             _coalesceTime = DateTime.UtcNow;
-            return;
+            return HistoryPushKind.Coalesced;
         }
 
         FlushCoalesce();
@@ -329,10 +430,11 @@ internal sealed class EditStack
         {
             _coalesce = entry;
             _coalesceTime = DateTime.UtcNow;
-            return;
+            return HistoryPushKind.NewNode;
         }
 
         _undo.Push(new SingleHistory(entry));
+        return HistoryPushKind.NewNode;
     }
 
     public void PushCompound(IReadOnlyList<EditEntry> entries)
@@ -345,6 +447,7 @@ internal sealed class EditStack
             _undo.Push(new SingleHistory(entries[0]));
             return;
         }
+
         _undo.Push(new CompoundHistory(entries.ToArray()));
     }
 
@@ -356,6 +459,7 @@ internal sealed class EditStack
             item = null!;
             return false;
         }
+
         item = _undo.Pop();
         _redo.Push(item);
         return true;
@@ -369,6 +473,7 @@ internal sealed class EditStack
             item = null!;
             return false;
         }
+
         item = _redo.Pop();
         _undo.Push(item);
         return true;
