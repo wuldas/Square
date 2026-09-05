@@ -314,9 +314,27 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj `
   -- --backend Direct2D
 ```
 
-NativeAOT 发布时显式加入 `-p:SquareSampleUseDirect2D=true`。Direct2D HWND target 不实现
-`IRenderBitmapSource`；`CaptureRendererBitmapAsync()` 因此使用 Software 重放，不能作为 Direct2D
-像素正确性的证据。真实后端测试使用 `SQUARE_RUN_REAL_DIRECT2D_CONFORMANCE=1` 开启 Win32 窗口抓图。
+Win32 创建窗口时，`CreateWindowEx` 会在返回前同步派发消息；`WndProc` 在关联正在创建的宿主时先绑定 HWND，再处理消息，确保 `SizeChanged` 回调创建 Direct2D render target 时已能取得有效窗口句柄。
+
+在 Windows 上从仓库根目录运行以下 PowerShell 命令，可复现 `.github/workflows/ci.yml` 的 Direct2D NativeAOT 发布、启动与截图 smoke（需安装 .NET SDK 及 Windows NativeAOT 构建工具链）：
+
+```powershell
+dotnet publish samples/Square.Sample/Square.Sample.csproj `
+  --configuration Release --runtime win-x64 --self-contained true `
+  -p:SquareTargetPlatform=Win32 `
+  -p:SquareSamplePublishAot=true `
+  -p:SquareSampleUseDirect2D=true `
+  -o artifacts/nativeaot-direct2d
+
+New-Item -ItemType Directory -Force "artifacts/screenshots" | Out-Null
+$process = Start-Process -FilePath ".\artifacts\nativeaot-direct2d\Square.Sample.exe" -ArgumentList "--backend", "Direct2D", "--screenshot", "artifacts/screenshots/direct2d-aot.png" -Wait -PassThru
+if ($process.ExitCode -ne 0) { throw "Direct2D NativeAOT sample exited with code $($process.ExitCode)." }
+if (-not (Test-Path -LiteralPath "artifacts/screenshots/direct2d-aot.png") -or (Get-Item -LiteralPath "artifacts/screenshots/direct2d-aot.png").Length -eq 0) { throw "Direct2D NativeAOT screenshot was not created." }
+```
+
+该 smoke 验证 NativeAOT 程序可启动、创建 Direct2D HWND target 并完成截图流程。Direct2D HWND target 不实现
+`IRenderBitmapSource`；`CaptureRendererBitmapAsync()` 因此使用 Software 重放，生成的 PNG 不能作为 Direct2D
+原生像素正确性的证据。真实 HWND 后端一致性测试另用 `SQUARE_RUN_REAL_DIRECT2D_CONFORMANCE=1` 开启 Win32 窗口抓图（CI 筛选 `Category=RealDirect2D`）。截图完成时机及外部宿主的帧驱动要求见 [API Reference](API-Reference.md#devtools-input-records)。
 
 ---
 
