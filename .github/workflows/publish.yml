@@ -62,8 +62,24 @@ jobs:
       - name: Build and run NuGet package consumer
         shell: pwsh
         run: |
-          $feed = (Resolve-Path artifacts/packages).Path
-          dotnet build tests/Square.PackageConsumer/Square.PackageConsumer.csproj -c Release "-p:Version=$env:RELEASE_PACKAGE_VERSION" -p:SquareTargetPlatform=Win32 --source $feed --source https://api.nuget.org/v3/index.json
+          $feed = [Security.SecurityElement]::Escape((Resolve-Path artifacts/packages).Path)
+          $config = Join-Path $env:RUNNER_TEMP 'release.NuGet.Config'
+          @"
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="local" value="$feed" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+            <packageSourceMapping>
+              <packageSource key="local"><package pattern="Wuldas.Square" /><package pattern="Wuldas.Square.*" /></packageSource>
+              <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+            </packageSourceMapping>
+          </configuration>
+          "@ | Set-Content $config
+          dotnet restore tests/Square.PackageConsumer/Square.PackageConsumer.csproj "-p:Version=$env:RELEASE_PACKAGE_VERSION" -p:SquareTargetPlatform=Win32 --configfile $config
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tests/Square.PackageConsumer/Square.PackageConsumer.csproj -c Release --no-restore "-p:Version=$env:RELEASE_PACKAGE_VERSION" -p:SquareTargetPlatform=Win32
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet tests/Square.PackageConsumer/bin/Release/net10.0/Square.PackageConsumer.dll
 
