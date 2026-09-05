@@ -14,7 +14,6 @@
   </ItemGroup>
 
   <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Assets')">
-    <None Remove="Assets\**\*" />
     <EmbeddedResource Include="Assets\**\*" Exclude="@(EmbeddedResource)" />
   </ItemGroup>
 
