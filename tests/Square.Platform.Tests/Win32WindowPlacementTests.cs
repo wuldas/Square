@@ -1,3 +1,4 @@
+using Square.Hosting;
 using Square.Platform.Win32;
 using Xunit;
 
@@ -5,6 +6,29 @@ namespace Square.Platform.Tests;
 
 public sealed class Win32WindowPlacementTests
 {
+    [Fact]
+    public void CreationSizeChangedExposesNativeWindowHandle()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var host = new Win32Host(new PlatformHostCreateInfo
+        {
+            Title = "Square creation lifecycle test",
+            Width = 320,
+            Height = 240,
+            TitleStyle = TitleStyle.Custom,
+            BorderStyle = BorderStyle.Resizable
+        });
+        var handlesDuringCreation = new List<IntPtr>();
+        host.SizeChanged += _ => handlesDuringCreation.Add(host.Handle);
+
+        host.Show();
+
+        Assert.NotEmpty(handlesDuringCreation);
+        Assert.NotEqual(IntPtr.Zero, host.Handle);
+        Assert.All(handlesDuringCreation, handle => Assert.Equal(host.Handle, handle));
+    }
+
     [Theory]
     [InlineData(0, false)]
     [InlineData(120, false)]

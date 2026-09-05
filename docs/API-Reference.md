@@ -255,6 +255,8 @@ public sealed record DevToolsWheelInput(
 
 `DesktopApplication` 暴露 `InjectPointerAsync`、`InjectKeyAsync`、`InjectTextAsync`、`InjectWheelAsync` 和 `CaptureRendererBitmapAsync()` 供 DevTools 层跨线程投递输入与截图。`CaptureRendererBitmapAsync()` 优先读取活动渲染上下文的实时帧：若 RenderContext 实现 `IRenderBitmapSource` 且 `IsCaptureAvailable` 为 `true`（Vulkan 需设置 `SQUARE_VULKAN_READBACK=1`）则直接读回真实 GPU 输出；否则在 UI 线程将当前 DisplayTree 重放到离屏 Software bitmap。两种路径都不捕获平台窗口边框。
 
+截图请求在 UI 线程排队，并在布局、绘制及后端提交完成后返回位图；空闲窗口也会为待处理截图调度一帧，避免读取首帧或调整窗口尺寸后尚未绘制的缓冲区。外部 `ApplicationSession` 宿主必须继续驱动帧处理；会话分离时尚未完成的截图请求以异常结束。
+
 ---
 
 ## 2. Square.Runtime — 应用运行时

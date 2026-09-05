@@ -541,6 +541,9 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow
         if (host == null && s_creating != null)
         {
             host = s_creating;
+            // CreateWindowEx dispatches messages before returning the new HWND.
+            // SizeChanged subscribers may already create a native render target.
+            host._hwnd = hWnd;
             lock (HostsGate) Hosts[hWnd] = host;
         }
         if (host == null) return Win32Api.DefWindowProc(hWnd, msg, wParam, lParam);

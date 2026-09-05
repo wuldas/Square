@@ -138,6 +138,63 @@ public sealed class ApplicationSessionTests
     }
 
     [Fact]
+    public async Task CaptureQueuedBeforeFirstFrameReturnsPaintedPixels()
+    {
+        var root = new View();
+        root.Style.Set("background", "#1a73e8");
+        var window = new AppWindow("capture", 64, 48);
+        window.Load(root);
+        using var session = new ApplicationSession(window, new FakeHost());
+
+        var capture = window.CaptureRendererBitmapAsync();
+        session.Attach();
+
+        Assert.True(capture.IsCompleted);
+        using var bitmap = await capture;
+        Assert.Equal(new byte[] { 232, 115, 26, 255 }, bitmap.GetPixel(10, 10).ToArray());
+    }
+
+    [Fact]
+    public async Task CaptureQueuedBeforeResizeReturnsRepaintedSurface()
+    {
+        var root = new View();
+        root.Style.Set("background", "#1a73e8");
+        var window = new AppWindow("capture", 64, 48);
+        window.Load(root);
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        session.Attach();
+
+        var capture = window.CaptureRendererBitmapAsync();
+        host.Resize(new Size(80, 60));
+
+        Assert.True(capture.IsCompleted);
+        using var bitmap = await capture;
+        Assert.Equal(80, bitmap.Width);
+        Assert.Equal(60, bitmap.Height);
+        Assert.Equal(new byte[] { 232, 115, 26, 255 }, bitmap.GetPixel(70, 50).ToArray());
+    }
+
+    [Fact]
+    public async Task CaptureOnIdleSessionSchedulesOneCompletedFrame()
+    {
+        var window = new AppWindow("capture", 64, 48);
+        window.Load(new View { Style = { CssText = "background: #1a73e8;" } });
+        using var session = new ApplicationSession(window, new FakeHost());
+        session.Attach();
+        session.ProcessFrame();
+        Assert.False(session.HasPendingFrame);
+
+        var capture = window.CaptureRendererBitmapAsync();
+        session.Tick();
+
+        Assert.True(capture.IsCompleted);
+        using var bitmap = await capture;
+        Assert.Equal(new byte[] { 232, 115, 26, 255 }, bitmap.GetPixel(10, 10).ToArray());
+        Assert.False(session.HasPendingFrame);
+    }
+
+    [Fact]
     public void PendingControlFrameSurvivesSuspendAndResume()
     {
         var root = new ScheduledView();
@@ -222,7 +279,7 @@ public sealed class ApplicationSessionTests
         private bool _disposed;
         private string _title = "session";
 
-        public Size ClientSize { get; } = new(64, 48);
+        public Size ClientSize { get; private set; } = new(64, 48);
         public float DpiScale => 1f;
         public bool IsRunning { get; private set; }
         public AppWindowState State => AppWindowState.Normal;
@@ -237,11 +294,7 @@ public sealed class ApplicationSessionTests
         public bool ThrowOnCreateRenderContext { get; init; }
         public Bitmap? LastFrame { get; private set; }
 
-        public event Action<Size>? SizeChanged
-        {
-            add { }
-            remove { }
-        }
+        public event Action<Size>? SizeChanged;
         public event Action<Point, MouseAction, MouseButton>? MouseEvent
         {
             add { }
@@ -276,6 +329,12 @@ public sealed class ApplicationSessionTests
 
         public void ShowAfterFirstFrame() => ShowAfterFirstFrameCount++;
         public void Close() => IsRunning = false;
+
+        public void Resize(Size size)
+        {
+            ClientSize = size;
+            SizeChanged?.Invoke(size);
+        }
 
         public IRenderContext CreateRenderContext()
         {

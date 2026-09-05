@@ -25,6 +25,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private readonly LayoutEngine _layout = new();
     private readonly DisplayTree _displayTree = new();
     private readonly Dictionary<Element, double> _scheduledFrames = [];
+    private readonly Queue<TaskCompletionSource<Bitmap>> _pendingRendererCaptures = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private double _lastAnimationTickSeconds;
     private IPlatformHost? _host;
@@ -324,6 +325,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         Cleanup(() => _root.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest));
         Cleanup(() => _document.RemoveEventListener(StandardEvents.RequestFrame, HandleFrameRequest));
         _scheduledFrames.Clear();
+        while (_pendingRendererCaptures.TryDequeue(out var capture))
+            capture.SetException(new InvalidOperationException("The application session ended before renderer capture completed."));
         if (_root.IsLoaded) Cleanup(() => ((IComponentLifecycle)_root).OnUnloaded());
         if (_root.IsAttached) Cleanup(() => ((IComponentLifecycle)_root).OnDetached());
         Cleanup(() => CssStyleReconciler.UnregisterScopesForTree(_root));
@@ -491,7 +494,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     internal bool HasPendingSessionFrame =>
         _sessionPrepared && !_sessionSuspended && _host != null &&
         _host.ClientSize.Width > 0 && _host.ClientSize.Height > 0 &&
-        (Volatile.Read(ref _renderRequested) || Dispatcher.HasWork ||
+        (Volatile.Read(ref _renderRequested) || Dispatcher.HasWork || _pendingRendererCaptures.Count > 0 ||
          _document.Context.Reconciler.HasWork || CssStyleReconciler.HasWorkForTree(_root) ||
          CssStyleReconciler.HasRunningAnimationsForTree(_root) ||
          _scheduledFrames.Count > 0 || HasVisualInvalidation(_root));
@@ -671,27 +674,37 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var completion = new TaskCompletionSource<Bitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.Invoke(() =>
         {
+            if (_host == null || _renderContext == null)
+            {
+                completion.SetException(new InvalidOperationException(
+                    "The application must be running before renderer capture is available."));
+                return;
+            }
+
+            // Dispatcher work runs before painting, including immediately after a surface resize.
+            _pendingRendererCaptures.Enqueue(completion);
+        });
+        return completion.Task;
+    }
+
+    private void CompleteRendererCaptures()
+    {
+        while (_pendingRendererCaptures.TryDequeue(out var completion))
+        {
             try
             {
-                if (_host == null || _renderContext == null)
-                    throw new InvalidOperationException(
-                        "The application must be running before renderer capture is available.");
-
-                // Prefer the live frame from the active render context. For GPU backends
-                // (e.g. Vulkan) this reads back the actual presented frame, so the capture
-                // reflects real GPU output instead of a software re-render — which is what
-                // makes GPU-side rendering bugs visible in DevTools screenshots.
+                // Read the active backend's completed frame, including real GPU output.
                 if (_renderContext is IRenderBitmapSource { IsCaptureAvailable: true } liveSource)
                 {
                     completion.SetResult(liveSource.CaptureBitmap());
-                    return;
+                    continue;
                 }
 
                 // Fallback: re-render the display tree into a software capture context.
                 using var textLayoutScope = TextLayoutProviderContext.Suppress();
                 using var captureContext = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
                 {
-                    CanvasSize = _host.ClientSize,
+                    CanvasSize = _host!.ClientSize,
                     DpiScale = _host.DpiScale
                 });
                 captureContext.Clear(MainWindow.Background);
@@ -705,8 +718,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             {
                 completion.SetException(exception);
             }
-        });
-        return completion.Task;
+        }
     }
 
     /// <inheritdoc/>
@@ -831,7 +843,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 dirty.Add(textSelectionOverlayDirtyBounds);
             if (dirty.Count == 0)
             {
-                if (hadPendingTextSelection && !textSelectionChanged)
+                if (hadPendingTextSelection && !textSelectionChanged && _pendingRendererCaptures.Count == 0)
                 {
                     if (_focusedEditor != null)
                         _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
@@ -884,6 +896,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (_focusedEditor != null)
             _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+        CompleteRendererCaptures();
         FramePresented?.Invoke();
     }
 
@@ -2559,6 +2572,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                           || scrollbarRepeated
                           || animationsRunning
                           || Volatile.Read(ref _renderRequested)
+                          || _pendingRendererCaptures.Count > 0
                           || _document.Context.Reconciler.HasWork
                           || CssStyleReconciler.HasWorkForTree(_root)
                           || Dispatcher.HasWork;
@@ -2569,7 +2583,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private bool HasVisualWork()
     {
         RunUpdatePass();
-        return _renderRequested || HasVisualInvalidation(_root);
+        return _renderRequested || _pendingRendererCaptures.Count > 0 || HasVisualInvalidation(_root);
     }
 
     private static bool HasVisualInvalidation(Element element)
