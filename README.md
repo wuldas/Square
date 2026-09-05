@@ -73,6 +73,19 @@ window.Load(new Main());
 new DesktopApplication(window).Run();
 ```
 
+## 创建独立应用
+
+`templates/` 提供可打包的 `Square.Templates`：
+
+```bash
+dotnet new install ./artifacts/template-feed/Square.Templates.0.1.0.nupkg
+dotnet new square -n MyApp
+dotnet new square -n MyMobileApp --platforms desktop,android --markup sqx
+dotnet new square-component -n UserCard -o MyApp/Components --namespace MyApp.Components
+```
+
+上述命令先要求准备模板包和框架本地 NuGet 源，打包步骤见[入门指南](docs/Getting-Started.md#21-安装模板与本地包)。生成项目默认使用 SQV + Software，独立于仓库构建属性；通过共享 `SquareProgram.CreateWindow()` 复用桌面与可选 Android 的应用初始化。
+
 ## 运行示例
 
 ```bash

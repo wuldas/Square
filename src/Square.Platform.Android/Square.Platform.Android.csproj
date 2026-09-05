@@ -11,15 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Square\Square.csproj">
-      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
-    </ProjectReference>
+    <ProjectReference Include="..\Square\Square.csproj" />
     <ProjectReference Include="..\Square.Backends.AndroidCanvas\Square.Backends.AndroidCanvas.csproj">
       <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
     </ProjectReference>
-    <ProjectReference Include="..\Square.Backends.Vulkan\Square.Backends.Vulkan.csproj">
-      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
-    </ProjectReference>
+    <ProjectReference Include="..\Square.Backends.Vulkan\Square.Backends.Vulkan.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SkiaSharp.Views" />

@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Square",
+  "classifications": ["Square", "Desktop", "Android"],
+  "identity": "Square.Templates.App",
+  "name": "Square App",
+  "description": "A native Square application using SQV or SQX components, with optional Android support.",
+  "shortName": "square",
+  "sourceName": "SquareApp",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "symbols": {
+    "markup": {
+      "type": "parameter",
+      "dataType": "choice",
+      "defaultValue": "sqv",
+      "description": "Component markup syntax.",
+      "choices": [
+        { "choice": "sqv", "description": "Vue-inspired Square markup" },
+        { "choice": "sqx", "description": "JSX-inspired Square markup" }
+      ]
+    },
+    "platforms": {
+      "type": "parameter",
+      "dataType": "choice",
+      "defaultValue": "desktop",
+      "replaces": "SquarePlatformSelection",
+      "description": "Include desktop, Android, or both. Combined projects build desktop unless SquareTargetPlatform=Android is selected.",
+      "choices": [
+        { "choice": "desktop", "description": "Windows, Linux, and macOS" },
+        { "choice": "android", "description": "Android only" },
+        { "choice": "desktop,android", "description": "Desktop and Android in one project" }
+      ]
+    },
+    "application-id": {
+      "type": "parameter",
+      "dataType": "text",
+      "defaultValue": "",
+      "description": "Android application ID: two or more dot-separated segments, each beginning with a letter and containing letters, digits, or underscores."
+    },
+    "hasDesktop": {
+      "type": "computed",
+      "value": "(platforms == \"desktop\" || platforms == \"desktop,android\")"
+    },
+    "hasAndroid": {
+      "type": "computed",
+      "value": "(platforms == \"android\" || platforms == \"desktop,android\")"
+    },
+    "applicationSuffix": {
+      "type": "generated",
+      "generator": "regex",
+      "parameters": {
+        "source": "name",
+        "steps": [{ "regex": "[^A-Za-z0-9]", "replacement": "" }]
+      },
+      "replaces": "DefaultApplicationSuffix"
+    },
+    "appNamespace": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "safe_namespace",
+      "replaces": "SafeAppNamespace"
+    },
+    "appTitle": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "xmlEncode",
+      "replaces": "XmlAppTitle"
+    },
+    "appId": {
+      "type": "derived",
+      "valueSource": "application-id",
+      "valueTransform": "xmlEncode",
+      "replaces": "XmlApplicationId"
+    }
+  },
+  "sources": [
+    {
+      "modifiers": [
+        { "condition": "(markup == \"sqv\")", "exclude": ["**/*.sqx"] },
+        { "condition": "(markup == \"sqx\")", "exclude": ["**/*.sqv"] },
+        { "condition": "(!hasDesktop)", "exclude": ["Platforms/Desktop/**", "Properties/launchSettings.json"] },
+        { "condition": "(!hasAndroid)", "exclude": ["Platforms/Android/**"] }
+      ]
+    }
+  ],
+  "primaryOutputs": [
+    { "path": "SquareApp.csproj" }
+  ]
+}

@@ -1,0 +1,11 @@
+<template>
+  <View class="app">
+    <MainPage />
+  </View>
+</template>
+<script lang="csharp" namespace="SafeAppNamespace">
+  using SafeAppNamespace.Pages;
+</script>
+<style>
+  .app { display: flex; flex-direction: column; height: 100%; background: #f7f8fa; }
+</style>

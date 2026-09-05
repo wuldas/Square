@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Square",
+  "classifications": [
+    "Square",
+    "UI",
+    "Component"
+  ],
+  "identity": "Square.Component",
+  "name": "Square Component",
+  "shortName": "square-component",
+  "sourceName": "SquareComponent",
+  "tags": {
+    "language": "C#",
+    "type": "item"
+  },
+  "symbols": {
+    "markup": {
+      "type": "parameter",
+      "datatype": "choice",
+      "defaultValue": "sqv",
+      "choices": [
+        {
+          "choice": "sqv",
+          "description": "Vue-style Square component"
+        },
+        {
+          "choice": "sqx",
+          "description": "Native Square component"
+        }
+      ]
+    },
+    "namespace": {
+      "type": "parameter",
+      "datatype": "text",
+      "defaultValue": "",
+      "description": "Optional namespace override; otherwise inferred from the consuming project and component path."
+    },
+    "namespaceAttribute": {
+      "type": "generated",
+      "generator": "regex",
+      "parameters": {
+        "source": "namespace",
+        "steps": [
+          {
+            "regex": "^(.+)$",
+            "replacement": "namespace=\"$1\""
+          }
+        ]
+      },
+      "replaces": "namespace=\"ComponentNamespace\""
+    }
+  },
+  "sources": [
+    {
+      "modifiers": [
+        {
+          "condition": "(markup == \"sqv\")",
+          "exclude": [
+            "**/*.sqx"
+          ]
+        },
+        {
+          "condition": "(markup == \"sqx\")",
+          "exclude": [
+            "**/*.sqv"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -3,10 +3,7 @@
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
-  <ItemGroup>
-    <UpToDateCheckInput Include="@(AdditionalFiles)" />
-    <Watch Include="@(AdditionalFiles)" />
-  </ItemGroup>
+  <Import Project="$(MSBuildThisFileDirectory)src\Square.Compiler\buildTransitive\Square.Compiler.targets" />
 
   <Target Name="ValidateSquareTargetPlatform" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(SquareUnsupportedPlatform)' != ''" Text="$(SquareUnsupportedPlatform)" />
@@ -22,17 +19,4 @@
            Text="RuntimeIdentifier '$(RuntimeIdentifier)' requires SquareTargetPlatform=Android." />
   </Target>
 
-  <Target Name="CopySquarePublicFiles" AfterTargets="CopyFilesToOutputDirectory"
-          Condition="'@(SquarePublicFile)' != ''">
-    <Copy SourceFiles="@(SquarePublicFile)"
-          DestinationFiles="@(SquarePublicFile->'$(TargetDir)%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="PublishSquarePublicFiles" AfterTargets="Publish"
-          Condition="'@(SquarePublicFile)' != '' and '$(PublishDir)' != ''">
-    <Copy SourceFiles="@(SquarePublicFile)"
-          DestinationFiles="@(SquarePublicFile->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
 </Project>

@@ -10,9 +10,7 @@
     <DefineConstants>$(DefineConstants);PLATFORM_ANDROID;BACKEND_ANDROID_CANVAS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Square\Square.csproj">
-      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
-    </ProjectReference>
+    <ProjectReference Include="..\Square\Square.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SkiaSharp.Views" />

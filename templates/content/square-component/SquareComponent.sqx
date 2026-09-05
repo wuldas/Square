@@ -1,0 +1,10 @@
+<template>
+  <View class="component">
+    <Text text="SquareComponent" />
+  </View>
+</template>
+<script lang="csharp" namespace="ComponentNamespace">
+</script>
+<style>
+  .component { padding: 12px; }
+</style>

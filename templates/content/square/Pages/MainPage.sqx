@@ -1,0 +1,25 @@
+<template>
+  <View class="page">
+    <Text class="heading" text="Welcome to Square" />
+    <Text class="description" text="Edit Pages/MainPage.sqx to get started." />
+    <Text class="counter-value" text={CountText} />
+    <Button class="increment" onClick={Increment}>Increment</Button>
+  </View>
+</template>
+<script lang="csharp" namespace="SafeAppNamespace.Pages">
+  public ObservableValue<string> CountText = new("Count: 0");
+  private int _count;
+
+  private void Increment()
+  {
+    _count++;
+    CountText.Value = "Count: " + _count;
+  }
+</script>
+<style>
+  .page { display: flex; flex-direction: column; gap: 16px; padding: 24px; }
+  .heading { color: #172b4d; font-size: 28px; }
+  .description { color: #475467; font-size: 16px; }
+  .counter-value { color: #172b4d; font-size: 20px; }
+  .increment { width: 160px; height: 48px; background: #1769e0; color: #ffffff; }
+</style>

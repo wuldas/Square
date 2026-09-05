@@ -65,6 +65,11 @@ jobs:
           -p:TrimMode=full -p:AndroidPackageFormats=apk
           -o artifacts/android-aot
 
+      - name: Verify installed Android templates
+        shell: pwsh
+        timeout-minutes: 20
+        run: templates/Verify-Templates.ps1 -Platform Android -WorkDirectory "${{ runner.temp }}/square-templates-android"
+
       - name: Upload Android artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

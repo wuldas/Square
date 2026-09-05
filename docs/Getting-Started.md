@@ -1,6 +1,6 @@
 # 入门指南
 
-> Document Revision: 0.3
+> Document Revision: 0.4
 > 配套：`vue-plan.md`、`Architecture.md`、`Sqx-Spec.md`、`API-Reference.md`
 
 本文带你从零创建一个 Square 桌面应用，默认使用 `.sqv` 的 Vue 模板语法编写组件。`.sqx` 原生语法仍可用，详见 `Sqx-Spec.md`。
@@ -20,56 +20,94 @@ dotnet --version
 
 ## 2. 创建项目
 
-### 2.1 新建控制台项目
+### 2.1 安装模板与本地包
+
+`Square.Templates` 提供 `square` 应用模板和 `square-component` 组件模板。生成的应用只引用 NuGet 包，不依赖 Square 仓库的 `Directory.Build.*` 或源码项目路径。
+
+当前可先从源码打包到本地源，不要求这些版本已经发布到 NuGet.org。以下命令在 Square 仓库根目录执行，以 Windows 为例：
 
 ```bash
-dotnet new console -n MyApp -o MyApp
-cd MyApp
+dotnet pack src/Square/Square.csproj -c Release -o artifacts/template-feed
+dotnet pack src/Square.Compiler/Square.Compiler.csproj -c Release -o artifacts/template-feed
+dotnet pack src/Square.Platform.Win32/Square.Platform.Win32.csproj -c Release -o artifacts/template-feed
+dotnet pack templates/Square.Templates.csproj -c Release -o artifacts/template-feed
+dotnet new install ./artifacts/template-feed/Square.Templates.0.1.0.nupkg
+dotnet new square -n MyApp -o ../MyApp
+cd ../MyApp
 ```
 
-### 2.2 修改 csproj
-
-将 `OutputType` 改为 `WinExe`，添加 Square 框架项目引用和 Source Generator 分析器引用：
+Linux / macOS 分别打包 `Square.Platform.X11` / `Square.Platform.MacOS`。在生成项目旁创建 `NuGet.Config`，把 `value` 改为刚才本地源的绝对路径；其余依赖从 NuGet.org 还原：
 
 ```xml
-<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <PublishAot>true</PublishAot>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="path\to\src\Square\Square.csproj" />
-    <ProjectReference Include="path\to\src\Square.Platform.Win32\Square.Platform.Win32.csproj" />
-    <ProjectReference Include="path\to\src\Square.Compiler\Square.Compiler.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      SetTargetFramework="TargetFramework=netstandard2.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <AdditionalFiles Include="**\*.sqv" />
-  </ItemGroup>
-
-</Project>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="SquareLocal" value="C:/path/to/Square/artifacts/template-feed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>
 ```
 
-> 如果你直接在 Square 仓库内开发，路径使用 `..\..\src\...` 相对引用。
+```bash
+dotnet run
+```
 
-关键配置说明：
+默认生成 `.sqv`、Software 后端和当前操作系统的桌面宿主。选择原生 SQX 语法：`dotnet new square -n MyApp --markup sqx`。
 
-| 配置 | 作用 |
-|---|---|
-| `OutputType=WinExe` | Windows 桌面应用，不弹出控制台窗口 |
-| `PublishAot=true` | 启用 NativeAOT 发布 |
-| `OutputItemType="Analyzer"` | Source Generator 作为分析器引用，不输出程序集 |
-| `AdditionalFiles Include="**\*.sqv"` | 将 `.sqv` 文件注册为 Source Generator 输入 |
+### 2.2 项目结构与选项
 
-`Square` 包含桌面运行时、控件、CSS、路由、布局和软件渲染。窗口宿主由 `Square.Platform.Win32` 或 `Square.Platform.X11` 提供；Skia、Vulkan、Windows-only Direct2D、Extensions 与 DevTools 按需单独引用。
+```text
+MyApp/
+  MyApp.csproj
+  SquareProgram.cs
+  App.sqv
+  Pages/MainPage.sqv
+  Platforms/Desktop/Program.cs
+  Properties/launchSettings.json
+```
 
-Windows 应用引用 `Square.Backends.Direct2D` 后，可在运行前显式选择 Direct2D：
+`SquareProgram.CreateWindow()` 是共享初始化入口；桌面 `Program.cs` 仅创建 `DesktopApplication` 并运行。`RootNamespace` 根据项目名称安全生成，应用标题、ID 和版本集中在项目文件中。
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `--markup` | `sqv` | `sqv` 或 `sqx`；生成后可混用不同扩展名的组件 |
+| `--platforms` | `desktop` | `desktop`、`android` 或 `desktop,android` |
+| `--application-id` | 根据项目名生成 | Android 包 ID；可显式指定，例如 `com.example.myapp` |
+
+平台按 RID 或当前操作系统自动选择，也可用 `-p:SquareTargetPlatform=Win32` 显式选择；另外三个值为 `X11`、`MacOS`、`Android`。桌面使用 `net10.0`，Android 使用 `net10.0-android`；每次只选择一个 TFM，`obj` / `bin` 按平台隔离。包含桌面与 Android 的项目默认仍构建桌面，不会为桌面还原请求 Android workload。
+
+新增组件：
+
+```bash
+dotnet new square-component -n UserCard -o Components --namespace MyApp.Components
+dotnet new square-component -n DetailCard -o Components --namespace MyApp.Components --markup sqx
+```
+
+`Square.Compiler` 自动发现 `.sqv` / `.sqx` 并加入 `dotnet watch`；无需手写 `AdditionalFiles`。需要资源时创建 `Assets/`（嵌入程序集）和 `Public/`（复制到输出/发布目录，去掉 `Public/` 前缀）。Android 原生资源使用 `Platforms/Android/Resources/`，APK assets 使用 `Platforms/Android/Assets/`；不要把桌面 `Public/` 文件路径当作 APK 内路径。
+
+### 2.3 自定义共享入口
+
+模板已经能运行。下面第 3 节演示新的 `Main.sqv`；使用该组件时，将 `SquareProgram.cs` 改为：
+
+```csharp
+using Square.Hosting;
+
+namespace MyApp;
+
+public static class SquareProgram
+{
+    public static AppWindow CreateWindow()
+    {
+        var window = new AppWindow("My First App", 600, 400);
+        window.Load(new Main());
+        return window;
+    }
+}
+```
+
+平台包自动注册匹配当前 OS 的桌面宿主，不需要调用 `PlatformRegistry.Register(...)`。`AppWindow` 管理内容、尺寸、标题和渲染配置；`DesktopApplication` 管理桌面消息循环。
+
+`Square` 包含运行时、控件、CSS、路由、布局和软件渲染。Skia、Vulkan、Windows-only Direct2D、Extensions 与 DevTools 按需单独引用。Windows 应用引用 `Square.Backends.Direct2D` 后，可在运行前显式选择：
 
 ```csharp
 using Square.Backends.Direct2D;
@@ -80,33 +118,9 @@ new DesktopApplication(window).Run();
 
 Direct2D 使用 `ID2D1HwndRenderTarget` 直接绘制 Win32 窗口，并以 DirectWrite 统一普通文本的 shaping、测量、换行、cluster、BiDi、命中、selection/caret 和绘制；已加载的内存 `FontFace` 也进入 DirectWrite custom collection。暂不支持的文本选项整体回退 Square 原路径。该后端只声明全帧渲染；`CaptureRendererBitmapAsync()` 暂时使用 Software DisplayTree 重放，真实 D2D/DirectWrite 验证使用窗口截图。
 
-### 2.3 编写入口
+全局 CSS 可在 `window.Load(...)` 前通过 `window.LoadGlobalCss("Styles/app.css")` 加载，对应文件放在 `Public/Styles/app.css`。也可使用 `LoadGlobalCssText(...)`。组件 `<style>` 保持作用域；全局文件支持本地相对 `@import`，不支持 HTTP、媒体条件或内存 CSS 中的相对导入。
 
-将 `Program.cs` 替换为：
-
-```csharp
-using Square.Hosting;
-
-var window = new AppWindow("My First App", 600, 400);
-window.LoadGlobalCss("Styles/reset.css", "Styles/app.css");
-window.Load(new Main());
-
-new DesktopApplication(window).Run();
-```
-
-Windows 项目引用 `Square.Platform.Win32`，Linux 项目引用 `Square.Platform.X11`。平台包自动注册默认宿主，不需要在 `Program.cs` 中调用 `PlatformRegistry.Register(...)`。
-
-`Main` 是由 `Main.sqv` 在编译期生成的组件类。`AppWindow` 负责窗口内容、尺寸、标题栏和渲染配置；`DesktopApplication` 负责应用生命周期和消息循环。
-
-`LoadGlobalCss` 可一次传入多个 CSS 文件，也可多次调用。文件按加载顺序参与级联，同等 specificity 下后加载的规则覆盖先加载规则。相对路径以应用程序输出目录为基准，因此需要在项目文件中复制 CSS：
-
-```xml
-<ItemGroup>
-  <Content Include="Styles\**\*.css" CopyToOutputDirectory="PreserveNewest" />
-</ItemGroup>
-```
-
-也可以直接加载内存中的 CSS 文本：
+`LoadGlobalCss` 可一次传入多个文件，也可多次调用。文件按加载顺序参与级联，同等 specificity 下后加载的规则覆盖先加载的规则。内存样式可直接加载：
 
 ```csharp
 window.LoadGlobalCssText(
@@ -114,9 +128,7 @@ window.LoadGlobalCssText(
     "Button { background: var(--primary); }");
 ```
 
-全局 CSS 应在 `DesktopApplication.Run()` 前加载。组件 `<style>` 仍作为组件作用域应用，并在同等 specificity 下覆盖全局样式。
-
-文件样式表支持本地 `@import`：
+全局 CSS 应在 `DesktopApplication.Run()` 前加载。组件 `<style>` 在同等 specificity 下覆盖全局样式。文件样式表支持本地 `@import`：
 
 ```css
 @import "reset.css";
@@ -130,6 +142,28 @@ Button {
 相对地址以声明 `@import` 的 CSS 文件目录为基准，支持递归导入并检测循环引用。`@import` 必须位于普通样式规则之前；出现在普通规则之后时按 CSS 规范忽略。当前仅支持本地文件和无条件导入，HTTP/HTTPS、media 条件、`supports()` 和 `layer` 尚不支持。由于内存 CSS 没有来源文件，`LoadGlobalCssText` 中的相对 `@import` 会抛出异常。
 
 已加载的顶层样式表可通过 `window.Document.StyleSheets` 按顺序枚举；每个 `DocumentStyleSheet.Imports` 保存其直接导入关系。
+
+### 2.4 Android 与 NativeAOT
+
+```bash
+dotnet new square -n MyMobileApp --platforms desktop,android --application-id com.example.mymobileapp
+dotnet workload install android
+dotnet build MyMobileApp/MyMobileApp.csproj -p:SquareTargetPlatform=Android
+```
+
+本地源还需打包 `Square.Backends.Vulkan`、`Square.Backends.AndroidCanvas` 和 `Square.Platform.Android`，各命令附加 `-p:SquareTargetPlatform=Android`。Android 入口是 `Platforms/Android/MainActivity.cs`，复用同一个 `SquareProgram.CreateWindow()`；标题、ID、版本由 Android SDK 写入 Manifest。Android 仍是 Experimental，桌面不需要安装 Android workload。
+
+开发时用 Android SDK 部署托管程序集并启动应用：`dotnet build MyMobileApp/MyMobileApp.csproj -t:Run -p:SquareTargetPlatform=Android`。默认 Debug APK 使用 Fast Deployment，不能只执行 `adb install` 就期望它独立运行；需要单独分发 APK 时应发布 Release 产物，或显式设置 `EmbedAssembliesIntoApk=true`。
+
+桌面 NativeAOT 使用标准 SDK 参数，不依赖仓库 Sample 的专用属性：
+
+```bash
+dotnet publish MyApp.csproj -c Release -r win-x64 --self-contained true -p:PublishAot=true
+```
+
+Linux / macOS 分别使用 `linux-x64` / `osx-x64`，并安装对应 NativeAOT 工具链。Android 不采用此桌面 NativeAOT 命令，支持边界见 [Android 平台说明](Android-Platform-TODO.md)。
+
+框架开发者可用 `pwsh -File templates/Verify-Templates.ps1 -Platform Win32` 验收本地打包、独立模板安装、仓库外还原、组件生成、资源发布和 NativeAOT 点击截图；Linux / macOS 使用 `X11` / `MacOS`，Android 使用 `Android` 验证两种语法的单项目构建。
 
 ---
 
@@ -194,7 +228,8 @@ Button {
 ```
 MyApp/
   MyApp.csproj
-  Program.cs
+  SquareProgram.cs
+  Platforms/Desktop/Program.cs
   Main.sqv
 ```
 

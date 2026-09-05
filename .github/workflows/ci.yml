@@ -156,6 +156,19 @@ jobs:
           ./artifacts/nativeaot/${{ matrix.executable }} --circle-regression --verify-circle-regression --screenshot artifacts/screenshots/macos.png
           test -s artifacts/screenshots/macos.png
 
+      - name: Verify installed Square templates
+        shell: pwsh
+        timeout-minutes: 20
+        run: templates/Verify-Templates.ps1 -Platform ${{ matrix.platform }} -WorkDirectory "${{ runner.temp }}/square-templates"
+
+      - name: Upload template screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: template-screenshots-${{ matrix.platform }}
+          path: ${{ runner.temp }}/square-templates/*.png
+          if-no-files-found: warn
+
   tooling:
     name: IDE tooling (Windows)
     runs-on: windows-2025

@@ -1,36 +1,6 @@
 <Project>
   <ItemGroup>
-    <CompilerVisibleProperty Include="MSBuildProjectDirectory" />
+    <CompilerVisibleProperty Include="MSBuildProjectDirectory" Exclude="@(CompilerVisibleProperty)" />
     <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="Link" />
-  </ItemGroup>
-  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Public')">
-    <None Remove="$(MSBuildProjectDirectory)\Public\**\*" />
-    <SquarePublicFile Include="$(MSBuildProjectDirectory)\Public\**\*" />
-  </ItemGroup>
-
-  <Target Name="CopySquarePublicFiles" AfterTargets="CopyFilesToOutputDirectory"
-          Condition="'@(SquarePublicFile)' != ''">
-    <Copy SourceFiles="@(SquarePublicFile)"
-          DestinationFiles="@(SquarePublicFile->'$(TargetDir)%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="PublishSquarePublicFiles" AfterTargets="Publish"
-          Condition="'@(SquarePublicFile)' != '' and '$(PublishDir)' != ''">
-    <Copy SourceFiles="@(SquarePublicFile)"
-          DestinationFiles="@(SquarePublicFile->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
-  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Assets')">
-    <None Remove="$(MSBuildProjectDirectory)\Assets\**\*" />
-    <EmbeddedResource Include="$(MSBuildProjectDirectory)\Assets\**\*" />
-  </ItemGroup>
-  <ItemGroup>
-    <AdditionalFiles Include="$(MSBuildProjectDirectory)\**\*.sqx"
-                     Exclude="$(DefaultItemExcludes);$(MSBuildProjectDirectory)\Public\**;$(MSBuildProjectDirectory)\Assets\**" />
-    <AdditionalFiles Include="$(MSBuildProjectDirectory)\**\*.sqv"
-                     Exclude="$(DefaultItemExcludes);$(MSBuildProjectDirectory)\Public\**;$(MSBuildProjectDirectory)\Assets\**" />
-    <UpToDateCheckInput Include="@(AdditionalFiles)" />
-    <Watch Include="@(AdditionalFiles)" />
   </ItemGroup>
 </Project>

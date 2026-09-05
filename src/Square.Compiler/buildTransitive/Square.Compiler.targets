@@ -1,0 +1,39 @@
+<Project>
+  <PropertyGroup>
+    <SquareEnableDefaultMarkup Condition="'$(SquareEnableDefaultMarkup)' == ''">true</SquareEnableDefaultMarkup>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(SquareEnableDefaultMarkup)' == 'true'">
+    <AdditionalFiles Include="**\*.sqx;**\*.sqv"
+                     Exclude="@(AdditionalFiles);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);**\obj\**;**\bin\**;**\obj-*\**;**\bin-*\**;Assets\**;Public\**" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Public')">
+    <None Remove="Public\**\*" />
+    <SquarePublicFile Include="Public\**\*" Exclude="@(SquarePublicFile)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Assets')">
+    <None Remove="Assets\**\*" />
+    <EmbeddedResource Include="Assets\**\*" Exclude="@(EmbeddedResource)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <UpToDateCheckInput Include="@(AdditionalFiles)" Exclude="@(UpToDateCheckInput)" />
+    <Watch Include="@(AdditionalFiles)" Exclude="@(Watch)" />
+  </ItemGroup>
+
+  <Target Name="CopySquarePublicFiles" AfterTargets="CopyFilesToOutputDirectory"
+          Condition="'@(SquarePublicFile)' != ''">
+    <Copy SourceFiles="@(SquarePublicFile)"
+          DestinationFiles="@(SquarePublicFile->'$(TargetDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="PublishSquarePublicFiles" AfterTargets="Publish"
+          Condition="'@(SquarePublicFile)' != '' and '$(PublishDir)' != ''">
+    <Copy SourceFiles="@(SquarePublicFile)"
+          DestinationFiles="@(SquarePublicFile->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>

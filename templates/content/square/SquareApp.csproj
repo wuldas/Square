@@ -1,0 +1,88 @@
+<Project>
+  <!-- Select one framework before SDK imports so desktop restore never requests Android. -->
+  <PropertyGroup>
+    <_SquareIncludedPlatforms>SquarePlatformSelection</_SquareIncludedPlatforms>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and '$(_SquareIncludedPlatforms)' == 'android'">Android</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^win-'))">Win32</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^linux(-musl)?-'))">X11</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^osx-'))">MacOS</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^android-'))">Android</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">Win32</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">MacOS</SquareTargetPlatform>
+    <SquareTargetPlatform Condition="'$(SquareTargetPlatform)' == ''">X11</SquareTargetPlatform>
+    <TargetFramework Condition="'$(SquareTargetPlatform)' != 'Android'">net10.0</TargetFramework>
+    <TargetFramework Condition="'$(SquareTargetPlatform)' == 'Android'">net10.0-android</TargetFramework>
+    <BaseIntermediateOutputPath>obj/$(SquareTargetPlatform)/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <BaseOutputPath>bin/$(SquareTargetPlatform)/</BaseOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+    <EnableDefaultAndroidItems>false</EnableDefaultAndroidItems>
+  </PropertyGroup>
+
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SafeAppNamespace</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <ApplicationTitle>XmlAppTitle</ApplicationTitle>
+    <ApplicationId Condition="'$(ApplicationId)' == ''">XmlApplicationId</ApplicationId>
+    <ApplicationId Condition="'$(ApplicationId)' == ''">com.example.appDefaultApplicationSuffix</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- SDK-generated AssemblyTitle safely escapes the shared desktop/Android window title. -->
+    <AssemblyTitle>$(ApplicationTitle)</AssemblyTitle>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SquareTargetPlatform)' == 'Android'">
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <GenerateApplicationManifest>true</GenerateApplicationManifest>
+    <AndroidManifest>Platforms/Android/AndroidManifest.xml</AndroidManifest>
+    <MonoAndroidResourcePrefix>Platforms/Android/Resources</MonoAndroidResourcePrefix>
+    <MonoAndroidAssetsPrefix>Platforms/Android/Assets</MonoAndroidAssetsPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Square" Version="0.1.0" />
+    <PackageReference Include="Square.Compiler" Version="0.1.0" PrivateAssets="all" />
+    <PackageReference Include="Square.Platform.Win32" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
+    <PackageReference Include="Square.Platform.X11" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'X11'" />
+    <PackageReference Include="Square.Platform.MacOS" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
+    <PackageReference Include="Square.Platform.Android" Version="0.1.0" Condition="'$(SquareTargetPlatform)' == 'Android'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Platforms/Android/**/*.cs" Condition="'$(SquareTargetPlatform)' != 'Android'" />
+    <Compile Remove="Platforms/Desktop/**/*.cs" Condition="'$(SquareTargetPlatform)' == 'Android'" />
+  </ItemGroup>
+
+  <!-- Square.Compiler owns shared Assets/ embedding and Public/ copying. -->
+  <ItemGroup Condition="'$(SquareTargetPlatform)' == 'Android'">
+    <None Remove="Platforms/Android/Resources/**/*;Platforms/Android/Assets/**/*" />
+    <AndroidResource Include="Platforms/Android/Resources/**/*" />
+    <AndroidAsset Include="Platforms/Android/Assets/**/*" />
+  </ItemGroup>
+
+  <Target Name="ValidateSquareProject" BeforeTargets="Restore;PrepareForBuild;_GenerateRestoreGraphProjectEntry">
+    <Error Condition="'$(SquareTargetPlatform)' != 'Win32' and '$(SquareTargetPlatform)' != 'X11' and '$(SquareTargetPlatform)' != 'MacOS' and '$(SquareTargetPlatform)' != 'Android'"
+           Text="SquareTargetPlatform must be Win32, X11, MacOS, or Android." />
+    <Error Condition="'$(SquareTargetPlatform)' == 'Android' and '$(_SquareIncludedPlatforms)' == 'desktop'"
+           Text="This project does not include Android. Generate with --platforms android or --platforms desktop,android." />
+    <Error Condition="'$(SquareTargetPlatform)' != 'Android' and '$(_SquareIncludedPlatforms)' == 'android'"
+           Text="This project does not include desktop. Generate with --platforms desktop or --platforms desktop,android." />
+    <Error Condition="'$(RuntimeIdentifier)' != '' and '$(SquareTargetPlatform)' == 'Win32' and !$([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^win-'))"
+           Text="RuntimeIdentifier '$(RuntimeIdentifier)' does not match SquareTargetPlatform=Win32; use a win-* RID or select the matching platform." />
+    <Error Condition="'$(RuntimeIdentifier)' != '' and '$(SquareTargetPlatform)' == 'X11' and !$([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^linux(-musl)?-'))"
+           Text="RuntimeIdentifier '$(RuntimeIdentifier)' does not match SquareTargetPlatform=X11; use a linux-* RID or select the matching platform." />
+    <Error Condition="'$(RuntimeIdentifier)' != '' and '$(SquareTargetPlatform)' == 'MacOS' and !$([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^osx-'))"
+           Text="RuntimeIdentifier '$(RuntimeIdentifier)' does not match SquareTargetPlatform=MacOS; use an osx-* RID or select the matching platform." />
+    <Error Condition="'$(RuntimeIdentifier)' != '' and '$(SquareTargetPlatform)' == 'Android' and !$([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^android-'))"
+           Text="RuntimeIdentifier '$(RuntimeIdentifier)' does not match SquareTargetPlatform=Android; use an android-* RID or select the matching platform." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ApplicationId)', '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$'))"
+           Text="ApplicationId must contain at least two dot-separated segments, each starting with a letter and containing only letters, digits, or underscores (for example com.example.myapp)." />
+  </Target>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

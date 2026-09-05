@@ -136,7 +136,6 @@ public sealed partial class SystemGlyphRasterizer
 
     private static RasterizedGlyph? RasterizeWin32(Font font, char character)
     {
-#if PLATFORM_WIN32
         var dc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
         if (dc == IntPtr.Zero) return null;
 
@@ -201,14 +200,16 @@ public sealed partial class SystemGlyphRasterizer
             NativeMethods.DeleteObject(fontHandle);
             NativeMethods.DeleteDC(dc);
         }
-#else
-        return null;
-#endif
     }
 
     internal static bool TryGetWin32FontMetrics(Font font, out FontMetrics metrics)
     {
-#if PLATFORM_WIN32
+        if (!OperatingSystem.IsWindows())
+        {
+            metrics = default;
+            return false;
+        }
+
         var family = ResolveGenericFontFamily(font.Family);
         var dc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
         if (dc == IntPtr.Zero)
@@ -252,27 +253,23 @@ public sealed partial class SystemGlyphRasterizer
             NativeMethods.DeleteObject(fontHandle);
             NativeMethods.DeleteDC(dc);
         }
-#else
-        metrics = default;
-        return false;
-#endif
     }
 
     internal static string ResolveGenericFontFamily(string family) => FontCollection.Shared.IsCustomFamily(family)
         ? family
         : family.ToLowerInvariant() switch
-    {
-        "sans-serif" or "system-ui" or "ui-sans-serif" => OperatingSystem.IsWindows()
-            ? "Segoe UI"
-            : OperatingSystem.IsAndroid() ? "sans-serif" : "DejaVu Sans",
-        "serif" or "ui-serif" => OperatingSystem.IsWindows()
-            ? "Times New Roman"
-            : OperatingSystem.IsAndroid() ? "serif" : "DejaVu Serif",
-        "monospace" or "ui-monospace" => OperatingSystem.IsWindows()
-            ? "Consolas"
-            : OperatingSystem.IsAndroid() ? "monospace" : "DejaVu Sans Mono",
-        _ => family
-    };
+        {
+            "sans-serif" or "system-ui" or "ui-sans-serif" => OperatingSystem.IsWindows()
+                ? "Segoe UI"
+                : OperatingSystem.IsAndroid() ? "sans-serif" : "DejaVu Sans",
+            "serif" or "ui-serif" => OperatingSystem.IsWindows()
+                ? "Times New Roman"
+                : OperatingSystem.IsAndroid() ? "serif" : "DejaVu Serif",
+            "monospace" or "ui-monospace" => OperatingSystem.IsWindows()
+                ? "Consolas"
+                : OperatingSystem.IsAndroid() ? "monospace" : "DejaVu Sans Mono",
+            _ => family
+        };
 
     private readonly record struct GlyphKey(
         string Family,
@@ -282,7 +279,6 @@ public sealed partial class SystemGlyphRasterizer
         char Character,
         int CustomGeneration);
 
-#if PLATFORM_WIN32
     private static partial class NativeMethods
     {
         internal const uint DefaultCharset = 1;
@@ -382,7 +378,6 @@ public sealed partial class SystemGlyphRasterizer
             internal byte CharSet;
         }
     }
-#endif
 }
 
 internal static class SystemTextMeasurementRegistration
@@ -435,8 +430,7 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
             return true;
         }
 
-        if (OperatingSystem.IsWindows() &&
-            TryGetWin32FontMetrics(font, out metrics))
+        if (SystemGlyphRasterizer.TryGetWin32FontMetrics(font, out metrics))
         {
             lock (_sync) _fontMetrics[key] = metrics;
             return true;
@@ -456,16 +450,6 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
         metrics = new FontMetrics(-ascent, -ascent, height - ascent, height - ascent, 0);
         lock (_sync) _fontMetrics[key] = metrics;
         return true;
-    }
-
-    private static bool TryGetWin32FontMetrics(Font font, out FontMetrics metrics)
-    {
-#if PLATFORM_WIN32
-        return SystemGlyphRasterizer.TryGetWin32FontMetrics(font, out metrics);
-#else
-        metrics = default;
-        return false;
-#endif
     }
 
     /// <summary>获取指定字体的单个字形度量。</summary>

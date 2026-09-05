@@ -7,7 +7,10 @@ internal static class MacOSPlatformBootstrap
 {
 #pragma warning disable CA2255
     [ModuleInitializer]
-    internal static void Register() =>
-        PlatformRegistry.RegisterDefault(new MacOSPlatformFactory());
+    internal static void Register()
+    {
+        if (OperatingSystem.IsMacOS())
+            PlatformRegistry.RegisterDefault(new MacOSPlatformFactory());
+    }
 #pragma warning restore CA2255
 }

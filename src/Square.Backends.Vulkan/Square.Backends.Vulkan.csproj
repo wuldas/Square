@@ -1,8 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework Condition="'$(SquareTargetPlatform)' == 'Android'">net10.0-android</TargetFramework>
-    <TargetFramework Condition="'$(SquareTargetPlatform)' != 'Android'">net10.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <Description>Square Vulkan GPU render backend (Silk.NET)</Description>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

@@ -25,20 +25,10 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;obj-*\**</DefaultItemExcludes>
   </PropertyGroup>
 
-  <ItemGroup>
-    <CompilerVisibleProperty Include="MSBuildProjectDirectory" />
-    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="Link" />
-  </ItemGroup>
-
-  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Public')">
-    <None Remove="$(MSBuildProjectDirectory)\Public\**\*" />
-    <SquarePublicFile Include="$(MSBuildProjectDirectory)\Public\**\*" />
-  </ItemGroup>
-
-  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\Assets')">
-    <None Remove="$(MSBuildProjectDirectory)\Assets\**\*" />
-    <EmbeddedResource Include="$(MSBuildProjectDirectory)\Assets\**\*" />
-  </ItemGroup>
+  <PropertyGroup>
+    <SquareEnableDefaultMarkup Condition="'$(SquareEnableDefaultMarkup)' == ''">false</SquareEnableDefaultMarkup>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)src\Square.Compiler\buildTransitive\Square.Compiler.props" />
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>

@@ -8,7 +8,10 @@ internal static class Win32PlatformPackageRegistration
 {
 #pragma warning disable CA2255
     [ModuleInitializer]
-    internal static void Register() =>
-        PlatformRegistry.RegisterDefault(new Win32PlatformFactory());
+    internal static void Register()
+    {
+        if (System.OperatingSystem.IsWindows())
+            PlatformRegistry.RegisterDefault(new Win32PlatformFactory());
+    }
 #pragma warning restore CA2255
 }
