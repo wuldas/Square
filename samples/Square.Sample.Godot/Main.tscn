@@ -1,0 +1,35 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Main.cs" id="1_main"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="GodotButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 220.0
+offset_bottom = 52.0
+text = "Godot button"
+
+[node name="GodotCount" type="Label" parent="."]
+layout_mode = 0
+offset_left = 236.0
+offset_top = 22.0
+offset_right = 520.0
+offset_bottom = 48.0
+text = "Godot count: 0"
+
+[node name="SquareContainer" type="Control" parent="."]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 72.0
+offset_right = 944.0
+offset_bottom = 624.0

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GodotProjectDir>$(MSBuildProjectDirectory)\</GodotProjectDir>
+    <IsPackable>true</IsPackable>
+    <Description>Square Godot Control host</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Square\Square.csproj" />
+    <ProjectReference Include="..\Square.Backends.Godot\Square.Backends.Godot.csproj" />
+    <PackageReference Include="GodotSharp" />
+    <PackageReference Include="Godot.SourceGenerators" PrivateAssets="all" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

@@ -6,6 +6,9 @@
   <ItemGroup>
     <PackageVersion Include="Wuldas.Square" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Compiler" Version="$(Version)" />
+    <PackageVersion Include="GodotSharp" Version="4.7.2" />
+    <PackageVersion Include="GodotSharpEditor" Version="4.7.2" />
+    <PackageVersion Include="Godot.SourceGenerators" Version="4.7.2" />
     <PackageVersion Include="Wuldas.Square.Images" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Platform.Win32" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Platform.X11" Version="$(Version)" />

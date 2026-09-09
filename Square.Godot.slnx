@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="src/Square/Square.csproj" />
+  <Project Path="src/Square.Compiler/Square.Compiler.csproj" />
+  <Project Path="src/Square.Backends.Godot/Square.Backends.Godot.csproj" />
+  <Project Path="src/Square.Platform.Godot/Square.Platform.Godot.csproj" />
+  <Project Path="samples/Square.Sample.Godot/Square.Sample.Godot.csproj" />
+  <Project Path="tests/Square.Platform.Tests/Square.Platform.Tests.csproj" />
+</Solution>

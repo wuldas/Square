@@ -1,9 +1,10 @@
 using Square.Graphics;
+using Square.Rendering.Tessellation;
 using Xunit;
 
 namespace Square.Backends.Vulkan.Tests;
 
-public class VulkanStrokeTessellatorTests
+public class StrokeTessellatorTests
 {
     [Fact]
     public void SquareCapExtendsOpenLineByHalfWidthAndFeather()
@@ -71,7 +72,7 @@ public class VulkanStrokeTessellatorTests
     [Fact]
     public void DashArraySplitsLineAtPathLengths()
     {
-        var dashes = VulkanStrokeTessellator.SplitDashes(
+        var dashes = StrokeTessellator.SplitDashes(
             [new Point(0, 0), new Point(14, 0)], false, [4, 2], 0);
 
         Assert.Equal(3, dashes.Count);
@@ -83,7 +84,7 @@ public class VulkanStrokeTessellatorTests
     [Fact]
     public void DashOffsetAdvancesIntoPattern()
     {
-        var dashes = VulkanStrokeTessellator.SplitDashes(
+        var dashes = StrokeTessellator.SplitDashes(
             [new Point(0, 0), new Point(12, 0)], false, [4, 2], 1);
 
         Assert.Equal(3, dashes.Count);
@@ -108,7 +109,7 @@ public class VulkanStrokeTessellatorTests
     [Fact]
     public void DashKeepsJoinWhenItCrossesPathVertex()
     {
-        var dashes = VulkanStrokeTessellator.SplitDashes(
+        var dashes = StrokeTessellator.SplitDashes(
             [new Point(0, 0), new Point(5, 0), new Point(5, 5)], false, [8, 2], 0);
 
         Assert.Single(dashes);
@@ -121,7 +122,7 @@ public class VulkanStrokeTessellatorTests
     public void ClosedContourMergesDashAcrossSeam()
     {
         var seam = new Point(0, 0);
-        var dashes = VulkanStrokeTessellator.SplitDashes(
+        var dashes = StrokeTessellator.SplitDashes(
             [seam, new Point(10, 0), new Point(10, 10), new Point(0, 10)], true, [12, 4], 0);
 
         Assert.Equal(2, dashes.Count);
@@ -148,7 +149,7 @@ public class VulkanStrokeTessellatorTests
     {
         var vertices = new List<Vertex2D>();
         var indices = new List<uint>();
-        VulkanStrokeTessellator.Append(contour, 2, 1, style, 0xFFFFFFFF, 0, 0, 1, 1,
+        StrokeTessellator.Append(contour, 2, 1, style, 0xFFFFFFFF, 0, 0, 1, 1,
             static point => point, vertices, indices);
         return (vertices, indices);
     }

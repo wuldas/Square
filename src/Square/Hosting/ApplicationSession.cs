@@ -78,6 +78,20 @@ public sealed class ApplicationSession : IDisposable
         return true;
     }
 
+    /// <summary>通知会话宿主失去焦点并清理暂态输入状态。</summary>
+    public void NotifyFocusLost()
+    {
+        if (!_attached) return;
+        _application.NotifySessionFocusLost();
+    }
+
+    /// <summary>通知会话指针离开宿主并清理悬停状态。</summary>
+    public void NotifyPointerExited()
+    {
+        if (!_attached) return;
+        _application.NotifySessionPointerExited();
+    }
+
     /// <summary>附加会话；重复调用不会重复注册资源。</summary>
     public void Attach()
     {

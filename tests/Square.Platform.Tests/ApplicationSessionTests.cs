@@ -3,6 +3,7 @@ using Square.Controls;
 using Square.Events;
 using Square.Graphics;
 using Square.Hosting;
+using Square.UI;
 using Square.Platform;
 using Xunit;
 
@@ -275,6 +276,93 @@ public sealed class ApplicationSessionTests
         Assert.False(session.HasPendingFrame);
     }
 
+
+    [Fact]
+    public void FocusLossCancelsPointerClickButNextClickWorks()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 120, 80) };
+        var button = new Button("click") { Geometry = new Rect(4, 4, 80, 32) };
+        root.Children.Add(button);
+        var clicks = 0;
+        button.AddEventListener(StandardEvents.Click, _ => clicks++);
+        var window = new AppWindow("pointer", 120, 80);
+        window.Load(root);
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        session.Attach();
+
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Down, button: MouseButton.Left));
+        session.NotifyFocusLost();
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Up, button: MouseButton.Left));
+
+        Assert.Equal(0, clicks);
+        Assert.False(button.IsFocused);
+        Assert.False(button.HasState(ElementState.Active));
+
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Down, button: MouseButton.Left));
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Up, button: MouseButton.Left));
+        Assert.Equal(1, clicks);
+    }
+
+    [Fact]
+    public void FocusLossPreservesScheduledFrameAndPresentsItOnTick()
+    {
+        var root = new ScheduledView { Geometry = new Rect(0, 0, 64, 48) };
+        var window = new AppWindow("scheduled-focus", 64, 48);
+        window.Load(root);
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        session.Attach();
+        root.DispatchEvent(StandardEvents.CreateRequestFrame(TimeSpan.Zero));
+
+        session.NotifyFocusLost();
+        session.Tick();
+
+        Assert.Equal(1, root.FrameCount);
+        Assert.Equal(new byte[] { 255, 0, 0, 255 }, host.LastFrame!.GetPixel(10, 10).ToArray());
+    }
+
+    [Fact]
+    public void FocusLossBlocksTextUntilInputIsFocusedAgain()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 160, 64) };
+        var input = new Input { Geometry = new Rect(4, 4, 120, 28), Value = "" };
+        root.Children.Add(input);
+        var window = new AppWindow("input-focus", 160, 64);
+        window.Load(root);
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        session.Attach();
+
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Down, button: MouseButton.Left));
+        session.NotifyFocusLost();
+        host.RaiseText("blocked");
+        Assert.Equal("", input.Value);
+
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Down, button: MouseButton.Left));
+        host.RaiseText("accepted");
+        Assert.Equal("accepted", input.Value);
+    }
+
+    [Fact]
+    public void PointerExitClearsHoverWithoutDroppingKeyboardFocus()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 160, 64) };
+        var input = new Input { Geometry = new Rect(4, 4, 120, 28), Value = "" };
+        root.Children.Add(input);
+        var window = new AppWindow("pointer-exit", 160, 64);
+        window.Load(root);
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        session.Attach();
+
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Down, button: MouseButton.Left));
+        session.NotifyPointerExited();
+        host.RaiseText("still-focused");
+
+        Assert.True(input.IsFocused);
+        Assert.Equal("still-focused", input.Value);
+    }
     [Fact]
     public void CssAnimationKeepsExternalSessionPendingUntilStopped()
     {
@@ -355,6 +443,7 @@ public sealed class ApplicationSessionTests
         public Exception? PresentationFailure { get; set; }
 
         public event Action<Size>? SizeChanged;
+        public event Action<PointerInput>? PointerEvent;
         public event Action<Point, MouseAction, MouseButton>? MouseEvent
         {
             add { }
@@ -370,11 +459,7 @@ public sealed class ApplicationSessionTests
             add { }
             remove { }
         }
-        public event Action<string>? TextInput
-        {
-            add { }
-            remove { }
-        }
+        public event Action<string>? TextInput;
         public event Action? Tick
         {
             add { }
@@ -395,6 +480,9 @@ public sealed class ApplicationSessionTests
             ClientSize = size;
             SizeChanged?.Invoke(size);
         }
+
+        public void RaisePointer(PointerInput input) => PointerEvent?.Invoke(input);
+        public void RaiseText(string text) => TextInput?.Invoke(text);
 
         public IRenderContext CreateRenderContext()
         {

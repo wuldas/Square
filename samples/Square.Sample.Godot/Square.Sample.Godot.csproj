@@ -1,0 +1,28 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Square.Sample.Godot</RootNamespace>
+    <AssemblyName>Square.Sample.Godot</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <PublishAot>false</PublishAot>
+    <DisableImplicitGodotSharpReferences>true</DisableImplicitGodotSharpReferences>
+    <DisableImplicitGodotGeneratorReferences>true</DisableImplicitGodotGeneratorReferences>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Square.Platform.Godot\Square.Platform.Godot.csproj" />
+    <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      SetTargetFramework="TargetFramework=netstandard2.0"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetPlatformIdentifier" />
+    <PackageReference Include="GodotSharp" />
+    <PackageReference Include="Godot.SourceGenerators" PrivateAssets="all" ReferenceOutputAssembly="false" />
+    <PackageReference Include="GodotSharpEditor" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="**\*.sqv" />
+  </ItemGroup>
+</Project>

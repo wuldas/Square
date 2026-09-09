@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <Description>Square Godot GPU render backend</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Square\Square.csproj" />
+    <PackageReference Include="GodotSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Shaders\*.gdshader" />
+  </ItemGroup>
+</Project>

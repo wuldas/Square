@@ -1,0 +1,97 @@
+<template>
+  <View class="page">
+    <Text class="title" text="Square inside Godot" />
+    <Text class="description" text="Canvas/GPU rendering with Square layout, text, input and scrolling." />
+    <Button class="counter" @click="OnIncrement">Increment Square count</Button>
+    <Text class="count" :text="CountText" />
+    <Input ref="NameInput" class="name" :value="Name" placeholder="Type 你好A" @input="OnNameInput" />
+    <Text class="name-preview" :text="NamePreview" />
+    <Image class="preview" :image="PreviewImage" />
+    <View class="scroll-box">
+      <Text class="scroll-title" text="Overflow auto / nested clipping" />
+      <Text class="scroll-copy" text="Scroll this content with the wheel. The same retained Square tree is hosted by Godot." />
+      <Text class="scroll-copy" text="Nested rounded clipping and overlapping translucent layers are rendered by GPU targets." />
+      <Text class="scroll-copy" text="中文文本 / English text / 24px" />
+      <Text class="scroll-copy" text="Line 1" />
+      <Text class="scroll-copy" text="Line 2" />
+      <Text class="scroll-copy" text="Line 3" />
+      <Text class="scroll-copy" text="Line 4" />
+      <Text class="scroll-copy" text="Line 5" />
+      <Text class="scroll-copy" text="Line 6" />
+    </View>
+    <View class="rounded-clipped">
+      <View class="overlap-a" />
+      <View class="overlap-b" />
+      <Text class="clipped-label" text="rounded + hidden" />
+    </View>
+    <View class="gradient-card">
+      <Text class="gradient-label" text="Linear / radial GPU gradients" />
+    </View>
+    <View class="animated-bar" />
+  </View>
+</template>
+<script lang="csharp">
+  public ObservableValue<int> Count = new(0);
+  public ObservableValue<string> CountText = new("Square count: 0");
+  public ObservableValue<string> Name = new("");
+  public ObservableValue<string> NamePreview = new("Name: ");
+  public ObservableValue<Square.Graphics.Image?> PreviewImage = new(CreatePreviewImage());
+
+  private void OnIncrement()
+  {
+    Count.Value++;
+    CountText.Value = "Square count: " + Count.Value;
+  }
+
+  private void OnNameInput()
+  {
+    NamePreview.Value = "Name: " + NameInput.Value;
+  }
+
+  protected override void OnDetachedCore()
+  {
+    PreviewImage.Value?.Dispose();
+    PreviewImage.Value = null;
+    base.OnDetachedCore();
+  }
+
+  private static Square.Graphics.Bitmap CreatePreviewImage()
+  {
+    var bitmap = new Square.Graphics.Bitmap(2, 2);
+    SetPixel(bitmap, 0, 0, 255, 0, 0, 255);
+    SetPixel(bitmap, 1, 0, 0, 255, 0, 255);
+    SetPixel(bitmap, 0, 1, 0, 0, 255, 255);
+    SetPixel(bitmap, 1, 1, 255, 0, 0, 128);
+    return bitmap;
+  }
+
+  private static void SetPixel(Square.Graphics.Bitmap bitmap, int x, int y, byte r, byte g, byte b, byte a)
+  {
+    var pixel = bitmap.GetPixel(x, y);
+    pixel[0] = b;
+    pixel[1] = g;
+    pixel[2] = r;
+    pixel[3] = a;
+  }
+</script>
+<style>
+  .page { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: #f7f8fa; color: #1d2939; }
+  .title { font-size: 24px; color: #172b4d; }
+  .description { font-size: 13px; color: #475467; }
+  .counter { width: 190px; height: 34px; background: #1769e0; color: #ffffff; }
+  .count { color: #067647; font-size: 15px; }
+  .name { height: 34px; color: #202124; }
+  .name-preview { color: #344054; }
+  .preview { width: 64px; height: 64px; }
+  .scroll-box { width: 100%; height: 112px; overflow: auto; padding: 8px; background: #ffffff; border: 1px solid #d0d5dd; }
+  .scroll-title { font-size: 16px; color: #202124; }
+  .scroll-copy { font-size: 13px; color: #344054; }
+  .rounded-clipped { width: 100%; height: 72px; overflow: hidden; border-radius: 16px; background: #ffffff; }
+  .overlap-a { width: 120px; height: 48px; margin-left: 20px; margin-top: 12px; background: rgba(0, 64, 255, 0.5); }
+  .overlap-b { width: 120px; height: 48px; margin-left: 86px; margin-top: -48px; background: rgba(0, 64, 255, 0.5); }
+  .clipped-label { margin-left: 240px; margin-top: -32px; font-size: 13px; }
+  .gradient-card { width: 100%; height: 42px; border-radius: 12px; background: linear-gradient(90deg, #1769e0, #9b51e0 55%, #ef476f); }
+  .gradient-label { margin-left: 12px; margin-top: 12px; color: #ffffff; font-size: 14px; }
+  .animated-bar { width: 180px; height: 6px; background: #f97316; animation: square-pulse 1.2s ease-in-out infinite; }
+  @keyframes square-pulse { 0% { opacity: 0.35; } 50% { opacity: 1; } 100% { opacity: 0.35; } }
+</style>

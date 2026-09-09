@@ -1,5 +1,6 @@
 using System.Numerics;
 using Silk.NET.Vulkan;
+using Square.Rendering.Tessellation;
 
 namespace Square.Backends.Vulkan;
 

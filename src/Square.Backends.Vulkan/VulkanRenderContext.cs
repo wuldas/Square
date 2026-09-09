@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Silk.NET.Vulkan;
 using Square.Graphics;
+using Square.Rendering.Tessellation;
 using Square.Text.Glyph;
 using Image = Square.Graphics.Image;
 using Buffer = Silk.NET.Vulkan.Buffer;
@@ -320,10 +321,10 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
     public void FillPath(PathGeometry path, Brush brush)
     {
         if (!EnsureFrame()) return;
-        var contours = FlattenPath(path);
+        var contours = PathTessellator.FlattenPath(path, _currentTransform);
         if (contours.Count == 0) return;
 
-        var tess = Triangulate(contours);
+        var tess = PathTessellator.Triangulate(contours);
         var triangleVertexCount = tess.ElementCount * 3;
         if (triangleVertexCount == 0) return;
 
@@ -356,7 +357,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
     {
         if (!EnsureFrame()) return;
         if (pen.Width <= 0) return;
-        var contours = FlattenPath(path);
+        var contours = PathTessellator.FlattenPath(path, _currentTransform);
         if (contours.Count == 0) return;
 
         var color = ResolveBrushColor(pen.Brush, GetPathBounds(path).Center);
@@ -369,7 +370,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         foreach (var contour in contours)
         {
             if (contour.Count < 2) continue;
-            VulkanStrokeTessellator.Append(contour, pen.Width / 2f, GetLogicalFeatherWidth(), pen.StrokeStyle,
+            StrokeTessellator.Append(contour, pen.Width / 2f, PathTessellator.GetLogicalFeatherWidth(_currentTransform), pen.StrokeStyle,
                 packed, u0, v0, u1, v1, TransformPoint, _scratchVertices, _scratchIndices);
         }
 
@@ -716,7 +717,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         rx = Math.Min(rx, rect.Width / 2);
         ry = Math.Min(ry, rect.Height / 2);
         if (rx <= 0 || ry <= 0) { FillRect(rect, brush); return; }
-        var segments = GetCurveSegmentCount(rx, ry, MathF.PI / 2);
+        var segments = PathTessellator.GetCurveSegmentCount(rx, ry, MathF.PI / 2, _currentTransform);
         var perimeterCount = segments * 4 + 4;
         var vertices = ArrayPool<Vertex2D>.Shared.Rent(perimeterCount + 1);
         var indices = ArrayPool<uint>.Shared.Rent(perimeterCount * 3);
@@ -778,12 +779,12 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
 
     private void FillEllipse(Point center, float radiusX, float radiusY, Brush brush)
     {
-        var segments = GetCurveSegmentCount(radiusX, radiusY, MathF.Tau);
+        var segments = PathTessellator.GetCurveSegmentCount(radiusX, radiusY, MathF.Tau, _currentTransform);
         var color = ResolveBrushColor(brush, center);
         var packed = PackColor(color);
         var transparent = packed & 0x00FFFFFFu;
         var (u0, v0, u1, v1) = VulkanTextureAtlas.WhitePixelUV;
-        var feather = GetLogicalFeatherWidth();
+        var feather = PathTessellator.GetLogicalFeatherWidth(_currentTransform);
         var innerRadiusX = Math.Max(0, radiusX - feather / 2f);
         var innerRadiusY = Math.Max(0, radiusY - feather / 2f);
         var outerRadiusX = radiusX + feather / 2f;
@@ -827,13 +828,13 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
 
     private void DrawEllipse(Point center, float radiusX, float radiusY, Pen pen)
     {
-        var segments = GetCurveSegmentCount(radiusX + pen.Width / 2f, radiusY + pen.Width / 2f, MathF.Tau);
+        var segments = PathTessellator.GetCurveSegmentCount(radiusX + pen.Width / 2f, radiusY + pen.Width / 2f, MathF.Tau, _currentTransform);
         var color = ResolveBrushColor(pen.Brush, center);
         var packed = PackColor(color);
         var transparent = packed & 0x00FFFFFFu;
         var (u0, v0, u1, v1) = VulkanTextureAtlas.WhitePixelUV;
         var halfW = pen.Width / 2f;
-        var feather = GetLogicalFeatherWidth();
+        var feather = PathTessellator.GetLogicalFeatherWidth(_currentTransform);
         var outerTransparentX = radiusX + halfW + feather / 2f;
         var outerTransparentY = radiusY + halfW + feather / 2f;
         var outerSolidX = Math.Max(0, radiusX + halfW - feather / 2f);
@@ -905,7 +906,7 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
     {
         // Approximate arcs with line segments
         var path = PathGeometry.Create();
-        var arcSegments = GetCurveSegmentCount(rx, ry, MathF.PI / 2);
+        var arcSegments = PathTessellator.GetCurveSegmentCount(rx, ry, MathF.PI / 2, _currentTransform);
 
         var l = rect.X; var t = rect.Y; var r = rect.Right; var b = rect.Bottom;
 
@@ -931,117 +932,6 @@ internal sealed unsafe class VulkanRenderContext : IRenderContext, IDpiResizable
         }
     }
 
-    // ─── Triangulation ────────────────────────────────────────────────────
-
-    private List<List<Point>> FlattenPath(PathGeometry path)
-    {
-        var contours = new List<List<Point>>();
-        var current = new List<Point>();
-        Point first = default;
-
-        foreach (var cmd in path.Commands)
-        {
-            switch (cmd)
-            {
-                case MoveToCmd move:
-                    if (current.Count > 0) contours.Add(current);
-                    current = [move.Point];
-                    first = move.Point;
-                    break;
-                case LineToCmd line:
-                    current.Add(line.Point);
-                    break;
-                case ArcToCmd arc:
-                    FlattenArc(current, arc);
-                    break;
-                case CloseCmd:
-                    if (current.Count > 0)
-                    {
-                        if (current[^1] != first) current.Add(first);
-                        contours.Add(current);
-                        current = [];
-                    }
-                    break;
-            }
-        }
-        if (current.Count > 0) contours.Add(current);
-        return contours;
-    }
-
-    private void FlattenArc(List<Point> contour, ArcToCmd arc)
-    {
-        var cx = arc.Oval.X + arc.Oval.Width / 2;
-        var cy = arc.Oval.Y + arc.Oval.Height / 2;
-        var rx = arc.Oval.Width / 2;
-        var ry = arc.Oval.Height / 2;
-        var startRad = arc.StartAngle * MathF.PI / 180f;
-        var sweepRad = arc.SweepAngle * MathF.PI / 180f;
-        var segments = GetCurveSegmentCount(rx, ry, MathF.Abs(sweepRad));
-
-        for (var i = 1; i <= segments; i++)
-        {
-            var angle = startRad + sweepRad * i / segments;
-            contour.Add(new Point(cx + rx * MathF.Cos(angle), cy + ry * MathF.Sin(angle)));
-        }
-    }
-
-    private int GetCurveSegmentCount(float radiusX, float radiusY, float sweepRadians)
-    {
-        const float maxSagitta = 0.2f;
-        const int minFullCircleSegments = 32;
-        const int maxFullCircleSegments = 256;
-
-        var xScale = MathF.Sqrt(
-            _currentTransform.M11 * _currentTransform.M11 +
-            _currentTransform.M12 * _currentTransform.M12);
-        var yScale = MathF.Sqrt(
-            _currentTransform.M21 * _currentTransform.M21 +
-            _currentTransform.M22 * _currentTransform.M22);
-        var physicalRadius = MathF.Max(MathF.Abs(radiusX) * xScale, MathF.Abs(radiusY) * yScale);
-        var sweep = Math.Clamp(MathF.Abs(sweepRadians), 0, MathF.Tau);
-        if (physicalRadius <= maxSagitta || sweep <= float.Epsilon) return 1;
-
-        var segmentAngle = 2f * MathF.Acos(Math.Clamp(1f - maxSagitta / physicalRadius, -1f, 1f));
-        var adaptive = segmentAngle > float.Epsilon
-            ? (int)MathF.Ceiling(sweep / segmentAngle)
-            : maxFullCircleSegments;
-        var minimum = Math.Max(1, (int)MathF.Ceiling(minFullCircleSegments * sweep / MathF.Tau));
-        var maximum = Math.Max(minimum, (int)MathF.Ceiling(maxFullCircleSegments * sweep / MathF.Tau));
-        return Math.Clamp(adaptive, minimum, maximum);
-    }
-
-    private float GetLogicalFeatherWidth()
-    {
-        var xScale = MathF.Sqrt(
-            _currentTransform.M11 * _currentTransform.M11 +
-            _currentTransform.M12 * _currentTransform.M12);
-        var yScale = MathF.Sqrt(
-            _currentTransform.M21 * _currentTransform.M21 +
-            _currentTransform.M22 * _currentTransform.M22);
-        return 1f / MathF.Max(0.001f, MathF.Max(xScale, yScale));
-    }
-
-    private static LibTessDotNet.Tess Triangulate(List<List<Point>> contours)
-    {
-        // Use LibTessDotNet for polygon triangulation
-        var tess = new LibTessDotNet.Tess();
-
-        foreach (var contour in contours)
-        {
-            if (contour.Count < 3) continue;
-            var points = new LibTessDotNet.ContourVertex[contour.Count];
-            for (var i = 0; i < contour.Count; i++)
-                points[i] = new LibTessDotNet.ContourVertex
-                {
-                    Position = new LibTessDotNet.Vec3 { X = contour[i].X, Y = contour[i].Y, Z = 0 }
-                };
-            tess.AddContour(points, LibTessDotNet.ContourOrientation.Original);
-        }
-
-        tess.Tessellate(LibTessDotNet.WindingRule.EvenOdd, LibTessDotNet.ElementType.Polygons, 3);
-
-        return tess;
-    }
 
     // ─── Glyph cache ──────────────────────────────────────────────────────
 

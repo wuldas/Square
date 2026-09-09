@@ -236,9 +236,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         BackendRegistration.RegisterDefaults();
         Square.Controls.ControlRegistration.RegisterDefaults();
         var renderBackend = MainWindow.RenderBackend;
-        _textLayoutScope = RenderBackendRegistry.Get(renderBackend) is ITextLayoutProviderSource source
-            ? TextLayoutProviderContext.Push(source.TextLayoutProvider)
-            : null;
+        _textLayoutScope = RenderBackendRegistry.TryGet(renderBackend, out var registeredFactory) &&
+            registeredFactory is ITextLayoutProviderSource source
+                ? TextLayoutProviderContext.Push(source.TextLayoutProvider)
+                : null;
 
         MainWindow.RegisterGlobalCssScope(_root);
         _document.Build();
@@ -259,6 +260,22 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _host = host;
         MainWindow.Attach(host);
         AttachHostEvents(host);
+    }
+
+    internal void NotifySessionFocusLost()
+    {
+        if (_host == null) return;
+        ClearInputInteractionState();
+        ClearHoverInteractionState();
+        RequestRender();
+    }
+
+    internal void NotifySessionPointerExited()
+    {
+        if (_host == null) return;
+        ClearHoverInteractionState();
+        _host.Cursor = CursorKind.Arrow;
+        RequestRender();
     }
 
     internal bool ProcessSessionFrame()
@@ -605,6 +622,15 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void ClearTransientInteractionState()
     {
+        ClearInputInteractionState();
+        ClearHoverInteractionState();
+        _scheduledFrames.Clear();
+        _inspectorHighlightDebugId = null;
+        _inspectorOverlayDirty = true;
+    }
+
+    private void ClearInputInteractionState()
+    {
         _focusedInput?.Unfocus();
         _focusedInput = null;
         _focusedEditor = null;
@@ -627,17 +653,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _pendingSplitterPoint = null;
         _lastClickTarget = null;
         _lastClickSeconds = double.NegativeInfinity;
-        UpdateHoverPath(null);
         ClearActivePath();
+        ClearTouchPointerState();
+    }
+
+    private void ClearHoverInteractionState()
+    {
+        UpdateHoverPath(null);
         _tooltipTarget = null;
         _tooltipPopup.Anchor = null;
         _tooltipPopup.Close();
         _hoveringScrollbar?.ClearScrollbarHover();
         _hoveringScrollbar = null;
-        ClearTouchPointerState();
-        _scheduledFrames.Clear();
-        _inspectorHighlightDebugId = null;
-        _inspectorOverlayDirty = true;
     }
 
     private static void InvalidatePaintSubtree(Element element)

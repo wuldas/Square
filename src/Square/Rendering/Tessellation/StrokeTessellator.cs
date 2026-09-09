@@ -1,8 +1,8 @@
 using Square.Graphics;
 
-namespace Square.Backends.Vulkan;
+namespace Square.Rendering.Tessellation;
 
-internal static class VulkanStrokeTessellator
+internal static class StrokeTessellator
 {
     private const float Epsilon = 0.0001f;
 

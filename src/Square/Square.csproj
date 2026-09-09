@@ -11,6 +11,8 @@
   <ItemGroup>
     <PackageReference Include="StbTrueTypeSharp" />
     <PackageReference Include="Yoga.Net" />
+    <PackageReference Include="LibTessDotNet" />
+
   </ItemGroup>
 
   <ItemGroup>
@@ -25,6 +27,9 @@
     <InternalsVisibleTo Include="Square.Backends.Skia" />
     <InternalsVisibleTo Include="Square.Backends.Direct2D" />
     <InternalsVisibleTo Include="Square.Extensions.CodeEditor" />
+    <InternalsVisibleTo Include="Square.Backends.Vulkan" />
+    <InternalsVisibleTo Include="Square.Backends.Vulkan.Tests" />
+    <InternalsVisibleTo Include="Square.Backends.Godot" />
   </ItemGroup>
 
   <ItemGroup>

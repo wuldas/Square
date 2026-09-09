@@ -1,0 +1,20 @@
+[application]
+config/name="Square Sample Godot"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.7", "C#", "GL Compatibility")
+
+[display]
+window/size/viewport_width=960
+window/size/viewport_height=640
+window/size/window_width_override=960
+window/size/window_height_override=640
+window/stretch/mode="canvas_items"
+window/handheld/orientation=1
+
+[dotnet]
+project/assembly_name="Square.Sample.Godot"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false

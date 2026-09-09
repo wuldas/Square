@@ -346,84 +346,47 @@ PDF 可复用类似的 DisplayTree exporter，但需要分页、字体嵌入、�
 
 ## 9. Godot 路线
 
-Godot 最适合作为嵌入式宿主和 canvas 绘制目标，而不是一开始映射成 Godot `Control` 树。
+Godot 4.7.2 .NET 现在作为嵌入式宿主和全 Canvas/GPU 绘制目标提供支持；不创建 Godot 原生控件树，也不把 Software/Skia 作为运行时回退。
 
-### 9.1 阶段 A：Godot 宿主 + Software bitmap
+### 9.1 当前实现：Godot Control 宿主
 
-```text
-Square UI
-  -> Software Renderer
-  -> Bitmap
-  -> Godot ImageTexture / TextureRect
-```
-
-`SquareControl` 可以作为 Godot `Control` 节点：
+`Square.Platform.Godot` 提供 `SquareControl`。它在已入树的 Godot `Control` 内创建一个 `ApplicationSession`，由 Godot `_Process` 驱动 `Tick` 和待处理帧；尺寸、外层缩放、可见性、暂停、焦点、指针离开、剪贴板和 IME 均通过 `GodotPlatformHost` 转换到现有 Square 契约。普通 Godot `Button` 等节点可以与 SquareControl 并存。
 
 ```csharp
-public partial class SquareControl : Control
-{
-    public override void _Ready()
-    {
-        // 初始化 Square document/application facade
-    }
+var square = new SquareControl();
+container.AddChild(square);
+square.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
-    public override void _Draw()
-    {
-        // 绘制 Square bitmap 或提交 Godot canvas draw calls
-    }
-
-    public override void _Input(InputEvent e)
-    {
-        // 转换 pointer/key/text/wheel 输入
-    }
-
-    public override void _Process(double delta)
-    {
-        // 驱动 dispatcher、timer、animation、QueueRedraw
-    }
-}
+var window = new AppWindow("Square Godot", 800, 520);
+window.Load(new SquarePage());
+square.Attach(window);
 ```
 
-优点：
+`Attach` 要求节点已入树；同一 Control 重复附加同一窗口幂等，附加不同窗口必须先 `Detach`。一个 Godot 主线程只允许一个活动 Square application，以符合现有线程静态 `Application.Current` 契约。
 
-- 最快在游戏中嵌入 Square UI。
-- 现有布局、文本、RichText、选择和高亮保持一致。
+### 9.2 当前实现：RenderingServer GPU 管线
 
-缺点：
+`Square.Backends.Godot.GodotRenderContext` 使用 RenderingServer 的 viewport、canvas、canvas item、shader 和 material RID；根 GPU viewport 的纹理再由一个子 CanvasItem 合成到目标 Control。`Present(empty)` 保留已显示帧，提交资源与暂存命令分离；嵌套 layer、mask 和 root viewport 以 producer-first 的 parent viewport 链提交。
 
-- Godot 看到的是贴图，不是原生 Godot Control。
-- 可访问性、主题、编辑器集成较弱。
+已实现的绘制路径包括：
 
-### 9.2 阶段 B：DisplayTree -> Godot Canvas
+- 共享 `PathTessellator` / `StrokeTessellator`：EvenOdd 填充、圆角/椭圆/Path、描边 cap/join/miter/dash；半透明描边先进入 GPU coverage viewport，再一次性施加 Brush。
+- Solid、LinearGradient、RadialGradient：stops 使用 nearest-filter 浮点 GPU 数据纹理，保留全部 stops、spread 和 Brush 变更；不把渐变采样为纯色。
+- 非预乘 BGRA `Bitmap`：ContentVersion 变化时原位更新 GPU texture，source crop 通过 UV 完成；图像和字形 coverage 在 shader 中只预乘一次。
+- 矩形 clip 与有界透明 GPU mask：嵌套 mask 通过 parent viewport 链组合；opacity layer 在独立有界 GPU target 中合成一次。
+- 字形：Square 换行、视觉顺序、对齐、baseline 和装饰线保持权威；单字形 coverage 写入白色 RGBA atlas。字号/DPI/自定义字体代次变化会重建相应 atlas。
 
-```text
-DisplayTree
-  -> CanvasItem.DrawRect / DrawString / DrawTextureRect
-```
+Compatibility renderer 不支持 2D MSAA 时 Godot 会报告引擎 warning；后端仍请求 `ViewportMsaa.Msaa4X`，不会切换到 CPU 帧缓冲。
 
-映射：
+### 9.3 Godot 支持边界
 
-| Square | Godot |
-|---|---|
-| Rect | `CanvasItem.DrawRect` |
-| Border | `DrawLine` / `DrawPolyline` / StyleBox-like helper |
-| Text | `Font.DrawString` / TextServer |
-| Image | `DrawTextureRect` |
-| Clip | clipping helper / SubViewport |
-| Transform | Canvas transform |
+- 文字 rasterizer 当前只接受 BMP `char` 且为单色 coverage。非 BMP 原字符明确显示 U+FFFD replacement glyph；彩色 emoji/彩色字体不在此后端能力内，不宣称原字形支持。
+- 输入使用 `_GuiInput(InputEvent)`，Unicode 提交来自 `InputEventKey.Unicode`；Backspace、方向键、Ctrl/Meta 快捷键、AltGr、滚轮和 canceled/focus-exit 清理复用 Square 现有事件模型。
+- `Square.Godot.slnx` 包含核心、编译器、Godot backend/platform、示例和平台测试；可运行示例位于 `samples/Square.Sample.Godot`，不依赖外部图片或桌面平台程序集。
 
-### 9.3 阶段 C：Godot Control 树（长期）
+### 9.4 长期 Control 树路线
 
-Godot Control 映射应后置，因为会遇到双框架冲突：
-
-- Square layout 与 Godot Container 谁负责布局？
-- Square 事件冒泡与 Godot signal 如何桥接？
-- hover、focus、pressed、disabled 状态谁维护？
-- RichText、输入法、选择是否使用 Godot 原生能力？
-
-只有当目标是深度 Godot 编辑器/主题集成时，才值得推进这一阶段。
-
----
+Square layout、事件冒泡、hover/focus、输入法、选择和主题仍由 Square 保持权威；本实现不映射 Godot 原生 `Control` 树。只有目标转为深度 Godot 编辑器/主题集成时，才需要单独评估原生 Control adapter。
 
 ## 10. 控件能力矩阵
 

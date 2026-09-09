@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using Buffer = Silk.NET.Vulkan.Buffer;
+using Square.Rendering.Tessellation;
 
 namespace Square.Backends.Vulkan;
 
@@ -8,18 +9,6 @@ namespace Square.Backends.Vulkan;
 /// ImGui-style batched 2D renderer: dynamic VBO/IBO, batched draw calls by texture + scissor.
 /// Reference: imgui_impl_vulkan.cpp rendering backend.
 /// </summary>
-[StructLayout(LayoutKind.Sequential)]
-internal struct Vertex2D
-{
-    public float X, Y;     // Position
-    public float U, V;     // UV
-    public uint Color;     // RGBA8 packed
-
-    public Vertex2D(float x, float y, float u, float v, uint color)
-    {
-        X = x; Y = y; U = u; V = v; Color = color;
-    }
-}
 
 internal struct DrawBatch
 {

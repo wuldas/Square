@@ -8,6 +8,8 @@ obj/
 *.log
 obj-*/
 bin-*/
+*.uid
+.godot/
 
 ## IDE
 .vs/

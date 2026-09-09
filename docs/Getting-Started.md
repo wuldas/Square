@@ -1,6 +1,6 @@
 # 入门指南
 
-> Document Revision: 0.4
+> Document Revision: 0.5
 > 配套：`vue-plan.md`、`Architecture.md`、`Sqx-Spec.md`、`API-Reference.md`
 
 本文带你从零创建一个 Square 桌面应用，默认使用 `.sqv` 的 Vue 模板语法编写组件。`.sqx` 原生语法仍可用，详见 `Sqx-Spec.md`。
@@ -10,7 +10,8 @@
 ## 1. 环境要求
 
 - [.NET SDK 10](https://dotnet.microsoft.com/download/dotnet/10.0)
-- Windows 10+（当前主要验证平台）
+- 桌面宿主：Windows / Win32、Linux / X11、macOS；这三个平台均已通过 `v0.1.0` 的 CI 验收。
+- Android 为可选的 Experimental 平台，额外需要 Android workload、Android SDK 和 JDK 17；仅开发桌面应用不需要安装它们。
 
 ```bash
 dotnet --version
@@ -20,37 +21,20 @@ dotnet --version
 
 ## 2. 创建项目
 
-### 2.1 安装模板与本地包
+### 2.1 从 NuGet.org 安装
 
 `Wuldas.Square.Templates` 提供 `square` 应用模板和 `square-component` 组件模板。NuGet 包统一使用 `Wuldas.Square` / `Wuldas.Square.*`，程序集与 C# 命名空间仍为 `Square`。生成的应用只引用 NuGet 包，不依赖 Square 仓库的 `Directory.Build.*` 或源码项目路径。
 
-当前可先从源码打包到本地源，不要求这些版本已经发布到 NuGet.org。以下命令在 Square 仓库根目录执行，以 Windows 为例：
+`0.1.0` 已正式发布。以下命令可在普通工作目录执行，无需克隆 Square 仓库，也无需配置本地包源：
 
 ```bash
-dotnet pack src/Square/Square.csproj -c Release -o artifacts/template-feed
-dotnet pack src/Square.Compiler/Square.Compiler.csproj -c Release -o artifacts/template-feed
-dotnet pack src/Square.Platform.Win32/Square.Platform.Win32.csproj -c Release -o artifacts/template-feed
-dotnet pack templates/Square.Templates.csproj -c Release -o artifacts/template-feed
-dotnet new install ./artifacts/template-feed/Wuldas.Square.Templates.0.1.0.nupkg
-dotnet new square -n MyApp -o ../MyApp
-cd ../MyApp
-```
-
-Linux / macOS 分别打包 `Square.Platform.X11` / `Square.Platform.MacOS`。在生成项目旁创建 `NuGet.Config`，把 `value` 改为刚才本地源的绝对路径；其余依赖从 NuGet.org 还原：
-
-```xml
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="SquareLocal" value="C:/path/to/Square/artifacts/template-feed" />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-  </packageSources>
-</configuration>
-```
-
-```bash
+dotnet new install Wuldas.Square.Templates@0.1.0
+dotnet new square -n MyApp
+cd MyApp
 dotnet run
 ```
+
+框架、编译器及匹配当前操作系统的平台包会从 NuGet.org 自动还原。默认项目包含欢迎页和计数按钮，点击按钮应更新计数。包信息见[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)和[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。
 
 默认生成 `.sqv`、Software 后端和当前操作系统的桌面宿主。选择原生 SQX 语法：`dotnet new square -n MyApp --markup sqx`。
 
@@ -151,7 +135,7 @@ dotnet workload install android
 dotnet build MyMobileApp/MyMobileApp.csproj -p:SquareTargetPlatform=Android
 ```
 
-本地源还需打包 `Square.Backends.Vulkan`、`Square.Backends.AndroidCanvas` 和 `Square.Platform.Android`，各命令附加 `-p:SquareTargetPlatform=Android`。Android 入口是 `Platforms/Android/MainActivity.cs`，复用同一个 `SquareProgram.CreateWindow()`；标题、ID、版本由 Android SDK 写入 Manifest。Android 仍是 Experimental，桌面不需要安装 Android workload。
+Android 平台包及其依赖会从 NuGet.org 自动还原，无需自行打包。入口是 `Platforms/Android/MainActivity.cs`，复用同一个 `SquareProgram.CreateWindow()`；标题、ID、版本由 Android SDK 写入 Manifest。Android 仍是 Experimental，桌面不需要安装 Android workload。
 
 开发时用 Android SDK 部署托管程序集并启动应用：`dotnet build MyMobileApp/MyMobileApp.csproj -t:Run -p:SquareTargetPlatform=Android`。默认 Debug APK 使用 Fast Deployment，不能只执行 `adb install` 就期望它独立运行；需要单独分发 APK 时应发布 Release 产物，或显式设置 `EmbedAssembliesIntoApk=true`。
 
@@ -162,6 +146,40 @@ dotnet publish MyApp.csproj -c Release -r win-x64 --self-contained true -p:Publi
 ```
 
 Linux / macOS 分别使用 `linux-x64` / `osx-x64`，并安装对应 NativeAOT 工具链。Android 不采用此桌面 NativeAOT 命令，支持边界见 [Android 平台说明](Android-Platform-TODO.md)。
+
+### 2.5 框架开发者：验证本地修改
+
+只有修改框架、编译器或模板源码时才需要本地包源。以下在 Square 仓库根目录执行，仅打包 Windows 桌面所需的包；Linux / macOS 分别将平台项目换为 `Square.Platform.X11` / `Square.Platform.MacOS`：
+
+```bash
+dotnet pack src/Square/Square.csproj -c Release -o artifacts/template-feed
+dotnet pack src/Square.Compiler/Square.Compiler.csproj -c Release -o artifacts/template-feed
+dotnet pack src/Square.Platform.Win32/Square.Platform.Win32.csproj -c Release -o artifacts/template-feed
+dotnet pack templates/Square.Templates.csproj -c Release -o artifacts/template-feed
+dotnet new install ./artifacts/template-feed/Wuldas.Square.Templates.0.1.0.nupkg --force
+dotnet new square -n LocalApp -o ../LocalApp
+```
+
+在生成项目中创建 `NuGet.Config`，将本地源改为实际绝对路径。Source Mapping 确保框架包来自本地，而不是同版本的正式包：
+
+```xml
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="SquareLocal" value="C:/path/to/Square/artifacts/template-feed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="SquareLocal">
+      <package pattern="Wuldas.Square" />
+      <package pattern="Wuldas.Square.*" />
+    </packageSource>
+    <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+  </packageSourceMapping>
+</configuration>
+```
+
+验证时使用独立的 `NUGET_PACKAGES` 目录，避免已缓存的同版本正式包掩盖本地修改。验证 Android 还需打包 `Square.Backends.Vulkan`、`Square.Backends.AndroidCanvas` 和 `Square.Platform.Android`，各命令附加 `-p:SquareTargetPlatform=Android`。完整发布包构建及版本标签流程见 [README 的 NuGet 发布说明](../README.md#nuget-发布)。
 
 框架开发者可用 `pwsh -File templates/Verify-Templates.ps1 -Platform Win32` 验收本地打包、独立模板安装、仓库外还原、组件生成、资源发布和 NativeAOT 点击截图；Linux / macOS 使用 `X11` / `MacOS`，Android 使用 `Android` 验证两种语法的单项目构建。
 
