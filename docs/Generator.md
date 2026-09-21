@@ -250,7 +250,7 @@ _for0 = new ForNode<Item>(
 
 ### 8.4 自定义组件与 `<Slot>`
 
-未知 PascalCase 标签按自定义组件处理。生成顺序固定为：
+标签先通过项目元素目录解析；未知名称直接产生 `SQXE001`–`SQXE004` 诊断，不再把原标签文本当作 C# 类型名。目录包含内置控件、当前项目组件，以及引用程序集显式声明的 `ElementExportAttribute`。生成顺序固定为：
 
 1. 构造组件实例。
 2. 写入常量 Props 与绑定 Props。
@@ -260,6 +260,8 @@ _for0 = new ForNode<Item>(
 6. 将子组件加入父视觉树。
 
 组件模板中的 `<Slot>` 不生成可布局 Element，而是生成 `SlotOutlet.AttachTo(parent, slotName, fallback)`。多个根节点作为连续区域插入，不创建隐式 `View`。
+
+引用组件包无需模板 `using` 或运行时注册即可参与编译期发现。无前缀名称按 HTML → Square/SVG → 扩展/本地 CLR 作用域解析；扩展冲突由应用程序集的 `ElementNamespaceOrderAttribute` 决定。`prefix:localName` 精确选择导出命名空间，`local:Type` 只使用 CLR 作用域，`global::Namespace.Type` 精确选择 CLR 类型。所有成功结果仍发射为直接 `new global::Type()`；运行时 `ElementRegistry` 不参与模板解析。
 
 ### 8.5 路由声明
 

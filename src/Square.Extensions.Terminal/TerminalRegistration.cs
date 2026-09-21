@@ -1,5 +1,7 @@
 using Square.UI;
 
+[assembly: ElementExport("urn:square:terminal", "terminal", "TerminalView", typeof(Square.Extensions.Terminal.TerminalView))]
+
 namespace Square.Extensions.Terminal;
 
 /// <summary>Registers the Square terminal control tag.</summary>

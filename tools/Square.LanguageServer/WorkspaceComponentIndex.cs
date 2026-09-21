@@ -47,6 +47,7 @@ internal sealed class WorkspaceComponentIndex
 
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _workspacePaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
     private readonly TemplateSemanticAnalyzer _analyzer = new();
     private readonly int _maxComponentFiles;
     private readonly int _maxDirectories;
@@ -65,13 +66,22 @@ internal sealed class WorkspaceComponentIndex
         _fileSystem = fileSystem ?? new PhysicalWorkspaceFileSystem();
     }
 
-    public IReadOnlyCollection<TemplateComponentDescriptor> Components =>
-        _entries.Values.Select(entry => entry.Component).ToArray();
+    public IReadOnlyCollection<TemplateComponentDescriptor> Components
+    {
+        get
+        {
+            lock (_gate)
+                return _entries.Values.Select(entry => entry.Component).ToArray();
+        }
+    }
 
     public void Index(IEnumerable<string> roots, CancellationToken cancellationToken)
     {
-        _entries.Clear();
-        _workspacePaths.Clear();
+        lock (_gate)
+        {
+            _entries.Clear();
+            _workspacePaths.Clear();
+        }
         var directories = new Stack<string>();
         var uniqueRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var remainingDirectoryCandidates = _maxDirectories;
@@ -137,7 +147,7 @@ internal sealed class WorkspaceComponentIndex
                 cancellationToken.ThrowIfCancellationRequested();
                 var normalizedFile = NormalizeComponentPath(file);
                 if (normalizedFile == null) continue;
-                _workspacePaths.Add(normalizedFile);
+                lock (_gate) _workspacePaths.Add(normalizedFile);
                 try
                 {
                     var text = ReadBoundedUtf8(normalizedFile, cancellationToken);
@@ -165,14 +175,17 @@ internal sealed class WorkspaceComponentIndex
         if (normalizedPath == null) return;
         text ??= string.Empty;
         if (Encoding.UTF8.GetByteCount(text) > _maxComponentBytes) return;
-        if (!_entries.ContainsKey(normalizedPath) && _entries.Count >= _maxComponentFiles) return;
+        lock (_gate)
+        {
+            if (!_entries.ContainsKey(normalizedPath) && _entries.Count >= _maxComponentFiles) return;
+        }
 
         var input = new[] { (Path: normalizedPath, Content: text, Namespace: string.Empty) };
         var component = _analyzer.BuildGeneratedComponents(input).Values.SingleOrDefault();
         cancellationToken.ThrowIfCancellationRequested();
         if (component == null)
         {
-            if (!preserveOnInvalid) _entries.Remove(normalizedPath);
+            if (!preserveOnInvalid) lock (_gate) _entries.Remove(normalizedPath);
             return;
         }
         var contracts = _analyzer.BuildEmbeddedPropContracts(input);
@@ -210,14 +223,17 @@ internal sealed class WorkspaceComponentIndex
         catch (UnauthorizedAccessException)
         {
         }
-        _entries[normalizedPath] = new Entry(
-            component,
-            props ?? Array.Empty<TemplatePropDescriptor>(),
-            mergedEvents.Values
-                .GroupBy(componentEvent => componentEvent.NormalizedName, StringComparer.OrdinalIgnoreCase)
-                .Where(group => group.Count() == 1)
-                .Select(group => group.First())
-                .ToArray());
+        lock (_gate)
+        {
+            _entries[normalizedPath] = new Entry(
+                component,
+                props ?? Array.Empty<TemplatePropDescriptor>(),
+                mergedEvents.Values
+                    .GroupBy(componentEvent => componentEvent.NormalizedName, StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Count() == 1)
+                    .Select(group => group.First())
+                    .ToArray());
+        }
     }
 
     public void RestoreFromDisk(string path, CancellationToken cancellationToken = default)
@@ -230,18 +246,18 @@ internal sealed class WorkspaceComponentIndex
             var text = ReadBoundedUtf8(normalizedPath, cancellationToken);
             if (text == null)
             {
-                _entries.Remove(normalizedPath);
+                lock (_gate) _entries.Remove(normalizedPath);
                 return;
             }
             Update(normalizedPath, text, preserveOnInvalid: false, cancellationToken);
         }
         catch (IOException)
         {
-            _entries.Remove(normalizedPath);
+            lock (_gate) _entries.Remove(normalizedPath);
         }
         catch (UnauthorizedAccessException)
         {
-            _entries.Remove(normalizedPath);
+            lock (_gate) _entries.Remove(normalizedPath);
         }
     }
 
@@ -250,38 +266,46 @@ internal sealed class WorkspaceComponentIndex
         cancellationToken.ThrowIfCancellationRequested();
         var normalizedPath = NormalizeComponentPath(path);
         if (normalizedPath == null) return;
-        if (_workspacePaths.Contains(normalizedPath))
+        bool isWorkspacePath;
+        lock (_gate) isWorkspacePath = _workspacePaths.Contains(normalizedPath);
+        if (isWorkspacePath)
         {
             RestoreFromDisk(normalizedPath, cancellationToken);
             return;
         }
-        _entries.Remove(normalizedPath);
+        lock (_gate) _entries.Remove(normalizedPath);
     }
 
     public bool TryGetProps(string tagName, out TemplatePropDescriptor[] props)
     {
-        var entry = _entries.Values.FirstOrDefault(candidate =>
-            candidate.Component.TagName.Equals(tagName, StringComparison.OrdinalIgnoreCase));
-        if (entry == null)
+        lock (_gate)
         {
-            props = Array.Empty<TemplatePropDescriptor>();
-            return false;
+            var matches = _entries.Values.Where(candidate =>
+                candidate.Component.TagName.Equals(tagName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1)
+            {
+                props = Array.Empty<TemplatePropDescriptor>();
+                return false;
+            }
+            props = matches[0].Props;
+            return true;
         }
-        props = entry.Props;
-        return true;
     }
 
     public bool TryGetEvents(string tagName, out TemplateComponentEventDescriptor[] events)
     {
-        var entry = _entries.Values.FirstOrDefault(candidate =>
-            candidate.Component.TagName.Equals(tagName, StringComparison.OrdinalIgnoreCase));
-        if (entry == null)
+        lock (_gate)
         {
-            events = Array.Empty<TemplateComponentEventDescriptor>();
-            return false;
+            var matches = _entries.Values.Where(candidate =>
+                candidate.Component.TagName.Equals(tagName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1)
+            {
+                events = Array.Empty<TemplateComponentEventDescriptor>();
+                return false;
+            }
+            events = matches[0].Events;
+            return true;
         }
-        events = entry.Events;
-        return true;
     }
 
     private string? ReadBoundedUtf8(string path, CancellationToken cancellationToken)

@@ -1,11 +1,10 @@
 <template>
   <View class="markdown-page sample-page">
     <Text class="page-title" text="Markdown extension" />
-    <MarkdownViewer class="markdown-card" :content="Document" ref="markdownViewer" />
+    <markdown:MarkdownViewer class="markdown-card" :content="Document" ref="markdownViewer" />
   </View>
 </template>
 <script lang="csharp">
-  using Square.Extensions.Markdown;
   public ObservableValue<string> Document = new("""
     # MarkdownViewer
 

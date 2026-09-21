@@ -142,6 +142,18 @@ public sealed class TemplateCompletionServiceTests
     }
 
     [Fact]
+    public void IncompleteQualifiedAttributePreservesOwningTag()
+    {
+        const string source = "<template><markdown:MarkdownViewer Co";
+
+        var context = TemplateCompletionService.GetContext(source, source.Length, "Editing.sqv");
+
+        Assert.Equal(TemplateCompletionKind.Attribute, context.Kind);
+        Assert.Equal("markdown:MarkdownViewer", context.TagName);
+        Assert.Equal("Co", context.Prefix);
+    }
+
+    [Fact]
     public void VueDirectivePrefixCompletesSupportedDirectives()
     {
         const string source = "<template><Text v-";

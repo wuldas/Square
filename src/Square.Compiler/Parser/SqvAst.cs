@@ -44,4 +44,5 @@ internal sealed class TemplateSlotPropertyBinding
     public string LocalName = "";
     public string TypeName;
     public int Position;
+    public int Length;
 }

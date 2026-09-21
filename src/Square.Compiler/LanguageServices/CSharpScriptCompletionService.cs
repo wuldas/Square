@@ -117,8 +117,12 @@ public static class CSharpScriptCompletionService
     public static IReadOnlyList<TemplateCompletionItem> GetItems(
         CSharpScriptCompletionContext context,
         string text,
-        string sourcePath)
+        string sourcePath,
+        TemplateCatalog catalog = null,
+        TemplateResolutionContext resolutionContext = null)
     {
+        catalog ??= TemplateCatalog.BuiltIn;
+        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
         if (context == null || context.Kind == CSharpScriptCompletionKind.None)
             return Array.Empty<TemplateCompletionItem>();
         var document = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty).ParsedSqxDocument;
@@ -130,9 +134,9 @@ public static class CSharpScriptCompletionService
             CSharpScriptCompletionKind.Namespace => Namespaces.Select(name => Item(name, 9, "C# namespace")),
             CSharpScriptCompletionKind.Attribute => Attributes.Select(name => Item(name, 7, "C# attribute")),
             CSharpScriptCompletionKind.AttributeArgument => GetAttributeArgumentItems(context.Receiver),
-            CSharpScriptCompletionKind.Type => GetTypeItems(),
-            CSharpScriptCompletionKind.Member => GetMemberItems(document.Syntax, script, context),
-            _ => GetGeneralItems(script, context.Position)
+            CSharpScriptCompletionKind.Type => GetTypeItems(catalog),
+            CSharpScriptCompletionKind.Member => GetMemberItems(document.Syntax, script, context, catalog, resolutionContext),
+            _ => GetGeneralItems(script, context.Position, catalog)
         };
         return items
             .Where(item => item.Label.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -142,7 +146,7 @@ public static class CSharpScriptCompletionService
             .ToArray();
     }
 
-    public static string GetHoverDetail(string text, int offset, string sourcePath)
+    public static string GetHoverDetail(string text, int offset, string sourcePath, TemplateCatalog catalog = null, TemplateResolutionContext resolutionContext = null)
     {
         text ??= string.Empty;
         offset = Math.Min(Math.Max(offset, 0), text.Length);
@@ -159,21 +163,22 @@ public static class CSharpScriptCompletionService
         if (tokenEnd <= tokenStart) return null;
         var token = text.Substring(tokenStart, tokenEnd - tokenStart);
         var context = GetContext(text, tokenEnd, sourcePath);
-        return GetItems(context, text, sourcePath)
+        return GetItems(context, text, sourcePath, catalog, resolutionContext)
             .FirstOrDefault(item => item.Label.Equals(token, StringComparison.Ordinal))?.Detail;
     }
 
-    private static IEnumerable<TemplateCompletionItem> GetGeneralItems(CSharpScriptSyntax script, int position)
+    private static IEnumerable<TemplateCompletionItem> GetGeneralItems(
+        CSharpScriptSyntax script,
+        int position,
+        TemplateCatalog catalog)
     {
         foreach (var keyword in Keywords) yield return Item(keyword, 14, "C# keyword");
-        foreach (var type in GetTypeItems()) yield return type;
+        foreach (var type in GetTypeItems(catalog)) yield return type;
         foreach (var member in GetScriptMemberItems(script)) yield return member;
         foreach (var local in GetVisibleLocals(script, position)) yield return local;
         if (!script.Members.OfType<MethodDeclarationSyntax>()
                 .Any(method => Contains(script.SourceMap.ToDocumentRange(method.Span), position)))
-        {
             foreach (var lifecycle in LifecycleItems()) yield return lifecycle;
-        }
     }
 
     private static IEnumerable<TemplateCompletionItem> GetAttributeArgumentItems(string attributeName)
@@ -186,11 +191,16 @@ public static class CSharpScriptCompletionService
             : Array.Empty<TemplateCompletionItem>();
     }
 
-    private static IEnumerable<TemplateCompletionItem> GetTypeItems()
+    private static IEnumerable<TemplateCompletionItem> GetTypeItems(TemplateCatalog catalog)
     {
         foreach (var type in CommonTypes) yield return Item(type, 7, "C# type");
-        foreach (var component in TemplateCatalog.BuiltIn.Components)
-            yield return Item(component.TagName, 7, component.TypeName);
+        foreach (var component in catalog.Components)
+        {
+            var simpleName = component.TypeName;
+            var lastDot = simpleName.LastIndexOf('.');
+            if (lastDot >= 0) simpleName = simpleName.Substring(lastDot + 1);
+            yield return Item(simpleName, 7, component.TypeName);
+        }
     }
 
     private static IEnumerable<TemplateCompletionItem> GetScriptMemberItems(CSharpScriptSyntax script)
@@ -237,25 +247,29 @@ public static class CSharpScriptCompletionService
     private static IEnumerable<TemplateCompletionItem> GetMemberItems(
         ComponentDocumentSyntax document,
         CSharpScriptSyntax script,
-        CSharpScriptCompletionContext context)
+        CSharpScriptCompletionContext context,
+        TemplateCatalog catalog,
+        TemplateResolutionContext resolutionContext)
     {
         if (context.Receiver.Equals("this", StringComparison.Ordinal))
-            return GetScriptMemberItems(script).Concat(GetMembersForType("__Component"));
-        var typeName = ResolveExpressionType(document, script, context.Receiver, context.Position);
-        return GetMembersForType(typeName);
+            return GetScriptMemberItems(script).Concat(GetMembersForType("__Component", catalog));
+        var typeName = ResolveExpressionType(document, script, context.Receiver, context.Position, catalog, resolutionContext);
+        return GetMembersForType(typeName, catalog);
     }
 
     private static string ResolveExpressionType(
         ComponentDocumentSyntax document,
         CSharpScriptSyntax script,
         string expression,
-        int position)
+        int position,
+        TemplateCatalog catalog,
+        TemplateResolutionContext resolutionContext)
     {
         var parts = expression.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length == 0) return string.Empty;
-        var type = ResolveIdentifierType(document, script, parts[0], position);
+        var type = ResolveIdentifierType(document, script, parts[0], position, catalog, resolutionContext);
         for (var index = 1; index < parts.Length && type.Length > 0; index++)
-            type = ResolveMemberType(type, parts[index]);
+            type = ResolveMemberType(type, parts[index], catalog);
         return type;
     }
 
@@ -263,7 +277,9 @@ public static class CSharpScriptCompletionService
         ComponentDocumentSyntax document,
         CSharpScriptSyntax script,
         string identifier,
-        int position)
+        int position,
+        TemplateCatalog catalog,
+        TemplateResolutionContext resolutionContext)
     {
         if (identifier == "this") return "__Component";
         var field = script.Members.OfType<FieldDeclarationSyntax>()
@@ -286,8 +302,14 @@ public static class CSharpScriptCompletionService
             return InferType(declaration.Type, variable.Initializer?.Value);
 
         var refType = FindTemplateRefType(document.Template, identifier);
-        if (refType.Length > 0) return refType;
-        return CommonTypes.Concat(TemplateCatalog.BuiltIn.Components.Select(item => item.TagName))
+        if (refType.Length > 0)
+        {
+            var resolution = catalog.ResolveComponent(refType, resolutionContext);
+            return resolution.Status == TemplateElementResolutionStatus.Resolved
+                ? resolution.Component.TypeName
+                : refType;
+        }
+        return CommonTypes.Concat(catalog.Components.SelectMany(item => new[] { item.LocalName, SimpleTypeName(item.TypeName) }))
             .FirstOrDefault(item => item.Equals(identifier, StringComparison.Ordinal)) ?? string.Empty;
     }
 
@@ -342,7 +364,7 @@ public static class CSharpScriptCompletionService
         return string.Empty;
     }
 
-    private static IEnumerable<TemplateCompletionItem> GetMembersForType(string typeName)
+    private static IEnumerable<TemplateCompletionItem> GetMembersForType(string typeName, TemplateCatalog catalog)
     {
         var normalized = NormalizeType(typeName);
         foreach (var member in CommonObjectMembers()) yield return member;
@@ -421,7 +443,7 @@ public static class CSharpScriptCompletionService
                          Method("Parse", "Color Parse(string value)"),
                          Method("TryParse", "bool TryParse(string value, out Color color)"))) yield return member;
         }
-        if (IsElementType(normalized))
+        if (IsElementType(normalized, catalog))
         {
             foreach (var member in ElementMembers()) yield return member;
             if (normalized == "__Component")
@@ -433,10 +455,10 @@ public static class CSharpScriptCompletionService
         }
     }
 
-    private static string ResolveMemberType(string typeName, string memberName)
+    private static string ResolveMemberType(string typeName, string memberName, TemplateCatalog catalog)
     {
         var normalized = NormalizeType(typeName);
-        if (IsElementType(normalized))
+        if (IsElementType(normalized, catalog))
         {
             if (memberName == "Style") return "StyleAccessor";
             if (memberName == "ClassList") return "ClassListAccessor";
@@ -540,9 +562,18 @@ public static class CSharpScriptCompletionService
         typeName.StartsWith("ICollection<", StringComparison.Ordinal) ||
         typeName.StartsWith("ObservableCollection<", StringComparison.Ordinal);
 
-    private static bool IsElementType(string typeName) =>
+    private static bool IsElementType(string typeName, TemplateCatalog catalog) =>
         typeName is "Element" or "UIElement" or "__Component" ||
-        TemplateCatalog.BuiltIn.Components.Any(item => item.TagName.Equals(typeName, StringComparison.OrdinalIgnoreCase));
+        catalog.Components.Any(item =>
+            item.LocalName.Equals(typeName, StringComparison.OrdinalIgnoreCase) ||
+            item.TypeName.Equals(typeName, StringComparison.Ordinal) ||
+            SimpleTypeName(item.TypeName).Equals(typeName, StringComparison.Ordinal));
+
+    private static string SimpleTypeName(string typeName)
+    {
+        var lastDot = typeName.LastIndexOf('.');
+        return lastDot >= 0 ? typeName.Substring(lastDot + 1) : typeName;
+    }
 
     private static bool Contains(SquareSourceRange range, int position) =>
         position >= range.Offset && position <= range.End;

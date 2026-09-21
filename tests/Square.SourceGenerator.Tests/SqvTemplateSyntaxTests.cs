@@ -98,6 +98,49 @@ public sealed class SqvTemplateSyntaxTests
         Assert.Empty(template.Ir.Roots);
     }
 
+    [Theory]
+    [InlineData("<Card ", "Card")]
+    [InlineData("<a:card ", "a:card")]
+    [InlineData("<a:", "a:")]
+    public void TolerantSqvTemplateKeepsElementReachingEndOfInput(string content, string expectedTagName)
+    {
+        var syntax = SqvTemplateSyntaxParser.Parse(content, tolerant: true);
+
+        var element = Assert.IsType<SqvElementSyntax>(Assert.Single(syntax.Roots));
+        Assert.Equal(expectedTagName, element.TagName);
+        Assert.False(element.IsSelfClosing);
+        Assert.Equal(content.Length, element.Origin.Offset + element.Origin.Length);
+        Assert.Throws<SqxParseException>(() => SqvTemplateSyntaxParser.Parse(content, tolerant: false));
+    }
+
+    [Fact]
+    public void TolerantSqvTemplateRecordsDiagnosticsAndLowersRecoverableTree()
+    {
+        const string content = "<Card><View></Card>";
+        const string source = "<template>" + content + "</template>";
+        var tolerant = ComponentSectionScanner.Scan(source, "Card.sqv", ComponentDialect.Sqv, tolerant: true).Document.Template;
+
+        Assert.True(tolerant.HasErrors);
+        Assert.NotEmpty(tolerant.Diagnostics);
+        Assert.All(tolerant.Diagnostics, diagnostic =>
+        {
+            Assert.Equal("SQV0001", diagnostic.Id);
+            Assert.True(diagnostic.Range.Length > 0);
+            Assert.InRange(diagnostic.Range.Offset, tolerant.ContentRange.Offset, source.Length);
+        });
+        var root = Assert.IsType<SqvElementSyntax>(Assert.Single(tolerant.SqvSyntax.Roots));
+        Assert.Equal("Card", root.TagName);
+        var ir = Assert.IsType<Square.Compiler.Template.Ir.TemplateIrElement>(Assert.Single(tolerant.Ir.Roots));
+        Assert.Equal("Card", ir.TagName);
+
+        var strict = Assert.Throws<SqxParseException>(() => SqvTemplateSyntaxParser.Parse(content, tolerant: false));
+        Assert.Equal("SQV0001", strict.DiagnosticId);
+
+        var strictSection = ComponentSectionScanner.Scan(source, "Card.sqv", ComponentDialect.Sqv, tolerant: false).Document.Template;
+        Assert.True(strictSection.HasErrors);
+        Assert.Contains(strictSection.Diagnostics, diagnostic => diagnostic.Id == "SQV0001");
+    }
+
     private static void AssertAttribute(
         string source,
         SqvAttributeSyntax attribute,

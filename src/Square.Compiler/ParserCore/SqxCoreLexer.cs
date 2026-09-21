@@ -31,6 +31,7 @@ namespace Square.Compiler.ParserCore
         private int _line = 1;
         private int _column = 1;
         private bool _inTag;
+        private bool _expectTagName;
         private int _templateExpressionDepth;
 
         public SqxCoreLexer(string source, bool tolerant = false)
@@ -59,7 +60,7 @@ namespace Square.Compiler.ParserCore
                         AdvanceChar();
                         AdvanceChar();
                         _inTag = true;
-                        if (_position >= _source.Length || !IsIdentifierStart(_source[_position]))
+                        if (_position >= _source.Length || char.IsWhiteSpace(_source[_position]) || _source[_position] == '>')
                         {
                             if (!_tolerant)
                                 throw Error("Expected closing tag name", offset, line, column);
@@ -67,7 +68,7 @@ namespace Square.Compiler.ParserCore
                             _inTag = false;
                             continue;
                         }
-                        var name = ReadIdentifier();
+                        var name = ReadTagName();
                         AdvanceWhitespace();
                         if (_position >= _source.Length || _source[_position] != '>')
                         {
@@ -85,6 +86,7 @@ namespace Square.Compiler.ParserCore
                     {
                         AdvanceChar();
                         _inTag = true;
+                        _expectTagName = true;
                         tokens.Add(New(CoreTokenType.OpenTag, "<", line, column, offset));
                     }
                 }
@@ -143,6 +145,14 @@ namespace Square.Compiler.ParserCore
                 {
                     AdvanceWhitespace();
                 }
+                else if (_inTag && _expectTagName && !char.IsWhiteSpace(c) && c != '>')
+                {
+                    var line = _line;
+                    var column = _column;
+                    var offset = _position;
+                    tokens.Add(New(CoreTokenType.Identifier, ReadTagName(), line, column, offset));
+                    _expectTagName = false;
+                }
                 else if (_inTag && IsIdentifierStart(c))
                 {
                     var line = _line;
@@ -185,6 +195,17 @@ namespace Square.Compiler.ParserCore
         {
             var start = _position;
             while (_position < _source.Length && IsIdentifierChar(_source[_position])) AdvanceChar();
+            return _source.Substring(start, _position - start);
+        }
+
+        private string ReadTagName()
+        {
+            var start = _position;
+            while (_position < _source.Length &&
+                   !char.IsWhiteSpace(_source[_position]) &&
+                   _source[_position] != '>' &&
+                   !(_source[_position] == '/' && Peek(1) == '>'))
+                AdvanceChar();
             return _source.Substring(start, _position - start);
         }
 

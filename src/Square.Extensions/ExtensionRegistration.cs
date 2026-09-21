@@ -2,6 +2,10 @@ using Square.Extensions.RichText;
 using Square.Extensions.Routing;
 using Square.UI;
 
+[assembly: ElementExport("urn:square:extensions", "ext", "RichTextEditor", typeof(RichTextEditor))]
+[assembly: ElementExport("urn:square:extensions", "ext", "RouterView", typeof(RouterView))]
+[assembly: ElementExport("urn:square:extensions", "ext", "RouterLink", typeof(RouterLink))]
+
 namespace Square.Extensions;
 
 public static class ExtensionRegistration

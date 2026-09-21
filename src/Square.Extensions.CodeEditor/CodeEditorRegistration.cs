@@ -1,5 +1,7 @@
 using Square.UI;
 
+[assembly: ElementExport("urn:square:codeeditor", "codeeditor", "CodeEditor", typeof(Square.Extensions.CodeEditor.CodeEditor))]
+
 namespace Square.Extensions.CodeEditor;
 
 /// <summary>

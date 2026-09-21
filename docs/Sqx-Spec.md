@@ -176,6 +176,26 @@ SVG 标签使用与浏览器一致的小写名称。模板编译器将它们直�
 <MyComponent Title={PageTitle} Count={ItemCount} />
 ```
 
+引用程序集可显式导出组件：
+
+```csharp
+[assembly: ElementExport("urn:acme:charts", "acme", "chart", typeof(Acme.Chart))]
+```
+
+消费者引用该包后可写 `<chart />`（候选唯一时）或 `<acme:chart />`，无需模板 `xmlns`、脚本 `using` 或启动注册。应用程序集可用以下属性处理冲突：
+
+```csharp
+[assembly: ElementNamespaceOrder("urn:acme:charts", "urn:square:local")]
+[assembly: ElementNamespaceAlias("urn:acme:charts", "charts")]
+```
+
+- `ui:`、`svg:`、`html:` 和 `local:` 是保留前缀；当前 `html:` 元素集为空。
+- `prefix:localName` 只查绑定的 URI，不回退到短名称。
+- `global::Namespace.Type` 和带 `.` 的完整 CLR 名是大小写敏感的精确路径。
+- 未导出类型仍可通过当前 CLR 命名空间、脚本 `using` 或完整 CLR 名使用；真正未知或歧义的名称会产生 `SQXE001`–`SQXE004`。
+- 事件属性（`onInput` 等）只校验组件显式声明的 `ComponentEvent` 契约；标准事件（`click`、`input`、`change`、`scroll`、`focus` 等）在任意组件上均可用，组件通过 `DispatchEvent(StandardEvents.CreateXxx())` 派发即可。
+- 自动发现只影响模板编译；`UIDocument.CreateElement(string)` 仍要求显式运行时注册。
+
 ### 2.4 结构原语（编译期处理，非运行时组件）
 
 | 原语 | 用途 |

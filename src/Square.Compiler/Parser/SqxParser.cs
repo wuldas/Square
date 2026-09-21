@@ -20,7 +20,7 @@ namespace Square.Compiler.Parser
             }
             catch (CoreParseException exception)
             {
-                throw new SqxParseException(exception.Message, exception.Position, length: exception.Length);
+                throw new SqxParseException(exception.Message, exception.Position, exception.DiagnosticId, exception.Length);
             }
         }
 

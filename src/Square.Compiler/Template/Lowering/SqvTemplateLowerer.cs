@@ -115,7 +115,15 @@ internal static class SqvTemplateLowerer
                 1,
                 attribute.NameRange.Offset,
                 pending);
-            if (value != null) converted.Attributes.Add(value);
+            if (value != null)
+            {
+                if (attribute.ValueRange.Length > 0)
+                {
+                    value.ValuePosition = attribute.ValueRange.Offset;
+                    value.ValueLength = attribute.ValueRange.Length;
+                }
+                converted.Attributes.Add(value);
+            }
             converted.Attributes.AddRange(pending);
         }
         SqvAttributeConverter.ApplyVModel(converted);
@@ -123,12 +131,17 @@ internal static class SqvTemplateLowerer
             attribute => attribute.NameRange.Offset,
             attribute => attribute.FullRange);
         return new TemplateIrElement(
-            TemplateCatalog.BuiltIn.GetComponent(element.TagName).TagName,
+            TemplateCatalog.BuiltIn.TryGetBuiltInComponent(element.TagName, out var descriptor)
+                ? descriptor.TagName
+                : element.TagName,
             converted.Attributes.Select(attribute => LowerAttribute(
                 attribute,
                 origins.TryGetValue(attribute.Position, out var origin) ? origin : element.Origin)).ToArray(),
             LowerNodes(element.Children),
-            element.Origin);
+            element.Origin,
+            element.TagNameRange,
+            element.CloseTagNameRange,
+            element.TagName);
     }
 
     private static TemplateIrAttribute LowerAttribute(SqxAttribute attribute, Square.Compiler.LanguageServices.SquareSourceRange origin)
@@ -157,7 +170,12 @@ internal static class SqvTemplateLowerer
             origin,
             kind,
             attribute.ArgumentExpression,
-            attribute.IsModelEvent);
+            attribute.IsModelEvent,
+            valueRange: attribute.ValueLength > 0 && attribute.ValuePosition >= 0
+                ? new SquareSourceRange(attribute.ValuePosition, attribute.ValueLength)
+                : default,
+            modelMemberName: attribute.ModelMemberName,
+            modelModifiers: attribute.ModelModifiers);
     }
 
     private static SqvAttributeSyntax FindConditional(SqvElementSyntax element) =>
@@ -166,13 +184,15 @@ internal static class SqvTemplateLowerer
     private static TemplateIrSlotScope LowerSlotScope(SqvAttributeSyntax slot)
     {
         if (string.IsNullOrWhiteSpace(slot.Value)) return null;
-        var scope = SqvAttributeConverter.ParseSlotScope(slot.Value, slot.FullRange.Offset);
+        var scope = SqvAttributeConverter.ParseSlotScope(slot.Value, slot.ValueRange.Offset);
         return new TemplateIrSlotScope(
             scope.WholePropsName,
             scope.Properties.Select(binding => new TemplateIrSlotBinding(
                 binding.PropertyName,
                 binding.LocalName,
-                slot.FullRange)).ToArray(),
+                binding.Length > 0
+                    ? new SquareSourceRange(binding.Position, binding.Length)
+                    : slot.FullRange)).ToArray(),
             slot.FullRange);
     }
 

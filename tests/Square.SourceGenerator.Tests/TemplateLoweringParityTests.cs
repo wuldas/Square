@@ -132,7 +132,9 @@ public sealed class TemplateLoweringParityTests
                 Assert.Equal("onInput", change.Name);
                 Assert.Equal(TemplateIrAttributeKind.Event, change.Kind);
                 Assert.True(change.IsModelEvent);
-                Assert.Contains(".Trim()", change.Value, StringComparison.Ordinal);
+                Assert.Equal("Name", change.Value);
+                Assert.Equal("Value", change.ModelMemberName);
+                Assert.Contains("trim", change.ModelModifiers);
             });
     }
 

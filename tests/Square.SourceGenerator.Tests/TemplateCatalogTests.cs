@@ -12,24 +12,24 @@ public sealed class TemplateCatalogTests
     [InlineData("SplitContainer", "Square.Controls.SplitContainer")]
     public void ResolvesBuiltInComponentType(string tagName, string expectedTypeName)
     {
-        var catalog = TemplateCatalog.BuiltIn;
+        var resolution = TemplateCatalog.BuiltIn.ResolveComponent(
+            tagName,
+            new TemplateResolutionContext(string.Empty, Array.Empty<string>()));
 
-        var descriptor = Assert.IsType<TemplateComponentDescriptor>(
-            catalog.GetComponent(tagName));
-
-        Assert.Equal(expectedTypeName, descriptor.TypeName);
-        Assert.True(descriptor.IsBuiltIn);
+        Assert.Equal(TemplateElementResolutionStatus.Resolved, resolution.Status);
+        Assert.Equal(expectedTypeName, resolution.Component.TypeName);
+        Assert.True(resolution.Component.IsBuiltIn);
     }
 
     [Fact]
-    public void UnknownComponentRemainsCustomAndUsesItsTagName()
+    public void UnknownComponentIsReported()
     {
-        var descriptor = TemplateCatalog.BuiltIn.GetComponent("MyCard");
+        var resolution = TemplateCatalog.BuiltIn.ResolveComponent(
+            "MyCard",
+            new TemplateResolutionContext(string.Empty, Array.Empty<string>()));
 
-        Assert.Equal("MyCard", descriptor.TagName);
-        Assert.Equal("MyCard", descriptor.TypeName);
-        Assert.False(descriptor.IsBuiltIn);
-        Assert.True(descriptor.RequiresBuildAfterAttach);
+        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, resolution.Status);
+        Assert.Null(resolution.Component);
     }
 
     [Theory]
@@ -51,7 +51,9 @@ public sealed class TemplateCatalogTests
     [InlineData("TreeItem")]
     public void IdentifiesTextContentComponents(string tagName)
     {
-        Assert.True(TemplateCatalog.BuiltIn.GetComponent(tagName).IsTextContentElement);
+        Assert.True(TemplateCatalog.BuiltIn.ResolveComponent(
+            tagName,
+            new TemplateResolutionContext(string.Empty, Array.Empty<string>())).Component.IsTextContentElement);
     }
 
     [Fact]

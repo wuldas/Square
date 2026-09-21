@@ -2,6 +2,7 @@ using Square.Compiler.Parser;
 using Square.Compiler.Syntax;
 using Square.Compiler.Directives;
 using Square.Compiler.Emit;
+using Square.Compiler.LanguageServices;
 using Square.Compiler.Template;
 using Square.Compiler.Template.Compatibility;
 using Xunit;
@@ -10,6 +11,53 @@ namespace Square.Compiler.Tests;
 
 public sealed class TemplateIrCompatibilityAdapterTests
 {
+    private static readonly DirectiveCatalog Catalog = DirectiveCatalog.BuiltIn;
+    private static readonly TemplateCatalog ElementCatalog = TemplateCatalog.BuiltIn;
+
+    private static string EmitLegacy(SqxDocument parsed)
+    {
+        var legacy = TemplateDocument.From(parsed);
+        legacy.Ir = null!;
+        return new ComponentEmitter(
+            legacy, parsed.Namespace ?? "Square.Sample", Catalog, null!, ElementCatalog,
+            new TemplateResolutionContext(parsed.Namespace ?? string.Empty, Array.Empty<string>()),
+            Resolve(parsed)).Emit();
+    }
+
+    private static string EmitIr(SqxDocument parsed) => new ComponentEmitter(
+        parsed, parsed.Namespace ?? "Square.Sample", Catalog, null!, ElementCatalog,
+        new TemplateResolutionContext(parsed.Namespace ?? string.Empty, Array.Empty<string>()),
+        Resolve(parsed)).Emit();
+
+    private static IReadOnlyDictionary<string, TemplateElementResolution> Resolve(SqxDocument parsed)
+    {
+        var context = new TemplateResolutionContext(parsed.Namespace ?? string.Empty, Array.Empty<string>());
+        var result = new Dictionary<string, TemplateElementResolution>(StringComparer.Ordinal);
+        Collect(parsed.Template.Roots, context, result);
+        return result;
+
+        static void Collect(IEnumerable<SqxNode> nodes, TemplateResolutionContext ctx,
+            Dictionary<string, TemplateElementResolution> target)
+        {
+            foreach (var node in nodes)
+            {
+                if (node is SqxElement element)
+                {
+                    target[element.TagName] = ElementCatalog.ResolveComponent(element.TagName, ctx);
+                    Collect(element.Children, ctx, target);
+                }
+                else if (node is TemplateForDirective forDirective)
+                {
+                    Collect(forDirective.Children, ctx, target);
+                }
+                else if (node is TemplateIfChainDirective chain)
+                {
+                    foreach (var branch in chain.Branches) Collect(branch.Children, ctx, target);
+                }
+            }
+        }
+    }
+
     [Fact]
     public void AdapterRestoresLegacyControlFlowAndDynamicBindingShape()
     {
@@ -40,11 +88,9 @@ public sealed class TemplateIrCompatibilityAdapterTests
         var parsed = fileName.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
             ? SqvDocumentParser.Parse(source, fileName)
             : SqxParser.Parse(source, fileName);
-        var legacy = TemplateDocument.From(parsed);
-        legacy.Ir = null!;
-        var expected = new ComponentEmitter(legacy).Emit();
+        var expected = EmitLegacy(parsed);
 
-        var actual = new ComponentEmitter(parsed).Emit();
+        var actual = EmitIr(parsed);
 
         Assert.Equal(expected, actual);
     }
@@ -54,11 +100,15 @@ public sealed class TemplateIrCompatibilityAdapterTests
     {
         const string source = "<template><Button text=\"Save\" onClick={OnSave} /></template>";
         var parsed = SqxParser.Parse(source, "Parity.sqx");
-        var expected = new ComponentEmitter(parsed).Emit();
+        var expected = EmitLegacy(parsed);
+        var resolutions = Resolve(parsed);
         var document = TemplateDocument.From(parsed);
         document.Roots.Clear();
 
-        var actual = new ComponentEmitter(document).Emit();
+        var actual = new ComponentEmitter(
+            document, parsed.Namespace ?? "Square.Sample", Catalog, null!, ElementCatalog,
+            new TemplateResolutionContext(parsed.Namespace ?? string.Empty, Array.Empty<string>()),
+            resolutions).Emit();
 
         Assert.Equal(expected, actual);
     }

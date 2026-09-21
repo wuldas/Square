@@ -18,17 +18,29 @@ internal sealed class TemplateIrElement : TemplateIrNode
         string tagName,
         IReadOnlyList<TemplateIrAttribute> attributes,
         IReadOnlyList<TemplateIrNode> children,
-        SquareSourceRange origin)
+        SquareSourceRange origin,
+        SquareSourceRange tagNameRange = default,
+        SquareSourceRange closeTagNameRange = default,
+        string originalTagName = null)
         : base(origin)
     {
         TagName = tagName ?? string.Empty;
         Attributes = attributes ?? throw new ArgumentNullException(nameof(attributes));
         Children = children ?? throw new ArgumentNullException(nameof(children));
+        TagNameRange = tagNameRange;
+        CloseTagNameRange = closeTagNameRange;
+        OriginalTagName = originalTagName ?? TagName;
     }
 
     public string TagName { get; }
     public IReadOnlyList<TemplateIrAttribute> Attributes { get; }
     public IReadOnlyList<TemplateIrNode> Children { get; }
+    /// <summary>开标签名的精确源范围。</summary>
+    public SquareSourceRange TagNameRange { get; }
+    /// <summary>闭标签名的精确源范围；自闭合或无闭标签时为 default。</summary>
+    public SquareSourceRange CloseTagNameRange { get; }
+    /// <summary>目录归一化之前的源标签名（如内置别名的原始写法）。</summary>
+    public string OriginalTagName { get; }
 }
 
 internal sealed class TemplateIrText : TemplateIrNode
@@ -162,7 +174,10 @@ internal sealed class TemplateIrAttribute
         TemplateIrAttributeKind kind = TemplateIrAttributeKind.Property,
         string argumentExpression = null,
         bool isModelEvent = false,
-        IReadOnlyList<TemplateIrNode> fragmentNodes = null)
+        IReadOnlyList<TemplateIrNode> fragmentNodes = null,
+        SquareSourceRange valueRange = default,
+        string modelMemberName = null,
+        IReadOnlyList<string> modelModifiers = null)
     {
         Name = name ?? string.Empty;
         Value = value;
@@ -172,6 +187,9 @@ internal sealed class TemplateIrAttribute
         ArgumentExpression = argumentExpression;
         IsModelEvent = isModelEvent;
         FragmentNodes = fragmentNodes;
+        ValueRange = valueRange;
+        ModelMemberName = modelMemberName;
+        ModelModifiers = modelModifiers ?? Array.Empty<string>();
     }
 
     public string Name { get; }
@@ -182,6 +200,11 @@ internal sealed class TemplateIrAttribute
     public string ArgumentExpression { get; }
     public bool IsModelEvent { get; }
     public IReadOnlyList<TemplateIrNode> FragmentNodes { get; }
+    public SquareSourceRange ValueRange { get; }
+    /// <summary>模型写回的目标成员名；由发射器在解析出组件类型后生成 cast。</summary>
+    public string ModelMemberName { get; }
+    /// <summary>模型写回需应用的修饰符（trim / number）。</summary>
+    public IReadOnlyList<string> ModelModifiers { get; }
 }
 
 internal enum TemplateIrAttributeKind

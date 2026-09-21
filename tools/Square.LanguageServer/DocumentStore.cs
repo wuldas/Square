@@ -4,27 +4,54 @@ namespace Square.LanguageServer;
 
 internal sealed class DocumentStore
 {
+    private readonly object _gate = new();
     private readonly Dictionary<string, DocumentState> _documents = new(StringComparer.Ordinal);
+    private long _revision;
 
-    public void Open(string uri, int version, string text)
+    public long Revision
     {
-        _documents[uri] = new DocumentState(uri, version, text);
+        get { lock (_gate) return _revision; }
     }
 
-    public void Change(string uri, int version, string text)
+    public bool Open(string uri, int version, string text)
     {
-        if (_documents.TryGetValue(uri, out var existing))
+        lock (_gate)
+        {
+            if (_documents.TryGetValue(uri, out var existing) && version < existing.Version) return false;
             _documents[uri] = new DocumentState(uri, version, text);
-        else
-            Open(uri, version, text);
+            _revision++;
+            return true;
+        }
     }
 
-    public void Close(string uri) => _documents.Remove(uri);
+    public bool Change(string uri, int version, string text)
+    {
+        lock (_gate)
+        {
+            if (_documents.TryGetValue(uri, out var existing) && version <= existing.Version) return false;
+            _documents[uri] = new DocumentState(uri, version, text);
+            _revision++;
+            return true;
+        }
+    }
 
-    public bool TryGet(string uri, out DocumentState? document) =>
-        _documents.TryGetValue(uri, out document);
+    public void Close(string uri)
+    {
+        lock (_gate)
+        {
+            if (_documents.Remove(uri)) _revision++;
+        }
+    }
 
-    public IEnumerable<DocumentState> All => _documents.Values;
+    public bool TryGet(string uri, out DocumentState? document)
+    {
+        lock (_gate) return _documents.TryGetValue(uri, out document);
+    }
+
+    public IReadOnlyList<DocumentState> All
+    {
+        get { lock (_gate) return _documents.Values.ToArray(); }
+    }
 
     internal sealed class DocumentState
     {

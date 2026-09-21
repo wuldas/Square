@@ -48,6 +48,33 @@ public sealed class TemplateSemanticTokensTests
     }
 
     [Fact]
+    public void TagNameTokensUseExactSourceOffsetsForPaddedTags()
+    {
+        const string source = "<template><   Button></Button></template>";
+        var data = TemplateSemanticTokens.Encode(source, "Ranges.sqx");
+        var tokens = DecodeSingleLineTokens(data);
+
+        var openIndex = source.IndexOf("Button", StringComparison.Ordinal);
+        var closeIndex = source.LastIndexOf("Button", StringComparison.Ordinal);
+        Assert.Contains((openIndex, "Button".Length), tokens);
+        Assert.Contains((closeIndex, "Button".Length), tokens);
+        Assert.DoesNotContain((source.IndexOf('<') + 1, "Button".Length), tokens);
+    }
+
+    private static IReadOnlyList<(int Offset, int Length)> DecodeSingleLineTokens(IReadOnlyList<int> data)
+    {
+        var tokens = new List<(int Offset, int Length)>();
+        var character = 0;
+        for (var index = 0; index < data.Count; index += 5)
+        {
+            Assert.Equal(0, data[index]);
+            character += data[index + 1];
+            tokens.Add((character, data[index + 2]));
+        }
+        return tokens;
+    }
+
+    [Fact]
     public void EncodesCSharpPropertiesMethodsLocalsAndAttributes()
     {
         const string source = """

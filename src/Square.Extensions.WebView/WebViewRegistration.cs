@@ -1,5 +1,7 @@
 using Square.UI;
 
+[assembly: ElementExport("urn:square:webview", "webview", "WebView", typeof(Square.Extensions.WebView.WebView))]
+
 namespace Square.Extensions.WebView;
 
 /// <summary>Registers the native <c>WebView</c> element tag.</summary>

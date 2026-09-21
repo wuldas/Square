@@ -25,72 +25,85 @@ public static class TemplateSemanticTokens
     private const int Parameter = 7;
     private const int Decorator = 8;
 
-    public static IReadOnlyList<int> Encode(string text, string sourcePath)
+    public static IReadOnlyList<int> Encode(
+        string text,
+        string sourcePath,
+        TemplateCatalog catalog = null,
+        TemplateResolutionContext resolutionContext = null)
     {
+        catalog ??= TemplateCatalog.BuiltIn;
+        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
         var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
         var document = result.ParsedSqxDocument?.Syntax;
         if (document == null) return Array.Empty<int>();
 
         var tokens = new List<(int Offset, int Length, int Type, int Modifiers)>();
         if (document.Template?.SqvSyntax != null)
-            CollectSqv(document.Template.SqvSyntax.Roots, tokens);
+            CollectSqv(document.Template.SqvSyntax.Roots, tokens, catalog, resolutionContext);
         else if (document.Template?.SqxSyntax != null)
-            CollectSqx(document.Template.SqxSyntax.Roots, tokens);
-        if (document.Script?.CSharp != null)
-            CollectScript(document.Script.CSharp, tokens);
+            CollectSqx(document.Template.SqxSyntax.Roots, tokens, catalog, resolutionContext);
+        if (document.Script?.CSharp != null) CollectScript(document.Script.CSharp, tokens);
         tokens.Sort((left, right) => left.Offset.CompareTo(right.Offset));
         return Encode(text, tokens);
     }
 
     private static void CollectSqx(
         IEnumerable<SqxSyntaxNode> nodes,
-        List<(int Offset, int Length, int Type, int Modifiers)> tokens)
+        List<(int Offset, int Length, int Type, int Modifiers)> tokens,
+        TemplateCatalog catalog,
+        TemplateResolutionContext context)
     {
         foreach (var node in nodes)
         {
             if (node is not SqxElementSyntax element) continue;
-            CollectElement(element.TagName, element.Origin.Offset + 1, tokens);
+            CollectElement(element.TagName, element.TagNameRange, element.CloseTagNameRange, element.Origin, tokens, catalog, context);
             foreach (var attribute in element.Attributes)
             {
-                var type = attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) &&
-                           attribute.Name.Length > 2
+                var type = attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) && attribute.Name.Length > 2
                     ? Event
                     : Property;
                 Add(tokens, attribute.NameRange.Offset, attribute.NameRange.Length, type, 0);
             }
-            CollectSqx(element.Children, tokens);
+            CollectSqx(element.Children, tokens, catalog, context);
         }
     }
 
     private static void CollectSqv(
         IEnumerable<SqvSyntaxNode> nodes,
-        List<(int Offset, int Length, int Type, int Modifiers)> tokens)
+        List<(int Offset, int Length, int Type, int Modifiers)> tokens,
+        TemplateCatalog catalog,
+        TemplateResolutionContext context)
     {
         foreach (var node in nodes)
         {
             if (node is not SqvElementSyntax element) continue;
-            CollectElement(element.TagName, element.Origin.Offset + 1, tokens);
+            CollectElement(element.TagName, element.TagNameRange, element.CloseTagNameRange, element.Origin, tokens, catalog, context);
             foreach (var attribute in element.Attributes)
-                Add(
-                    tokens,
-                    attribute.NameRange.Offset,
-                    attribute.NameRange.Length,
-                    attribute.DirectiveName == null ? Property : Keyword,
-                    0);
-            CollectSqv(element.Children, tokens);
+                Add(tokens, attribute.NameRange.Offset, attribute.NameRange.Length,
+                    attribute.DirectiveName == null ? Property : Keyword, 0);
+            CollectSqv(element.Children, tokens, catalog, context);
         }
     }
 
     private static void CollectElement(
         string tagName,
-        int offset,
-        List<(int Offset, int Length, int Type, int Modifiers)> tokens)
+        SquareSourceRange tagNameRange,
+        SquareSourceRange closeTagNameRange,
+        SquareSourceRange origin,
+        List<(int Offset, int Length, int Type, int Modifiers)> tokens,
+        TemplateCatalog catalog,
+        TemplateResolutionContext context)
     {
-        var descriptor = TemplateCatalog.BuiltIn.GetComponent(tagName);
-        var type = descriptor.IsBuiltIn ? Class : Type;
-        var modifiers = descriptor.IsBuiltIn || IsControlFlow(tagName) ? 2 : 0;
+        var resolution = catalog.ResolveComponent(tagName, context);
+        var resolved = resolution.Status == TemplateElementResolutionStatus.Resolved;
+        var isBuiltIn = resolved && resolution.Component.IsBuiltIn;
+        var type = isBuiltIn ? Class : Type;
+        var modifiers = isBuiltIn || IsControlFlow(tagName) ? 2 : 0;
         if (IsControlFlow(tagName)) type = Type;
+        var offset = tagNameRange.Length > 0 ? tagNameRange.Offset : origin.Offset + 1;
         Add(tokens, offset, tagName.Length, type, modifiers);
+        if (closeTagNameRange.Length > 0)
+            Add(tokens, closeTagNameRange.Offset, closeTagNameRange.Length, type, modifiers);
     }
 
     private static void CollectScript(

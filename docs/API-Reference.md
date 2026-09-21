@@ -392,6 +392,38 @@ public sealed class PropAttribute : Attribute
 | `Required` | 标记为必填 Prop，编译期校验 |
 | `Default` | 默认值（也可用初始化器） |
 
+### 元素导出与命名空间属性
+
+```csharp
+namespace Square.UI;
+
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+public sealed class ElementExportAttribute : Attribute
+{
+    public ElementExportAttribute(string namespaceUri, string prefix, string localName, Type elementType);
+}
+
+[AttributeUsage(AttributeTargets.Assembly)]
+public sealed class ElementNamespaceOrderAttribute : Attribute
+{
+    public ElementNamespaceOrderAttribute(params string[] namespaceUris);
+}
+
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+public sealed class ElementNamespaceAliasAttribute : Attribute
+{
+    public ElementNamespaceAliasAttribute(string namespaceUri, string prefix);
+}
+
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+public sealed class ElementEventContractAttribute : Attribute
+{
+    public ElementEventContractAttribute(Type elementType, string memberName, string eventName);
+}
+```
+
+`ElementExportAttribute` 是组件包的编译期公开清单；不会自动公开程序集中的每个 `Element` 子类。`ElementNamespaceOrderAttribute` 与 `ElementNamespaceAliasAttribute` 只从消费应用程序集读取。`ElementEventContractAttribute` 持久化已编译组件的 `ComponentEvent` 名称，使引用 DLL 的强类型事件校验和编辑器补全与源码组件一致。这些属性不注册运行时字符串工厂。
+
 ### IComponentLifecycle
 
 ```csharp

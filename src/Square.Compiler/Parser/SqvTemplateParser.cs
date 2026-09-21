@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
+using Square.Compiler.LanguageServices;
 
 namespace Square.Compiler.Parser;
 
@@ -70,6 +71,7 @@ internal sealed class SqvTemplateParser
         var open = Expect(SqvTokenType.OpenTag);
         var nameToken = Expect(SqvTokenType.Identifier);
         var tagName = nameToken.Text;
+        ValidateElementName(nameToken, false);
         var element = new SqxElement
         {
             TagName = tagName,
@@ -92,7 +94,9 @@ internal sealed class SqvTemplateParser
         var slotScopeAttribute = element.Attributes.FirstOrDefault(attribute => attribute.Name == "__sqv_slot_scope");
         if (slotScopeAttribute != null)
         {
-            element.SlotScope = SqvAttributeConverter.ParseSlotScope(slotScopeAttribute.RawValue, slotScopeAttribute.Position);
+            element.SlotScope = SqvAttributeConverter.ParseSlotScope(
+                slotScopeAttribute.RawValue,
+                slotScopeAttribute.ValuePosition >= 0 ? slotScopeAttribute.ValuePosition : slotScopeAttribute.Position);
             element.Attributes.Remove(slotScopeAttribute);
         }
 
@@ -113,6 +117,7 @@ internal sealed class SqvTemplateParser
             }
             if (t.Type == SqvTokenType.EndTag)
             {
+                ValidateElementName(t, true);
                 if (!string.Equals(t.Text, tagName, StringComparison.OrdinalIgnoreCase))
                 {
                     if (_tolerant) return element;
@@ -147,19 +152,25 @@ internal sealed class SqvTemplateParser
         _index++;
         var valueToken = Peek();
         string rawValue = null;
+        var valueOffset = -1;
         if (valueToken.Type == SqvTokenType.StringLiteral)
         {
             _index++;
             rawValue = valueToken.Text;
+            valueOffset = Absolute(valueToken.Offset) + 1;
         }
         else if (valueToken.Type == SqvTokenType.Identifier)
         {
             _index++;
             rawValue = valueToken.Text;
+            valueOffset = Absolute(valueToken.Offset);
         }
 
         // v-if / v-else-if 需要同时产出 kind 与 cond 两个标记属性，通过 _pendingAttrs 追加。
-        return ConvertAttribute(nameToken.Text, rawValue, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset));
+        var converted = ConvertAttribute(nameToken.Text, rawValue, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset));
+        if (converted != null && valueOffset >= 0) converted.ValuePosition = valueOffset;
+        if (converted != null) converted.ValueLength = rawValue?.Length ?? 0;
+        return converted;
     }
 
     private SqxAttribute ConvertAttribute(string name, string value, int line, int column, int position)
@@ -173,6 +184,17 @@ internal sealed class SqvTemplateParser
             _pendingAttrs.Clear();
             return new SqxAttribute { Name = name, RawValue = value, Line = line, Position = position };
         }
+    }
+
+    private void ValidateElementName(SqvToken token, bool closing)
+    {
+        var parsed = TemplateElementName.Parse(token.Text, false);
+        if (parsed.Status == TemplateElementNameStatus.Valid || _tolerant) return;
+        throw new SqxParseException(
+            "Invalid element name '" + token.Text + "'.",
+            Absolute(closing ? token.Offset + 2 : token.Offset),
+            "SQXE001",
+            token.Text.Length);
     }
 
     private readonly List<SqxAttribute> _pendingAttrs = new();
@@ -431,13 +453,15 @@ internal static class SqvAttributeConverter
             }
 
             var eventName = GetModelEvent(element.TagName, modifiers.Contains("lazy"));
-            var targetValue = GetModelTargetValue(element.TagName);
-            var writeValue = ApplyModelModifiers(targetValue, modifiers);
+            var writeModifiers = new List<string>();
+            if (modifiers.Contains("trim")) writeModifiers.Add("trim");
+            if (modifiers.Contains("number")) writeModifiers.Add("number");
 
             element.Attributes.Add(ExprAttr(property.Value.AttributeName, value, attr.Line, attr.Position));
-            var eventAttribute = ExprAttr(ToEventAttribute(eventName),
-                "e => " + value + ".Value = " + writeValue, attr.Line, attr.Position);
+            var eventAttribute = ExprAttr(ToEventAttribute(eventName), value, attr.Line, attr.Position);
             eventAttribute.IsModelEvent = true;
+            eventAttribute.ModelMemberName = GetModelMember(element.TagName);
+            eventAttribute.ModelModifiers = writeModifiers;
             element.Attributes.Add(eventAttribute);
         }
     }
@@ -584,33 +608,48 @@ internal static class SqvAttributeConverter
         return SyntaxFacts.GetKeywordKind(value) == SyntaxKind.None;
     }
 
+    /// <param name="value">作用域绑定原文（标识符或对象解构模式）。</param>
+    /// <param name="position">该原文在文档中的绝对起始偏移。</param>
     internal static TemplateSlotScope ParseSlotScope(string value, int position)
     {
-        value = value?.Trim() ?? "";
+        var raw = value ?? "";
+        var leading = raw.Length - raw.TrimStart().Length;
+        value = raw.Trim();
         if (IsValidIdentifier(value))
-            return new TemplateSlotScope { WholePropsName = value, Position = position };
+            return new TemplateSlotScope { WholePropsName = value, Position = position + leading };
         if (value.Length < 2 || value[0] != '{' || value[value.Length - 1] != '}')
             throw new SqxParseException("Scoped slot binding must be an identifier or an object destructuring pattern", position, "SQV0008");
 
-        var scope = new TemplateSlotScope { Position = position };
+        var innerStart = position + leading + 1;
+        var scope = new TemplateSlotScope { Position = innerStart };
         var locals = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var rawPart in value.Substring(1, value.Length - 2).Split(','))
+        var inner = value.Substring(1, value.Length - 2);
+        var segmentStart = 0;
+        while (segmentStart <= inner.Length)
         {
+            var comma = inner.IndexOf(',', segmentStart);
+            var segmentEnd = comma < 0 ? inner.Length : comma;
+            var rawPart = inner.Substring(segmentStart, segmentEnd - segmentStart);
             var part = rawPart.Trim();
-            if (part.Length == 0) continue;
-            var separator = part.IndexOf(':');
-            var propertyName = separator < 0 ? part : part.Substring(0, separator).Trim();
-            var localName = separator < 0 ? propertyName : part.Substring(separator + 1).Trim();
-            if (!IsValidIdentifier(propertyName) || !IsValidIdentifier(localName))
-                throw new SqxParseException("Scoped slot destructuring names must be valid C# identifiers", position, "SQV0008");
-            if (!locals.Add(localName))
-                throw new SqxParseException("Scoped slot local '" + localName + "' is declared more than once", position, "SQV0008");
-            scope.Properties.Add(new TemplateSlotPropertyBinding
+            if (part.Length > 0)
             {
-                PropertyName = propertyName,
-                LocalName = localName,
-                Position = position
-            });
+                var separator = part.IndexOf(':');
+                var propertyName = separator < 0 ? part : part.Substring(0, separator).Trim();
+                var localName = separator < 0 ? propertyName : part.Substring(separator + 1).Trim();
+                if (!IsValidIdentifier(propertyName) || !IsValidIdentifier(localName))
+                    throw new SqxParseException("Scoped slot destructuring names must be valid C# identifiers", position, "SQV0008");
+                if (!locals.Add(localName))
+                    throw new SqxParseException("Scoped slot local '" + localName + "' is declared more than once", position, "SQV0008");
+                scope.Properties.Add(new TemplateSlotPropertyBinding
+                {
+                    PropertyName = propertyName,
+                    LocalName = localName,
+                    Position = innerStart + segmentStart + (rawPart.Length - rawPart.TrimStart().Length),
+                    Length = part.Length
+                });
+            }
+            if (comma < 0) break;
+            segmentStart = comma + 1;
         }
         if (scope.Properties.Count == 0)
             throw new SqxParseException("Scoped slot destructuring pattern cannot be empty", position, "SQV0008");
@@ -639,6 +678,7 @@ internal static class SqvAttributeConverter
 
     private static ModelProperty? GetModelProperty(string tagName)
     {
+        tagName = GetBuiltInLocalName(tagName) ?? tagName;
         if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
             return new ModelProperty("checked");
@@ -651,40 +691,32 @@ internal static class SqvAttributeConverter
 
     private static string GetModelEvent(string tagName, bool lazy)
     {
+        tagName = GetBuiltInLocalName(tagName) ?? tagName;
         if (string.Equals(tagName, "Input", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(tagName, "TextArea", StringComparison.OrdinalIgnoreCase))
             return lazy ? "change" : "input";
         return "change";
     }
 
-    private static string GetModelTargetValue(string tagName)
+    private static string GetModelMember(string tagName)
     {
-        if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase))
-            return "((Square.Controls.CheckBox)e.Target!).IsChecked";
-        if (string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
-            return "((Square.Controls.Radio)e.Target!).IsChecked";
-        if (string.Equals(tagName, "TextArea", StringComparison.OrdinalIgnoreCase))
-            return "((Square.Controls.TextArea)e.Target!).Value";
-        if (string.Equals(tagName, "Select", StringComparison.OrdinalIgnoreCase))
-            return "((Square.Controls.Select)e.Target!).Value";
-        if (string.Equals(tagName, "Input", StringComparison.OrdinalIgnoreCase))
-            return "((Square.Controls.Input)e.Target!).Value";
-        return "((" + tagName + ")e.Target!).Value";
+        tagName = GetBuiltInLocalName(tagName) ?? tagName;
+        if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
+            return "IsChecked";
+        return "Value";
     }
 
-    private static bool IsBuiltInTag(string tagName) => tagName.ToLowerInvariant() is
-        "view" or "scrollviewer" or "popup" or "dialog" or "menubar" or "menu" or
-        "contextmenu" or "menuitem" or "menuseparator" or "text" or "fonticon" or "splitter" or "list" or "virtuallist" or "listitem" or
-        "tree" or "virtualtree" or "treeitem" or "swiper" or "button" or "input" or "textarea" or "checkbox" or
-        "radio" or "select" or "image" or "canvas" or "titlebar" or "link" or "svg" or "g" or
-        "path" or "rect" or "circle" or "ellipse" or "line" or "polyline" or "polygon";
+    private static bool IsBuiltInTag(string tagName) => GetBuiltInLocalName(tagName) != null;
 
-    private static string ApplyModelModifiers(string valueExpression, HashSet<string> modifiers)
+    private static string GetBuiltInLocalName(string tagName)
     {
-        if (modifiers.Contains("trim")) valueExpression += ".Trim()";
-        if (modifiers.Contains("number"))
-            valueExpression = "double.Parse(" + valueExpression + ", System.Globalization.CultureInfo.InvariantCulture)";
-        return valueExpression;
+        var resolution = TemplateCatalog.BuiltIn.ResolveComponent(
+            tagName,
+            new TemplateResolutionContext(string.Empty, Array.Empty<string>()));
+        return resolution.Status == TemplateElementResolutionStatus.Resolved && resolution.Component.IsBuiltIn
+            ? resolution.Component.LocalName
+            : null;
     }
 
     private static HashSet<string> GetModifiers(string name)

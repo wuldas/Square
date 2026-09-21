@@ -20,18 +20,15 @@ internal static class TemplateIrCompatibilityAdapter
         private readonly string _source;
         private readonly ComponentDialect? _dialect;
         private readonly int _templateContentOffset;
-        private readonly int _sqxLineBase;
 
         public ConversionContext(
             string source,
             ComponentDialect? dialect,
-            int templateContentOffset,
-            int? sqxLineBase = null)
+            int templateContentOffset)
         {
             _source = source;
             _dialect = dialect;
             _templateContentOffset = Math.Max(0, Math.Min(templateContentOffset, source.Length));
-            _sqxLineBase = sqxLineBase ?? GetAbsoluteLine(source, _templateContentOffset);
         }
 
         public List<SqxNode> ConvertNodes(IReadOnlyList<TemplateIrNode> nodes)
@@ -245,7 +242,8 @@ internal static class TemplateIrCompatibilityAdapter
                         PropertyName = binding.PropertyName,
                         LocalName = binding.LocalName,
                         TypeName = binding.TypeName,
-                        Position = binding.Origin.Offset
+                        Position = binding.Origin.Offset,
+                        Length = binding.Origin.Length
                     });
             }
             else if (!string.IsNullOrWhiteSpace(slot.ScopeExpression))
@@ -264,9 +262,16 @@ internal static class TemplateIrCompatibilityAdapter
                 kind = SqxNodeKind.Directive;
                 directiveId = descriptor.TagName;
             }
+            var hasTagRange = element.TagNameRange.Length > 0;
+            var hasCloseRange = element.CloseTagNameRange.Length > 0;
             return new SqxElement
             {
                 TagName = element.TagName,
+                OriginalTagName = element.OriginalTagName,
+                TagNamePosition = hasTagRange ? element.TagNameRange.Offset : element.Origin.Offset + 1,
+                TagNameLength = hasTagRange ? element.TagNameRange.Length : element.TagName.Length,
+                CloseTagNamePosition = hasCloseRange ? element.CloseTagNameRange.Offset : -1,
+                CloseTagNameLength = hasCloseRange ? element.CloseTagNameRange.Length : 0,
                 DirectiveId = directiveId,
                 Kind = kind,
                 Attributes = element.Attributes.Select(ConvertAttribute).ToList(),
@@ -293,12 +298,16 @@ internal static class TemplateIrCompatibilityAdapter
                 IsDynamicProperty = attribute.Kind == TemplateIrAttributeKind.DynamicProperty,
                 IsDynamicEvent = attribute.Kind == TemplateIrAttributeKind.DynamicEvent,
                 IsModelEvent = attribute.IsModelEvent,
+                ModelMemberName = attribute.ModelMemberName,
+                ModelModifiers = attribute.ModelModifiers,
                 ArgumentExpression = attribute.ArgumentExpression,
                 FragmentNodes = attribute.FragmentNodes == null
                     ? null
                     : ConvertFragmentNodes(attribute.FragmentNodes),
                 Line = location.Line,
-                Position = attribute.Origin.Offset
+                Position = attribute.Origin.Offset,
+                ValuePosition = attribute.ValueRange.Length > 0 ? attribute.ValueRange.Offset : -1,
+                ValueLength = attribute.ValueRange.Length
             };
         }
 
@@ -308,8 +317,7 @@ internal static class TemplateIrCompatibilityAdapter
             return new ConversionContext(
                 _source,
                 _dialect,
-                nodes.Min(node => node.Origin.Offset),
-                _sqxLineBase).ConvertNodes(nodes);
+                nodes.Min(node => node.Origin.Offset)).ConvertNodes(nodes);
         }
 
         private SourceLocation GetLocation(int offset)
@@ -317,7 +325,7 @@ internal static class TemplateIrCompatibilityAdapter
             offset = Math.Max(_templateContentOffset, Math.Min(offset, _source.Length));
             var line = 1;
             var column = 1;
-            for (var index = _templateContentOffset; index < offset; index++)
+            for (var index = 0; index < offset; index++)
             {
                 if (_source[index] == '\n')
                 {
@@ -329,17 +337,7 @@ internal static class TemplateIrCompatibilityAdapter
                     column++;
                 }
             }
-            if (_dialect == ComponentDialect.Sqx)
-                line += _sqxLineBase - 1;
             return new SourceLocation(line, column);
-        }
-
-        private static int GetAbsoluteLine(string source, int offset)
-        {
-            var line = 1;
-            for (var index = 0; index < offset && index < source.Length; index++)
-                if (source[index] == '\n') line++;
-            return line;
         }
     }
 

@@ -10,6 +10,7 @@ internal sealed class SqxTemplateSyntaxParser
     private readonly string _source;
     private readonly int _baseOffset;
     private readonly bool _tolerant;
+    private readonly List<SquareDiagnostic> _diagnostics = new();
     private int _index;
 
     private SqxTemplateSyntaxParser(List<CoreToken> tokens, string source, int baseOffset, bool tolerant)
@@ -34,7 +35,7 @@ internal sealed class SqxTemplateSyntaxParser
             var node = ParseNode();
             if (node != null) roots.Add(node);
         }
-        return new SqxTemplateSyntax(roots.ToArray());
+        return new SqxTemplateSyntax(roots.ToArray(), _diagnostics);
     }
 
     private SqxSyntaxNode ParseNode()
@@ -51,8 +52,13 @@ internal sealed class SqxTemplateSyntaxParser
                 _index++;
                 return new SqxExpressionSyntax(token.Text, Range(token.Offset, GetExpressionLength(token)));
             default:
-                if (!_tolerant && token.Type == CoreTokenType.EndTag)
-                    throw Error("Unexpected closing tag </" + token.Text + ">", token.Offset);
+                if (token.Type == CoreTokenType.EndTag)
+                {
+                    if (!_tolerant)
+                        throw Error("Unexpected closing tag </" + token.Text + ">", token.Offset);
+                    _diagnostics.Add(Diagnostic("SQX0001",
+                        "Unexpected closing tag </" + token.Text + ">", token.Offset + 2, token.Text.Length));
+                }
                 _index++;
                 return null;
         }
@@ -62,6 +68,7 @@ internal sealed class SqxTemplateSyntaxParser
     {
         var open = Expect(CoreTokenType.OpenTag);
         var name = Expect(CoreTokenType.Identifier);
+        ValidateElementName(name, false);
         var attributes = new List<SqxAttributeSyntax>();
         while (Peek().Type is not (CoreTokenType.CloseTag or CoreTokenType.CloseSelfTag or CoreTokenType.Eof))
         {
@@ -76,7 +83,8 @@ internal sealed class SqxTemplateSyntaxParser
                 attributes.ToArray(),
                 Array.Empty<SqxSyntaxNode>(),
                 true,
-                Range(open.Offset, close.Offset + 2 - open.Offset));
+                Range(open.Offset, close.Offset + 2 - open.Offset),
+                Range(name.Offset, name.Text.Length));
         }
         if (Peek().Type == CoreTokenType.Eof && _tolerant)
         {
@@ -85,7 +93,8 @@ internal sealed class SqxTemplateSyntaxParser
                 attributes.ToArray(),
                 Array.Empty<SqxSyntaxNode>(),
                 false,
-                Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)));
+                Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)),
+                Range(name.Offset, name.Text.Length));
         }
 
         Expect(CoreTokenType.CloseTag);
@@ -95,25 +104,36 @@ internal sealed class SqxTemplateSyntaxParser
             if (Peek().Type == CoreTokenType.EndTag)
             {
                 var end = Next();
-                if (end.Text != name.Text && !_tolerant)
-                    throw Error("Closing tag </" + end.Text + "> does not match <" + name.Text + ">", end.Offset);
+                ValidateElementName(end, true);
+                if (end.Text != name.Text)
+                {
+                    if (!_tolerant)
+                        throw Error("Closing tag </" + end.Text + "> does not match <" + name.Text + ">", end.Offset);
+                    _diagnostics.Add(Diagnostic("SQX0001",
+                        "Closing tag </" + end.Text + "> does not match <" + name.Text + ">",
+                        end.Offset + 2, end.Text.Length));
+                }
                 return new SqxElementSyntax(
                     name.Text,
                     attributes.ToArray(),
                     children.ToArray(),
                     false,
-                    Range(open.Offset, end.Offset + end.Text.Length + 3 - open.Offset));
+                    Range(open.Offset, end.Offset + end.Text.Length + 3 - open.Offset),
+                    Range(name.Offset, name.Text.Length),
+                    Range(end.Offset + 2, end.Text.Length));
             }
             var child = ParseNode();
             if (child != null) children.Add(child);
         }
         if (!_tolerant) throw Error("Unclosed element <" + name.Text + ">", open.Offset);
+        _diagnostics.Add(Diagnostic("SQX0001", "Unclosed element <" + name.Text + ">", open.Offset, name.Text.Length + 1));
         return new SqxElementSyntax(
             name.Text,
             attributes.ToArray(),
             children.ToArray(),
             false,
-            Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)));
+            Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)),
+            Range(name.Offset, name.Text.Length));
     }
 
     private SqxAttributeSyntax ParseAttribute()
@@ -197,6 +217,28 @@ internal sealed class SqxTemplateSyntaxParser
         }
         return _source.Length - token.Offset;
     }
+
+    private void ValidateElementName(CoreToken token, bool closing)
+    {
+        var atEnd = _tolerant && token.Offset + token.Text.Length >= _source.Length;
+        var parsed = TemplateElementName.Parse(token.Text, atEnd);
+        if (parsed.Status == TemplateElementNameStatus.Valid ||
+            _tolerant && parsed.Status == TemplateElementNameStatus.Incomplete) return;
+        var offset = closing ? token.Offset + 2 : token.Offset;
+        if (_tolerant)
+        {
+            _diagnostics.Add(Diagnostic("SQXE001", "Invalid element name '" + token.Text + "'.", offset, token.Text.Length));
+            return;
+        }
+        throw new SqxParseException(
+            "Invalid element name '" + token.Text + "'.",
+            Absolute(offset),
+            "SQXE001",
+            token.Text.Length);
+    }
+
+    private SquareDiagnostic Diagnostic(string id, string message, int offset, int length) =>
+        new(id, SquareDiagnosticSeverity.Error, message, Range(offset, length), string.Empty);
 
     private SqxParseException Error(string message, int offset) =>
         new(message, Absolute(offset), "SQX0001");

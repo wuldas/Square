@@ -1,5 +1,7 @@
 using Square.UI;
 
+[assembly: ElementExport("urn:square:markdown", "markdown", "MarkdownViewer", typeof(Square.Extensions.Markdown.MarkdownViewer))]
+
 namespace Square.Extensions.Markdown;
 
 /// <summary>Markdown 扩展控件注册。</summary>

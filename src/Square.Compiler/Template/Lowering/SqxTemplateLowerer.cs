@@ -75,7 +75,9 @@ internal static class SqxTemplateLowerer
     private static TemplateIrElement LowerElement(SqxElementSyntax element, string excludedAttribute)
     {
         return new TemplateIrElement(
-            TemplateCatalog.BuiltIn.GetComponent(element.TagName).TagName,
+            TemplateCatalog.BuiltIn.TryGetBuiltInComponent(element.TagName, out var descriptor)
+                ? descriptor.TagName
+                : element.TagName,
             element.Attributes
                 .Where(attribute => attribute.Name != excludedAttribute)
                 .Select(attribute => new TemplateIrAttribute(
@@ -86,9 +88,13 @@ internal static class SqxTemplateLowerer
                 attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase)
                     ? TemplateIrAttributeKind.Event
                     : TemplateIrAttributeKind.Property,
-                fragmentNodes: attribute.FragmentNodes?.Select(LowerNode).ToArray())).ToArray(),
+                fragmentNodes: attribute.FragmentNodes?.Select(LowerNode).ToArray(),
+                valueRange: attribute.ValueRange)).ToArray(),
             element.Children.Select(LowerNode).ToArray(),
-            element.Origin);
+            element.Origin,
+            element.TagNameRange,
+            element.CloseTagNameRange,
+            element.TagName);
     }
 
     private static string ParseLambdaItem(string expression)

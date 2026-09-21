@@ -21,16 +21,15 @@ public sealed class TemplateSemanticAnalyzerTests
             </script>
             """;
 
-        var analyzer = new TemplateSemanticAnalyzer();
-        var contracts = analyzer.BuildPropContracts(
-            CreateCompilation(),
-            new[] { ("Card.sqx", source, "Sample") });
+        var compilation = CreateCompilation();
+        var inputs = new[] { ("Card.sqx", source, "Sample") };
+        var catalog = TemplateCatalog.FromCompilation(compilation, inputs);
+        var component = Assert.Single(catalog.Components, item => item.TypeName == "Sample.Card");
 
-        var props = Assert.Single(contracts);
-        Assert.Equal("Sample.Card", props.Key);
-        Assert.Equal(2, props.Value.Length);
-        Assert.Contains(props.Value, prop => prop.Name == "Title" && prop.Required && prop.TypeName.Contains("string"));
-        Assert.Contains(props.Value, prop => prop.Name == "Count" && !prop.Required && prop.TypeName.Contains("int"));
+        var props = catalog.GetProps(component);
+        Assert.Equal(2, props.Count);
+        Assert.Contains(props, prop => prop.Name == "Title" && prop.Required && prop.TypeName.Contains("System.String"));
+        Assert.Contains(props, prop => prop.Name == "Count" && !prop.Required && prop.TypeName.Contains("System.Int32"));
     }
 
     [Fact]
@@ -45,15 +44,15 @@ public sealed class TemplateSemanticAnalyzerTests
             </script>
             """;
 
-        var analyzer = new TemplateSemanticAnalyzer();
-        var contracts = analyzer.BuildPropContracts(
-            CreateCompilation(),
-            new[] { ("QualifiedCard.sqx", source, "Sample") });
+        var compilation = CreateCompilation();
+        var inputs = new[] { ("QualifiedCard.sqx", source, "Sample") };
+        var catalog = TemplateCatalog.FromCompilation(compilation, inputs);
+        var component = Assert.Single(catalog.Components, item => item.TypeName == "Sample.QualifiedCard");
 
-        var prop = Assert.Single(Assert.Single(contracts).Value);
+        var prop = Assert.Single(catalog.GetProps(component));
         Assert.Equal("Title", prop.Name);
         Assert.True(prop.Required);
-        Assert.Equal("global::Square.Runtime.Binding.ObservableValue<string>", prop.TypeName);
+        Assert.Equal("global::Square.Runtime.Binding.ObservableValue<global::System.String>", prop.TypeName);
     }
 
     [Fact]
@@ -136,17 +135,17 @@ public sealed class TemplateSemanticAnalyzerTests
             </script>
             """;
 
-        var analyzer = new TemplateSemanticAnalyzer();
-        var contracts = analyzer.BuildEventContracts(
-            CreateCompilation(codeBehind),
-            new[] { ("Card.sqx", component, "Sample") });
+        var compilation = CreateCompilation(codeBehind);
+        var inputs = new[] { ("Card.sqx", component, "Sample") };
+        var catalog = TemplateCatalog.FromCompilation(compilation, inputs);
+        var card = Assert.Single(catalog.Components, item => item.TypeName == "Sample.Card");
 
-        var events = Assert.Single(contracts).Value;
+        var events = catalog.GetEvents(card);
         Assert.Contains(events, item => item.MemberName == "ClosedEvent" && item.Name == "closed");
         Assert.Contains(events, item =>
             item.MemberName == "SavedEvent" &&
             item.Name == "saved" &&
-            item.DetailTypeName == "string");
+            item.DetailTypeName == "global::System.String");
     }
 
     [Fact]
@@ -177,11 +176,11 @@ public sealed class TemplateSemanticAnalyzerTests
             </script>
             """;
 
-        var exception = Record.Exception(() =>
-            new TemplateSemanticAnalyzer().BuildEventContracts(
-                CreateCompilation(),
-                new[] { ("Card.sqx", source, "Sample") }));
-
+        var compilation = CreateCompilation();
+        var inputs = new[] { ("Card.sqx", source, "Sample") };
+        var catalog = TemplateCatalog.FromCompilation(compilation, inputs);
+        var card = Assert.Single(catalog.Components, item => item.TypeName == "Sample.Card");
+        var exception = Record.Exception(() => catalog.GetEvents(card));
         Assert.Null(exception);
     }
 

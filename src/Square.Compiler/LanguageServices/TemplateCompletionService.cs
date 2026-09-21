@@ -242,8 +242,12 @@ public static class TemplateCompletionService
     public static IReadOnlyList<TemplateCompletionItem> GetItems(
         TemplateCompletionContext context,
         string text,
-        TemplateComponentEventDescriptor componentEvent = null)
+        TemplateComponentEventDescriptor componentEvent = null,
+        TemplateCatalog catalog = null,
+        TemplateResolutionContext resolutionContext = null)
     {
+        catalog ??= TemplateCatalog.BuiltIn;
+        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
         if (context == null) return Array.Empty<TemplateCompletionItem>();
         var inferredSourcePath = context.IsSqv ? "Completion.sqv" : "Completion.sqx";
         if (context.Kind is TemplateCompletionKind.CssProperty or
@@ -262,7 +266,7 @@ public static class TemplateCompletionService
             TemplateCompletionKind.ScriptAttribute or
             TemplateCompletionKind.ScriptAttributeArgument)
         {
-            return CSharpScriptCompletionService.GetItems(ToScriptContext(context), text, inferredSourcePath);
+            return CSharpScriptCompletionService.GetItems(ToScriptContext(context), text, inferredSourcePath, catalog, resolutionContext);
         }
         if (context.Kind == TemplateCompletionKind.EventHandler)
             return GetEventHandlerItems(
@@ -278,7 +282,7 @@ public static class TemplateCompletionService
         {
             case TemplateCompletionKind.Event:
                 return Filter(
-                    TemplateCatalog.BuiltIn.Events,
+                    catalog.Events,
                     context.Prefix,
                     item => context.IsSqv ? item.Name : item.CanonicalName,
                     item =>
@@ -303,21 +307,37 @@ public static class TemplateCompletionService
                     .Select(name => new TemplateCompletionItem(name, 12, "CSS class", name))
                     .ToArray();
             case TemplateCompletionKind.Attribute:
-                return GetAttributeItems(context);
+                return GetAttributeItems(context, catalog);
             case TemplateCompletionKind.AttributeValue:
                 return GetAttributeValueItems(context);
             case TemplateCompletionKind.Binding:
-                return GetBindingItems(context);
+                return GetBindingItems(context, catalog);
             case TemplateCompletionKind.Tag:
-                return Filter(
-                    TemplateCatalog.BuiltIn.Components,
-                    context.Prefix,
-                    item => item.TagName,
-                    item => new TemplateCompletionItem(
-                        item.TagName,
-                        item.IsBuiltIn ? 7 : 14,
-                        item.TypeName,
-                        item.TagName));
+            {
+                var componentItems = new List<TemplateCompletionItem>();
+                foreach (var component in catalog.Components)
+                {
+                    if (component.LocalName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var shortResolution = catalog.ResolveComponent(component.LocalName, resolutionContext);
+                        if (shortResolution.Status == TemplateElementResolutionStatus.Resolved &&
+                            string.Equals(shortResolution.Component.AssemblyName, component.AssemblyName, StringComparison.Ordinal) &&
+                            string.Equals(shortResolution.Component.TypeMetadataName, component.TypeMetadataName, StringComparison.Ordinal))
+                            componentItems.Add(new TemplateCompletionItem(component.LocalName, component.IsBuiltIn ? 7 : 14, component.TypeName, component.LocalName));
+                    }
+                    foreach (var qualifiedName in catalog.GetQualifiedNames(component))
+                        if (qualifiedName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
+                            componentItems.Add(new TemplateCompletionItem(qualifiedName, component.IsBuiltIn ? 7 : 14, component.TypeName, qualifiedName));
+                }
+                var components = componentItems
+                    .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First());
+                var structural = new[] { "Show", "For", "Index", "Switch", "Match", "Slot", "Outlet", "Fragment", "template" }
+                    .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
+                    .Select(name => new TemplateCompletionItem(name, 7, name, name));
+
+                return components.Concat(structural).ToArray();
+            }
             case TemplateCompletionKind.ClosingTag:
                 if (context.TagName.Length == 0 ||
                     !context.TagName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -512,12 +532,25 @@ public static class TemplateCompletionService
             .Skip(1)
             .Any(modifier => modifier is "stop" or "prevent");
 
-    private static string NormalizeEventHandlerType(string typeName) =>
-        new string((typeName ?? string.Empty)
+    private static string NormalizeEventHandlerType(string typeName)
+    {
+        var value = new string((typeName ?? string.Empty)
             .Replace("global::", string.Empty)
             .Replace("Square.Events.", string.Empty)
             .Where(character => !char.IsWhiteSpace(character))
             .ToArray());
+        return SpecialTypeAliases.TryGetValue(value, out var alias) ? alias : value;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> SpecialTypeAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["System.String"] = "string", ["System.Int32"] = "int", ["System.Int64"] = "long",
+            ["System.Int16"] = "short", ["System.UInt32"] = "uint", ["System.UInt64"] = "ulong",
+            ["System.UInt16"] = "ushort", ["System.Byte"] = "byte", ["System.SByte"] = "sbyte",
+            ["System.Single"] = "float", ["System.Double"] = "double", ["System.Decimal"] = "decimal",
+            ["System.Boolean"] = "bool", ["System.Char"] = "char", ["System.Object"] = "object"
+        };
 
     private static IReadOnlyList<TemplateCompletionItem> GetDirectiveItems(
         TemplateCompletionContext context)
@@ -549,9 +582,10 @@ public static class TemplateCompletionService
         tagName.Equals("Radio", StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<TemplateCompletionItem> GetAttributeItems(
-        TemplateCompletionContext context)
+        TemplateCompletionContext context,
+        TemplateCatalog catalog)
     {
-        var propertyDescriptors = TemplateCatalog.BuiltIn.GetPropertiesForTag(context.TagName);
+        var propertyDescriptors = catalog.GetPropertiesForTag(context.TagName);
         var existingProperties = new HashSet<string>(
             context.IsSqv
                 ? context.ExistingAttributes.Select(NormalizeSqvPropertyName)
@@ -569,7 +603,7 @@ public static class TemplateCompletionService
         if (!context.IsSqv)
         {
             var existing = new HashSet<string>(context.ExistingAttributes, StringComparer.OrdinalIgnoreCase);
-            var events = TemplateCatalog.BuiltIn.Events
+            var events = catalog.Events
                 .Select(eventItem => eventItem.CanonicalName)
                 .Where(name => !existing.Contains(name))
                 .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -585,7 +619,7 @@ public static class TemplateCompletionService
         var existingEvents = new HashSet<string>(
             context.ExistingAttributes.Select(NormalizeSqvEventName),
             StringComparer.OrdinalIgnoreCase);
-        var vueEvents = TemplateCatalog.BuiltIn.Events
+        var vueEvents = catalog.Events
             .Where(eventItem => !existingEvents.Contains(eventItem.Name))
             .Select(eventItem => "@" + eventItem.Name)
             .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -610,7 +644,8 @@ public static class TemplateCompletionService
     }
 
     private static IReadOnlyList<TemplateCompletionItem> GetBindingItems(
-        TemplateCompletionContext context)
+        TemplateCompletionContext context,
+        TemplateCatalog catalog)
     {
         var existing = new HashSet<string>(
             context.ExistingAttributes.Select(NormalizeSqvPropertyName),
@@ -817,6 +852,18 @@ public static class TemplateCompletionService
             return new TemplateCompletionContext(TemplateCompletionKind.Event, token, tagName, isSqv);
         if (!isSqv && token.StartsWith("on", StringComparison.OrdinalIgnoreCase))
             return new TemplateCompletionContext(TemplateCompletionKind.Event, token, string.Empty, false);
+        if (tagName.Length > 0)
+        {
+            var open = offset > 0 ? text.LastIndexOf('<', offset - 1) : -1;
+            var nameEnd = open + 1 + tagName.Length;
+            if (open >= 0 && nameEnd < offset && char.IsWhiteSpace(text[nameEnd]))
+                return new TemplateCompletionContext(
+                    TemplateCompletionKind.Attribute,
+                    token,
+                    tagName,
+                    isSqv,
+                    Array.Empty<string>());
+        }
         if (tokenStart > 0 && text[tokenStart - 1] == '<')
             return new TemplateCompletionContext(TemplateCompletionKind.Tag, token, string.Empty, isSqv);
         if (TryGetClassPrefix(text, offset, out var classPrefix))
@@ -832,7 +879,7 @@ public static class TemplateCompletionService
         if (open < 0 || open + 1 >= offset || text[open + 1] == '/') return string.Empty;
         var start = open + 1;
         var end = start;
-        while (end < offset && (char.IsLetterOrDigit(text[end]) || text[end] is '_' or '-')) end++;
+        while (end < offset && (char.IsLetterOrDigit(text[end]) || text[end] is '_' or '-' or ':' or '.')) end++;
         return SafeSlice(text, start, end);
     }
 
@@ -1097,7 +1144,7 @@ public static class TemplateCompletionService
             return false;
         }
         prefix = SafeSlice(text, open + 2, offset);
-        return prefix.All(IsTokenCharacter);
+        return prefix.All(IsElementNameCharacter);
     }
 
     private sealed class TemplateElementContext
@@ -1239,6 +1286,9 @@ public static class TemplateCompletionService
 
     private static bool IsTokenCharacter(char value) =>
         char.IsLetterOrDigit(value) || value is '-' or '_' or ':' or '#';
+
+    private static bool IsElementNameCharacter(char value) =>
+        IsTokenCharacter(value) || value == '.';
 
     private static string SafeSlice(string text, int start, int end)
     {
