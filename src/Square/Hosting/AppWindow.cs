@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Square.CSS.Engine;
 using Square.Graphics;
 using Square.Platform;
@@ -28,6 +29,7 @@ public sealed class AppWindow : IRenderBackendApplication
     private AppWindowState _state;
     private bool _isClosed;
     private bool _closeRequested;
+    private EventHandler<CancelEventArgs>? _hostClosing;
     private Action<object?>? _dialogCompletion;
     private object? _dialogResult;
     private bool _hasDialogResult;
@@ -200,6 +202,11 @@ public sealed class AppWindow : IRenderBackendApplication
     public event Action<AppWindowState>? StateChanged;
     /// <summary>窗口关闭时触发。</summary>
     public event Action? Closed;
+    /// <summary>原生关闭请求。仅在宿主支持取消时触发。</summary>
+    public event EventHandler<CancelEventArgs>? Closing;
+
+    /// <summary>当前平台是否支持取消关闭。</summary>
+    public bool SupportsCloseCancellation { get; private set; }
     /// <summary>全局按键事件。</summary>
     public event Action<int, KeyAction>? GlobalKeyEvent;
     /// <summary>Inspector 点选元素时触发。</summary>
@@ -265,7 +272,15 @@ public sealed class AppWindow : IRenderBackendApplication
     /// <summary>请求关闭窗口。</summary>
     public void Close()
     {
-        lock (_gate) _closeRequested = true;
+        lock (_gate)
+        {
+            if (_host is null)
+            {
+                _closeRequested = true;
+                return;
+            }
+        }
+
         Post(static host => host.Close());
     }
 
@@ -515,6 +530,17 @@ public sealed class AppWindow : IRenderBackendApplication
         host.SizeChanged += HandleSizeChanged;
         host.StateChanged += HandleStateChanged;
         host.Closed += HandleClosed;
+        if (host is IPlatformCloseRequestSource source)
+        {
+            SupportsCloseCancellation = true;
+            _hostClosing = OnHostClosing;
+            source.Closing += _hostClosing;
+        }
+        else
+        {
+            SupportsCloseCancellation = false;
+        }
+
         if (closeRequested) host.Close();
     }
 
@@ -523,6 +549,10 @@ public sealed class AppWindow : IRenderBackendApplication
         host.SizeChanged -= HandleSizeChanged;
         host.StateChanged -= HandleStateChanged;
         host.Closed -= HandleClosed;
+        if (host is IPlatformCloseRequestSource source && _hostClosing is not null)
+            source.Closing -= _hostClosing;
+        _hostClosing = null;
+        SupportsCloseCancellation = false;
         var raiseClosed = false;
         lock (_gate)
         {
@@ -535,6 +565,11 @@ public sealed class AppWindow : IRenderBackendApplication
         }
 
         if (raiseClosed) Closed?.Invoke();
+    }
+
+    private void OnHostClosing(object? sender, CancelEventArgs e)
+    {
+        Closing?.Invoke(this, e);
     }
 
     internal void SynchronizeTitle(string title)

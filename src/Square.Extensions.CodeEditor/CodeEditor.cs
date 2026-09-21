@@ -30,13 +30,15 @@ public sealed class CodeEditor : UIElement, ITextEditor
     private const float ScrollBarFadeDelaySeconds = 0.5f;
     private const float ScrollBarFadeDurationSeconds = 0.2f;
 
-    private readonly CodeEditorTextModel _model = new();
+    private readonly CodeEditorTextModel _model;
     private readonly FoldingEngine _folding = new();
     private readonly CodeEditorViewLayout _viewLayout = new();
     private readonly Dictionary<string, CodeEditorLineDecoration> _decorations = new(StringComparer.Ordinal);
     private readonly Dictionary<int, List<CodeEditorLineDecoration>> _decorationsByLine = [];
     /// <summary>附加光标（不含主光标 _caretIndex/_selectionAnchor）。</summary>
     private readonly List<CodeEditorCursor> _extraCursors = [];
+    private bool _mutating;
+    private bool _modelSubscribed;
     private TokenizationCache? _tokens;
     private string _tokenizerLanguage = "";
     private int _caretIndex;
@@ -54,6 +56,10 @@ public sealed class CodeEditor : UIElement, ITextEditor
     private bool _findMatchCase;
     private int _foldModelVersion = -1;
     private int _contentVersion;
+    private float _cachedMaxContentWidth;
+    private bool _maxContentWidthValid;
+    private Font? _maxContentWidthFont;
+    private int _maxContentWidthTabSize;
     private float _caretOpacity = 1f;
     private float _caretBlinkTarget;
     private double _nextCaretTransitionSeconds;
@@ -100,9 +106,26 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>最大垂直滚动偏移。</summary>
     public float VerticalScrollRange => GetScrollMetrics(ResolveFont(), GetLineHeight(ResolveFont())).MaxScrollY;
 
-    /// <summary>初始化默认等宽样式。</summary>
-    public CodeEditor()
+    /// <summary>按当前滚动范围 clamp 后设置每视图滚动偏移。</summary>
+    public void SetScrollOffset(float horizontal, float vertical)
     {
+        var font = ResolveFont();
+        var metrics = GetScrollMetrics(font, GetLineHeight(font));
+        _scrollX = Math.Clamp(horizontal, 0, metrics.MaxScrollX);
+        _scrollY = Math.Clamp(vertical, 0, metrics.MaxScrollY);
+        InvalidatePaint();
+    }
+
+    /// <summary>初始化默认等宽样式。</summary>
+    public CodeEditor() : this(new CodeEditorTextModel())
+    {
+    }
+
+    /// <summary>使用共享文档模型构造视图。</summary>
+    public CodeEditor(CodeEditorTextModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        _model = model;
         if (string.IsNullOrEmpty(Style.Get("font-family")))
             Style.Set("font-family", "monospace");
         if (string.IsNullOrEmpty(Style.Get("font-size")))
@@ -110,14 +133,6 @@ public sealed class CodeEditor : UIElement, ITextEditor
         AddEventListener("focus", ResetCaretBlink);
         AddEventListener("blur", OnBlur);
         AddEventListener("wheel", OnWheel);
-        _model.Changed += (_, _) =>
-        {
-            _contentVersion++;
-            _viewLayout.Invalidate();
-            InvalidateTokensFromCaret();
-            ScheduleFoldRecompute();
-            InvalidateLayout();
-        };
     }
 
 
@@ -139,14 +154,17 @@ public sealed class CodeEditor : UIElement, ITextEditor
         get => _model.GetValue();
         set
         {
-            _model.SetValue(value ?? "");
-            _extraCursors.Clear();
-            ClampSelection();
-            _tokens?.Reset();
-            _contentVersion++;
-            _viewLayout.Invalidate();
-            ScheduleFoldRecompute();
-            InvalidateLayout();
+            RunLocalEdit(() =>
+            {
+                _model.SetValue(value ?? "");
+                _extraCursors.Clear();
+                ClampSelection();
+                _tokens?.Reset();
+                _contentVersion++;
+                _viewLayout.Invalidate();
+                ScheduleFoldRecompute();
+                InvalidateLayout();
+            });
         }
     }
 
@@ -554,7 +572,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
         {
             if (SelectionLength == 0) return "";
             var (start, end) = GetEffectiveSelectionRange();
-            return _model.GetValue().Substring(start, end - start);
+            return end <= start ? "" : _model.GetText(start, end - start);
         }
     }
     /// <inheritdoc/>
@@ -1331,7 +1349,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>撤销。</summary>
     public bool Undo()
     {
-        if (!CanEdit() || !_model.Undo(out var caret, out var carets)) return false;
+        if (!CanEdit()) return false;
+        var restored = false;
+        var caret = 0;
+        var carets = Array.Empty<int>();
+        RunLocalEdit(() => restored = _model.Undo(out caret, out carets));
+        if (!restored) return false;
         ApplyRestoredCarets(carets, caret);
         _tokens?.Reset();
         AfterEdit();
@@ -1342,7 +1365,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
     /// <summary>重做。</summary>
     public bool Redo()
     {
-        if (!CanEdit() || !_model.Redo(out var caret, out var carets)) return false;
+        if (!CanEdit()) return false;
+        var restored = false;
+        var caret = 0;
+        var carets = Array.Empty<int>();
+        RunLocalEdit(() => restored = _model.Redo(out caret, out carets));
+        if (!restored) return false;
         ApplyRestoredCarets(carets, caret);
         _tokens?.Reset();
         AfterEdit();
@@ -1514,32 +1542,22 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
         var comparison = _findMatchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         var text = _model.GetValue();
-        var count = 0;
+        var edits = new List<TextEdit>();
         var idx = 0;
-        var sb = new StringBuilder(text.Length);
         while (idx < text.Length)
         {
             var found = text.IndexOf(_findQuery, idx, comparison);
-            if (found < 0)
-            {
-                sb.Append(text, idx, text.Length - idx);
-                break;
-            }
-            sb.Append(text, idx, found - idx);
-            sb.Append(_replaceQuery);
-            idx = found + _findQuery.Length;
-            count++;
+            if (found < 0) break;
+            edits.Add(new TextEdit(found, _findQuery.Length, _replaceQuery));
+            idx = found + Math.Max(1, _findQuery.Length);
         }
 
-        if (count == 0) return 0;
-        _model.SetValue(sb.ToString());
+        if (edits.Count == 0) return 0;
+        RunLocalEdit(() => _model.ReplaceMany(edits));
         _tokens?.Reset();
-        _contentVersion++;
-        _viewLayout.Invalidate();
-        ScheduleFoldRecompute();
         ClampSelection();
         AfterEdit();
-        return count;
+        return edits.Count;
     }
 
     /// <summary>设置文档选区 [start, end)（UTF-16 offset）。</summary>
@@ -1587,9 +1605,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
         }
         if (remove == 0) return;
         var caretInLine = _caretIndex - start;
-        _model.Replace(start, remove, "");
-        _caretIndex = start + Math.Max(0, caretInLine - remove);
-        _selectionAnchor = _caretIndex;
+        RunLocalEdit(() =>
+        {
+            _model.Replace(start, remove, "");
+            _caretIndex = start + Math.Max(0, caretInLine - remove);
+            _selectionAnchor = _caretIndex;
+        });
         AfterEdit();
     }
 
@@ -1612,27 +1633,30 @@ public sealed class CodeEditor : UIElement, ITextEditor
             }
         }
 
-        for (var line = endLine; line >= startLine; line--)
+        RunLocalEdit(() =>
         {
-            var start = _model.GetLineStart(line);
-            var content = _model.GetLineContent(line);
-            var trimStart = 0;
-            while (trimStart < content.Length && char.IsWhiteSpace(content[trimStart])) trimStart++;
-            if (allCommented)
+            for (var line = endLine; line >= startLine; line--)
             {
-                if (content.AsSpan(trimStart).StartsWith(prefix, StringComparison.Ordinal))
+                var start = _model.GetLineStart(line);
+                var content = _model.GetLineContent(line);
+                var trimStart = 0;
+                while (trimStart < content.Length && char.IsWhiteSpace(content[trimStart])) trimStart++;
+                if (allCommented)
                 {
-                    var extra = prefix.Length;
-                    if (trimStart + extra < content.Length && content[trimStart + extra] == ' ')
-                        extra++;
-                    _model.Replace(start + trimStart, extra, "");
+                    if (content.AsSpan(trimStart).StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        var extra = prefix.Length;
+                        if (trimStart + extra < content.Length && content[trimStart + extra] == ' ')
+                            extra++;
+                        _model.Replace(start + trimStart, extra, "");
+                    }
+                }
+                else if (content.Length > 0)
+                {
+                    _model.Replace(start + trimStart, 0, prefix + " ");
                 }
             }
-            else if (content.Length > 0)
-            {
-                _model.Replace(start + trimStart, 0, prefix + " ");
-            }
-        }
+        });
         AfterEdit();
     }
 
@@ -1662,9 +1686,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
             AfterEdit();
             return;
         }
-        _model.SetNextPreCaret(_caretIndex);
-        _model.Replace(prev, _caretIndex - prev, "");
-        _caretIndex = _selectionAnchor = prev;
+        RunLocalEdit(() =>
+        {
+            _model.SetNextPreCaret(_caretIndex);
+            _model.Replace(prev, _caretIndex - prev, "");
+            _caretIndex = _selectionAnchor = prev;
+        });
         AfterEdit();
     }
 
@@ -1693,9 +1720,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
             AfterEdit();
             return;
         }
-        _model.SetNextPreCaret(_caretIndex);
-        _model.Replace(_caretIndex, next - _caretIndex, "");
-        _selectionAnchor = _caretIndex;
+        RunLocalEdit(() =>
+        {
+            _model.SetNextPreCaret(_caretIndex);
+            _model.Replace(_caretIndex, next - _caretIndex, "");
+            _selectionAnchor = _caretIndex;
+        });
         AfterEdit();
     }
 
@@ -1704,9 +1734,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
         ExpandSelectionToCoverCollapsedFolds();
         var start = SelectionStart;
         var length = SelectionLength;
-        _model.SetNextPreCaret(_caretIndex);
-        _model.Replace(start, length, text);
-        _caretIndex = _selectionAnchor = start + text.Length;
+        RunLocalEdit(() =>
+        {
+            _model.SetNextPreCaret(_caretIndex);
+            _model.Replace(start, length, text);
+            _caretIndex = _selectionAnchor = start + text.Length;
+        });
     }
 
     /// <summary>
@@ -1861,6 +1894,9 @@ public sealed class CodeEditor : UIElement, ITextEditor
             InvalidateTokensFromCaret();
             ScheduleFoldRecompute();
         }
+        if (!IsAttached)
+            return;
+
         EnsureCaretNotInHidden();
         EnsureCaretVisible();
         ResetCaretBlink();
@@ -2453,15 +2489,24 @@ public sealed class CodeEditor : UIElement, ITextEditor
     }
     private float MeasureMaxContentWidth(Font font)
     {
+        if (_maxContentWidthValid &&
+            ReferenceEquals(_maxContentWidthFont, font) &&
+            _maxContentWidthTabSize == TabSize)
+            return _cachedMaxContentWidth;
+
         var max = 0f;
-        // sample visible-ish bound: scan all document lines (ok for moderate docs)
         for (var line = 0; line < _model.LineCount; line++)
         {
             if (_folding.IsLineHidden(line)) continue;
             var content = _model.GetLineContent(line);
             max = Math.Max(max, CodeEditorMetrics.MeasureLineWidth(content, font, TabSize));
         }
-        return max + 24f;
+
+        _cachedMaxContentWidth = max + 24f;
+        _maxContentWidthValid = true;
+        _maxContentWidthFont = font;
+        _maxContentWidthTabSize = TabSize;
+        return _cachedMaxContentWidth;
     }
 
     private void EnsureViewLayout(Font font, float contentWidth)
@@ -2488,7 +2533,12 @@ public sealed class CodeEditor : UIElement, ITextEditor
         EnsureViewLayout(font, contentWidth);
     }
 
-    private void ScheduleFoldRecompute() => _foldModelVersion = -1; // dirty
+    private void ScheduleFoldRecompute()
+    {
+        if (!ShowFolding)
+            return;
+        _foldModelVersion = -1;
+    }
 
     private void EnsureFolds()
     {
@@ -2589,6 +2639,8 @@ public sealed class CodeEditor : UIElement, ITextEditor
     protected override void OnAttachedCore()
     {
         base.OnAttachedCore();
+        SubscribeModel();
+        SynchronizeFromModel();
         if (_scrollbarFadeActive)
         {
             _scrollbarFadeLastTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -2787,6 +2839,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
 
     protected override void OnDetachedCore()
     {
+        UnsubscribeModel();
         _draggingVScroll = false;
         _draggingHScroll = false;
         _dragging = false;
@@ -3351,7 +3404,7 @@ public sealed class CodeEditor : UIElement, ITextEditor
         }
 
         if (edits.Count > 0)
-            _model.ReplaceMany(edits, preCaretsForHistory);
+            RunLocalEdit(() => _model.ReplaceMany(edits, preCaretsForHistory));
 
         var finalCarets = new List<int>(postLocalCarets.Count);
         foreach (var pre in postLocalCarets)
@@ -3549,62 +3602,199 @@ public sealed class CodeEditor : UIElement, ITextEditor
     {
         if (index <= 0) return 0;
         index--;
-        if (index > 0 && char.IsLowSurrogate(_model.GetValue()[index]) && char.IsHighSurrogate(_model.GetValue()[index - 1]))
-            index--;
+        if (index > 0)
+        {
+            var pair = _model.GetText(index - 1, 2);
+            if (pair.Length == 2 && char.IsHighSurrogate(pair[0]) && char.IsLowSurrogate(pair[1]))
+                index--;
+        }
+
         return index;
     }
 
     private int NextIndex(int index)
     {
         if (index >= _model.Length) return _model.Length;
-        var text = _model.GetValue();
-        return index + (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]) ? 2 : 1);
+        var take = Math.Min(2, _model.Length - index);
+        var text = _model.GetText(index, take);
+        return index + (text.Length >= 2 && char.IsHighSurrogate(text[0]) && char.IsLowSurrogate(text[1]) ? 2 : 1);
     }
 
     private int PreviousWord(int index)
     {
-        var text = _model.GetValue();
-        while (index > 0 && char.IsWhiteSpace(text[index - 1])) index--;
-        while (index > 0 && IsWordChar(text[index - 1])) index--;
+        while (index > 0 && IsWhiteSpaceAt(index - 1)) index--;
+        while (index > 0 && IsWordCharAt(index - 1)) index--;
         return index;
     }
 
     private int NextWord(int index)
     {
-        var text = _model.GetValue();
-        while (index < text.Length && IsWordChar(text[index])) index++;
-        while (index < text.Length && char.IsWhiteSpace(text[index])) index++;
+        while (index < _model.Length && IsWordCharAt(index)) index++;
+        while (index < _model.Length && IsWhiteSpaceAt(index)) index++;
         return index;
     }
 
     private (int Start, int End) WordAt(int index)
     {
-        var text = _model.GetValue();
-        if (text.Length == 0) return (0, 0);
-        index = Math.Clamp(index, 0, text.Length - 1);
+        if (_model.Length == 0) return (0, 0);
+        index = Math.Clamp(index, 0, _model.Length - 1);
+        var line = _model.GetLineNumberAt(index);
+        var lineStart = _model.GetLineStart(line);
+        var content = _model.GetLineContent(line);
+        var local = Math.Clamp(index - lineStart, 0, Math.Max(0, content.Length - 1));
         var config = LanguageRegistry.ResolveConfiguration(Language);
-        if (!string.IsNullOrEmpty(config.WordPattern))
+        if (!string.IsNullOrEmpty(config.WordPattern) && content.Length > 0)
         {
             try
             {
                 var regex = new Regex(config.WordPattern, RegexOptions.CultureInvariant);
-                foreach (Match m in regex.Matches(text))
+                foreach (Match match in regex.Matches(content))
                 {
-                    if (index >= m.Index && index < m.Index + m.Length)
-                        return (m.Index, m.Index + m.Length);
+                    if (local >= match.Index && local < match.Index + match.Length)
+                        return (lineStart + match.Index, lineStart + match.Index + match.Length);
                 }
             }
             catch
             {
-                // fall through
             }
         }
-        if (!IsWordChar(text[index])) return (index, index + 1);
-        var start = index;
-        var end = index + 1;
-        while (start > 0 && IsWordChar(text[start - 1])) start--;
-        while (end < text.Length && IsWordChar(text[end])) end++;
-        return (start, end);
+
+        if (content.Length == 0 || local >= content.Length || !IsWordChar(content[local]))
+            return (index, Math.Min(_model.Length, index + 1));
+        var start = local;
+        var end = local + 1;
+        while (start > 0 && IsWordChar(content[start - 1])) start--;
+        while (end < content.Length && IsWordChar(content[end])) end++;
+        return (lineStart + start, lineStart + end);
+    }
+
+    private bool IsWhiteSpaceAt(int index)
+    {
+        if (index < 0 || index >= _model.Length) return false;
+        var ch = _model.GetText(index, 1)[0];
+        return char.IsWhiteSpace(ch);
+    }
+
+    private bool IsWordCharAt(int index)
+    {
+        if (index < 0 || index >= _model.Length) return false;
+        return IsWordChar(_model.GetText(index, 1)[0]);
+    }
+
+    private void RunLocalEdit(Action edit)
+    {
+        _model.BeginViewEdit(this);
+        _mutating = true;
+        try
+        {
+            edit();
+        }
+        finally
+        {
+            _mutating = false;
+            _model.EndViewEdit();
+        }
+    }
+
+    private void SubscribeModel()
+    {
+        if (_modelSubscribed) return;
+        _model.Changed += OnModelChanged;
+        _modelSubscribed = true;
+    }
+
+    private void UnsubscribeModel()
+    {
+        if (!_modelSubscribed) return;
+        _model.Changed -= OnModelChanged;
+        _modelSubscribed = false;
+    }
+
+    private void SynchronizeFromModel()
+    {
+        ClampSelection();
+        _tokens?.Reset();
+        _contentVersion++;
+        _viewLayout.Invalidate();
+        ScheduleFoldRecompute();
+        InvalidateLayout();
+    }
+
+    private void OnModelChanged(object? sender, ContentChangedEventArgs e)
+    {
+        if (e.IsReset)
+        {
+            if (!_mutating)
+                ClampSelection();
+            _tokens?.Reset();
+            _contentVersion++;
+            _maxContentWidthValid = false;
+            _viewLayout.Invalidate();
+            ScheduleFoldRecompute();
+            InvalidateLayout();
+            return;
+        }
+
+        if (!_mutating)
+        {
+            _caretIndex = MapOffset(_caretIndex, e.Edits);
+            _selectionAnchor = MapOffset(_selectionAnchor, e.Edits);
+            for (var i = 0; i < _extraCursors.Count; i++)
+            {
+                var cursor = _extraCursors[i];
+                _extraCursors[i] = new CodeEditorCursor(
+                    MapOffset(cursor.Caret, e.Edits),
+                    MapOffset(cursor.Anchor, e.Edits)).Clamp(_model.Length);
+            }
+
+            ClampSelection();
+        }
+        _contentVersion++;
+        UpdateMaxContentWidthCache(e);
+        _viewLayout.Invalidate();
+        InvalidateTokensFromCaret();
+        ScheduleFoldRecompute();
+        InvalidateLayout();
+    }
+
+    private void UpdateMaxContentWidthCache(ContentChangedEventArgs e)
+    {
+        if (!_maxContentWidthValid || e.Edits.Count != 1)
+        {
+            _maxContentWidthValid = false;
+            return;
+        }
+
+        var edit = e.Edits[0];
+        if (edit.Length > 0 || edit.Text.Contains('\n'))
+        {
+            _maxContentWidthValid = false;
+            return;
+        }
+
+        var font = ResolveFont();
+        var line = _model.GetLineNumberAt(Math.Min(_model.Length, edit.Offset + edit.Text.Length));
+        var width = CodeEditorMetrics.MeasureLineWidth(_model.GetLineContent(line), font, TabSize) + 24f;
+        if (width > _cachedMaxContentWidth)
+            _cachedMaxContentWidth = width;
+    }
+
+    private static int MapOffset(int offset, IReadOnlyList<TextEdit> edits)
+    {
+        var result = offset;
+        foreach (var edit in edits.OrderBy(item => item.Offset))
+        {
+            var start = edit.Offset;
+            var oldEnd = start + edit.Length;
+            var delta = edit.Text.Length - edit.Length;
+            if (offset < start)
+                return result;
+            if (edit.Length > 0 && offset < oldEnd)
+                return start + edit.Text.Length;
+            result += delta;
+        }
+
+        return Math.Max(0, result);
     }
 
     private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
