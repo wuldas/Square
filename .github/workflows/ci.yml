@@ -206,7 +206,9 @@ jobs:
           restore-keys: nuget-tooling-${{ runner.os }}-
 
       - name: Restore Language Server tests
-        run: dotnet restore tests/Square.LanguageServer.Tests/Square.LanguageServer.Tests.csproj -p:SquareTargetPlatform=Win32
+        run: |
+          dotnet restore tests/Square.LanguageServer.Tests/Square.LanguageServer.Tests.csproj -p:SquareTargetPlatform=Win32
+          dotnet restore samples/Square.Sample.Vue/Square.Sample.Vue.csproj -p:SquareTargetPlatform=Win32
 
       - name: Test Language Server
         run: dotnet test tests/Square.LanguageServer.Tests/Square.LanguageServer.Tests.csproj --configuration Release --no-restore -p:SquareTargetPlatform=Win32
