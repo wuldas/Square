@@ -129,8 +129,10 @@
       "patterns": [
         { "include": "#comments" },
         { "include": "#interpolation" },
+        { "include": "#closing-directive-tag" },
         { "include": "#closing-tag" },
         { "include": "#directive-tag" },
+        { "include": "#nested-template" },
         { "include": "#opening-tag" }
       ]
     },
@@ -165,6 +167,15 @@
         { "include": "#quoted-string" }
       ]
     },
+    "closing-directive-tag": {
+      "name": "meta.tag.directive.sqv",
+      "match": "(</)(Show|For|Index|Switch|Match|Slot|Outlet)(?=[\\s>])(\\s*>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.directive.sqv" },
+        "3": { "name": "punctuation.definition.tag.end.sqv" }
+      }
+    },
     "closing-tag": {
       "name": "meta.tag.sqv",
       "match": "(</)(?!(?:template|script|style)\\b)([A-Za-z_][A-Za-z0-9_.:-]*)(\\s*>)",
@@ -186,6 +197,11 @@
         "1": { "name": "punctuation.definition.tag.end.sqv" }
       },
       "patterns": [
+        { "include": "#tag-attributes" }
+      ]
+    },
+    "tag-attributes": {
+      "patterns": [
         { "include": "#event-binding" },
         { "include": "#slot-binding" },
         { "include": "#directive-binding" },
@@ -199,6 +215,26 @@
           "match": "="
         },
         { "include": "#quoted-string" }
+      ]
+    },
+    "nested-template": {
+      "begin": "(<)(template)((?:\\s+(?:[^>\"']|\"[^\"]*\"|'[^']*')*)?)(/?>)",
+      "beginCaptures": {
+        "0": { "name": "meta.tag.sqv" },
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.sqv" },
+        "3": { "patterns": [ { "include": "#tag-attributes" } ] },
+        "4": { "name": "punctuation.definition.tag.end.sqv" }
+      },
+      "end": "(</)(template)(\\s*>)",
+      "endCaptures": {
+        "0": { "name": "meta.tag.sqv" },
+        "1": { "name": "punctuation.definition.tag.begin.sqv" },
+        "2": { "name": "entity.name.tag.sqv" },
+        "3": { "name": "punctuation.definition.tag.end.sqv" }
+      },
+      "patterns": [
+        { "include": "#template" }
       ]
     },
     "event-binding": {

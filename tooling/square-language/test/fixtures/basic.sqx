@@ -4,6 +4,9 @@
     <Show when={Visible}>
       <Text text="Ready" />
     </Show>
+    <Slot name="header">
+      <Text text="Fallback" />
+    </Slot>
   </View>
 </template>
 

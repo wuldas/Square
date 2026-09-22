@@ -128,6 +128,7 @@
     "template": {
       "patterns": [
         { "include": "#comments" },
+        { "include": "#closing-directive-tag" },
         { "include": "#closing-tag" },
         { "include": "#directive-tag" },
         { "include": "#opening-tag" },
@@ -170,6 +171,15 @@
         { "include": "#csharp-expression" },
         { "include": "#quoted-string" }
       ]
+    },
+    "closing-directive-tag": {
+      "name": "meta.tag.directive.sqx",
+      "match": "(</)(Show|For|Index|Switch|Match|Slot|Outlet)(?=[\\s>])(\\s*>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.begin.sqx" },
+        "2": { "name": "entity.name.tag.directive.sqx" },
+        "3": { "name": "punctuation.definition.tag.end.sqx" }
+      }
     },
     "closing-tag": {
       "name": "meta.tag.sqx",

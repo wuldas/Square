@@ -6,6 +6,14 @@
       {{ index }} {{ item.Name }}
     </Text>
     <Card><template #header="{ title }">{{ title }}</template></Card>
+    <SlotCard>
+      <template v-slot:header>
+        <Text class="slot-fallback" text="Fallback" />
+      </template>
+    </SlotCard>
+    <Slot name="header">
+      <Text class="slot-fallback" text="Fallback" />
+    </Slot>
   </View>
 </template>
 
