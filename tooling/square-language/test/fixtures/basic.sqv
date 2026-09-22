@@ -2,6 +2,7 @@
   <View class="page">
     <Button ref="SaveButton" @click.stop.prevent="OnSave">{{ Title }}</Button>
     <Text v-if="Visible">Ready</Text>
+    <Text v-else>Fallback</Text>
     <Text v-for="(item, index) in Items" :key="item.Id">
       {{ index }} {{ item.Name }}
     </Text>

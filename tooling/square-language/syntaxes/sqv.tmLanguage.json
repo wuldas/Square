@@ -151,6 +151,7 @@
         { "include": "#event-binding" },
         { "include": "#slot-binding" },
         { "include": "#directive-binding" },
+        { "include": "#directive-binding-name" },
         { "include": "#property-binding" },
         {
           "name": "entity.other.attribute-name.directive.sqv",
@@ -205,6 +206,7 @@
         { "include": "#event-binding" },
         { "include": "#slot-binding" },
         { "include": "#directive-binding" },
+        { "include": "#directive-binding-name" },
         { "include": "#property-binding" },
         {
           "name": "entity.other.attribute-name.sqv",
@@ -277,7 +279,7 @@
     "directive-binding": {
       "name": "meta.attribute.directive.sqv",
       "contentName": "source.cs",
-      "begin": "(v-[A-Za-z_][A-Za-z0-9_-]*(?::(?:[A-Za-z_][A-Za-z0-9_-]*|\\[[^\\]]+\\]))?)((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)(?:\\s*=\\s*(\"))?",
+      "begin": "(v-[A-Za-z_][A-Za-z0-9_-]*(?::(?:[A-Za-z_][A-Za-z0-9_-]*|\\[[^\\]]+\\]))?)((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)(\\s*=\\s*)(\")",
       "beginCaptures": {
         "1": { "name": "entity.other.attribute-name.directive.sqv" },
         "2": {
@@ -287,13 +289,28 @@
             { "name": "storage.modifier.sqv", "match": "[A-Za-z_][A-Za-z0-9_-]*" }
           ]
         },
-        "3": { "name": "punctuation.definition.string.begin.sqv" }
+        "3": { "name": "keyword.operator.assignment.sqv" },
+        "4": { "name": "punctuation.definition.string.begin.sqv" }
       },
-      "end": "(?<=\")|(?=\\s|/?>)|$",
+      "end": "\"|$",
       "endCaptures": { "0": { "name": "punctuation.definition.string.end.sqv" } },
       "patterns": [
         { "include": "source.cs" }
       ]
+    },
+    "directive-binding-name": {
+      "name": "meta.attribute.directive.sqv",
+      "match": "(v-[A-Za-z_][A-Za-z0-9_-]*(?::(?:[A-Za-z_][A-Za-z0-9_-]*|\\[[^\\]]+\\]))?)((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)",
+      "captures": {
+        "1": { "name": "entity.other.attribute-name.directive.sqv" },
+        "2": {
+          "name": "meta.modifiers.sqv",
+          "patterns": [
+            { "name": "punctuation.separator.modifier.sqv", "match": "\\." },
+            { "name": "storage.modifier.sqv", "match": "[A-Za-z_][A-Za-z0-9_-]*" }
+          ]
+        }
+      }
     },
     "property-binding": {
       "name": "meta.attribute.binding.sqv",

@@ -121,6 +121,14 @@ assert.ok(scopesFor(sqv, '@click').includes('entity.other.attribute-name.event.s
 assert.ok(scopesFor(sqv, 'stop').includes('storage.modifier.sqv'));
 assert.ok(scopesFor(sqv, 'v-if').includes('entity.other.attribute-name.directive.sqv'));
 assert.ok(scopesFor(sqv, '#header').includes('entity.other.attribute-name.slot.sqv'));
+// 带值指令：值必须是 C# 作用域，且不得吞掉同行的结束标签
+assert.ok(scopesFor(sqv, 'v-if').includes('entity.other.attribute-name.directive.sqv'));
+assert.ok(scopesFor(sqv, 'Visible').includes('meta.attribute.directive.sqv'));
+assert.ok(scopesFor(sqv, 'Visible').includes('source.cs'));
+assert.ok(scopesFor(sqv, 'v-else').includes('entity.other.attribute-name.directive.sqv'));
+assert.ok(scopesFor(sqv, ':key').includes('entity.other.attribute-name.binding.sqv'));
+assert.ok(sqv.every(token => !(token.scopes.includes('string.quoted.double.sqv') && token.text.includes('</'))),
+  'Closing tags must not be swallowed by a string scope');
 assertTagScopes(sqv, 'Slot', 'entity.name.tag.directive.sqv', 'slot');
 assertTagScopes(sqv, 'Button', 'entity.name.tag.sqv', 'component');
 
