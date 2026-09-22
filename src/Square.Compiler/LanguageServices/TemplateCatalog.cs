@@ -229,7 +229,7 @@ public sealed class TemplateCatalog
         Compilation analysisCompilation,
         IReadOnlyDictionary<string, TemplateComponentDescriptor> generatedComponents)
     {
-        var builtIns = CreateBuiltInDescriptors();
+        var builtIns = CreateBuiltInDescriptorsWithSourcePaths(analysisCompilation);
         var diagnostics = new List<SquareDiagnostic>();
         var exports = new List<TemplateComponentDescriptor>();
         var elementSymbol = analysisCompilation.GetTypeByMetadataName("Square.UI.Element");
@@ -529,6 +529,27 @@ public sealed class TemplateCatalog
                 slotHost, TextContentTags.Contains(pair.Key), slotHost);
         }
         return new ReadOnlyDictionary<string, TemplateComponentDescriptor>(components);
+    }
+
+    /// <summary>
+    /// 内置控件描述符默认没有源路径；当分析编译里能解析到类型符号且源码可用（工程引用）时补上，
+    /// 使 <c>textDocument/definition</c> 能跳到 <c>View</c>/<c>Button</c> 这类框架控件。
+    /// </summary>
+    private static IReadOnlyDictionary<string, TemplateComponentDescriptor> CreateBuiltInDescriptorsWithSourcePaths(
+        Compilation compilation)
+    {
+        var descriptors = CreateBuiltInDescriptors();
+        if (compilation == null) return descriptors;
+        var withPaths = new Dictionary<string, TemplateComponentDescriptor>(descriptors.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in descriptors)
+        {
+            var sourcePath = compilation.GetTypeByMetadataName(pair.Value.TypeMetadataName)
+                ?.DeclaringSyntaxReferences.FirstOrDefault()?.SyntaxTree.FilePath;
+            withPaths[pair.Key] = string.IsNullOrWhiteSpace(sourcePath)
+                ? pair.Value
+                : CopyWithSourcePath(pair.Value, sourcePath);
+        }
+        return new ReadOnlyDictionary<string, TemplateComponentDescriptor>(withPaths);
     }
 
     internal static Compilation AddScriptDeclarations(

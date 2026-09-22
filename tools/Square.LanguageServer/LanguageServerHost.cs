@@ -8,6 +8,10 @@ namespace Square.LanguageServer;
 public sealed class LanguageServerHost
 {
     private const int DiagnosticDelayMilliseconds = 120;
+    private const int RequestCancelledCode = -32800;
+    private const int ParseErrorCode = -32700;
+    /// <summary>本服务端的位置换算基于 .NET 字符串（UTF-16 代码单元）。</summary>
+    private const string Utf16EncodingName = "utf-16";
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly DocumentStore _documents = new();
@@ -21,9 +25,14 @@ public sealed class LanguageServerHost
     private readonly Dictionary<string, string?> _documentProjects = new(StringComparer.Ordinal);
     private readonly object _requestGate = new();
     private readonly HashSet<Task> _pendingRequestTasks = new();
+    private readonly Dictionary<string, CancellationTokenSource> _pendingRequestCancellations = new(StringComparer.Ordinal);
     private long _nextDiagnosticSequence;
     private readonly SemaphoreSlim _outputGate = new(1, 1);
     private bool _shutdownRequested;
+    private bool _hoverSupportsMarkdown = true;
+    private bool _definitionSupportsLocationLinks;
+    private bool _watchRegistrationSupported;
+    private string? _clientCapabilityWarning;
     private CancellationToken _lifetimeToken;
 
     public LanguageServerHost(Stream input, Stream output)
@@ -41,25 +50,50 @@ public sealed class LanguageServerHost
         {
             while (!cancellationToken.IsCancellationRequested)
         {
-            var message = await ReadMessageAsync(cancellationToken);
-            if (message == null) return _shutdownRequested ? 0 : 1;
+            var frame = await ReadFrameAsync(cancellationToken);
+            if (frame.Payload == null)
+            {
+                // 协议错误按 LSP 规范回 -32700 并继续服务；流结束则退出。
+                if (frame.Malformed)
+                {
+                    await WriteParseErrorAsync(cancellationToken);
+                    continue;
+                }
+                return _shutdownRequested ? 0 : 1;
+            }
 
-            using var document = JsonDocument.Parse(message);
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(frame.Payload);
+            }
+            catch (JsonException)
+            {
+                await WriteParseErrorAsync(cancellationToken);
+                continue;
+            }
+
+            using (document)
+            {
             var root = document.RootElement;
             var method = root.TryGetProperty("method", out var methodElement)
                 ? methodElement.GetString()
                 : null;
             var hasId = root.TryGetProperty("id", out var id);
+            // 客户端对本服务器发起请求（如 client/registerCapability）的响应没有 method，忽略即可。
+            if (method == null) continue;
 
             switch (method)
             {
                 case "initialize" when hasId:
+                    ReadClientCapabilities(root);
                     IndexWorkspaceComponents(root, cancellationToken);
                     await WriteResponseAsync(id, new
                     {
                         capabilities = new
                         {
                             textDocumentSync = 1,
+                            positionEncoding = Utf16EncodingName,
                             completionProvider = new
                             {
                                 triggerCharacters = new[]
@@ -83,10 +117,23 @@ public sealed class LanguageServerHost
                         serverInfo = new { name = "Square Language Server", version = "0.1.0" }
                     }, cancellationToken);
                     break;
+                case "initialized":
+                    await ReportClientCapabilityWarningAsync(cancellationToken);
+                    await RegisterFileWatchersAsync(cancellationToken);
+                    break;
                 case "shutdown" when hasId:
                     _shutdownRequested = true;
                     CancelAllPendingDiagnostics();
                     await WriteResponseAsync(id, null, cancellationToken);
+                    break;
+                case "$/cancelRequest":
+                    CancelRequest(root);
+                    break;
+                case "workspace/didChangeWatchedFiles":
+                    HandleWatchedFiles(root, cancellationToken);
+                    break;
+                case "workspace/didChangeConfiguration":
+                    // 语言服务器的启动路径/参数变更需要客户端重启服务端，此处无状态可更新。
                     break;
                 case "textDocument/didOpen":
                     HandleDidOpen(root, cancellationToken);
@@ -104,35 +151,35 @@ public sealed class LanguageServerHost
                     {
                         var requestRoot = root.Clone();
                         var documentSnapshot = SnapshotDocument(root);
-                        DispatchRequest(id, () => BuildCompletionAsync(requestRoot, documentSnapshot, cancellationToken));
+                        DispatchRequest(id, token => BuildCompletionAsync(requestRoot, documentSnapshot, token));
                         break;
                     }
                 case "textDocument/hover" when hasId:
                     {
                         var requestRoot = root.Clone();
                         var documentSnapshot = SnapshotDocument(root);
-                        DispatchRequest(id, () => BuildHoverAsync(requestRoot, documentSnapshot, cancellationToken));
+                        DispatchRequest(id, token => BuildHoverAsync(requestRoot, documentSnapshot, token));
                         break;
                     }
                 case "textDocument/documentSymbol" when hasId:
                     {
                         var requestRoot = root.Clone();
                         var documentSnapshot = SnapshotDocument(root);
-                        DispatchRequest(id, () => BuildDocumentSymbolsAsync(requestRoot, documentSnapshot, cancellationToken));
+                        DispatchRequest(id, token => BuildDocumentSymbolsAsync(requestRoot, documentSnapshot, token));
                         break;
                     }
                 case "textDocument/definition" when hasId:
                     {
                         var requestRoot = root.Clone();
                         var documentSnapshot = SnapshotDocument(root);
-                        DispatchRequest(id, () => BuildDefinitionAsync(requestRoot, documentSnapshot, cancellationToken));
+                        DispatchRequest(id, token => BuildDefinitionAsync(requestRoot, documentSnapshot, token));
                         break;
                     }
                 case "textDocument/semanticTokens/full" when hasId:
                     {
                         var requestRoot = root.Clone();
                         var documentSnapshot = SnapshotDocument(root);
-                        DispatchRequest(id, () => BuildSemanticTokensAsync(requestRoot, documentSnapshot, cancellationToken));
+                        DispatchRequest(id, token => BuildSemanticTokensAsync(requestRoot, documentSnapshot, token));
                         break;
                     }
                 case "textDocument/foldingRange" when hasId:
@@ -151,9 +198,18 @@ public sealed class LanguageServerHost
                         await WriteErrorAsync(id, -32601, "Method not found", cancellationToken);
                     break;
             }
+            }
         }
 
             return 0;
+        }
+        catch (EndOfStreamException)
+        {
+            return 1;
+        }
+        catch (IOException)
+        {
+            return 1;
         }
         finally
         {
@@ -210,6 +266,11 @@ public sealed class LanguageServerHost
         if (uri == null || !_documents.TryGet(uri, out var document) || document == null) return;
         var sourcePath = GetSourcePath(uri);
         CancelPendingDiagnostics(uri);
+        lock (_diagnosticGate)
+        {
+            _documentProjects.Remove(uri);
+            _diagnosticSequence.Remove(uri);
+        }
         _componentIndex.Close(sourcePath, cancellationToken);
         _documents.Close(uri);
         SquareDocumentService.InvalidateSyntaxTree(sourcePath);
@@ -226,8 +287,7 @@ public sealed class LanguageServerHost
         var uri = root.GetProperty("params").GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
         if (!_documents.TryGet(uri, out var document) || document == null) return;
         var sourcePath = GetSourcePath(uri);
-        if (!sourcePath.EndsWith(".sqx", StringComparison.OrdinalIgnoreCase) &&
-            !sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase))
+        if (!IsTemplatePath(sourcePath))
         {
             await WriteNotificationAsync("textDocument/publishDiagnostics", new
             {
@@ -294,7 +354,8 @@ public sealed class LanguageServerHost
                 {
                     var clamped = Math.Min(diagnostic.Range.Offset, document.Text.Length);
                     line = OffsetToLine(clamped);
-                    character = clamped - document.Text.LastIndexOf('\n', clamped - 1) - 1;
+                    var lastNewline = clamped > 0 ? document.Text.LastIndexOf('\n', clamped - 1) : -1;
+                    character = clamped - lastNewline - 1;
                 }
                 if (localKeys.Contains(DiagnosticKey(diagnostic.Id, line, character, diagnostic.Message))) continue;
                 var range = string.IsNullOrWhiteSpace(diagnostic.SourcePath)
@@ -351,8 +412,7 @@ public sealed class LanguageServerHost
         foreach (var document in documents)
         {
             var sourcePath = GetSourcePath(document.Uri);
-            if (!sourcePath.EndsWith(".sqx", StringComparison.OrdinalIgnoreCase) &&
-                !sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!IsTemplatePath(sourcePath)) continue;
             string? projectPath;
             lock (_diagnosticGate)
             {
@@ -492,36 +552,67 @@ public sealed class LanguageServerHost
     }
 
     /// <summary>在后台任务中计算请求并按 request id 写响应，避免阻塞消息循环。</summary>
-    private void DispatchRequest<T>(JsonElement id, Func<Task<T>> build)
+    private void DispatchRequest<T>(JsonElement id, Func<CancellationToken, Task<T>> build)
     {
         var requestId = id.Clone();
+        var key = RequestKey(requestId);
+        var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeToken);
+        lock (_requestGate) _pendingRequestCancellations[key] = source;
         var task = Task.Run(async () =>
         {
+            var cancelledByClient = false;
             try
             {
-                var result = await build().ConfigureAwait(false);
+                var result = await build(source.Token).ConfigureAwait(false);
                 await WriteResponseAsync(requestId, result, _lifetimeToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
+                cancelledByClient = !_lifetimeToken.IsCancellationRequested;
             }
             catch (ObjectDisposedException)
             {
             }
             catch (Exception exception)
             {
-                await WriteErrorAsync(requestId, -32603, exception.Message, _lifetimeToken).ConfigureAwait(false);
+                await TryWriteErrorAsync(requestId, -32603, exception.Message).ConfigureAwait(false);
             }
+
+            if (cancelledByClient)
+                await TryWriteErrorAsync(requestId, RequestCancelledCode, "Request cancelled").ConfigureAwait(false);
         }, CancellationToken.None);
         lock (_requestGate) _pendingRequestTasks.Add(task);
         _ = task.ContinueWith(
             completed =>
             {
-                lock (_requestGate) _pendingRequestTasks.Remove(completed);
+                lock (_requestGate)
+                {
+                    _pendingRequestTasks.Remove(completed);
+                    _pendingRequestCancellations.Remove(key);
+                }
+                source.Dispose();
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    /// <summary>写错误响应；服务端不得因写入竞争或关停竞态而抛出未处理异常。</summary>
+    private async Task TryWriteErrorAsync(JsonElement id, int code, string message)
+    {
+        try
+        {
+            await WriteErrorAsync(id, code, message, _lifetimeToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (IOException)
+        {
+        }
     }
 
     private async Task PublishEmptyDiagnosticsAsync(JsonElement root, CancellationToken cancellationToken)
@@ -666,29 +757,10 @@ public sealed class LanguageServerHost
             })
             .Cast<object>()
             .ToArray();
-        return new { isIncomplete = project != null && !project.IsComplete, items };
+        // 没有工程上下文（未提供工作区根、无工程拥有该文档或 MSBuild 不可用）时列表必然是残缺的，
+        // 必须告知客户端可继续请求，否则会丢掉工程级组件。
+        return new { isIncomplete = project?.IsComplete != true, items };
     }
-
-    private static IEnumerable<TemplateCompletionItem> GetProjectTagItems(
-        TemplateCatalog catalog,
-        TemplateResolutionContext context,
-        string prefix)
-    {
-        foreach (var component in catalog.Components)
-        {
-            var shortResolution = catalog.ResolveComponent(component.LocalName, context);
-            if (shortResolution.Status == TemplateElementResolutionStatus.Resolved &&
-                SameComponent(shortResolution.Component, component) &&
-                component.LocalName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                yield return new TemplateCompletionItem(component.LocalName, component.IsBuiltIn ? 7 : 14, component.TypeName, component.LocalName);
-            foreach (var qualifiedName in catalog.GetQualifiedNames(component))
-                if (qualifiedName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    yield return new TemplateCompletionItem(qualifiedName, component.IsBuiltIn ? 7 : 14, component.TypeName, qualifiedName);
-        }
-    }
-
-    private static bool SameComponent(TemplateComponentDescriptor left, TemplateComponentDescriptor right) =>
-        left.AssemblyName == right.AssemblyName && left.TypeMetadataName == right.TypeMetadataName;
 
     private async Task<ProjectTemplateContext?> GetProjectContextAsync(string sourcePath, CancellationToken cancellationToken)
     {
@@ -718,7 +790,7 @@ public sealed class LanguageServerHost
 
     private async Task ReportWorkspaceWarningAsync(ProjectTemplateContext? project, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(project?.Warning)) return;
+        if (project == null || !project.ShouldReportWarning || string.IsNullOrWhiteSpace(project.Warning)) return;
         lock (_reportedWarnings)
         {
             if (!_reportedWarnings.Add(project.Warning)) return;
@@ -867,62 +939,146 @@ public sealed class LanguageServerHost
             project?.Catalog ?? TemplateCatalog.BuiltIn,
             resolutionContext);
         if (!string.IsNullOrEmpty(scriptDetail))
-        {
-            return new
-            {
-                contents = new { kind = "markdown", value = "```csharp\n" + scriptDetail + "\n```" },
-                range = new
-                {
-                    start = ToPosition(document.Text, tokenStart),
-                    end = ToPosition(document.Text, tokenEnd)
-                }
-            };
-        }
+            return CreateHoverResult(document.Text, "```csharp\n" + scriptDetail + "\n```", scriptDetail, tokenStart, tokenEnd);
 
         var lexicalContext = tokenStart > 0 ? document.Text[tokenStart - 1] : '\0';
-        string? markdown;
+        var completionContext = TemplateCompletionService.GetContext(document.Text, offset, sourcePath);
+        (string? Markdown, string? Plain) hover;
         if (lexicalContext == '@')
-        {
-            var completionContext = TemplateCompletionService.GetContext(document.Text, offset, sourcePath);
-            resolutionContext = CreateResolutionContext(project, document.Text, sourcePath);
-            var resolution = project?.Catalog?.ResolveComponent(completionContext.TagName, resolutionContext);
-            TemplateComponentEventDescriptor? componentEvent = null;
-            if (resolution?.Status == TemplateElementResolutionStatus.Resolved)
-                componentEvent = project!.Catalog!.GetEvents(resolution.Component)
-                    .FirstOrDefault(item => item.Name.Equals(token, StringComparison.OrdinalIgnoreCase));
-            var eventDescriptor = TemplateCatalog.BuiltIn.Events.FirstOrDefault(eventItem =>
-                eventItem.Name.Equals(token, StringComparison.OrdinalIgnoreCase));
-            markdown = componentEvent != null
-                ? $"**@{componentEvent.Name}**\\n\\n`{(componentEvent.HasDetail ? "CustomEvent<" + componentEvent.DetailTypeName + ">" : "Event")}`"
-                : eventDescriptor == null ? null : $"**@{eventDescriptor.Name}**\\n\\nSquare event.";
-        }
+            hover = DescribeEventHover(project, token, completionContext, resolutionContext);
         else if (lexicalContext == '<' || IsInsideTagName(document.Text, tokenStart))
         {
             var tagName = TemplateDefinitionService.GetTagNameAt(document.Text, sourcePath, offset);
             if (string.IsNullOrWhiteSpace(tagName)) tagName = token;
-            var resolution = project?.Catalog?.ResolveComponent(
-                tagName,
-                CreateResolutionContext(project, document.Text, sourcePath));
-            TemplateComponentDescriptor? component = resolution?.Status == TemplateElementResolutionStatus.Resolved
-                ? resolution.Component
-                : null;
-            if (component == null && !TemplateCatalog.BuiltIn.TryGetBuiltInComponent(tagName, out component)) return null;
-            markdown = $"**<{tagName}>**\\n\\n`{component.TypeName}`";
+            hover = DescribeTagHover(tagName, project, CreateResolutionContext(project, document.Text, sourcePath));
         }
         else
+            hover = DescribeAttributeHover(project, token, completionContext, resolutionContext);
+
+        if (hover.Markdown == null) return null;
+        return CreateHoverResult(document.Text, hover.Markdown, hover.Plain ?? hover.Markdown, tokenStart, tokenEnd);
+    }
+
+    private object CreateHoverResult(string text, string markdown, string plain, int start, int end) => new
+    {
+        contents = _hoverSupportsMarkdown
+            ? (object)new { kind = "markdown", value = markdown }
+            : new { kind = "plaintext", value = plain },
+        range = new
         {
-            return null;
+            start = ToPosition(text, start),
+            end = ToPosition(text, end)
+        }
+    };
+
+    private static (string? Markdown, string? Plain) DescribeTagHover(
+        string tagName,
+        ProjectTemplateContext? project,
+        TemplateResolutionContext resolutionContext)
+    {
+        var component = ResolveComponentDescriptor(project?.Catalog, tagName, resolutionContext);
+        if (component == null) return (null, null);
+        // 标签名放入反引号，避免 markdown 渲染器把 <Button> 当原始 HTML 吞掉。
+        return ("**`<" + tagName + ">`**\n\n`" + component.TypeName + "`",
+            "<" + tagName + "> — " + component.TypeName);
+    }
+
+    private (string? Markdown, string? Plain) DescribeEventHover(
+        ProjectTemplateContext? project,
+        string token,
+        TemplateCompletionContext completionContext,
+        TemplateResolutionContext resolutionContext)
+    {
+        var component = ResolveComponentDescriptor(project?.Catalog, completionContext.TagName, resolutionContext);
+        var componentEvent = component == null || project?.Catalog == null
+            ? null
+            : project.Catalog.GetEvents(component).FirstOrDefault(item =>
+                NormalizeEventAlias(item.Name).Equals(NormalizeComponentEventName(token), StringComparison.OrdinalIgnoreCase));
+        if (componentEvent != null)
+        {
+            var detail = componentEvent.HasDetail ? "CustomEvent<" + componentEvent.DetailTypeName + ">" : "Event";
+            return ("**`@" + token + "`**\n\n`" + detail + "`", "@" + token + " — " + detail);
+        }
+        var standardEvent = TemplateCatalog.BuiltIn.Events.FirstOrDefault(item =>
+            NormalizeEventAlias(item.Name).Equals(NormalizeComponentEventName(token), StringComparison.OrdinalIgnoreCase));
+        if (standardEvent == null) return (null, null);
+        return ("**`@" + token + "`**\n\n`Square event: " + standardEvent.CanonicalName + "`",
+            "@" + token + " — Square event: " + standardEvent.CanonicalName);
+    }
+
+    /// <summary>属性名 hover：先按组件事件、组件属性、标准事件、内置属性别名的顺序匹配。</summary>
+    private (string? Markdown, string? Plain) DescribeAttributeHover(
+        ProjectTemplateContext? project,
+        string token,
+        TemplateCompletionContext completionContext,
+        TemplateResolutionContext resolutionContext)
+    {
+        if (completionContext.Kind is TemplateCompletionKind.None or TemplateCompletionKind.Tag or
+            TemplateCompletionKind.ClosingTag or TemplateCompletionKind.CssClass or
+            TemplateCompletionKind.CssProperty or TemplateCompletionKind.CssValue or
+            TemplateCompletionKind.CssSelector or TemplateCompletionKind.CssPseudoClass or
+            TemplateCompletionKind.CssPseudoElement) return (null, null);
+
+        var attributeName = string.IsNullOrWhiteSpace(completionContext.AttributeName)
+            ? token
+            : completionContext.AttributeName;
+        var propertyName = NormalizeComponentPropertyName(attributeName);
+        // 只在光标位于属性名上时给出说明，避免在属性值/表达式里张冠李戴。
+        if (!propertyName.EndsWith(token, StringComparison.OrdinalIgnoreCase) &&
+            !attributeName.EndsWith(token, StringComparison.OrdinalIgnoreCase)) return (null, null);
+
+        var component = ResolveComponentDescriptor(project?.Catalog, completionContext.TagName, resolutionContext);
+        TemplateComponentEventDescriptor[] events = Array.Empty<TemplateComponentEventDescriptor>();
+        TemplatePropDescriptor[] props = Array.Empty<TemplatePropDescriptor>();
+        if (component != null && project?.Catalog != null)
+        {
+            events = project.Catalog.GetEvents(component).ToArray();
+            props = project.Catalog.GetProps(component).ToArray();
+        }
+        else if (project?.Catalog == null)
+        {
+            _componentIndex.TryGetEvents(completionContext.TagName, out events);
+            _componentIndex.TryGetProps(completionContext.TagName, out props);
         }
 
-        return new
+        var eventName = NormalizeComponentEventName(attributeName);
+        var componentEvent = events.FirstOrDefault(item =>
+            NormalizeEventAlias(item.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase));
+        if (componentEvent != null)
         {
-            contents = new { kind = "markdown", value = markdown },
-            range = new
-            {
-                start = ToPosition(document.Text, tokenStart),
-                end = ToPosition(document.Text, tokenEnd)
-            }
-        };
+            var detail = componentEvent.HasDetail ? "CustomEvent<" + componentEvent.DetailTypeName + ">" : "Event";
+            return ("**`" + attributeName + "`**\n\n`" + detail + "`", attributeName + " — " + detail);
+        }
+
+        var property = props.FirstOrDefault(item => item.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase));
+        if (property != null)
+        {
+            var detail = property.TypeName + (property.Required ? " (required)" : string.Empty);
+            return ("**`" + attributeName + "`**\n\n`" + detail + "`", attributeName + " — " + detail);
+        }
+
+        var standardEvent = TemplateCatalog.BuiltIn.Events.FirstOrDefault(item =>
+            NormalizeEventAlias(item.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase));
+        if (standardEvent != null)
+            return ("**`" + attributeName + "`**\n\n`Square event: " + standardEvent.CanonicalName + "`",
+                attributeName + " — Square event: " + standardEvent.CanonicalName);
+
+        var alias = TemplateCatalog.BuiltIn.Properties.FirstOrDefault(item =>
+            item.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase));
+        if (alias == null) return (null, null);
+        var aliasDetail = alias.CanonicalName + " (" + alias.ValueKind + ")";
+        return ("**`" + attributeName + "`**\n\n`" + aliasDetail + "`", attributeName + " — " + aliasDetail);
+    }
+
+    private static TemplateComponentDescriptor? ResolveComponentDescriptor(
+        TemplateCatalog? catalog,
+        string tagName,
+        TemplateResolutionContext resolutionContext)
+    {
+        if (string.IsNullOrWhiteSpace(tagName)) return null;
+        var resolution = catalog?.ResolveComponent(tagName, resolutionContext);
+        if (resolution?.Status == TemplateElementResolutionStatus.Resolved) return resolution.Component;
+        return TemplateCatalog.BuiltIn.TryGetBuiltInComponent(tagName, out var builtIn) ? builtIn : null;
     }
 
     private static bool IsInsideTagName(string text, int tokenStart)
@@ -1123,7 +1279,7 @@ public sealed class LanguageServerHost
         {
             var targetPath = Path.GetFullPath(resolution.Component.SourcePath);
             var definitionUri = new Uri(targetPath).AbsoluteUri;
-            return new[] { CreateLocationLink(definitionUri, ReadSourceText(targetPath), resolution.Component.LocalName) };
+            return new[] { CreateDefinitionResult(definitionUri, ReadSourceText(targetPath), resolution.Component.LocalName) };
         }
 
         if (project?.IsComplete == true && project.Analysis != null) return Array.Empty<object>();
@@ -1132,7 +1288,7 @@ public sealed class LanguageServerHost
             if (candidate.Uri.Equals(uri, StringComparison.OrdinalIgnoreCase)) continue;
             var name = Path.GetFileNameWithoutExtension(GetSourcePath(candidate.Uri));
             if (!name.Equals(token, StringComparison.OrdinalIgnoreCase)) continue;
-            return new[] { CreateLocationLink(candidate.Uri, candidate.Text, name) };
+            return new[] { CreateDefinitionResult(candidate.Uri, candidate.Text, name) };
         }
         return Array.Empty<object>();
     }
@@ -1156,20 +1312,32 @@ public sealed class LanguageServerHost
         }
     }
 
-    private static object CreateLocationLink(string targetUri, string text, string componentName)
+    /// <summary>客户端声明 textDocument.definition.linkSupport 时返回 LocationLink，否则返回 Location。</summary>
+    private object CreateDefinitionResult(string targetUri, string text, string componentName)
     {
         var (start, length) = FindDeclarationRange(text, componentName);
-        return new
-        {
-            targetUri,
-            targetRange = ToRange(text, 0, text.Length),
-            targetSelectionRange = ToRange(text, start, start + length)
-        };
+        if (_definitionSupportsLocationLinks)
+            return new
+            {
+                targetUri,
+                targetRange = ToRange(text, 0, text.Length),
+                targetSelectionRange = ToRange(text, start, start + length)
+            };
+        return new { uri = targetUri, range = ToRange(text, start, start + length) };
     }
 
     private static (int Start, int Length) FindDeclarationRange(string text, string componentName)
     {
         if (text.Length == 0) return (0, 0);
+        if (!string.IsNullOrWhiteSpace(componentName))
+        {
+            // 代码后置文件里优先选中类型声明，避免命中文档注释中的同名引用。
+            foreach (var keyword in new[] { "class ", "struct ", "record " })
+            {
+                var declaration = text.IndexOf(keyword + componentName, StringComparison.Ordinal);
+                if (declaration >= 0) return (declaration + keyword.Length, componentName.Length);
+            }
+        }
         const string template = "<template";
         var index = text.IndexOf(template, StringComparison.OrdinalIgnoreCase);
         if (index >= 0) return (index + 1, template.Length - 1);
@@ -1181,30 +1349,182 @@ public sealed class LanguageServerHost
         return (0, Math.Min(1, text.Length));
     }
 
-    private async Task<string?> ReadMessageAsync(CancellationToken cancellationToken)
+    private readonly record struct FrameReadResult(string? Payload, bool Malformed);
+
+    /// <summary>
+    /// 读取一条 JSON-RPC 报文。Payload 为 null 且 Malformed 为 false 表示流已结束；
+    /// Malformed 为 true 表示头部缺失或非法（已消费头部，调用方应回 -32700 后继续）。
+    /// </summary>
+    private async Task<FrameReadResult> ReadFrameAsync(CancellationToken cancellationToken)
     {
         var contentLength = -1;
         while (true)
         {
             var line = await ReadAsciiLineAsync(cancellationToken);
-            if (line == null) return null;
+            if (line == null) return new FrameReadResult(null, false);
             if (line.Length == 0) break;
 
             const string prefix = "Content-Length:";
-            if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                if (!int.TryParse(line[prefix.Length..].Trim(), out contentLength) || contentLength < 0)
-                    throw new InvalidDataException("Invalid Content-Length header.");
-            }
+            if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            if (int.TryParse(line[prefix.Length..].Trim(), out contentLength) && contentLength >= 0) continue;
+            contentLength = -1;
+            break;
         }
 
-        if (contentLength < 0)
-            throw new InvalidDataException("Missing Content-Length header.");
+        if (contentLength < 0) return new FrameReadResult(null, true);
 
         var bytes = new byte[contentLength];
         await ReadExactlyAsync(_input, bytes, cancellationToken);
-        return Encoding.UTF8.GetString(bytes);
+        return new FrameReadResult(Encoding.UTF8.GetString(bytes), false);
     }
+
+    private Task WriteParseErrorAsync(CancellationToken cancellationToken) =>
+        WriteJsonAsync(
+            new { jsonrpc = "2.0", id = (object?)null, error = new { code = ParseErrorCode, message = "Parse error" } },
+            cancellationToken);
+
+    private static string RequestKey(JsonElement id) => id.ValueKind == JsonValueKind.String
+        ? "s:" + id.GetString()
+        : "n:" + id.GetRawText();
+
+    private void CancelRequest(JsonElement root)
+    {
+        if (!root.TryGetProperty("params", out var parameters) ||
+            !parameters.TryGetProperty("id", out var id)) return;
+        CancellationTokenSource? source;
+        lock (_requestGate) _pendingRequestCancellations.TryGetValue(RequestKey(id), out source);
+        if (source == null) return;
+        try
+        {
+            source.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void ReadClientCapabilities(JsonElement initializeRequest)
+    {
+        _hoverSupportsMarkdown = true;
+        _definitionSupportsLocationLinks = false;
+        _watchRegistrationSupported = false;
+        _clientCapabilityWarning = null;
+        if (!initializeRequest.TryGetProperty("params", out var parameters) ||
+            !parameters.TryGetProperty("capabilities", out var capabilities) ||
+            capabilities.ValueKind != JsonValueKind.Object) return;
+
+        if (capabilities.TryGetProperty("general", out var general) &&
+            general.ValueKind == JsonValueKind.Object &&
+            general.TryGetProperty("positionEncodings", out var encodings) &&
+            encodings.ValueKind == JsonValueKind.Array)
+        {
+            var declared = encodings.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()!)
+                .ToArray();
+            if (declared.Length > 0 && !declared.Contains(Utf16EncodingName, StringComparer.OrdinalIgnoreCase))
+                _clientCapabilityWarning = "Client does not support '" + Utf16EncodingName +
+                    "' in general.positionEncodings (declared: " + string.Join(", ", declared) +
+                    "); positions are reported as UTF-16 code units and may be misaligned.";
+        }
+
+        if (!capabilities.TryGetProperty("textDocument", out var textDocument) ||
+            textDocument.ValueKind != JsonValueKind.Object) return;
+
+        if (textDocument.TryGetProperty("hover", out var hover) &&
+            hover.ValueKind == JsonValueKind.Object &&
+            hover.TryGetProperty("contentFormat", out var contentFormat) &&
+            contentFormat.ValueKind == JsonValueKind.Array)
+        {
+            _hoverSupportsMarkdown = contentFormat.EnumerateArray()
+                .Any(item => item.ValueKind == JsonValueKind.String &&
+                             item.GetString()!.Equals("markdown", StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (textDocument.TryGetProperty("definition", out var definition) &&
+            definition.ValueKind == JsonValueKind.Object &&
+            definition.TryGetProperty("linkSupport", out var linkSupport) &&
+            linkSupport.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            _definitionSupportsLocationLinks = linkSupport.GetBoolean();
+
+        if (capabilities.TryGetProperty("workspace", out var workspace) &&
+            workspace.ValueKind == JsonValueKind.Object &&
+            workspace.TryGetProperty("didChangeWatchedFiles", out var watchedFiles) &&
+            watchedFiles.ValueKind == JsonValueKind.Object &&
+            watchedFiles.TryGetProperty("dynamicRegistration", out var dynamicRegistration) &&
+            dynamicRegistration.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            _watchRegistrationSupported = dynamicRegistration.GetBoolean();
+    }
+
+    private async Task ReportClientCapabilityWarningAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_clientCapabilityWarning)) return;
+        await WriteNotificationAsync("window/logMessage",
+            new { type = 2, message = _clientCapabilityWarning }, cancellationToken);
+    }
+
+    /// <summary>注册模板文件与工程文件变更监视，避免编辑器外部改动导致索引过期。</summary>
+    private async Task RegisterFileWatchersAsync(CancellationToken cancellationToken)
+    {
+        if (!_watchRegistrationSupported) return;
+        await WriteJsonAsync(new
+        {
+            jsonrpc = "2.0",
+            id = "square-file-watchers",
+            method = "client/registerCapability",
+            @params = new
+            {
+                registrations = new object[]
+                {
+                    new
+                    {
+                        id = "square-file-watchers",
+                        method = "workspace/didChangeWatchedFiles",
+                        registerOptions = new
+                        {
+                            watchers = new object[]
+                            {
+                                new { globPattern = "**/*.sqx" },
+                                new { globPattern = "**/*.sqv" },
+                                new { globPattern = "**/*.csproj" }
+                            }
+                        }
+                    }
+                }
+            }
+        }, cancellationToken);
+    }
+
+    private void HandleWatchedFiles(JsonElement root, CancellationToken cancellationToken)
+    {
+        if (!root.TryGetProperty("params", out var parameters) ||
+            !parameters.TryGetProperty("changes", out var changes) ||
+            changes.ValueKind != JsonValueKind.Array) return;
+
+        foreach (var change in changes.EnumerateArray())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!change.TryGetProperty("uri", out var uriElement)) continue;
+            var uri = uriElement.GetString();
+            if (string.IsNullOrWhiteSpace(uri)) continue;
+            var sourcePath = GetSourcePath(uri);
+
+            if (sourcePath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                _projectWorkspace.Invalidate(sourcePath);
+                continue;
+            }
+            if (!IsTemplatePath(sourcePath)) continue;
+            // 已打开的文档以编辑器缓冲区为准，磁盘状态不覆盖它。
+            if (_documents.TryGet(uri, out var open) && open != null) continue;
+            _componentIndex.RestoreFromDisk(sourcePath, cancellationToken);
+            _projectWorkspace.InvalidateBuffer(sourcePath);
+        }
+    }
+
+    private static bool IsTemplatePath(string sourcePath) =>
+        sourcePath.EndsWith(".sqx", StringComparison.OrdinalIgnoreCase) ||
+        sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
 
     private async Task WriteResponseAsync(JsonElement id, object? result, CancellationToken cancellationToken)
     {

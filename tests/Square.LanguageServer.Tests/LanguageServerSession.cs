@@ -16,8 +16,10 @@ internal sealed class LanguageServerSession : IDisposable
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly List<JsonDocument> _notifications = new();
+    private readonly List<string> _received = new();
     private readonly Dictionary<int, JsonDocument> _responses = new();
     private int? _lastRequestId;
+    private int _nextRequestId = 100;
 
     private LanguageServerSession(Process process)
     {
@@ -27,6 +29,9 @@ internal sealed class LanguageServerSession : IDisposable
     }
 
     public Process Process => _process;
+
+    /// <summary>截至当前收到的全部原始报文（含带 id 的请求/响应与通知），按到达顺序。</summary>
+    public IReadOnlyList<string> ReceivedMessages => _received;
 
     public static LanguageServerSession Start()
     {
@@ -52,6 +57,51 @@ internal sealed class LanguageServerSession : IDisposable
     {
         if (TryReadRequestId(json, out var id)) _lastRequestId = id;
         var payload = Encoding.UTF8.GetBytes(json);
+        await _input.WriteAsync(Encoding.ASCII.GetBytes("Content-Length: " + payload.Length + "\r\n\r\n"));
+        await _input.WriteAsync(payload);
+        await _input.FlushAsync();
+    }
+
+    /// <summary>打开文档并等待其诊断通知（诊断去抖 120ms 后到达）。</summary>
+    public Task OpenAsync(string uri, string text, string languageId = "sqx") =>
+        OpenAndReadDiagnosticsAsync(uri, text, TimeSpan.FromSeconds(30), languageId);
+
+    /// <summary>打开文档并在给定预算内等待其诊断通知，用于耗时回归断言。</summary>
+    public async Task<string> OpenAndReadDiagnosticsAsync(
+        string uri,
+        string text,
+        TimeSpan budget,
+        string languageId = "sqx")
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new { textDocument = new { uri, languageId, version = 1, text } }
+        });
+        await SendAsync(json);
+        return await ReadNotificationAsync("textDocument/publishDiagnostics", uri).WaitAsync(budget);
+    }
+
+    /// <summary>发送请求并读取其响应原文；id 自动分配。</summary>
+    public async Task<string> RequestAsync(string method, string parametersJson)
+    {
+        var id = _nextRequestId++;
+        await SendAsync("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + parametersJson + "}");
+        return await ReadResponseAsync(id);
+    }
+
+    /// <summary>按原样写入字节（不补 Content-Length 头），用于构造畸形 framing 的健壮性测试。</summary>
+    public async Task SendRawAsync(string raw)
+    {
+        await _input.WriteAsync(Encoding.UTF8.GetBytes(raw));
+        await _input.FlushAsync();
+    }
+
+    /// <summary>写入带正确 Content-Length 头但正文不受约束的报文，用于构造非法 JSON 的健壮性测试。</summary>
+    public async Task SendFramedRawAsync(string body)
+    {
+        var payload = Encoding.UTF8.GetBytes(body);
         await _input.WriteAsync(Encoding.ASCII.GetBytes("Content-Length: " + payload.Length + "\r\n\r\n"));
         await _input.WriteAsync(payload);
         await _input.FlushAsync();
@@ -184,7 +234,9 @@ internal sealed class LanguageServerSession : IDisposable
         Assert.True(length >= 0, "Missing Content-Length header.");
         var buffer = new byte[length];
         await ReadExactlyAsync(buffer);
-        return JsonDocument.Parse(buffer);
+        var document = JsonDocument.Parse(buffer);
+        _received.Add(document.RootElement.GetRawText());
+        return document;
     }
 
     private async Task<string?> ReadAsciiLineAsync()

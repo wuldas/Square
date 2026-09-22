@@ -102,7 +102,11 @@ internal sealed class ProjectTemplateWorkspace : IDisposable
             if (exhausted)
                 return ProjectTemplateContext.Incomplete(
                     "Project ownership search exceeded its discovery budget for '" + documentPath + "'.");
-            return null;
+            // 工作区外的松散模板文件是合法常态而非故障，保留说明供上下文消费，但不作为告警推给客户端。
+            return ProjectTemplateContext.Incomplete(
+                "No MSBuild project declares '" + documentPath +
+                "' as a template file; only built-in components are available for it.",
+                report: false);
         }
         finally
         {
@@ -440,41 +444,9 @@ internal sealed class ProjectTemplateWorkspace : IDisposable
             if (levels >= 64) exhausted = true;
         }
 
-        foreach (var root in _roots)
-        {
-            var directories = new Stack<string>();
-            directories.Push(root);
-            var visited = 0;
-            var budgetExceeded = false;
-            while (directories.Count > 0)
-            {
-                if (visited++ >= 20000)
-                {
-                    budgetExceeded = true;
-                    break;
-                }
-                var directory = directories.Pop();
-                string[] projects;
-                string[] children;
-                try
-                {
-                    projects = Directory.EnumerateFiles(directory, "*.csproj", SearchOption.TopDirectoryOnly).ToArray();
-                    children = Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly).ToArray();
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    continue;
-                }
-                foreach (var project in projects.OrderBy(path => path, StringComparer.Ordinal)) results.Add(Path.GetFullPath(project));
-                foreach (var child in children)
-                {
-                    var name = Path.GetFileName(child);
-                    if (name is ".git" or ".vs" or "bin" or "obj" or "node_modules") continue;
-                    directories.Push(child);
-                }
-            }
-            if (budgetExceeded) exhausted = true;
-        }
+        // 模板文件只可能被自身目录或祖先目录中的工程声明（AdditionalFiles/Compile 都是工程目录相对 glob），
+        // 祖先目录扫描已经覆盖全部可能的所有者；此前的"递归枚举所有工作区根"会让无主文档逐个 MSBuild
+        // 加载工作区里每个工程（实测 58 个工程时 didOpen 超过 180 秒无响应），故不再保留。
         return results;
     }
 
@@ -648,7 +620,8 @@ internal sealed class ProjectTemplateContext
         bool isComplete,
         string? warning,
         string? projectPath,
-        IReadOnlyList<TemplateComponentDescriptor> localComponents)
+        IReadOnlyList<TemplateComponentDescriptor> localComponents,
+        bool shouldReportWarning = true)
     {
         Analysis = analysis;
         CurrentNamespace = currentNamespace;
@@ -657,6 +630,7 @@ internal sealed class ProjectTemplateContext
         Warning = warning;
         ProjectPath = projectPath;
         LocalComponents = localComponents ?? Array.Empty<TemplateComponentDescriptor>();
+        ShouldReportWarning = shouldReportWarning;
     }
 
     public ProjectTemplateContext WithWarning(string warning) => new(
@@ -666,7 +640,8 @@ internal sealed class ProjectTemplateContext
         IsComplete,
         string.IsNullOrWhiteSpace(Warning) ? warning : Warning + Environment.NewLine + warning,
         ProjectPath,
-        LocalComponents);
+        LocalComponents,
+        ShouldReportWarning);
 
     public TemplateProjectAnalysis? Analysis { get; }
     public TemplateCatalog? Catalog => Analysis?.Catalog;
@@ -676,13 +651,16 @@ internal sealed class ProjectTemplateContext
     public string? Warning { get; }
     public string? ProjectPath { get; }
     public IReadOnlyList<TemplateComponentDescriptor> LocalComponents { get; }
+    /// <summary>Warning 是否需要以 window/logMessage 主动上报；预期内的降级（如无工程拥有该文档）为 false。</summary>
+    public bool ShouldReportWarning { get; }
 
-    public static ProjectTemplateContext Incomplete(string warning) => new(
+    public static ProjectTemplateContext Incomplete(string warning, bool report = true) => new(
         null,
         string.Empty,
         0,
         false,
         warning,
         null,
-        Array.Empty<TemplateComponentDescriptor>());
+        Array.Empty<TemplateComponentDescriptor>(),
+        report);
 }

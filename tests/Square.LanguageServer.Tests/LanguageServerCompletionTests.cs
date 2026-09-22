@@ -525,7 +525,8 @@ public sealed class LanguageServerCompletionTests
             jsonrpc = "2.0",
             id = 1,
             method = "initialize",
-            @params = new { rootUri }
+            // linkSupport 按 LSP 规范默认 false；本用例验证 LocationLink 形态，故需显式声明。
+            @params = new { rootUri, capabilities = new { textDocument = new { definition = new { linkSupport = true } } } }
         }));
         await session.SendAsync("""{"jsonrpc":"2.0","method":"initialized","params":{}}""");
 
