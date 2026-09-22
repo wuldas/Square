@@ -702,8 +702,12 @@ public sealed class ForNode<T> : IForNode
     private readonly Func<T, int, Element?>? _buildIndexed;
     private readonly List<(T item, Element? node)> _nodes = new();
     private readonly INotifyCollectionChanged? _observableSource;
+    private readonly List<NotifyCollectionChangedEventArgs> _pendingChanges = [];
     private Element? _parent;
     private int _index;
+    private bool _resetPending;
+    private bool _flushScheduled;
+    private bool _disposed;
 
     /// <summary>初始化 <see cref="ForNode{T}"/> 的新实例。</summary>
     public ForNode(Func<IEnumerable<T>> source, Func<T, Element?> build)
@@ -750,6 +754,10 @@ public sealed class ForNode<T> : IForNode
     /// <inheritdoc/>
     public void Update()
     {
+        // 显式全量同步与 Reset 语义相同：数据源已重新读取，排队的增量事件全部过时。
+        _pendingChanges.Clear();
+        _resetPending = false;
+        _flushScheduled = false;
         Rebuild();
     }
 
@@ -778,8 +786,49 @@ public sealed class ForNode<T> : IForNode
 
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        // 通过 Reconciler 批处理集合变更，而非即时操作树
-        (_parent?.Reconciler ?? Square.UI.Reconciler.Current).ScheduleUpdate(() => ApplyCollectionChange(e));
+        if (_disposed) return;
+
+        // 同一批次内合并集合通知，而非逐事件排队。
+        // Reset 表示「整体重建」，而重建在 flush 时才读取数据源，此时已包含该批次内的全部变更；
+        // 因此 Reset 之前与之后的其他事件都已被覆盖，必须丢弃，否则会在重建结果上重复追加节点。
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+        {
+            _pendingChanges.Clear();
+            _resetPending = true;
+        }
+        else if (!_resetPending)
+        {
+            _pendingChanges.Add(e);
+        }
+
+        ScheduleFlush();
+    }
+
+    /// <summary>每批次只向 Reconciler 排队一次 flush，避免中间态被重复应用。</summary>
+    private void ScheduleFlush()
+    {
+        if (_flushScheduled) return;
+        _flushScheduled = true;
+        (_parent?.Reconciler ?? Square.UI.Reconciler.Current).ScheduleUpdate(FlushPendingChanges);
+    }
+
+    private void FlushPendingChanges()
+    {
+        _flushScheduled = false;
+        if (_disposed) return;
+
+        if (_resetPending)
+        {
+            _resetPending = false;
+            _pendingChanges.Clear();
+            Rebuild();
+            return;
+        }
+
+        if (_pendingChanges.Count == 0) return;
+        var changes = _pendingChanges.ToArray();
+        _pendingChanges.Clear();
+        foreach (var change in changes) ApplyCollectionChange(change);
     }
 
     private void ApplyCollectionChange(NotifyCollectionChangedEventArgs e)
@@ -871,6 +920,10 @@ public sealed class ForNode<T> : IForNode
     /// <inheritdoc/>
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+        _pendingChanges.Clear();
+        _resetPending = false;
         if (_observableSource != null)
             _observableSource.CollectionChanged -= OnCollectionChanged;
         if (_parent != null)

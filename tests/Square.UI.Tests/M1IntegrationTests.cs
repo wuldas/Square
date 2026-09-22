@@ -2797,6 +2797,32 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void ForNodeCoalescesResetFollowedByAddsInOneBatch()
+    {
+        Reconciler.Current.Reset();
+        var root = new View();
+        var items = new ObservableCollection<string> { "stale" };
+        var loop = ForNode.Create(items, item => new Square.Controls.Text(item));
+        loop.AttachTo(root);
+        ((IComponentLifecycle)root).OnAttached();
+
+        Assert.Equal(new[] { "stale" },
+            root.Children.Select(child => Assert.IsType<Square.Controls.Text>(child).TextContent));
+
+        // Clear() 触发 Reset，之后的 Add 事件属于同一批次：Reset 重建时读取的已是最终数据源，
+        // 因此后续事件不得再次应用到重建结果上（否则节点重复）。
+        items.Clear();
+        items.Add("new-a");
+        items.Add("new-b");
+        Reconciler.Current.Flush();
+
+        Assert.Equal(new[] { "new-a", "new-b" },
+            root.Children.Select(child => Assert.IsType<Square.Controls.Text>(child).TextContent));
+
+        loop.Dispose();
+    }
+
+    [Fact]
     public void ComputedBindingUpdatesFromAllReactiveSources()
     {
         var text = new Square.Controls.Text();
