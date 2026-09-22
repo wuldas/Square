@@ -740,26 +740,154 @@ public sealed class LanguageServerHost
                     item.Name)));
         }
 
+        // 无工程上下文时 resolved 为空，但内置组件仍可解析——补全文档应能标明成员所属的组件。
+        var documentationComponent = resolved?.Component;
+        if (documentationComponent == null && project?.Catalog == null)
+            documentationComponent = ResolveComponentDescriptor(
+                TemplateCatalog.BuiltIn, context.TagName, resolutionContext);
+
         var items = completionItems
             .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
-            .Select(item => new
+            .Select(item =>
             {
-                label = item.Label,
-                kind = item.Kind,
-                detail = item.Detail,
-                insertText = item.InsertText,
-                textEdit = new
+                // 用字典而非匿名类型，以便仅在确有内容时输出 documentation（显式 null 会被部分客户端拒绝）。
+                var entry = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
-                    range = ToRange(document.Text, Math.Max(0, offset - context.Prefix.Length), offset),
-                    newText = item.InsertText
-                }
+                    ["label"] = item.Label,
+                    ["kind"] = item.Kind,
+                    ["detail"] = item.Detail,
+                    ["insertText"] = item.InsertText,
+                    ["textEdit"] = new
+                    {
+                        range = ToRange(document.Text, Math.Max(0, offset - context.Prefix.Length), offset),
+                        newText = item.InsertText
+                    }
+                };
+                var documentation = DescribeCompletionItem(
+                    item.Label, context, componentEvents, componentProps, documentationComponent, project, resolutionContext);
+                if (documentation != null) entry["documentation"] = documentation;
+                return (object)entry;
             })
-            .Cast<object>()
             .ToArray();
         // 没有工程上下文（未提供工作区根、无工程拥有该文档或 MSBuild 不可用）时列表必然是残缺的，
         // 必须告知客户端可继续请求，否则会丢掉工程级组件。
         return new { isIncomplete = project?.IsComplete != true, items };
+    }
+
+    /// <summary>
+    /// 补全项的文档显示。查找顺序与 hover 一致（组件事件 → 组件属性 → 标准事件 → 内置属性别名），
+    /// 并额外标出声明者与来源文件，使补全浮层里能直接判断该选哪一项。
+    /// </summary>
+    private static object? DescribeCompletionItem(
+        string label,
+        TemplateCompletionContext context,
+        TemplateComponentEventDescriptor[] componentEvents,
+        TemplatePropDescriptor[] componentProps,
+        TemplateComponentDescriptor? component,
+        ProjectTemplateContext? project,
+        TemplateResolutionContext resolutionContext)
+    {
+        var markdown = context.Kind switch
+        {
+            TemplateCompletionKind.Tag => DescribeTagCompletion(label, project, resolutionContext),
+            TemplateCompletionKind.Attribute or TemplateCompletionKind.Binding or TemplateCompletionKind.Event =>
+                DescribeMemberCompletion(label, context.TagName, componentEvents, componentProps, component),
+            _ => null
+        };
+        return string.IsNullOrWhiteSpace(markdown) ? null : new { kind = "markdown", value = markdown };
+    }
+
+    private static string? DescribeTagCompletion(
+        string label,
+        ProjectTemplateContext? project,
+        TemplateResolutionContext resolutionContext)
+    {
+        var catalog = project?.Catalog ?? TemplateCatalog.BuiltIn;
+        var component = ResolveComponentDescriptor(catalog, label, resolutionContext)
+            ?? catalog.Components.FirstOrDefault(candidate =>
+                candidate.LocalName.Equals(label, StringComparison.OrdinalIgnoreCase) ||
+                label.EndsWith(":" + candidate.LocalName, StringComparison.OrdinalIgnoreCase));
+        if (component == null) return null;
+        var builder = new StringBuilder();
+        builder.Append("**`<").Append(label).Append(">`**\n\n`").Append(component.TypeName).Append('`');
+        builder.Append("\n\n").Append(component.IsBuiltIn ? "Square built-in control" : "Square component");
+        // 内置控件的 SourcePath 由 TemplateCatalog 从编译单元解析，可让补全项直接指向框架源码。
+        var source = DescribeSourcePath(component.SourcePath, project);
+        if (source != null) builder.Append(" · `").Append(source).Append('`');
+        return builder.ToString();
+    }
+
+    private static string? DescribeMemberCompletion(
+        string label,
+        string tagName,
+        TemplateComponentEventDescriptor[] componentEvents,
+        TemplatePropDescriptor[] componentProps,
+        TemplateComponentDescriptor? component)
+    {
+        var name = NormalizeComponentPropertyName(label);
+        var eventName = NormalizeComponentEventName(label);
+        var componentEvent = componentEvents.FirstOrDefault(item =>
+            NormalizeEventAlias(item.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase));
+        if (componentEvent != null)
+        {
+            var detail = componentEvent.HasDetail ? "CustomEvent<" + componentEvent.DetailTypeName + ">" : "Event";
+            return DescribeMember(label, detail, component, tagName);
+        }
+
+        var property = componentProps.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (property != null)
+            return DescribeMember(
+                label,
+                property.TypeName + (property.Required ? " (required)" : string.Empty),
+                component,
+                tagName);
+
+        var standardEvent = TemplateCatalog.BuiltIn.Events.FirstOrDefault(item =>
+            NormalizeEventAlias(item.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase));
+        if (standardEvent != null)
+            return DescribeMember(label, "Square event: " + standardEvent.CanonicalName, component, tagName);
+
+        var alias = TemplateCatalog.BuiltIn.Properties.FirstOrDefault(item =>
+            item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return alias == null
+            ? null
+            : DescribeMember(label, alias.CanonicalName + " (" + alias.ValueKind + ")", component, tagName);
+    }
+
+    private static string DescribeMember(
+        string label,
+        string detail,
+        TemplateComponentDescriptor? component,
+        string tagName)
+    {
+        var builder = new StringBuilder();
+        builder.Append("**`").Append(label).Append("`**\n\n`").Append(detail).Append('`');
+        // 用 Available on 而非 Declared by：id/class/style 这类成员来自 Element 基类，并非组件自身声明。
+        if (!string.IsNullOrWhiteSpace(component?.TypeName) && !string.IsNullOrWhiteSpace(tagName))
+            builder.Append("\n\nAvailable on `<").Append(tagName).Append(">` · `").Append(component!.TypeName).Append('`');
+        return builder.ToString();
+    }
+
+    /// <summary>把绝对源码路径转成可读短路径：优先相对工程目录，跨出工程时退化为仓库相对形态。</summary>
+    private static string? DescribeSourcePath(string? sourcePath, ProjectTemplateContext? project)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath)) return null;
+        var projectPath = project?.ProjectPath;
+        if (string.IsNullOrWhiteSpace(projectPath)) return sourcePath;
+        var projectDirectory = Path.GetDirectoryName(projectPath);
+        if (string.IsNullOrWhiteSpace(projectDirectory)) return sourcePath;
+        try
+        {
+            var relative = Path.GetRelativePath(projectDirectory, sourcePath).Replace('\\', '/');
+            // 框架源码通常在工程之外（samples/ 与 src/ 平级），去掉前导 ../ 后即为仓库相对形态。
+            while (relative.StartsWith("../", StringComparison.Ordinal)) relative = relative.Substring(3);
+            return relative.Length == 0 || relative.StartsWith("..", StringComparison.Ordinal) ? sourcePath : relative;
+        }
+        catch (ArgumentException)
+        {
+            return sourcePath;
+        }
     }
 
     private async Task<ProjectTemplateContext?> GetProjectContextAsync(string sourcePath, CancellationToken cancellationToken)

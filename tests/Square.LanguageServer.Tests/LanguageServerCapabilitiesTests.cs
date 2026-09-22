@@ -101,6 +101,62 @@ public sealed class LanguageServerCapabilitiesTests
         Assert.Equal(0, await locationSession.ShutdownAsync());
     }
 
+    /// <summary>补全浮层里的文档显示：标签项给出类型与来源，成员项给出类型与所属组件。</summary>
+    [Fact]
+    public async Task CompletionItemsCarryMarkdownDocumentation()
+    {
+        using var session = LanguageServerSession.Start();
+        await session.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await session.ReadResponseAsync(1);
+
+        const string uri = "file:///C:/Square/Docs.sqx";
+        await session.OpenAsync(uri, "<template><But</template>");
+        var completion = await session.RequestAsync(
+            "textDocument/completion",
+            "{\"textDocument\":{\"uri\":\"" + uri + "\"},\"position\":{\"line\":0,\"character\":14}}");
+
+        var button = ItemDocumentation(completion, "Button");
+        Assert.Equal("markdown", button.Kind);
+        Assert.Contains("Square.Controls.Button", button.Value, StringComparison.Ordinal);
+        Assert.Contains("built-in", button.Value, StringComparison.Ordinal);
+        Assert.Equal(0, await session.ShutdownAsync());
+    }
+
+    [Fact]
+    public async Task CompletionMemberDocumentationNamesDeclaringComponent()
+    {
+        using var session = LanguageServerSession.Start();
+        await session.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
+        _ = await session.ReadResponseAsync(1);
+
+        const string uri = "file:///C:/Square/Members.sqx";
+        await session.OpenAsync(uri, "<template><Button </template>");
+        var completion = await session.RequestAsync(
+            "textDocument/completion",
+            "{\"textDocument\":{\"uri\":\"" + uri + "\"},\"position\":{\"line\":0,\"character\":18}}");
+
+        using var document = JsonDocument.Parse(completion);
+        var documented = document.RootElement.GetProperty("result").GetProperty("items").EnumerateArray()
+            .Where(item => item.TryGetProperty("documentation", out _))
+            .Select(item => item.GetProperty("documentation"))
+            .ToArray();
+
+        Assert.NotEmpty(documented);
+        Assert.All(documented, entry => Assert.Equal("markdown", entry.GetProperty("kind").GetString()));
+        Assert.Contains(documented, entry =>
+            entry.GetProperty("value").GetString()!.Contains("Available on `<Button>`", StringComparison.Ordinal));
+        Assert.Equal(0, await session.ShutdownAsync());
+    }
+
+    private static (string Kind, string Value) ItemDocumentation(string response, string label)
+    {
+        using var document = JsonDocument.Parse(response);
+        var item = document.RootElement.GetProperty("result").GetProperty("items").EnumerateArray()
+            .First(candidate => candidate.GetProperty("label").GetString() == label);
+        var documentation = item.GetProperty("documentation");
+        return (documentation.GetProperty("kind").GetString()!, documentation.GetProperty("value").GetString()!);
+    }
+
     private static async Task<string> DefinitionAsync(LanguageServerSession session)
     {
         const string cardUri = "file:///C:/Square/Card.sqx";
