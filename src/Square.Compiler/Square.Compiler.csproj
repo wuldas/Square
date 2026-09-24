@@ -36,6 +36,10 @@
     <InternalsVisibleTo Include="Square.LanguageServer.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Square\UI\Html\HtmlTagCatalog.cs" Link="HtmlTagCatalog.cs" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <Compile Remove="Markup\**\*.cs" />
   </ItemGroup>

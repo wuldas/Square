@@ -137,7 +137,7 @@ internal sealed class SqvLexer
                 continue;
             }
 
-            if (char.IsWhiteSpace(c))
+            if (_inTag && char.IsWhiteSpace(c))
             {
                 SkipWhitespace();
                 continue;
@@ -154,7 +154,7 @@ internal sealed class SqvLexer
             {
                 var (line, column, offset) = (_line, _column, _position);
                 var text = ReadText();
-                if (!string.IsNullOrWhiteSpace(text))
+                if (text.Length != 0)
                     tokens.Add(New(SqvTokenType.Text, text, line, column, offset));
                 continue;
             }

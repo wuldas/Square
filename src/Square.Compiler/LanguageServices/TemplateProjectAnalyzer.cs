@@ -60,7 +60,7 @@ internal static class TemplateProjectAnalyzer
             foreach (var element in EnumerateElements(document.Syntax.Template.Ir.Roots))
             {
                 if (element.TagName.IndexOf(':') < 0 &&
-                    (directiveCatalog.IsDirective(element.TagName) ||
+                    (!catalog.IsExactHtmlTag(element.TagName) && directiveCatalog.IsDirective(element.TagName) ||
                      element.TagName.Equals("Fragment", StringComparison.OrdinalIgnoreCase) ||
                      element.TagName.Equals("template", StringComparison.OrdinalIgnoreCase)))
                     continue;
@@ -120,12 +120,12 @@ internal static class TemplateProjectAnalyzer
                 sourceMappings.AddRange(emitter.SourceMappings);
                 CollectEventContractDeclarations(catalog, document, eventContractDeclarations);
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException exception)
             {
                 diagnostics.Add(new SquareDiagnostic(
                     "SQXE001",
                     SquareDiagnosticSeverity.Error,
-                    "Template '" + input.Path + "' could not be emitted because an element could not be resolved.",
+                    "Template '" + input.Path + "' could not be emitted: " + exception.Message,
                     new SquareSourceRange(0, 0),
                     input.Path));
             }
@@ -283,6 +283,20 @@ internal static class TemplateProjectAnalyzer
                 : catalog.ResolveComponent(element.TagName, resolutionContext);
             if (resolution.Status == TemplateElementResolutionStatus.Resolved)
             {
+                if (resolution.Component.Kind == TemplateElementKind.Html)
+                {
+                    foreach (var attribute in element.Attributes)
+                    {
+                        if (attribute.Kind != TemplateIrAttributeKind.Event || attribute.IsExpression) continue;
+                        hasErrors = true;
+                        diagnostics.Add(new SquareDiagnostic(
+                            "SQXE007",
+                            SquareDiagnosticSeverity.Error,
+                            "HTML inline event attribute '" + attribute.Name + "' is prohibited; use Square event binding.",
+                            attribute.Origin,
+                            document.SourcePath));
+                    }
+                }
                 var props = catalog.GetProps(resolution.Component);
                 foreach (var prop in props)
                 {

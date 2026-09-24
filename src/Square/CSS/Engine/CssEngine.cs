@@ -793,12 +793,16 @@ public sealed class CssEngine
         if (selector.AttributeOperator == AttributeSelectorOperator.Invalid || selector.Name.Length == 0)
             return false;
         if (selector.AttributeOperator == AttributeSelectorOperator.Presence)
-            return Element.Properties.HasValue(selector.Name);
+            return Element is Square.UI.Html.HtmlElement htmlPresence
+                ? htmlPresence.HasAttribute(selector.Name)
+                : Element.Properties.HasValue(selector.Name);
 
-        var actualValue = Element.GetProperty<object>(selector.Name);
+        var actualValue = Element is Square.UI.Html.HtmlElement html
+            ? html.GetAttribute(selector.Name)
+            : Convert.ToString(Element.GetProperty<object>(selector.Name), CultureInfo.InvariantCulture);
         var expected = selector.AttributeValue;
         if (actualValue == null || expected == null) return false;
-        var actual = Convert.ToString(actualValue, CultureInfo.InvariantCulture) ?? "";
+        var actual = actualValue;
         var comparison = selector.AttributeCaseSensitivity == AttributeCaseSensitivity.Insensitive
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;

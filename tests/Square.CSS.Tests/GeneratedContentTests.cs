@@ -195,6 +195,26 @@ public sealed class GeneratedContentTests
         Assert.Null(second.Style.Get("selected"));
     }
 
+    [Fact]
+    public void HtmlOrderedListStartsAndReversesWithoutDuplicateMarkerRows()
+    {
+        var list = new Square.UI.Html.HtmlElement("ol");
+        list.SetAttribute("start", "5");
+        list.SetAttribute("reversed", "");
+        var first = new Square.UI.Html.HtmlElement("li");
+        first.Children.Add(new Square.UI.Html.HtmlTextRun("first"));
+        var second = new Square.UI.Html.HtmlElement("li");
+        second.Children.Add(new Square.UI.Html.HtmlTextRun("second"));
+        list.Children.Add(first);
+        list.Children.Add(second);
+
+        new CssEngine().ApplyStylesToTree(list);
+
+        Assert.Equal("5. ", Assert.IsAssignableFrom<Square.Controls.Text>(first.Children[0]).TextContent);
+        Assert.Equal("4. ", Assert.IsAssignableFrom<Square.Controls.Text>(second.Children[0]).TextContent);
+        Assert.Equal("inline", first.Children[0].Style.Get("display"));
+    }
+
     private static CssEngine CreateEngine(string css)
     {
         var engine = new CssEngine();

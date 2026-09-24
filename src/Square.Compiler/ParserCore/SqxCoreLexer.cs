@@ -172,7 +172,7 @@ namespace Square.Compiler.ParserCore
                     var column = _column;
                     var offset = _position;
                     var text = ReadText();
-                    if (!string.IsNullOrWhiteSpace(text))
+                    if (text.Length != 0)
                         tokens.Add(New(CoreTokenType.Text, text, line, column, offset));
                 }
             }

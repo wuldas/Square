@@ -2,6 +2,7 @@ using Square.Controls;
 using Square.Graphics;
 using Square.Native.Html;
 using Square.UI;
+using Square.UI.Html;
 using Square.UI.Svg;
 using Xunit;
 using SquareImage = Square.Controls.Image;
@@ -266,6 +267,139 @@ public sealed class HtmlExporterTests
         Assert.Contains("id=\"save\"", result.BodyHtml);
         Assert.DoesNotContain("<!doctype html>", result.BodyHtml);
         Assert.DoesNotContain("<script", result.Html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ExportKeepsHtmlMixedTextVoidAndSvgOrder()
+    {
+        var article = new HtmlElement("article");
+        var paragraph = new HtmlElement("p");
+        paragraph.Children.Add(new HtmlTextRun("Hello "));
+        var strong = new HtmlElement("strong");
+        strong.Children.Add(new HtmlTextRun("世界"));
+        paragraph.Children.Add(strong);
+        paragraph.Children.Add(new HtmlTextRun(" !"));
+        paragraph.Children.Add(new HtmlElement("br"));
+        paragraph.Children.Add(new HtmlTextRun("next"));
+        article.Children.Add(paragraph);
+        var checkbox = new HtmlElement("input");
+        checkbox.SetAttribute("type", "checkbox");
+        checkbox.SetAttribute("checked", "");
+        article.Children.Add(checkbox);
+        var svg = new SVGSVGElement();
+        var circle = new SVGCircleElement();
+        circle.SetProperty("Radius", 8);
+        svg.Children.Add(circle);
+        article.Children.Add(svg);
+
+        var result = HtmlExporter.Export(article, new HtmlExportOptions { IncludeDocument = false });
+
+        Assert.Contains("Hello ", result.BodyHtml);
+        Assert.Contains("<strong", result.BodyHtml);
+        Assert.Contains("世界</strong> !<br", result.BodyHtml);
+        Assert.Contains("<input", result.BodyHtml);
+        Assert.Contains(" checked", result.BodyHtml);
+        Assert.DoesNotContain("</br>", result.BodyHtml);
+        Assert.DoesNotContain("</input>", result.BodyHtml);
+        Assert.Contains("<svg", result.BodyHtml);
+        Assert.Contains("<circle", result.BodyHtml);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ExportRejectsActiveHtmlPayloadAndUnsafeUrls()
+    {
+        var root = new HtmlElement("article");
+        var link = new HtmlElement("a");
+        link.SetAttribute("href", "javascript:alert(1)");
+        link.SetAttribute("onclick", "alert(2)");
+        link.SetAttribute("data-state", "a&b");
+        link.SetAttribute("title", "<safe>");
+        link.Tooltip = "Square fallback";
+        link.Children.Add(new HtmlTextRun("<click>"));
+        root.Children.Add(link);
+        var image = new HtmlElement("img");
+        image.SetAttribute("srcset", "safe.png 1x, javascript:alert(3) 2x");
+        root.Children.Add(image);
+        var script = new HtmlElement("script");
+        script.Children.Add(new HtmlTextRun("alert(4)"));
+        root.Children.Add(script);
+        var iframe = new HtmlElement("iframe");
+        iframe.SetAttribute("src", "https://example.test/");
+        root.Children.Add(iframe);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions { IncludeDocument = false });
+
+        Assert.Contains("data-state=\"a&amp;b\"", result.BodyHtml);
+        Assert.Contains("&lt;click&gt;", result.BodyHtml);
+        Assert.Contains("title=\"&lt;safe&gt;\"", result.BodyHtml);
+        Assert.DoesNotContain("Square fallback", result.BodyHtml);
+        Assert.DoesNotContain("javascript:", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("onclick", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("srcset", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<script", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<iframe", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEmpty(result.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("java\nscript:alert(1)")]
+    [InlineData("java\tscript:alert(1)")]
+    [InlineData("javascript:alert(1)")]
+    public void HtmlHrefRejectsBrowserNormalizedScriptSchemes(string href)
+    {
+        var link = new HtmlElement("a");
+        link.SetAttribute("href", href);
+        link.Children.Add(new HtmlTextRun("safe text"));
+
+        var result = HtmlExporter.Export(link, new HtmlExportOptions { IncludeDocument = false });
+
+        Assert.DoesNotContain(" href=", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEmpty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ClosedDetailsRetainContentForBrowserDisclosure()
+    {
+        var details = new HtmlElement("details");
+        var summary = new HtmlElement("summary");
+        summary.Children.Add(new HtmlTextRun("More"));
+        var content = new HtmlElement("p");
+        content.Children.Add(new HtmlTextRun("Hidden detail"));
+        details.Children.Add(summary);
+        details.Children.Add(content);
+
+        var result = HtmlExporter.Export(details, new HtmlExportOptions { IncludeDocument = false });
+
+        Assert.Contains("<details", result.BodyHtml);
+        Assert.Contains("<summary", result.BodyHtml);
+        Assert.Contains("Hidden detail", result.BodyHtml);
+    }
+
+    [Fact]
+    public void HtmlDocumentRootMergesHeadAndBodyIntoOneShell()
+    {
+        var html = new HtmlElement("html");
+        html.SetAttribute("lang", "zh");
+        var head = new HtmlElement("head");
+        var title = new HtmlElement("title");
+        title.Children.Add(new HtmlTextRun("文档标题"));
+        head.Children.Add(title);
+        html.Children.Add(head);
+        var body = new HtmlElement("body");
+        var paragraph = new HtmlElement("p");
+        paragraph.Children.Add(new HtmlTextRun("正文"));
+        body.Children.Add(paragraph);
+        html.Children.Add(body);
+
+        var result = HtmlExporter.Export(html);
+
+        Assert.Equal(1, CountOccurrences(result.Html, "<!doctype html>"));
+        Assert.Equal(1, CountOccurrences(result.Html, "<html"));
+        Assert.Equal(1, CountOccurrences(result.Html, "<head>"));
+        Assert.Equal(1, CountOccurrences(result.Html, "<body"));
+        Assert.Contains("<title>文档标题</title>", result.Html);
+        Assert.Contains("正文", result.BodyHtml);
     }
 
     private static int CountOccurrences(string value, string needle)

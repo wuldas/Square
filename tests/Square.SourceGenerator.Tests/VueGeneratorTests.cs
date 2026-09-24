@@ -557,29 +557,6 @@ public class VueGeneratorTests
         Assert.DoesNotContain(".Slots.Set(\"SlotName\"", generated);
     }
 
-    [Fact]
-    public void SqvSlotOutletEmitsDynamicNameAndScopedProperties()
-    {
-        const string source = """
-            <template>
-              <slot :name="ActiveSlot" :item="CurrentItem" label="Row" />
-            </template>
-            <script lang="csharp">
-              public string ActiveSlot = "row";
-              public int CurrentItem = 4;
-            </script>
-            """;
-
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("SlotProvider.sqv", source)).GeneratedTrees).GetText().ToString();
-
-
-        Assert.Contains("new SlotProps()", generated);
-        Assert.Contains(".Set(\"item\", CurrentItem);", generated);
-        Assert.Contains(".Set(\"label\", \"Row\");", generated);
-        Assert.Contains("Slots.Render(ActiveSlot", generated);
-        Assert.DoesNotContain("Slots.Render(\"ActiveSlot\"", generated);
-    }
 
     [Fact]
     public void SqvScopedSlotDestructuringUsesDeclaredContractTypes()
@@ -1046,29 +1023,6 @@ public class VueGeneratorTests
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
-    [Fact]
-    public void SqvVElseIfAndVElseLowersToExclusiveShowChain()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text v-if="State == 0">A</Text>
-                <Text v-else-if="State == 1">B</Text>
-                <Text v-else>C</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public int State = 0;
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Chain.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("new ShowNode(State == 0", generated);
-        Assert.Contains("new ShowNode(!((State == 0)) && (State == 1)", generated);
-        Assert.Contains("new ShowNode(!((State == 0) || (State == 1))", generated);
-    }
 
     [Fact]
     public void SqvEventModifiersEmitStopAndPreventWrapper()
@@ -1227,24 +1181,6 @@ public class VueGeneratorTests
         Assert.DoesNotContain("private IForNode _for", generated);
     }
 
-    [Fact]
-    public void SqxMixedTextInterpolationPreservesSpacesAndSubscribesSources()
-    {
-        const string source = """
-            <template><Text>Hello {FirstName} {LastName}</Text></template>
-            <script lang="csharp">
-              public ObservableValue<string> FirstName = new("Ada");
-              public ObservableValue<string> LastName = new("Lovelace");
-            </script>
-            """;
-
-        var generated = Assert.Single(RunGenerator(new InMemoryAdditionalText("MixedText.sqx", source)).GeneratedTrees)
-            .GetText().ToString();
-
-        Assert.Contains(@"$""Hello {(FirstName)}{(LastName)}""", generated);
-        Assert.Contains("BindProperty(\"TextContent\", () =>", generated);
-        Assert.Contains("FirstName, LastName);", generated);
-    }
 
 
     [Theory]

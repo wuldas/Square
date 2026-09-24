@@ -1,0 +1,26 @@
+<template>
+  <View class="html-regression-page">
+    <article class="html-regression-article">
+      <h2>Square HTML5 regression</h2>
+      <p>Hello <strong>世界</strong> !<br>next line uses native HTML text layout.</p>
+      <p><a href="https://example.com/">Safe link</a> beside <mark>highlighted text</mark>.</p>
+      <ul><li>First item</li><li>Second item<ul><li>Nested item</li></ul></li></ul>
+      <table class="html-regression-table">
+        <thead><tr><th>Element</th><th>Native result</th></tr></thead>
+        <tbody><tr><td>Text</td><td>Measured and painted</td></tr><tr><td colspan="2">Spanning cell</td></tr></tbody>
+      </table>
+      <figure><img class="html-regression-image" src="Assets/html-preview.png" alt="Square example image"><figcaption>Static image proxy</figcaption></figure>
+      <label><input type="checkbox" checked> Checkbox initially selected</label>
+      <p><input type="text" value="Editable text" placeholder="Type here"></p>
+      <progress value="65" max="100"></progress>
+      <svg width="90" height="45" viewBox="0 0 90 45"><circle cx="24" cy="22" r="14" fill="#2b78ee" /></svg>
+    </article>
+  </View>
+</template>
+<style>
+  .html-regression-page { display: block; width: 100%; height: 100%; padding: 24px; background: #ffffff; color: #1e293b; font-family: "Segoe UI", Arial, sans-serif; }
+  .html-regression-article { display: block; max-width: 760px; }
+  .html-regression-table { border-spacing: 0; border: 1px solid #94a3b8; }
+  .html-regression-table td, .html-regression-table th { border: 1px solid #cbd5e1; padding: 6px; }
+  .html-regression-image { width: 180px; height: 100px; }
+</style>

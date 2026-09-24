@@ -25,6 +25,11 @@ public static class ElementDiagnostics
     public static readonly DiagnosticDescriptor SQXE006_InvalidEventContract = new(
         "SQXE006", "Invalid element event contract", "{0}", Category, DiagnosticSeverity.Error, true);
 
+    public static readonly DiagnosticDescriptor SQXE007_ForbiddenHtmlAttribute = new(
+        "SQXE007", "Forbidden HTML attribute",
+        "{0}",
+        Category, DiagnosticSeverity.Error, true);
+
     public static DiagnosticDescriptor Get(string id) => id switch
     {
         "SQXE002" => SQXE002_UnknownPrefix,
@@ -32,6 +37,7 @@ public static class ElementDiagnostics
         "SQXE004" => SQXE004_AmbiguousElement,
         "SQXE005" => SQXE005_DuplicateIdentity,
         "SQXE006" => SQXE006_InvalidEventContract,
+        "SQXE007" => SQXE007_ForbiddenHtmlAttribute,
         _ => SQXE001_InvalidDeclaration
     };
 

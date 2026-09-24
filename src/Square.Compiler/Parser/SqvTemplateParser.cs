@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
 using Square.Compiler.LanguageServices;
+using Square.UI.Html;
 
 namespace Square.Compiler.Parser;
 
@@ -34,13 +35,13 @@ internal sealed class SqvTemplateParser
         var raw = new List<SqxNode>();
         while (Peek().Type != SqvTokenType.Eof)
         {
-            var node = ParseNode();
+            var node = ParseNode(htmlContext: false);
             if (node != null) raw.Add(node);
         }
         return _tolerant ? raw : RewriteSiblings(raw);
     }
 
-    private SqxNode ParseNode()
+    private SqxNode ParseNode(bool htmlContext)
     {
         var token = Peek();
         switch (token.Type)
@@ -49,7 +50,17 @@ internal sealed class SqvTemplateParser
                 return ParseElement();
             case SqvTokenType.Text:
                 _index++;
-                return new SqxText { Text = token.Text.Trim(), Kind = SqxNodeKind.Text, Line = token.Line, Column = token.Column, Position = Absolute(token.Offset) };
+                if (!htmlContext && string.IsNullOrWhiteSpace(token.Text)) return null;
+                // HTML 上下文保留有意义的空白（混合文本与 pre/textarea 原文）；
+                // 其余上下文保持既有的首尾修剪行为。
+                return new SqxText
+                {
+                    Text = htmlContext ? token.Text : token.Text.Trim(),
+                    Kind = SqxNodeKind.Text,
+                    Line = token.Line,
+                    Column = token.Column,
+                    Position = Absolute(token.Offset)
+                };
             case SqvTokenType.Interpolation:
                 _index++;
                 return new SqxExpression { Expression = token.Text, Kind = SqxNodeKind.Expression, Line = token.Line, Column = token.Column, Position = Absolute(token.Offset) };
@@ -107,6 +118,13 @@ internal sealed class SqvTemplateParser
         }
 
         Expect(SqvTokenType.CloseTag);
+        if (IsHtmlVoidElement(tagName))
+        {
+            // 识别的 HTML void 元素（精确小写或 html: 前缀）在 '>' 处即完整，
+            // 后续兄弟节点不会被吞入子节点列表。
+            return element;
+        }
+        var childContext = IsHtmlElement(tagName);
         while (true)
         {
             var t = Peek();
@@ -126,7 +144,7 @@ internal sealed class SqvTemplateParser
                 _index++;
                 return element;
             }
-            var child = ParseNode();
+            var child = ParseNode(childContext);
             if (child != null) element.Children.Add(child);
         }
         throw Error("Unclosed element <" + tagName + ">", open.Offset);
@@ -184,6 +202,25 @@ internal sealed class SqvTemplateParser
             _pendingAttrs.Clear();
             return new SqxAttribute { Name = name, RawValue = value, Line = line, Position = position };
         }
+    }
+
+    /// <summary>仅精确小写的 HTML 目录 void 标签或 html: 前缀标签被视为无闭合元素；大写 Square 名称不适用。</summary>
+    private static bool IsHtmlVoidElement(string tagName)
+    {
+        if (string.IsNullOrEmpty(tagName)) return false;
+        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
+            return HtmlTagCatalog.IsVoid(tagName.Substring("html:".Length).ToLowerInvariant());
+        return HtmlTagCatalog.IsVoid(tagName);
+    }
+
+    /// <summary>精确小写命中 HTML 目录或带 html: 前缀即 HTML 元素；不带前缀的 template 是既有片段包装，不算 HTML。</summary>
+    private static bool IsHtmlElement(string tagName)
+    {
+        if (string.IsNullOrEmpty(tagName)) return false;
+        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
+            return HtmlTagCatalog.IsTag(tagName.Substring("html:".Length).ToLowerInvariant());
+        if (tagName.Equals("template", StringComparison.Ordinal)) return false;
+        return HtmlTagCatalog.IsTag(tagName);
     }
 
     private void ValidateElementName(SqvToken token, bool closing)
@@ -435,7 +472,7 @@ internal static class SqvAttributeConverter
             if (string.IsNullOrWhiteSpace(value)) { element.Attributes.RemoveAt(i); i--; continue; }
 
             var modifiers = GetModifiers(name);
-            var property = GetModelProperty(element.TagName);
+            var property = GetModelProperty(element);
             element.Attributes.RemoveAt(i);
             i--;
             if (property == null)
@@ -452,7 +489,7 @@ internal static class SqvAttributeConverter
                         "SQV0002");
             }
 
-            var eventName = GetModelEvent(element.TagName, modifiers.Contains("lazy"));
+            var eventName = GetModelEvent(element, modifiers.Contains("lazy"));
             var writeModifiers = new List<string>();
             if (modifiers.Contains("trim")) writeModifiers.Add("trim");
             if (modifiers.Contains("number")) writeModifiers.Add("number");
@@ -460,7 +497,7 @@ internal static class SqvAttributeConverter
             element.Attributes.Add(ExprAttr(property.Value.AttributeName, value, attr.Line, attr.Position));
             var eventAttribute = ExprAttr(ToEventAttribute(eventName), value, attr.Line, attr.Position);
             eventAttribute.IsModelEvent = true;
-            eventAttribute.ModelMemberName = GetModelMember(element.TagName);
+            eventAttribute.ModelMemberName = GetModelMember(element);
             eventAttribute.ModelModifiers = writeModifiers;
             element.Attributes.Add(eventAttribute);
         }
@@ -676,9 +713,10 @@ internal static class SqvAttributeConverter
         return "on" + char.ToUpperInvariant(eventName[0]) + eventName.Substring(1);
     }
 
-    private static ModelProperty? GetModelProperty(string tagName)
+    private static ModelProperty? GetModelProperty(SqxElement element)
     {
-        tagName = GetBuiltInLocalName(tagName) ?? tagName;
+        if (IsHtmlCheckableInput(element)) return new ModelProperty("checked");
+        var tagName = GetBuiltInLocalName(element.TagName) ?? element.TagName;
         if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
             return new ModelProperty("checked");
@@ -689,22 +727,35 @@ internal static class SqvAttributeConverter
         return IsBuiltInTag(tagName) ? null : new ModelProperty("Value");
     }
 
-    private static string GetModelEvent(string tagName, bool lazy)
+    private static string GetModelEvent(SqxElement element, bool lazy)
     {
-        tagName = GetBuiltInLocalName(tagName) ?? tagName;
+        if (IsHtmlCheckableInput(element)) return "change";
+        var tagName = GetBuiltInLocalName(element.TagName) ?? element.TagName;
         if (string.Equals(tagName, "Input", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(tagName, "TextArea", StringComparison.OrdinalIgnoreCase))
             return lazy ? "change" : "input";
         return "change";
     }
 
-    private static string GetModelMember(string tagName)
+    private static string GetModelMember(SqxElement element)
     {
-        tagName = GetBuiltInLocalName(tagName) ?? tagName;
+        if (IsHtmlCheckableInput(element)) return "checked";
+        var tagName = GetBuiltInLocalName(element.TagName) ?? element.TagName;
         if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
             return "IsChecked";
         return "Value";
+    }
+
+    private static bool IsHtmlCheckableInput(SqxElement element)
+    {
+        var tag = element.TagName;
+        if (tag != "input" && !(tag.StartsWith("html:", StringComparison.OrdinalIgnoreCase) &&
+                                  tag.Substring(5).Equals("input", StringComparison.OrdinalIgnoreCase))) return false;
+        var type = element.Attributes.FirstOrDefault(attribute =>
+            attribute.Name.Equals("type", StringComparison.OrdinalIgnoreCase))?.RawValue;
+        return type is not null && (type.Equals("checkbox", StringComparison.OrdinalIgnoreCase) ||
+                                    type.Equals("radio", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsBuiltInTag(string tagName) => GetBuiltInLocalName(tagName) != null;

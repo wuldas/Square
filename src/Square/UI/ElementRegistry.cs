@@ -1,3 +1,5 @@
+using Square.UI.Html;
+
 namespace Square.UI;
 
 /// <summary>AOT-friendly registry used by window documents to create elements by tag name.</summary>
@@ -17,6 +19,14 @@ public static class ElementRegistry
     internal static Element Create(string tagName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tagName);
+        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
+        {
+            var htmlName = tagName[5..].ToLowerInvariant();
+            if (HtmlTagCatalog.IsTag(htmlName)) return new HtmlElement(htmlName);
+            throw new InvalidOperationException($"Unknown element tag '{tagName}'. Register it with ElementRegistry.Register.");
+        }
+        if (HtmlTagCatalog.IsTag(tagName))
+            return new HtmlElement(tagName);
         if (!Factories.TryGetValue(tagName, out var factory))
             throw new InvalidOperationException(
                 $"Unknown element tag '{tagName}'. Register it with ElementRegistry.Register.");

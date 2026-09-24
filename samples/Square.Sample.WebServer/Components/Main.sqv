@@ -143,6 +143,16 @@
                 </View>
               </View>
 
+              <article class="html-preview">
+                <h2>HTML5 inside Square</h2>
+                <p>Hello <strong>世界</strong> !<br>next line keeps its spacing.</p>
+                <ul><li>Native article and list</li><li>Square event bridge</li></ul>
+                <label><input id="html-preview-check" type="checkbox" checked @change="HtmlCheckChanged"> Subscribe</label>
+                <label>Name <input id="html-preview-name" type="text" value="Ada" @input="HtmlInputEdited"></label>
+                <button id="html-preview-button" type="button" @click="HtmlButtonClicked">Confirm HTML state</button>
+                <Text id="html-preview-status" :text="HtmlStatus" />
+              </article>
+
               <View class="message-block user-message">
                 <Text class="message-body" text="先做 UI，参考 bomp 的工作区轨道、会话栏和右侧上下文。" />
               </View>
@@ -282,6 +292,22 @@
   public ObservableValue<string> FilesTabClass = new("context-tab");
   public ObservableValue<string> AcceptText = new("Accept");
   public ObservableValue<string> StatusText = new("Interactive preview ready");
+  public ObservableValue<string> HtmlStatus = new("HTML ready");
+
+  private void HtmlCheckChanged(Event e)
+  {
+    HtmlStatus.Value = ((Square.UI.Html.HtmlElement)e.Target!).HasAttribute("checked") ? "Subscribed" : "Unsubscribed";
+  }
+
+  private void HtmlInputEdited(Event e)
+  {
+    HtmlStatus.Value = "Name: " + ((Square.UI.Html.HtmlElement)e.Target!).GetAttribute("value");
+  }
+
+  private void HtmlButtonClicked(Event e)
+  {
+    HtmlStatus.Value = "HTML button clicked";
+  }
 
   private void OnSessionSearch(Event e)
   {
@@ -336,6 +362,13 @@
 </script>
 
 <style>
+  .html-preview { display: block; margin: 12px 0; padding: 14px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; color: #17212f; }
+  .html-preview h2 { font-size: 18px; margin: 0 0 8px; }
+  .html-preview p { margin: 0 0 8px; }
+  .html-preview label { display: block; margin: 6px 0; }
+  .html-preview input { margin: 4px; }
+  .html-preview button { margin: 8px 12px 8px 0; }
+  .html-preview #html-preview-status { display: block; margin-top: 4px; }
   .window-shell { display: flex; flex-direction: column; width: 100%; height: 100vh; min-width: 1180px; min-height: 720px; overflow: hidden; background: #f4f6f8; font-family: "Segoe UI", Arial, sans-serif; }
   .window-title-bar { display: flex; flex-direction: row; align-items: center; height: 40px; min-height: 40px; padding-left: 12px; background: #1f2328; border-bottom: 1px solid #343a40; }
   .brand-mark { display: flex; align-items: center; justify-content: center; width: 32px; height: 28px; background: #0d6efd; border-radius: 6px; }

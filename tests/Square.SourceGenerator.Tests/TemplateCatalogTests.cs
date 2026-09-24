@@ -66,7 +66,9 @@ public sealed class TemplateCatalogTests
         Assert.NotEmpty(descriptors);
         Assert.Equal(
             descriptors.Length,
-            descriptors.Select(descriptor => descriptor.TagName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            descriptors.Select(descriptor => (descriptor.NamespaceUri, descriptor.TagName))
+                .Distinct().Count());
+        Assert.Equal(113, descriptors.Count(descriptor => descriptor.NamespaceUri == TemplateCatalog.HtmlNamespaceUri));
         Assert.Contains(descriptors, descriptor => descriptor.TagName == "SplitContainer");
     }
 

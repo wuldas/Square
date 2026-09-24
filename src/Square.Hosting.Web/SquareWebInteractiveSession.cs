@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.Text;
 using Square.Controls;
 using Square.CSS.Engine;
 using Square.Events;
 using Square.Native.Html;
 using Square.Runtime;
 using Square.UI;
+using Square.UI.Html;
 
 namespace Square.Hosting.Web;
 
@@ -115,31 +117,157 @@ internal sealed class SquareWebInteractiveSession : IDisposable
 
     private static void SynchronizeControlValue(Element target, SquareWebEventRequest request)
     {
-        if (request.Type is "input" or "change")
+        if (target is HtmlElement host)
         {
-            switch (target)
+            SynchronizeHtmlFormState(host, request);
+            return;
+        }
+        if (request.Type is not ("input" or "change")) return;
+        switch (target)
+        {
+            case Input input when request.Value != null:
+                input.Value = request.Value;
+                break;
+            case TextArea textArea when request.Value != null:
+                textArea.Value = request.Value;
+                break;
+            case Select select when request.Value != null:
+                select.Value = request.Value;
+                break;
+            case CheckBox checkBox when request.Checked.HasValue:
+                checkBox.IsChecked = request.Checked.Value;
+                break;
+            case Radio radio when request.Checked == true:
+                if (radio.Parent != null && radio.GroupName.Length > 0)
+                    foreach (var sibling in radio.Parent.QueryAll<Radio>())
+                        if (!ReferenceEquals(sibling, radio) && sibling.GroupName == radio.GroupName)
+                            sibling.IsChecked = false;
+                radio.IsChecked = true;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Mirrors the browser-side form state carried in the event payload onto the HTML semantic host
+    /// before dispatch: value for input/textarea, checked for checkbox/radio (radio exclusivity
+    /// sweeps same-name hosts), and selected on the matching option. Handlers then observe current
+    /// state and the next export reflects it; host OnPropertyChanged reconciles native proxies.
+    /// </summary>
+    private static void SynchronizeHtmlFormState(HtmlElement host, SquareWebEventRequest request)
+    {
+        switch (host.TagName)
+        {
+            case "input":
+                SynchronizeHtmlInput(host, request);
+                break;
+            case "textarea" when request.Value != null:
+                host.SetAttribute("value", request.Value);
+                break;
+            case "select" when request.Value != null:
+                SynchronizeHtmlSelectedOption(host, request.Value);
+                break;
+        }
+    }
+
+    private static void SynchronizeHtmlInput(HtmlElement input, SquareWebEventRequest request)
+    {
+        var type = (input.GetAttribute("type") ?? "text").Trim().ToLowerInvariant();
+        if (type is "checkbox" or "radio")
+        {
+            if (!request.Checked.HasValue) return;
+            if (!request.Checked.Value)
             {
-                case Input input when request.Value != null:
-                    input.Value = request.Value;
-                    break;
-                case TextArea textArea when request.Value != null:
-                    textArea.Value = request.Value;
-                    break;
-                case Select select when request.Value != null:
-                    select.Value = request.Value;
-                    break;
-                case CheckBox checkBox when request.Checked.HasValue:
-                    checkBox.IsChecked = request.Checked.Value;
-                    break;
-                case Radio radio when request.Checked == true:
-                    if (radio.Parent != null && radio.GroupName.Length > 0)
-                        foreach (var sibling in radio.Parent.QueryAll<Radio>())
-                            if (!ReferenceEquals(sibling, radio) && sibling.GroupName == radio.GroupName)
-                                sibling.IsChecked = false;
-                    radio.IsChecked = true;
-                    break;
+                input.RemoveAttribute("checked");
+                return;
+            }
+            if (type == "radio") UncheckHtmlRadioGroup(input);
+            input.SetAttribute("checked", string.Empty);
+            return;
+        }
+        if (request.Value != null) input.SetAttribute("value", request.Value);
+    }
+
+    /// <summary>Radio exclusivity: clears the checked attribute of same-name radio hosts tree-wide.</summary>
+    private static void UncheckHtmlRadioGroup(HtmlElement radio)
+    {
+        var name = radio.GetAttribute("name");
+        if (string.IsNullOrEmpty(name) || RootOf(radio) is not { } root) return;
+        ClearHtmlCheckedAttribute(root, radio, name);
+    }
+
+    private static Element? RootOf(Element element)
+    {
+        Element? root = element;
+        while (root.Parent != null) root = root.Parent;
+        return root;
+    }
+
+    private static void ClearHtmlCheckedAttribute(Element element, HtmlElement radio, string name)
+    {
+        foreach (var child in element.Children)
+        {
+            if (child is HtmlElement { TagName: "input" } input &&
+                !ReferenceEquals(input, radio) &&
+                string.Equals((input.GetAttribute("type") ?? "text").Trim(), "radio", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(input.GetAttribute("name"), name, StringComparison.Ordinal) &&
+                input.HasAttribute("checked"))
+            {
+                input.RemoveAttribute("checked");
+            }
+            ClearHtmlCheckedAttribute(child, radio, name);
+        }
+    }
+
+    /// <summary>Selects the first option whose effective value matches and deselects every other one.</summary>
+    private static void SynchronizeHtmlSelectedOption(HtmlElement select, string value)
+    {
+        var options = new List<HtmlElement>();
+        CollectHtmlOptions(select, options);
+        HtmlElement? match = null;
+        foreach (var option in options)
+        {
+            if (string.Equals(HtmlOptionValue(option), value, StringComparison.Ordinal))
+            {
+                match = option;
+                break;
             }
         }
+        foreach (var option in options)
+        {
+            if (ReferenceEquals(option, match)) option.SetAttribute("selected", string.Empty);
+            else if (option.HasAttribute("selected")) option.RemoveAttribute("selected");
+        }
+        select.SetAttribute("value", value);
+    }
+
+    private static void CollectHtmlOptions(Element element, List<HtmlElement> options)
+    {
+        foreach (var child in element.Children)
+        {
+            if (child is HtmlElement { TagName: "option" } option) options.Add(option);
+            else CollectHtmlOptions(child, options);
+        }
+    }
+
+    /// <summary>Option value mirrors the DOM: the value attribute, else the concatenated text runs.</summary>
+    private static string HtmlOptionValue(HtmlElement option)
+    {
+        var value = option.GetAttribute("value");
+        if (value != null) return value;
+        var builder = new StringBuilder();
+        AppendHtmlText(option, builder);
+        return builder.ToString();
+    }
+
+    private static void AppendHtmlText(Element element, StringBuilder builder)
+    {
+        if (element is Square.Controls.Text run)
+        {
+            builder.Append(run.TextContent);
+            return;
+        }
+        foreach (var child in element.Children)
+            AppendHtmlText(child, builder);
     }
 }
 

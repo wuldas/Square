@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
+using System.Text.Unicode;
 using Square.Controls;
 using Square.Graphics;
 using Square.Graphics.Codecs;
 using Square.Native;
 using Square.UI;
+using Square.UI.Html;
 using Square.UI.Svg;
 using SquareImage = Square.Controls.Image;
 using SquareText = Square.Controls.Text;
@@ -24,6 +26,11 @@ public static class HtmlExporter
         [data-square-unsupported="true"]{padding:.75rem;border:1px dashed #b42318;color:#b42318;background:#fff5f5;font-family:system-ui,sans-serif;}
         """;
 
+    private const string DefaultViewport = "width=device-width,initial-scale=1";
+
+    /// <summary>HTML 转义保留非 ASCII 字符原样输出（与桌面绘制文本一致），仅转义标记敏感字符。</summary>
+    private static readonly HtmlEncoder Encoder = HtmlEncoder.Create(UnicodeRanges.All);
+
     /// <summary>生成元素树 HTML。调用方负责元素树的生命周期。</summary>
     public static HtmlExportResult Export(Element root, HtmlExportOptions? options = null)
     {
@@ -37,27 +44,37 @@ public static class HtmlExporter
     {
         ArgumentNullException.ThrowIfNull(document);
         options ??= new HtmlExportOptions();
-        if (string.IsNullOrWhiteSpace(options.Title)) options.Title = document.Title;
         document.DocumentElement.BuildElementTree();
-        return ExportSnapshot(NativeUiTreeBuilder.Snapshot(document.DocumentElement), options);
+        return ExportSnapshot(NativeUiTreeBuilder.Snapshot(document.DocumentElement), options, document.Title);
     }
 
-    private static HtmlExportResult ExportSnapshot(NativeUiNode root, HtmlExportOptions? options)
+    private static HtmlExportResult ExportSnapshot(NativeUiNode root, HtmlExportOptions? options, string? documentTitle = null)
     {
         options ??= new HtmlExportOptions();
         var diagnostics = new List<HtmlExportDiagnostic>();
-        var context = new ExportContext(options, diagnostics);
+        var context = new ExportContext(options, diagnostics)
+        {
+            DocumentHtmlRoot = options.IncludeDocument ? FindSoleHtmlRoot(root) : null
+        };
         var body = new StringBuilder();
-        WriteNode(body, root, context, isRoot: true);
+        WriteNode(body, root, context, isRoot: true, isSnapshotRoot: true);
         var css = BuildCss(options, context.Styles);
 
         if (!options.IncludeDocument)
             return new HtmlExportResult { Html = body.ToString(), BodyHtml = body.ToString(), Css = css, Diagnostics = diagnostics };
 
+        var title = !string.IsNullOrWhiteSpace(options.Title) ? options.Title
+            : !string.IsNullOrWhiteSpace(context.HeadTitle) ? context.HeadTitle
+            : !string.IsNullOrWhiteSpace(documentTitle) ? documentTitle
+            : root.Kind;
+        var lang = !string.IsNullOrWhiteSpace(context.HtmlLang) ? context.HtmlLang : options.Language;
+
         var html = new StringBuilder(body.Length + 512);
-        html.Append("<!doctype html><html lang=\"").Append(Encode(options.Language)).Append("\"><head>");
-        html.Append("<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-        html.Append("<title>").Append(Encode(string.IsNullOrWhiteSpace(options.Title) ? root.Kind : options.Title)).Append("</title>");
+        html.Append("<!doctype html><html lang=\"").Append(Encode(lang)).Append("\"><head>");
+        html.Append("<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"")
+            .Append(Encode(context.ViewportContent ?? DefaultViewport)).Append("\">");
+        html.Append("<title>").Append(Encode(title)).Append("</title>");
+        foreach (var item in context.HeadItems) html.Append(item);
         var stylesheetLinked = false;
         if (!string.IsNullOrWhiteSpace(options.StylesheetHref))
         {
@@ -73,20 +90,39 @@ public static class HtmlExporter
         }
         if (!stylesheetLinked && !string.IsNullOrWhiteSpace(css))
         {
-            html.Append("<style data-square-css=\"true\">").Append(css).Append("</style>");
+            html.Append("<style data-square-css=\"true\">").Append(SanitizeInlineCss(css)).Append("</style>");
         }
-        html.Append("</head><body>").Append(body).Append("</body></html>");
+        html.Append("</head><body");
+        if (context.BodyHostNode is { } bodyHost) WriteCommonAttributes(html, bodyHost, context, isRoot: false);
+        html.Append('>').Append(body).Append("</body></html>");
         return new HtmlExportResult { Html = html.ToString(), BodyHtml = body.ToString(), Css = css, Diagnostics = diagnostics };
+    }
+
+    /// <summary>
+    /// 定位穿过单一子节点链（Square 文档外壳、生成的组件包装）可达的唯一 HTML <c>html</c> 根；
+    /// 找不到或存在多条分支时返回 null（嵌套 html/head/body 会被压平并诊断）。
+    /// </summary>
+    private static HtmlElement? FindSoleHtmlRoot(NativeUiNode root)
+    {
+        var current = root;
+        while (true)
+        {
+            if (current.SourceElement is HtmlElement { TagName: "html" } html) return html;
+            if (current.Children.Count != 1) return null;
+            current = current.Children[0];
+        }
     }
 
     private static void WriteNode(
         StringBuilder output,
         NativeUiNode node,
         ExportContext context,
-        bool isRoot = false)
+        bool isRoot = false,
+        bool isSnapshotRoot = false,
+        bool includeHiddenHtmlChild = false)
     {
         var element = node.SourceElement;
-        if (!element.IsVisible || element is UIHeadElement) return;
+        if ((!element.IsVisible && !includeHiddenHtmlChild) || element is UIHeadElement) return;
 
         if (element is UIRootElement or UIBodyElement)
         {
@@ -96,6 +132,13 @@ public static class HtmlExporter
 
         switch (element)
         {
+            case HtmlTextRun run:
+                // HTML 文本按原始顺序输出为转义裸文本，不包裹任何标签。
+                output.Append(Encode(run.TextContent));
+                return;
+            case HtmlElement host:
+                WriteHtmlElement(output, node, host, context, isRoot, isSnapshotRoot);
+                return;
             case Canvas:
             case Popup:
                 WriteUnsupported(output, node, context, isRoot);
@@ -154,6 +197,377 @@ public static class HtmlExporter
         }
 
         WriteUnsupported(output, node, context, isRoot);
+    }
+
+    private static void WriteHtmlElement(
+        StringBuilder output,
+        NativeUiNode node,
+        HtmlElement host,
+        ExportContext context,
+        bool isRoot,
+        bool isSnapshotRoot)
+    {
+        var tag = host.TagName;
+        switch (tag)
+        {
+            case "html" when ReferenceEquals(host, context.DocumentHtmlRoot):
+            {
+                // 唯一文档根并入生成壳：lang 合并，head 元数据入 head，其余进入 body。
+                var lang = host.GetAttribute("lang");
+                if (!string.IsNullOrWhiteSpace(lang)) context.HtmlLang = lang;
+                foreach (var child in node.Children) WriteNode(output, child, context, isRoot);
+                return;
+            }
+            case "html" when isSnapshotRoot && !context.Options.IncludeDocument:
+            case "head" when isSnapshotRoot && !context.Options.IncludeDocument:
+            case "body" when isSnapshotRoot && !context.Options.IncludeDocument:
+                // 片段模式下文档根原样输出。
+                WriteHtmlGeneric(output, node, host, context, isRoot);
+                return;
+            case "html":
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    "HTML html element is only exported as the single document root; nested document shells are flattened."));
+                goto case "flatten";
+            case "head":
+                if (!ReferenceEquals(host.Parent, context.DocumentHtmlRoot))
+                    context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                        "HTML head element outside the document root was flattened; its metadata moved to the document head."));
+                goto case "flatten";
+            case "body":
+                if (ReferenceEquals(host.Parent, context.DocumentHtmlRoot))
+                    context.BodyHostNode ??= node;
+                else
+                    context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                        "HTML body element outside the document root was flattened into the document body."));
+                goto case "flatten";
+            case "flatten":
+                foreach (var child in node.Children) WriteNode(output, child, context, isRoot);
+                return;
+        }
+
+        if (HtmlTagCatalog.IsMetadata(tag))
+        {
+            WriteHtmlMetadata(output, node, host, context, isRoot);
+            return;
+        }
+
+        switch (tag)
+        {
+            case "iframe" or "embed":
+                WriteEmbedPlaceholder(output, node, context, isRoot, tag);
+                return;
+            case "object":
+                WriteObjectFallback(output, node, host, context, isRoot);
+                return;
+        }
+
+        WriteHtmlGeneric(output, node, host, context, isRoot);
+    }
+
+    /// <summary>按目的把不可见元数据并入单一 head；被禁用的主动内容只留诊断。</summary>
+    private static void WriteHtmlMetadata(
+        StringBuilder output,
+        NativeUiNode node,
+        HtmlElement host,
+        ExportContext context,
+        bool isRoot)
+    {
+        var tag = host.TagName;
+        switch (tag)
+        {
+            case "script":
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    "HTML script elements are never exported; script content and src would enable script execution."));
+                return;
+            case "style":
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    "Static HTML style elements are disabled; use component CSS or HtmlExportOptions.AdditionalCss."));
+                return;
+            case "base":
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    "HTML base elements are disabled; the document base URL cannot be changed."));
+                return;
+            case "link":
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    "HTML link elements are disabled; external resource loading is not exported."));
+                return;
+            case "title":
+            {
+                var title = GetTextContent(host);
+                if (HoistMetadata(context))
+                {
+                    context.HeadTitle ??= title;
+                    return;
+                }
+                output.Append("<title");
+                WriteHtmlAttributes(output, host, context, tag);
+                output.Append('>').Append(Encode(title)).Append("</title>");
+                return;
+            }
+            case "meta":
+                if (HoistMetadata(context))
+                {
+                    if (RenderMeta(host, context, hoist: true) is { } item) context.HeadItems.Add(item);
+                }
+                else if (RenderMeta(host, context, hoist: false) is { } markup)
+                {
+                    output.Append(markup);
+                }
+                return;
+            case "template":
+                WriteTemplate(output, node, host, context, hoist: HoistMetadata(context));
+                return;
+            default:
+                return;
+        }
+    }
+
+    private static bool HoistMetadata(ExportContext context) =>
+        context.Options.IncludeDocument && !context.SuppressHeadHoist;
+
+    /// <summary>校验并渲染安全的 meta；http-equiv、非 UTF-8 charset 一律拒绝并诊断。</summary>
+    private static string? RenderMeta(HtmlElement host, ExportContext context, bool hoist)
+    {
+        if (host.GetAttribute("http-equiv") is { } httpEquiv)
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic("meta",
+                $"Rejected meta http-equiv '{httpEquiv}'; response header injection is prohibited."));
+            return null;
+        }
+        if (host.GetAttribute("charset") is { } charset)
+        {
+            if (!charset.Trim().Equals("utf-8", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic("meta",
+                    $"Rejected meta charset '{charset}'; documents are exported as UTF-8."));
+                return null;
+            }
+            // 文档壳已固定声明 UTF-8；head 合并时跳过，片段模式下原样保留。
+            return hoist ? null : "<meta charset=\"utf-8\">";
+        }
+        var name = host.GetAttribute("name");
+        var itemprop = host.GetAttribute("itemprop");
+        if (name == null && itemprop == null) return null;
+        var content = host.GetAttribute("content");
+        if (name is not null && name.Trim().Equals("viewport", StringComparison.OrdinalIgnoreCase))
+        {
+            // 壳层 viewport 只出现一次：首个安全 viewport 生效，其余忽略。
+            if (!string.IsNullOrWhiteSpace(content) && context.ViewportContent == null) context.ViewportContent = content;
+            return hoist ? null : "<meta name=\"viewport\" content=\"" + Encode(content ?? "") + "\">";
+        }
+        var builder = new StringBuilder("<meta");
+        if (name != null) builder.Append(" name=\"").Append(Encode(name)).Append('"');
+        if (itemprop != null) builder.Append(" itemprop=\"").Append(Encode(itemprop)).Append('"');
+        if (content != null) builder.Append(" content=\"").Append(Encode(content)).Append('"');
+        return builder.Append('>').ToString();
+    }
+
+    /// <summary>template 子树保持惰性：文档模式下并入 head，片段模式下原样输出。</summary>
+    private static void WriteTemplate(
+        StringBuilder output,
+        NativeUiNode node,
+        HtmlElement host,
+        ExportContext context,
+        bool hoist)
+    {
+        var target = hoist ? new StringBuilder() : output;
+        target.Append("<template");
+        WriteHtmlAttributes(target, host, context, "template");
+        target.Append('>');
+        var previous = context.SuppressHeadHoist;
+        context.SuppressHeadHoist = true;
+        try
+        {
+            foreach (var child in node.Children) WriteNode(target, child, context);
+        }
+        finally
+        {
+            context.SuppressHeadHoist = previous;
+        }
+        target.Append("</template>");
+        if (hoist) context.HeadItems.Add(target.ToString());
+    }
+
+    private static void WriteHtmlGeneric(
+        StringBuilder output,
+        NativeUiNode node,
+        HtmlElement host,
+        ExportContext context,
+        bool isRoot)
+    {
+        var tag = host.TagName;
+        var isVoid = HtmlTagCatalog.IsVoid(tag);
+        output.Append('<').Append(tag);
+        if (context.Options.EnableInteractions) output.Append(" data-square-html=\"true\"");
+        WriteCommonAttributes(output, node, context, isRoot);
+        WriteHtmlAttributes(output, host, context, tag);
+        output.Append('>');
+        if (tag == "textarea")
+        {
+            // 浏览器以元素内容作为 textarea 的值；当前值来自 value 属性（含交互回写）。
+            var value = host.GetAttribute("value");
+            if (value != null) output.Append(Encode(value));
+            else WriteHtmlChildren(output, node, host, context);
+        }
+        else if (!isVoid)
+        {
+            WriteHtmlChildren(output, node, host, context);
+        }
+        if (!isVoid) output.Append("</").Append(tag).Append('>');
+    }
+
+    private static void WriteHtmlChildren(StringBuilder output, NativeUiNode node, HtmlElement host, ExportContext context)
+    {
+        if (host.TagName == "details")
+        {
+            foreach (var child in host.Children)
+            {
+                if (host.IsInternalHtmlProxy(child)) continue;
+                var snapshot = node.Children.FirstOrDefault(item => ReferenceEquals(item.SourceElement, child))
+                    ?? NativeUiTreeBuilder.Snapshot(child);
+                WriteNode(output, snapshot, context, includeHiddenHtmlChild: true);
+            }
+            return;
+        }
+        foreach (var child in node.Children)
+        {
+            if (host.IsInternalHtmlProxy(child.SourceElement)) continue;
+            WriteNode(output, child, context);
+        }
+    }
+
+    /// <summary>
+    /// 输出 HTML 元素自有属性：名字必须形如 <c>[A-Za-z][A-Za-z0-9:_-]*</c>，拒绝 <c>on*</c>/<c>srcdoc</c>，
+    /// URL 属性逐项走安全校验，<c>srcset</c> 任一候选不安全则整体省略。id/class/style/title 由
+    /// WriteCommonAttributes 输出，不重复。
+    /// </summary>
+    private static void WriteHtmlAttributes(StringBuilder output, HtmlElement host, ExportContext context, string tag)
+    {
+        foreach (var (name, value) in host.GetAttributes())
+        {
+            if (name is "id" or "class" or "style" or "title") continue;
+            if (tag == "textarea" && name == "value") continue;
+            if (name == "data-square-html" && context.Options.EnableInteractions)
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag, "Rejected reserved HTML interaction attribute."));
+                continue;
+            }
+            if (!IsValidAttributeName(name) || name is "srcdoc" || name.StartsWith("on", StringComparison.Ordinal))
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    $"Rejected prohibited or malformed HTML attribute '{name}'."));
+                continue;
+            }
+            if (IsUrlAttribute(name))
+            {
+                if (!TrySafeUrl(value, allowMailTo: name == "href", allowDataImage: name is "src" or "poster", out _))
+                {
+                    context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                        $"Rejected unsafe URL in HTML attribute '{name}'."));
+                    continue;
+                }
+            }
+            else if (name == "srcset")
+            {
+                if (!TrySafeSrcSet(value))
+                {
+                    context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                        "Rejected HTML attribute 'srcset' with an unsafe candidate URL."));
+                    continue;
+                }
+            }
+            output.Append(' ').Append(name);
+            if (value.Length == 0 && HtmlTagCatalog.BooleanAttributes.Contains(name)) continue;
+            output.Append("=\"").Append(Encode(value)).Append('"');
+        }
+    }
+
+    private static bool IsUrlAttribute(string name) =>
+        name is "href" or "src" or "poster" or "action" or "formaction" or "cite";
+
+    private static bool IsValidAttributeName(string name)
+    {
+        if (name.Length == 0) return false;
+        var first = name[0];
+        if (first is not ((>= 'a' and <= 'z') or (>= 'A' and <= 'Z'))) return false;
+        foreach (var character in name.AsSpan(1))
+        {
+            if (character is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or ':' or '-' or '_') continue;
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>srcset 任一候选 URL 不安全即整体拒绝，不能只验证首个候选。</summary>
+    private static bool TrySafeSrcSet(string value)
+    {
+        foreach (var candidate in value.Split(','))
+        {
+            var trimmed = candidate.Trim();
+            if (trimmed.Length == 0) return false;
+            var url = trimmed.Split(' ', '\t', '\n', '\r', '\f')[0];
+            if (url.Length == 0 || !TrySafeUrl(url, allowMailTo: false, allowDataImage: true, out _)) return false;
+        }
+        return true;
+    }
+
+    private static void WriteEmbedPlaceholder(
+        StringBuilder output,
+        NativeUiNode node,
+        ExportContext context,
+        bool isRoot,
+        string tag)
+    {
+        context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+            $"Embedded {tag} content is disabled; documents and plugins are never loaded or exported."));
+        output.Append("<div");
+        WriteCommonAttributes(output, node, context, isRoot);
+        output.Append(" data-square-kind=\"").Append(Encode(tag)).Append("\" data-square-unsupported=\"true\">");
+        output.Append(Encode("Embedded content disabled"));
+        output.Append("</div>");
+    }
+
+    private static void WriteObjectFallback(
+        StringBuilder output,
+        NativeUiNode node,
+        HtmlElement host,
+        ExportContext context,
+        bool isRoot)
+    {
+        context.Diagnostics.Add(new HtmlExportDiagnostic("object",
+            "Embedded object content is disabled; plugin data is never loaded or exported."));
+        if (!node.Children.Any())
+        {
+            WriteEmbedPlaceholder(output, node, context, isRoot, "object");
+            return;
+        }
+        // object 不加载其 URL，只输出文本 fallback 子内容。
+        output.Append("<div");
+        WriteCommonAttributes(output, node, context, isRoot);
+        output.Append(" data-square-kind=\"object\">");
+        foreach (var child in node.Children)
+        {
+            if (host.IsInternalHtmlProxy(child.SourceElement)) continue;
+            WriteNode(output, child, context);
+        }
+        output.Append("</div>");
+    }
+
+    private static string GetTextContent(Element element)
+    {
+        var builder = new StringBuilder();
+        AppendTextContent(element, builder);
+        return builder.ToString();
+    }
+
+    private static void AppendTextContent(Element element, StringBuilder builder)
+    {
+        if (element is SquareText text)
+        {
+            builder.Append(text.TextContent);
+            return;
+        }
+        foreach (var child in element.Children) AppendTextContent(child, builder);
     }
 
     private static void WriteContainer(
@@ -377,8 +791,13 @@ public static class HtmlExporter
         if (classes.Count > 0)
             output.Append(" class=\"").Append(Encode(string.Join(' ', classes.Distinct(StringComparer.Ordinal)))).Append('"');
 
-        if (element is UIElement ui && !string.IsNullOrWhiteSpace(ui.Tooltip))
-            output.Append(" title=\"").Append(Encode(ui.Tooltip)).Append('"');
+        if (element is UIElement ui)
+        {
+            var title = element is HtmlElement html && html.HasAttribute("title")
+                ? html.GetAttribute("title") : ui.Tooltip;
+            if (!string.IsNullOrWhiteSpace(title))
+                output.Append(" title=\"").Append(Encode(title)).Append('"');
+        }
     }
 
     private static void WriteWidgetAppearance(StringBuilder output, NativeUiNode node, ExportContext context)
@@ -505,11 +924,18 @@ public static class HtmlExporter
         return css.ToString();
     }
 
+    /// <summary>
+    /// 内嵌样式块中的 <c>&lt;</c> 统一转义为 CSS 等价形式，杜绝 <c>&lt;/style&gt;</c> 提前闭合注入脚本。
+    /// </summary>
+    private static string SanitizeInlineCss(string css) => css.Replace("<", "\\3c ", StringComparison.Ordinal);
+
     private static bool TrySafeUrl(string? value, bool allowMailTo, bool allowDataImage, out string safe)
     {
         safe = "";
         if (string.IsNullOrWhiteSpace(value)) return false;
         var text = value.Trim();
+        foreach (var character in text)
+            if (char.IsControl(character)) return false;
         if (text.StartsWith('#') || Uri.TryCreate(text, UriKind.Relative, out _))
         {
             safe = text;
@@ -525,7 +951,7 @@ public static class HtmlExporter
         return false;
     }
 
-    private static string Encode(string? value) => HtmlEncoder.Default.Encode(value ?? "");
+    private static string Encode(string? value) => Encoder.Encode(value ?? "");
 
     private sealed class ExportContext
     {
@@ -538,6 +964,21 @@ public static class HtmlExporter
         public HtmlExportOptions Options { get; }
         public List<HtmlExportDiagnostic> Diagnostics { get; }
         public GeneratedStyleSheet Styles { get; } = new();
+
+        /// <summary>文档模式下穿过单一包装找到的唯一 HTML html 根。</summary>
+        public HtmlElement? DocumentHtmlRoot { get; init; }
+        /// <summary>文档根的 body 宿主；其公共属性并入壳层 body 标签。</summary>
+        public NativeUiNode? BodyHostNode { get; set; }
+        /// <summary>HTML html 根的 lang 属性，优先于 options.Language。</summary>
+        public string? HtmlLang { get; set; }
+        /// <summary>首个 HTML title 元素的文本（选项显式标题缺省时的次级来源）。</summary>
+        public string? HeadTitle { get; set; }
+        /// <summary>首个安全 viewport meta 的 content，替换壳层默认值。</summary>
+        public string? ViewportContent { get; set; }
+        /// <summary>按遍历顺序合并进 head 的安全元数据片段。</summary>
+        public List<string> HeadItems { get; } = new();
+        /// <summary>渲染惰性 template 内容时禁止元数据外提。</summary>
+        public bool SuppressHeadHoist { get; set; }
     }
 
     private sealed class GeneratedStyleSheet
@@ -552,7 +993,7 @@ public static class HtmlExporter
                 !name.StartsWith("sq-style-", StringComparison.Ordinal));
             if (selector != null)
             {
-                MergeRule("." + selector, styles);
+                MergeRule(SelectorFor(selector), styles);
                 return null;
             }
 
@@ -567,9 +1008,9 @@ public static class HtmlExporter
             var baseName = "sq-style-" + StableHash(signature);
             var className = baseName;
             var suffix = 1;
-            while (_rules.ContainsKey("." + className)) className = baseName + "-" + suffix++;
+            while (_rules.ContainsKey(SelectorFor(className))) className = baseName + "-" + suffix++;
             _classesBySignature[signature] = className;
-            MergeRule("." + className, styles);
+            MergeRule(SelectorFor(className), styles);
             return className;
         }
 
@@ -589,6 +1030,9 @@ public static class HtmlExporter
             }
             return css.ToString();
         }
+
+        /// <summary>author 类名只作为 CSS 标识符进入选择器，杜绝选择器注入。</summary>
+        private static string SelectorFor(string className) => "." + EncodeCssIdentifier(className);
 
         private void MergeRule(string selector, IReadOnlyList<KeyValuePair<string, string>> styles)
         {

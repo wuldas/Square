@@ -3,6 +3,7 @@ using Square.Controls;
 using Square.Graphics;
 using Square.Rendering.Paint;
 using Square.UI;
+using Square.UI.Html;
 
 namespace Square.Rendering;
 
@@ -498,13 +499,28 @@ internal sealed class TableLayoutEngine
         return true;
     }
 
-    private static int GetColSpan(Element element) => element is TableCell cell
-        ? cell.ColSpan
-        : ParsePositiveInt(element.Style.Get("column-span"));
+    private static int GetColSpan(Element element)
+    {
+        if (element is TableCell cell) return cell.ColSpan;
+        if (element is HtmlElement html) return ParseSpanAttribute(html.GetAttribute("colspan"), MaxHtmlColSpan);
+        return ParsePositiveInt(element.Style.Get("column-span"));
+    }
 
-    private static int GetRowSpan(Element element) => element is TableCell cell
-        ? cell.RowSpan
-        : ParsePositiveInt(element.Style.Get("row-span"));
+    private static int GetRowSpan(Element element)
+    {
+        if (element is TableCell cell) return cell.RowSpan;
+        if (element is HtmlElement html) return ParseSpanAttribute(html.GetAttribute("rowspan"), MaxHtmlRowSpan);
+        return ParsePositiveInt(element.Style.Get("row-span"));
+    }
+
+    // HTML spec clamps: colspan max 1000, rowspan max 65534; colspan="0" (span-to-colgroup-end) is unsupported here.
+    private const int MaxHtmlColSpan = 1000;
+    private const int MaxHtmlRowSpan = 65534;
+
+    private static int ParseSpanAttribute(string? value, int max) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Clamp(parsed, 1, max)
+            : 1;
 
     private static int ParsePositiveInt(string? value) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? Math.Max(1, parsed) : 1;

@@ -41,6 +41,7 @@ public static class Program
             return;
         }
 
+        if (HasOption(args, "--html-regression")) Square.Images.ImageSourceRegistration.RegisterDefaults();
         var window = new AppWindow("Square Framework", 900, 980);
         var router = window.UseRouter(routes =>
         {
@@ -269,6 +270,7 @@ public static class Program
     private static UIElement CreatePage(string[] args)
     {
         if (HasOption(args, "--circle-regression")) return new CircleRegressionPage();
+        if (HasOption(args, "--html-regression")) return new HtmlRegressionPage();
         if (HasOption(args, "--media-regression")) return new MediaSvgRegressionPage();
         if (HasOption(args, "--stroke-regression")) return new VulkanStrokeRegressionPage();
         return new Main();

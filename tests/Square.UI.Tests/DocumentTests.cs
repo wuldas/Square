@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using Square.Backends;
 using Square.Controls;
 using Square.CSS.Engine;
 using Square.CSS.Tokenizer;
@@ -10,6 +11,7 @@ using Square.Platform;
 using Square.Runtime.State;
 using Square.Rendering;
 using Square.UI;
+using Square.UI.Html;
 using Square.UI.Svg;
 using Xunit;
 
@@ -1225,6 +1227,111 @@ public class DocumentTests
 
         Assert.Equal(expectedType, element.GetType());
         Assert.Same(doc, element.OwnerDocument);
+    }
+
+    [Fact]
+    public void HtmlElementsPreserveNamespaceAndAttributesWithoutReplacingSquareControls()
+    {
+        var document = new UIDocument();
+        var html = Assert.IsType<HtmlElement>(document.CreateElement("button"));
+        Assert.Equal("http://www.w3.org/1999/xhtml", html.NamespaceURI);
+        Assert.Same(document, html.OwnerDocument);
+        Assert.IsType<Button>(document.CreateElement("Button"));
+        Assert.IsType<Button>(document.CreateElement("BUTTON"));
+        Assert.Equal("button", Assert.IsType<HtmlElement>(document.CreateElement("HTML:BUTTON")).TagName);
+
+        html.SetAttribute("DATA-State", "on");
+        html.SetAttribute("checked", "");
+        html.SetAttribute("id", "sample");
+        Assert.True(html.HasAttribute("CHECKED"));
+        Assert.Equal("on", html.GetProperty<string>("data-state"));
+        var snapshot = html.GetAttributes();
+        html.RemoveAttribute("checked");
+        Assert.False(html.HasAttribute("checked"));
+        Assert.True(snapshot.ContainsKey("checked"));
+        html.SetProperty("disabled", false);
+        Assert.False(html.HasAttribute("disabled"));
+        html.SetProperty("disabled", true);
+        Assert.True(html.HasAttribute("disabled"));
+        Assert.True(html.IsDisabled);
+        Assert.Equal("sample", html.GetAttribute("id"));
+        html.SetProperty("id", "bound");
+        Assert.Equal("bound", html.Id);
+        Assert.Equal("bound", html.GetAttribute("id"));
+        html.RemoveProperty("id");
+        Assert.False(html.HasAttribute("id"));
+        Assert.Throws<InvalidOperationException>(() => document.CreateElement("param"));
+        Assert.Throws<InvalidOperationException>(() => document.CreateElement("html:param"));
+    }
+
+    [Fact]
+    public void HtmlAttributeSelectorsRespectPresenceAndKeepSquareControlSemantics()
+    {
+        var html = new HtmlElement("input");
+        html.SetAttribute("checked", "");
+        html.SetAttribute("data-state", "on");
+        var square = new Button();
+        square.SetProperty("checked", true);
+        var root = new View();
+        root.Children.Add(html);
+        root.Children.Add(square);
+
+        var css = new CssEngine();
+        css.LoadStyleSheet(new CssParser(new CssTokenizer(
+            "[checked][data-state=on] { color: red; } [checked] { opacity: 0.5; }").Tokenize()).Parse());
+        css.ApplyStylesToTree(root);
+
+        Assert.Equal("red", html.Style.Get("color"));
+        Assert.Equal("0.5", html.Style.Get("opacity"));
+        Assert.Equal("0.5", square.Style.Get("opacity"));
+        html.RemoveAttribute("checked");
+        CssStyleReconciler.Flush();
+        Assert.NotEqual("0.5", html.Style.Get("opacity"));
+    }
+
+    [Fact]
+    public void HtmlProgressPaintsMeasuredFillIntoDesktopBitmap()
+    {
+        var root = new View();
+        root.Style.Set("display", "block");
+        var progress = new HtmlElement("progress");
+        progress.SetAttribute("value", "50");
+        progress.SetAttribute("max", "100");
+        progress.Style.Set("width", "100px");
+        progress.Style.Set("height", "16px");
+        root.Children.Add(progress);
+
+        new LayoutEngine().MeasureAndArrange(root, new Size(120, 40));
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var bitmap = new Bitmap(120, 40);
+        using var context = new RenderContext(bitmap, 1f);
+        context.Clear(Color.Transparent);
+        tree.Render(context);
+
+        var y = (int)progress.Geometry.Y + 8;
+        var filled = bitmap.GetPixel((int)progress.Geometry.X + 10, y);
+        var unfilled = bitmap.GetPixel((int)progress.Geometry.X + 90, y);
+        Assert.True(filled[0] > unfilled[0]);
+        Assert.True(filled[3] > 0 && unfilled[3] > 0);
+    }
+
+    [Fact]
+    public void HtmlDetailsSummaryTogglesContentVisibility()
+    {
+        var details = new HtmlElement("details");
+        var summary = new HtmlElement("summary");
+        var body = new HtmlElement("p");
+        details.Children.Add(summary);
+        details.Children.Add(body);
+
+        Assert.False(body.IsVisible);
+        summary.DispatchEvent(StandardEvents.CreateClick());
+        Assert.True(details.HasAttribute("open"));
+        Assert.True(body.IsVisible);
+        summary.DispatchEvent(StandardEvents.CreateClick());
+        Assert.False(details.HasAttribute("open"));
+        Assert.False(body.IsVisible);
     }
 
     [Fact]

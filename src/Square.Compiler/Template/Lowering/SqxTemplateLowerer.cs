@@ -1,6 +1,7 @@
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Syntax;
 using Square.Compiler.Template.Ir;
+using Square.UI.Html;
 
 namespace Square.Compiler.Template.Lowering;
 
@@ -75,9 +76,7 @@ internal static class SqxTemplateLowerer
     private static TemplateIrElement LowerElement(SqxElementSyntax element, string excludedAttribute)
     {
         return new TemplateIrElement(
-            TemplateCatalog.BuiltIn.TryGetBuiltInComponent(element.TagName, out var descriptor)
-                ? descriptor.TagName
-                : element.TagName,
+            ResolveTagName(element.TagName),
             element.Attributes
                 .Where(attribute => attribute.Name != excludedAttribute)
                 .Select(attribute => new TemplateIrAttribute(
@@ -95,6 +94,29 @@ internal static class SqxTemplateLowerer
             element.TagNameRange,
             element.CloseTagNameRange,
             element.TagName);
+    }
+
+    /// <summary>
+    /// HTML 标签身份解析：html: 前缀（大小写不敏感）与精确小写 HTML 目录名保留 HTML 规范名，
+    /// 不经大小写不敏感的 Square 内建归一化；其余标签维持既有解析。
+    /// </summary>
+    private static string ResolveTagName(string tagName)
+    {
+        if (!string.IsNullOrEmpty(tagName))
+        {
+            if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
+            {
+                var local = tagName.Substring("html:".Length).ToLowerInvariant();
+                if (HtmlTagCatalog.IsTag(local)) return local;
+            }
+            else if (HtmlTagCatalog.IsTag(tagName))
+            {
+                return tagName;
+            }
+        }
+        return TemplateCatalog.BuiltIn.TryGetBuiltInComponent(tagName, out var descriptor)
+            ? descriptor.TagName
+            : tagName;
     }
 
     private static string ParseLambdaItem(string expression)

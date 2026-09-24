@@ -131,6 +131,17 @@ internal static class CssGeneratedContentEvaluator
 
     private static int GetListItemIndex(Element owner)
     {
+        if (owner.Parent is Square.UI.Html.HtmlElement { TagName: "ol" } list)
+        {
+            var items = list.Children.Where(item => item.IsVisible &&
+                string.Equals(item.Style.Get("display")?.Trim(), "list-item", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var position = Array.IndexOf(items, owner);
+            if (position < 0) return 1;
+            var reversed = list.HasAttribute("reversed");
+            var initial = int.TryParse(list.GetAttribute("start"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed : reversed ? items.Length : 1;
+            return initial + (reversed ? -position : position);
+        }
         if (owner.Parent == null) return 1;
         var index = 0;
         foreach (var sibling in owner.Parent.Children)

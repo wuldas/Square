@@ -9,6 +9,7 @@ using Square.Hosting.Web;
 using Square.Platform;
 using Square.Runtime.Binding;
 using Square.UI;
+using Square.UI.Html;
 using Xunit;
 #if PLATFORM_WIN32
 using Square.Platform.Win32;
@@ -124,6 +125,34 @@ public sealed class SquareWebEndpointTests
     }
 
     [Fact]
+    public async Task InteractiveHtmlFormReflectsValueAndCheckedState()
+    {
+        await using var app = await StartApp(builder => builder.MapSquareInteractivePage<HtmlFormPage>("/"));
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var html = await client.GetStringAsync("/");
+        var token = Match(html, "data-square-token=\"([^\"]+)\"");
+        var inputId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"html-name\""));
+        var checkboxId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"html-check\""));
+        var selectId = int.Parse(Match(html, "data-square-id=\"(\\d+)\"[^>]* id=\"html-choice\""));
+
+        using var inputResponse = await PostEvent(client, token, 0, inputId, "input", "Ada");
+        var inputUpdate = await JsonDocument.ParseAsync(await inputResponse.Content.ReadAsStreamAsync());
+        Assert.Contains("value=\"Ada\"", inputUpdate.RootElement.GetProperty("bodyHtml").GetString());
+        Assert.Contains("name:Ada", inputUpdate.RootElement.GetProperty("bodyHtml").GetString());
+
+        using var checkedResponse = await PostEvent(client, token, 1, checkboxId, "change", checkedValue: true);
+        var checkedUpdate = await JsonDocument.ParseAsync(await checkedResponse.Content.ReadAsStreamAsync());
+        Assert.Contains(" checked", checkedUpdate.RootElement.GetProperty("bodyHtml").GetString());
+        Assert.Contains("checked:yes", checkedUpdate.RootElement.GetProperty("bodyHtml").GetString());
+
+        using var selectResponse = await PostEvent(client, token, 2, selectId, "change", "B");
+        var selectUpdate = await JsonDocument.ParseAsync(await selectResponse.Content.ReadAsStreamAsync());
+        var selectedBody = selectUpdate.RootElement.GetProperty("bodyHtml").GetString();
+        Assert.Contains("choice:B", selectedBody);
+        Assert.Contains("value=\"B\" selected", selectedBody);
+    }
+
+    [Fact]
     public async Task InteractiveEndpointIsolatesSessionsAndRejectsUnknownToken()
     {
         await using var app = await StartApp(builder => builder.MapSquareInteractivePage<InteractivePage>("/"));
@@ -186,9 +215,10 @@ public sealed class SquareWebEndpointTests
         int elementId,
         string type,
         string? value = null,
-        bool ensureSuccess = true)
+        bool ensureSuccess = true,
+        bool? checkedValue = null)
     {
-        var json = JsonSerializer.Serialize(new { token, revision, elementId, type, value });
+        var json = JsonSerializer.Serialize(new { token, revision, elementId, type, value, @checked = checkedValue });
         var response = await client.PostAsync("/", new StringContent(json, Encoding.UTF8, "application/json"));
         if (ensureSuccess) response.EnsureSuccessStatusCode();
         return response;
@@ -212,6 +242,50 @@ public sealed class SquareWebEndpointTests
         {
             if (Children.Count > 0) return;
             Children.Add(new SquareText("Request " + _id));
+        }
+    }
+
+    private sealed class HtmlFormPage : View
+    {
+        private bool _built;
+
+        public override void BuildElementTree()
+        {
+            if (_built) return;
+            _built = true;
+            var article = new HtmlElement("article");
+            var input = new HtmlElement("input");
+            input.SetAttribute("id", "html-name");
+            var output = new HtmlTextRun("name:");
+            input.AddEventListener("input", e => output.TextContent = "name:" + ((HtmlElement)e.Target!).GetAttribute("value"));
+            article.Children.Add(input);
+            article.Children.Add(output);
+            var check = new HtmlElement("input");
+            check.SetAttribute("id", "html-check");
+            check.SetAttribute("type", "checkbox");
+            var checkedOutput = new HtmlTextRun("checked:no");
+            check.AddEventListener("change", e => checkedOutput.TextContent =
+                "checked:" + (((HtmlElement)e.Target!).HasAttribute("checked") ? "yes" : "no"));
+            article.Children.Add(check);
+            article.Children.Add(checkedOutput);
+            var select = new HtmlElement("select");
+            select.SetAttribute("id", "html-choice");
+            select.SetAttribute("value", "A");
+            var first = new HtmlElement("option");
+            first.SetAttribute("value", "A");
+            first.SetAttribute("selected", "");
+            first.Children.Add(new HtmlTextRun("A"));
+            var second = new HtmlElement("option");
+            second.SetAttribute("value", "B");
+            second.Children.Add(new HtmlTextRun("B"));
+            select.Children.Add(first);
+            select.Children.Add(second);
+            var selectedOutput = new HtmlTextRun("choice:A");
+            select.AddEventListener("change", e => selectedOutput.TextContent =
+                "choice:" + ((HtmlElement)e.Target!).GetAttribute("value"));
+            article.Children.Add(select);
+            article.Children.Add(selectedOutput);
+            Children.Add(article);
         }
     }
 

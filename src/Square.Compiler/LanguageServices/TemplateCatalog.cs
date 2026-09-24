@@ -17,6 +17,8 @@ public sealed class TemplateCatalog
     private const string ExportAttributeName = "Square.UI.ElementExportAttribute";
     private const string OrderAttributeName = "Square.UI.ElementNamespaceOrderAttribute";
     private const string AliasAttributeName = "Square.UI.ElementNamespaceAliasAttribute";
+    /// <summary>所有 HTML 描述符共享的 CLR 类型；类型名本身不指向任何具体标签。</summary>
+    private const string HtmlElementTypeName = "Square.UI.Html.HtmlElement";
 
     private static readonly IReadOnlyDictionary<string, string> BuiltInTypeNames =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -138,6 +140,13 @@ public sealed class TemplateCatalog
         { "Text", "Button", "Link", "ListItem", "TreeItem" };
     private static readonly HashSet<string> BooleanPropertyNames = new(StringComparer.OrdinalIgnoreCase)
         { "seamless", "vertical", "reversed", "checked", "disabled", "checkable", "stays-open-on-click", "expanded", "loop", "replace", "underline" };
+    /// <summary>HTML 全局属性完成集（不与 Square CLR 属性别名混淆）。</summary>
+    private static readonly string[] HtmlGlobalAttributeNames =
+    {
+        "id", "class", "style", "title", "hidden", "inert", "dir", "lang", "translate", "spellcheck",
+        "autocapitalize", "autocorrect", "autofocus", "enterkeyhint", "inputmode", "accesskey",
+        "draggable", "tabindex", "popover"
+    };
     private static readonly (string Name, string CanonicalName)[] StandardEvents =
     {
         ("pointerdown", "onPointerDown"), ("pointerup", "onPointerUp"), ("pointermove", "onPointerMove"),
@@ -148,6 +157,8 @@ public sealed class TemplateCatalog
     };
 
     private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _builtIns;
+    /// <summary>精确小写键的 HTML 目录描述符；与 Square/SVG 内置表分开存放，避免大小写折叠覆盖同名控件。</summary>
+    private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _htmlBuiltIns;
     private readonly IReadOnlyList<TemplateComponentDescriptor> _exports;
     private readonly IReadOnlyList<TemplateComponentDescriptor> _localComponents;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _prefixes;
@@ -159,6 +170,7 @@ public sealed class TemplateCatalog
 
     private TemplateCatalog(
         IReadOnlyDictionary<string, TemplateComponentDescriptor> builtIns,
+        IReadOnlyDictionary<string, TemplateComponentDescriptor> htmlBuiltIns,
         IReadOnlyList<TemplateComponentDescriptor> exports,
         IReadOnlyList<TemplateComponentDescriptor> localComponents,
         IReadOnlyDictionary<string, IReadOnlyList<string>> prefixes,
@@ -169,6 +181,8 @@ public sealed class TemplateCatalog
         IReadOnlyDictionary<string, INamedTypeSymbol> exportedSymbols)
     {
         _builtIns = builtIns;
+        _htmlBuiltIns = htmlBuiltIns ?? new ReadOnlyDictionary<string, TemplateComponentDescriptor>(
+            new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal));
         _exports = exports;
         _localComponents = localComponents;
         _prefixes = prefixes;
@@ -188,7 +202,7 @@ public sealed class TemplateCatalog
         new ReadOnlyCollection<TemplatePropertyDescriptor>(PropertyAliases.Select(pair =>
             new TemplatePropertyDescriptor(pair.Key, pair.Value, GetPropertyValueKind(pair.Key))).ToArray());
     public IReadOnlyCollection<TemplateComponentDescriptor> Components =>
-        new ReadOnlyCollection<TemplateComponentDescriptor>(_builtIns.Values.Concat(_exports).Concat(_localComponents)
+        new ReadOnlyCollection<TemplateComponentDescriptor>(_htmlBuiltIns.Values.Concat(_builtIns.Values).Concat(_exports).Concat(_localComponents)
             .GroupBy(ComponentIdentity, StringComparer.Ordinal).Select(group => group.First()).ToArray());
 
     public static TemplateCatalog FromCompilation(
@@ -299,6 +313,7 @@ public sealed class TemplateCatalog
 
         return new TemplateCatalog(
             builtIns,
+            CreateHtmlDescriptors(),
             new ReadOnlyCollection<TemplateComponentDescriptor>(exports.OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray()),
             new ReadOnlyCollection<TemplateComponentDescriptor>(locals.OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray()),
             prefixes,
@@ -317,9 +332,15 @@ public sealed class TemplateCatalog
     public bool TryGetBuiltInComponent(string tagName, out TemplateComponentDescriptor descriptor)
     {
         descriptor = null;
-        return !string.IsNullOrWhiteSpace(tagName) && tagName.IndexOf(':') < 0 &&
-               _builtIns.TryGetValue(tagName, out descriptor);
+        if (string.IsNullOrWhiteSpace(tagName) || tagName.IndexOf(':') >= 0) return false;
+        // 精确小写先命中 HTML 目录（ordinal），其余大小写仍走 Square/SVG 大小写折叠表。
+        if (_htmlBuiltIns.TryGetValue(tagName, out descriptor)) return true;
+        return _builtIns.TryGetValue(tagName, out descriptor);
     }
+
+    /// <summary>判断名字是否为目录中的 HTML 标签的精确小写拼写（不带前缀）。发射器用它避免把 <c>slot</c> 之类同名标签交给指令管线。</summary>
+    internal bool IsExactHtmlTag(string tagName) =>
+        !string.IsNullOrEmpty(tagName) && tagName.IndexOf(':') < 0 && _htmlBuiltIns.ContainsKey(tagName);
 
     public IReadOnlyList<TemplatePropDescriptor> GetProps(TemplateComponentDescriptor component) =>
         GetContracts(component).Props;
@@ -339,12 +360,16 @@ public sealed class TemplateCatalog
     internal INamedTypeSymbol GetComponentSymbol(TemplateComponentDescriptor component)
     {
         if (component == null || _compilation == null) return null;
+        // HTML 描述符共享 HtmlElement CLR 类型；不得把该类型当作组件契约来源。
+        if (component.Kind == TemplateElementKind.Html) return null;
         var frameworkAssembly = _compilation.GetTypeByMetadataName("Square.UI.Element")?.ContainingAssembly;
         return FindComponentSymbol(_compilation, component, frameworkAssembly?.GetTypeByMetadataName(ExportAttributeName), _exportedSymbols);
     }
 
     private TemplateComponentContracts GetContracts(TemplateComponentDescriptor component)
     {
+        // HTML 元素没有 CLR 属性/事件契约：属性一律是小写 HTML attribute。
+        if (component == null || component.Kind == TemplateElementKind.Html) return TemplateComponentContracts.Empty;
         var symbol = GetComponentSymbol(component);
         if (symbol == null) return TemplateComponentContracts.Empty;
         lock (_contractGate)
@@ -395,16 +420,23 @@ public sealed class TemplateCatalog
                     component.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase))
                 .Concat(_builtIns.Values.Where(component => namespaceUris.Contains(component.NamespaceUri, StringComparer.Ordinal) &&
                     component.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase)))
-                .OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray();
+                .ToList();
+            // html: 前缀显式指向 HTML 目录（大小写不敏感），且 html URI 保留给框架，不会与扩展导出冲突。
+            if (namespaceUris.Contains(HtmlNamespaceUri, StringComparer.Ordinal) &&
+                _htmlBuiltIns.TryGetValue(localName.ToLowerInvariant(), out var htmlCandidate))
+                candidates.Add(htmlCandidate);
+            var ordered = candidates.OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray();
             var orderedUris = namespaceUris.OrderBy(uri => uri, StringComparer.Ordinal).ToArray();
-            if (candidates.Length == 1 && namespaceUris.Count == 1)
-                return TemplateElementResolution.Resolved(candidates[0]);
-            if (candidates.Length == 0)
-                return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement, candidates, orderedUris);
-            return TemplateElementResolution.Failed(TemplateElementResolutionStatus.Ambiguous, candidates, orderedUris);
+            if (ordered.Length == 1 && namespaceUris.Count == 1)
+                return TemplateElementResolution.Resolved(ordered[0]);
+            if (ordered.Length == 0)
+                return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement, ordered, orderedUris);
+            return TemplateElementResolution.Failed(TemplateElementResolutionStatus.Ambiguous, ordered, orderedUris);
         }
 
         var unqualifiedName = parsedName.LocalName;
+        // 精确小写先命中 HTML；其余大小写（BUTTON/Button）继续匹配 Square/SVG 内置表。
+        if (_htmlBuiltIns.TryGetValue(unqualifiedName, out var htmlBuiltIn)) return TemplateElementResolution.Resolved(htmlBuiltIn);
         if (_builtIns.TryGetValue(unqualifiedName, out var builtIn)) return TemplateElementResolution.Resolved(builtIn);
 
         var extensionCandidates = _exports.Where(component => component.LocalName.Equals(unqualifiedName, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -439,6 +471,12 @@ public sealed class TemplateCatalog
     public IReadOnlyCollection<TemplatePropertyDescriptor> GetPropertiesForTag(string tagName)
     {
         if (string.IsNullOrWhiteSpace(tagName)) return Properties;
+        if (IsExactHtmlTag(tagName))
+        {
+            // HTML 标签只补全标准全局属性；不套用 Square 控件别名（text/checked/disabled → CLR 属性）。
+            return HtmlGlobalAttributeNames.Select(name =>
+                new TemplatePropertyDescriptor(name, name, GetPropertyValueKind(name))).ToArray();
+        }
         var names = new HashSet<string>(CommonPropertyNames, StringComparer.OrdinalIgnoreCase);
         if (!NonUiElementTags.Contains(tagName)) names.UnionWith(UiElementPropertyNames);
         if (TagPropertyNames.TryGetValue(tagName, out var tagProperties)) names.UnionWith(tagProperties);
@@ -450,6 +488,10 @@ public sealed class TemplateCatalog
 
     private TemplateElementResolution ResolveExactClr(string typeName)
     {
+        // HtmlElement 只有 HtmlElement(string) 构造且被 113 个标签共享；
+        // CLR 全名本身不指向任何标签，必须用 html:<name> 或精确小写拼写。
+        if (string.Equals(typeName, HtmlElementTypeName, StringComparison.Ordinal))
+            return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement);
         var builtIn = _builtIns.Values.FirstOrDefault(component => component.TypeName.Equals(typeName, StringComparison.Ordinal));
         if (builtIn != null) return TemplateElementResolution.Resolved(builtIn);
         var known = DistinctComponents(_exports.Concat(_localComponents)
@@ -509,10 +551,21 @@ public sealed class TemplateCatalog
             ["html"] = new[] { HtmlNamespaceUri }, ["ui"] = new[] { SquareNamespaceUri },
             ["svg"] = new[] { SvgNamespaceUri }, ["local"] = new[] { LocalNamespaceUri }
         };
-        return new TemplateCatalog(CreateBuiltInDescriptors(), Array.Empty<TemplateComponentDescriptor>(),
+        return new TemplateCatalog(CreateBuiltInDescriptors(), CreateHtmlDescriptors(), Array.Empty<TemplateComponentDescriptor>(),
             Array.Empty<TemplateComponentDescriptor>(), prefixes, Array.Empty<string>(), Array.Empty<SquareDiagnostic>(), null,
             new Dictionary<INamedTypeSymbol, TemplateComponentContracts>(SymbolEqualityComparer.Default),
             new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal));
+    }
+
+    /// <summary>为共享目录中的每个 HTML 标签建立描述符；全部共用 Square.UI.Html.HtmlElement（按规范化小写标签构造）。</summary>
+    private static IReadOnlyDictionary<string, TemplateComponentDescriptor> CreateHtmlDescriptors()
+    {
+        var components = new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
+        foreach (var tag in Square.UI.Html.HtmlTagCatalog.Tags)
+            components[tag] = new TemplateComponentDescriptor(
+                tag, HtmlElementTypeName, HtmlElementTypeName, HtmlNamespaceUri, "html", tag,
+                "Square", string.Empty, TemplateElementKind.Html, true, false, false, false);
+        return new ReadOnlyDictionary<string, TemplateComponentDescriptor>(components);
     }
 
     private static IReadOnlyDictionary<string, TemplateComponentDescriptor> CreateBuiltInDescriptors()
@@ -978,7 +1031,9 @@ public sealed class TemplateCatalog
     private static bool IsReservedNamespace(string uri) => IsFrameworkNamespace(uri) || uri == LocalNamespaceUri;
     private static TemplatePropertyValueKind GetPropertyValueKind(string name) =>
         name.Equals("class", StringComparison.OrdinalIgnoreCase) ? TemplatePropertyValueKind.CssClass :
-        BooleanPropertyNames.Contains(name) ? TemplatePropertyValueKind.Boolean : TemplatePropertyValueKind.String;
+        BooleanPropertyNames.Contains(name) ||
+            Square.UI.Html.HtmlTagCatalog.BooleanAttributes.Contains((name ?? string.Empty).ToLowerInvariant())
+            ? TemplatePropertyValueKind.Boolean : TemplatePropertyValueKind.String;
     private static string ComponentIdentity(TemplateComponentDescriptor item) => item.NamespaceUri + "\0" + item.LocalName.ToUpperInvariant() + "\0" + ComponentAssemblyTypeIdentity(item);
     private static string ComponentAssemblyTypeIdentity(TemplateComponentDescriptor item) =>
         item.AssemblyName + "\0" + item.TypeMetadataName + "\0" + item.TypeName;

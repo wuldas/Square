@@ -2,6 +2,7 @@ using System.Text;
 using Square.Controls;
 using Square.Graphics;
 using Square.UI;
+using Square.UI.Html;
 using ControlText = Square.Controls.Text;
 
 namespace Square.Rendering;
@@ -134,8 +135,8 @@ public sealed partial class LayoutEngine
                 LayoutFloat(child, childBox, floatSide, content, y, floats, containingBlock, plan);
                 continue;
             }
-
-            if (CssKeyword(child, "display") is "inline" or "inline-block" or "inline-table")
+            if (CssKeyword(child, "display") is "inline" or "inline-block" or "inline-table" ||
+                container is HtmlElement && child is Square.UI.Svg.SVGSVGElement)
             {
                 inline.Add(child);
                 continue;
@@ -228,6 +229,22 @@ public sealed partial class LayoutEngine
         var childContainingBlock = EstablishesContainingBlock(element)
             ? new CssContainingBlock(PaddingBox(borderBounds, box))
             : containingBlock;
+        if (element is HtmlElement html && html.TagName is "img" or "input" or "textarea" or "select" or "video")
+        {
+            var proxyHeight = float.IsFinite(proposed.Height)
+                ? proposed.Height
+                : ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
+            var bounds = new Rect(proposed.X, proposed.Y, proposed.Width, proxyHeight);
+            plan.Set(element, bounds);
+            var inner = new Rect(bounds.X + box.BorderLeft + box.PaddingLeft,
+                bounds.Y + box.BorderTop + box.PaddingTop,
+                Math.Max(0, bounds.Width - box.BorderLeft - box.BorderRight - box.PaddingLeft - box.PaddingRight),
+                Math.Max(0, bounds.Height - box.BorderTop - box.BorderBottom - box.PaddingTop - box.PaddingBottom));
+            foreach (var child in element.Children)
+                if (html.IsInternalHtmlProxy(child)) plan.Set(child, inner);
+            return proxyHeight;
+        }
+
         if (element.Children.Count > 0)
         {
             var contentHeight = LayoutContainerContents(element, borderBounds, box, childContainingBlock, plan);
@@ -251,11 +268,19 @@ public sealed partial class LayoutEngine
         foreach (var element in elements)
         {
             var box = ResolveCssBox(element, content.Width, float.NaN);
+            if (element is HtmlElement { TagName: "br" })
+            {
+                pieces.Add(CssInlinePiece.LineBreak(element));
+                continue;
+            }
+            if (element is HtmlElement { TagName: "wbr" }) continue;
             if (element is ControlText text)
             {
                 plan.TextFragments.TryAdd(text, []);
-                AddTextPieces(text, box, content.Width, pieces);
+                AddTextPieces(text, box, content.Width, pieces, null);
             }
+            else if (element is HtmlElement && CssKeyword(element, "display") == "inline")
+                CollectHtmlInlinePieces(element, content.Width, [element], pieces, plan);
             else
                 pieces.Add(CreateAtomicInlinePiece(element, box, content.Width));
         }
@@ -351,6 +376,9 @@ public sealed partial class LayoutEngine
                     if (display == "inline-table")
                         plan.ExternalLayouts.Add(new CssLayoutEntry(piece.Element, bounds));
                 }
+                if (piece.InlineAncestors != null)
+                    foreach (var ancestor in piece.InlineAncestors)
+                        plan.Union(ancestor, bounds);
                 x += piece.Width;
             }
             y += lineHeight;
@@ -359,7 +387,47 @@ public sealed partial class LayoutEngine
         return y;
     }
 
-    private void AddTextPieces(ControlText text, CssBox box, float availableWidth, List<CssInlinePiece> pieces)
+    /// <summary>
+    /// Flattens HTML display:inline descendants into ordered text pieces and atomic inline boxes.
+    /// Square (non-HTML) inline elements stay atomic, preserving their existing behavior.
+    /// </summary>
+    private void CollectHtmlInlinePieces(Element container, float availableWidth, List<Element>? ancestors,
+        List<CssInlinePiece> pieces, CssLayoutPlan plan)
+    {
+        foreach (var child in container.Children)
+        {
+            if (!child.IsVisible || CssKeyword(child, "display") == "none") continue;
+            if (child is ControlText text)
+            {
+                plan.TextFragments.TryAdd(text, []);
+                AddTextPieces(text, ResolveCssBox(text, availableWidth, float.NaN), availableWidth, pieces, ancestors);
+                continue;
+            }
+            if (child is HtmlElement)
+            {
+                // <br> forces a line break; <wbr> contributes no box — the piece boundary it creates
+                // between adjacent runs is already a wrapping opportunity in the line breaker.
+                if (child.TagName == "br")
+                {
+                    pieces.Add(CssInlinePiece.LineBreak(child, ancestors));
+                    continue;
+                }
+                if (child.TagName == "wbr") continue;
+                if (CssKeyword(child, "display") == "inline")
+                {
+                    List<Element> chain = ancestors == null ? [child] : [.. ancestors, child];
+                    CollectHtmlInlinePieces(child, availableWidth, chain, pieces, plan);
+                    continue;
+                }
+            }
+            var box = ResolveCssBox(child, availableWidth, float.NaN);
+            var piece = CreateAtomicInlinePiece(child, box, availableWidth);
+            pieces.Add(ancestors == null ? piece : piece with { InlineAncestors = ancestors });
+        }
+    }
+
+    private void AddTextPieces(ControlText text, CssBox box, float availableWidth, List<CssInlinePiece> pieces,
+        List<Element>? ancestors)
     {
         var value = text.TextContent.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         var font = ControlDrawing.ResolveFont(text, text.FontSize);
@@ -393,7 +461,7 @@ public sealed partial class LayoutEngine
             {
                 var width = ControlDrawing.MeasureRenderedTextWidth(normalized.ToString(), font, letterSpacing, wordSpacing);
                 pieces.Add(new CssInlinePiece(text, normalized.ToString(), width, lineHeight, baseline,
-                    box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, false, false));
+                    box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, false, false, ancestors));
             }
             return;
         }
@@ -409,7 +477,7 @@ public sealed partial class LayoutEngine
                 var token = preserved.ToString();
                 var width = ControlDrawing.MeasureRenderedTextWidth(token, font, letterSpacing, wordSpacing);
                 pieces.Add(new CssInlinePiece(text, token, width, lineHeight, baseline,
-                    box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, true, false));
+                    box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, true, false, ancestors));
                 preserved.Clear();
             }
 
@@ -418,7 +486,7 @@ public sealed partial class LayoutEngine
                 if (rune.Value == '\n')
                 {
                     FlushPreserved();
-                    pieces.Add(CssInlinePiece.LineBreak(text));
+                    pieces.Add(CssInlinePiece.LineBreak(text, ancestors));
                     transformWordStart = true;
                     continue;
                 }
@@ -441,7 +509,7 @@ public sealed partial class LayoutEngine
             var width = ControlDrawing.MeasureRenderedTextWidth(token, font, letterSpacing, wordSpacing);
             pieces.Add(new CssInlinePiece(text, token, width, lineHeight, baseline,
                 box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, whitespace && !preserveWhitespace, false,
-                preserveWhitespace, whiteSpace is not (TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.Nowrap)));
+                preserveWhitespace, whiteSpace is not (TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.Nowrap), ancestors));
             segment.Clear();
         }
 
@@ -450,7 +518,7 @@ public sealed partial class LayoutEngine
             if (rune.Value == '\n')
             {
                 Flush();
-                if (preserveNewlines) pieces.Add(CssInlinePiece.LineBreak(text));
+                if (preserveNewlines) pieces.Add(CssInlinePiece.LineBreak(text, ancestors));
                 else if (!preserveWhitespace && !whitespace)
                 {
                     whitespace = true;
@@ -837,9 +905,10 @@ public sealed partial class LayoutEngine
     private readonly record struct CssTextSplit(CssInlinePiece Head, CssInlinePiece Tail);
     private readonly record struct CssInlinePiece(Element Element, string? Text, float Width, float Height, float Baseline,
         float MarginLeft, float MarginTop, float MarginRight, float MarginBottom, bool IsCollapsibleSpace, bool ForceBreak,
-        bool PreserveWhitespace, bool AllowWrap)
+        bool PreserveWhitespace, bool AllowWrap, List<Element>? InlineAncestors = null)
     {
-        public static CssInlinePiece LineBreak(Element element) => new(element, null, 0, 0, 0, 0, 0, 0, 0, false, true, true, true);
+        public static CssInlinePiece LineBreak(Element element, List<Element>? ancestors = null) =>
+            new(element, null, 0, 0, 0, 0, 0, 0, 0, false, true, true, true, ancestors);
     }
     private readonly record struct CssBox(float Width, float Height, float MinHeight, float MaxHeight,
         float PaddingTop, float PaddingRight, float PaddingBottom, float PaddingLeft,

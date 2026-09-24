@@ -1,5 +1,6 @@
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
+using Square.UI.Html;
 
 namespace Square.Compiler.Syntax;
 
@@ -97,7 +98,19 @@ internal sealed class SqvTemplateSyntaxParser
                 new SquareSourceRange(Absolute(name.Offset), name.Text.Length));
         }
 
-        Expect(SqvTokenType.CloseTag);
+        var startTagEnd = Expect(SqvTokenType.CloseTag);
+        if (IsHtmlVoidElement(name.Text))
+        {
+            // 识别的 HTML void 元素（精确小写或 html: 前缀）在 '>' 处即完整，
+            // 后续兄弟节点不会被吞入子节点列表。
+            return new SqvElementSyntax(
+                name.Text,
+                attributes.ToArray(),
+                Array.Empty<SqvSyntaxNode>(),
+                true,
+                new SquareSourceRange(Absolute(open.Offset), startTagEnd.Offset + 1 - open.Offset),
+                new SquareSourceRange(Absolute(name.Offset), name.Text.Length));
+        }
         var children = new List<SqvSyntaxNode>();
         while (Peek().Type != SqvTokenType.Eof)
         {
@@ -196,6 +209,15 @@ internal sealed class SqvTemplateSyntaxParser
     {
         var close = _source.IndexOf("}}", offset + 2, StringComparison.Ordinal);
         return close < 0 ? _source.Length - offset : close + 2 - offset;
+    }
+
+    /// <summary>仅精确小写的 HTML 目录 void 标签或 html: 前缀标签被视为无闭合元素；大写 Square 名称不适用。</summary>
+    private static bool IsHtmlVoidElement(string tagName)
+    {
+        if (string.IsNullOrEmpty(tagName)) return false;
+        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
+            return HtmlTagCatalog.IsVoid(tagName.Substring("html:".Length).ToLowerInvariant());
+        return HtmlTagCatalog.IsVoid(tagName);
     }
 
     private void ValidateElementName(SqvToken token, bool closing)

@@ -104,9 +104,10 @@ public sealed class ElementNamespaceTests
             """);
         var catalog = CreateCatalog("public sealed class Consumer { }", package);
 
-        Assert.Equal("Square.Controls.Button", catalog.ResolveComponent("button", EmptyContext).Component.TypeName);
+        Assert.Equal("Square.UI.Html.HtmlElement", catalog.ResolveComponent("button", EmptyContext).Component.TypeName);
+        Assert.Equal("Square.Controls.Button", catalog.ResolveComponent("Button", EmptyContext).Component.TypeName);
         Assert.Equal("A.Button", catalog.ResolveComponent("a:button", EmptyContext).Component.TypeName);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, catalog.ResolveComponent("html:button", EmptyContext).Status);
+        Assert.Equal("Square.UI.Html.HtmlElement", catalog.ResolveComponent("html:button", EmptyContext).Component.TypeName);
     }
 
     [Theory]
@@ -131,6 +132,82 @@ public sealed class ElementNamespaceTests
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Theory]
+    [InlineData("sqx")]
+    [InlineData("sqv")]
+    public void ConformingHtmlVocabularyCompilesInBothDialects(string extension)
+    {
+        var content = string.Join("", TemplateCatalog.BuiltIn.Components
+            .Where(descriptor => descriptor.NamespaceUri == TemplateCatalog.HtmlNamespaceUri)
+            .Select(descriptor => descriptor.TagName).Select(tag =>
+            tag == "template" ? "<html:template></html:template>" : $"<{tag} />"));
+        var result = RunGenerator("HtmlVocabulary." + extension, "<template><View>" + content + "</View></template>", out var output);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Theory]
+    [InlineData("sqx")]
+    [InlineData("sqv")]
+    public void HtmlVoidTagsLeaveFollowingSiblingsIntact(string extension)
+    {
+        var result = RunGenerator("HtmlMixed." + extension,
+            "<template><article><p>Hello <strong>世界</strong> !<br>next</p><input type=\"checkbox\" checked><svg><circle r=\"8\" /></svg></article></template>",
+            out var output);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void HtmlFormModelBindingsCompileWithValueAndCheckedTypes()
+    {
+        const string source = """
+            <template><article>
+              <input v-model="Name"><textarea v-model="Notes"></textarea>
+              <select v-model="Choice"><option value="A">A</option></select>
+              <input type="checkbox" v-model="Agreed">
+            </article></template>
+            <script lang="csharp">
+              public ObservableValue<string> Name = new("");
+              public ObservableValue<string> Notes = new("");
+              public ObservableValue<string> Choice = new("A");
+              public ObservableValue<bool> Agreed = new(false);
+            </script>
+            """;
+
+        var result = RunGenerator("HtmlModel.sqv", source, out var output);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Theory]
+    [InlineData("sqx")]
+    [InlineData("sqv")]
+    public void QualifiedHtmlScriptAndStyleStayInsideTemplate(string extension)
+    {
+        var result = RunGenerator("InertSections." + extension,
+            "<template><article><html:script>not executed</html:script><html:style>disabled</html:style></article></template>",
+            out var output);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Theory]
+    [InlineData("sqx")]
+    [InlineData("sqv")]
+    public void StaticHtmlInlineEventsAreRejected(string extension)
+    {
+        var result = RunGenerator("Unsafe." + extension,
+            "<template><html:button onclick=\"alert(1)\">Click</html:button></template>", out _);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "SQXE007" &&
+            diagnostic.GetMessage() == "HTML inline event attribute 'onclick' is prohibited; use Square event binding.");
     }
 
     [Theory]

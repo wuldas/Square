@@ -19,7 +19,7 @@ internal static class SquareWebInteractiveRuntime
 
               const sequence = ++queued;
               const link = type === "click" ? domTarget.closest("a[href]")?.href : null;
-              if (type === "click") event.preventDefault();
+              if (type === "click" && (link || !squareTarget.hasAttribute("data-square-html"))) event.preventDefault();
 
               const valueTarget = domTarget.matches("input,textarea,select")
                 ? domTarget

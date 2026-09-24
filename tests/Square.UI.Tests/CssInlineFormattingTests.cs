@@ -1,6 +1,10 @@
 using Square.Controls;
+using Square.Backends;
 using Square.Graphics;
+using Square.Rendering;
 using Square.UI;
+using Square.UI.Html;
+using Square.UI.Svg;
 using Xunit;
 
 namespace Square.UI.Tests;
@@ -120,6 +124,64 @@ public class CssInlineFormattingTests
         Assert.NotNull(fragments);
         Assert.Contains(fragments!, fragment => fragment.Text == "HELLO");
         Assert.Contains(fragments!, fragment => fragment.Text == "WORLD");
+    }
+
+    [Fact]
+    public void NestedHtmlInlineTextAndBreakStayInDocumentOrder()
+    {
+        var root = InlineRoot(180);
+        var paragraph = new HtmlElement("p");
+        var before = new HtmlTextRun("Hello ");
+        var emphasis = new HtmlElement("strong");
+        var middle = new HtmlTextRun("世界");
+        var after = new HtmlTextRun(" !");
+        var next = new HtmlTextRun("next");
+        emphasis.Children.Add(middle);
+        paragraph.Children.Add(before);
+        paragraph.Children.Add(emphasis);
+        paragraph.Children.Add(after);
+        paragraph.Children.Add(new HtmlElement("br"));
+        paragraph.Children.Add(next);
+        root.Children.Add(paragraph);
+
+        CssBlockFormattingTests.Layout(root, 180, 100);
+
+        Assert.True(before.Geometry.Width > 0);
+        Assert.True(emphasis.Geometry.Width > 0, $"strong={emphasis.Geometry}, middle={middle.Geometry}, before={before.Geometry}, display={emphasis.Style.Get("display")}");
+        Assert.True(middle.Geometry.X >= before.Geometry.Right);
+        Assert.True(after.Geometry.X >= middle.Geometry.Right);
+        Assert.True(next.Geometry.Y > middle.Geometry.Y, $"next={next.Geometry}, middle={middle.Geometry}, after={after.Geometry}");
+        Assert.Contains(ElementLayoutStore.Get(middle).CssTextFragments!, fragment => fragment.Text == "世界");
+    }
+
+    [Fact]
+    public void HtmlFlowArrangesAndPaintsEmbeddedSvg()
+    {
+        var root = InlineRoot(200);
+        var article = new HtmlElement("article");
+        var svg = new SVGSVGElement { ViewBox = "0 0 90 45" };
+        svg.SetProperty("Width", 90);
+        svg.SetProperty("Height", 45);
+        var circle = new SVGCircleElement();
+        circle.SetProperty("CenterX", 24);
+        circle.SetProperty("CenterY", 22);
+        circle.SetProperty("Radius", 14);
+        circle.SetProperty("Fill", "#2b78ee");
+        svg.Children.Add(circle);
+        article.Children.Add(svg);
+        root.Children.Add(article);
+
+        CssBlockFormattingTests.Layout(root, 200, 80);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var bitmap = new Bitmap(200, 80);
+        using var context = new RenderContext(bitmap, 1f);
+        context.Clear(Color.White);
+        tree.Render(context);
+
+        Assert.True(svg.Geometry.Width >= 90);
+        var pixel = bitmap.GetPixel((int)svg.Geometry.X + 24, (int)svg.Geometry.Y + 22);
+        Assert.True(pixel[0] > pixel[2], $"svg={svg.Geometry}, blue={pixel[0]}, red={pixel[2]}, alpha={pixel[3]}");
     }
 
     private static View InlineRoot(float width)

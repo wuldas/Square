@@ -26,6 +26,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Square\Square.csproj" />
     <ProjectReference Include="..\..\src\Square.Extensions\Square.Extensions.csproj" />
+    <ProjectReference Include="..\..\src\Square.Images\Square.Images.csproj" />
     <ProjectReference Include="..\..\src\Square.Platform.Win32\Square.Platform.Win32.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square.Platform.X11\Square.Platform.X11.csproj" Condition="'$(SquareTargetPlatform)' == 'X11'" />
     <ProjectReference Include="..\..\src\Square.Platform.MacOS\Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
@@ -33,8 +34,13 @@
     <ProjectReference Include="..\..\src\Square.Backends.Skia\Square.Backends.Skia.csproj" Condition="'$(SquareSampleUseSkia)' == 'true'" />
     <ProjectReference Include="..\..\src\Square.Backends.Direct2D\Square.Backends.Direct2D.csproj" Condition="'$(SquareSampleUseDirect2D)' == 'true' and '$(SquareTargetPlatform)' == 'Win32'" />
     <ProjectReference Include="..\..\src\Square.DevTools\Square.DevTools.csproj" Condition="'$(SquareSampleUseDevTools)' == 'true'" />
+
     <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\QQ20260724-162126.png" Link="Assets\html-preview.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 
   <ItemGroup>
     <AdditionalFiles Include="**\*.sqx" />
