@@ -1,5 +1,6 @@
 using Square.Controls;
 using Square.Graphics;
+using Square.Html;
 using Square.UI;
 using Square.UI.Scrolling;
 using Square.Rendering.Tree;
@@ -53,6 +54,18 @@ public sealed class DisplayTree
         foreach (var child in parent.Children)
             if (child.Element != null) existing[child.Element] = child;
 
+        DisplayNode GetOrCreateNode(Element child)
+        {
+            if (!existing.TryGetValue(child, out var node))
+            {
+                node = new DisplayNode { Element = child, Bounds = child.Geometry, IsDirty = true };
+                node.RebuildCommands();
+                node.PopupBounds = GetPopupVisualBounds(child);
+                node.IsDirty = true;
+            }
+            return node;
+        }
+
         var ordered = element.Children
             .Select(static (child, index) => (Child: child, Index: index))
             .Where(static item => item.Child.IsVisible && item.Child.IsCssDisplayed())
@@ -63,16 +76,21 @@ public sealed class DisplayTree
         var synchronized = new List<DisplayNode>(ordered.Count);
         foreach (var child in ordered)
         {
-            if (!existing.TryGetValue(child, out var node))
-            {
-                node = new DisplayNode { Element = child, Bounds = child.Geometry, IsDirty = true };
-                node.RebuildCommands();
-                node.PopupBounds = GetPopupVisualBounds(child);
-                node.IsDirty = true;
-            }
+            var node = GetOrCreateNode(child);
             SynchronizeChildren(node, child);
             synchronized.Add(node);
         }
+
+        // HTML visual sidecars (native proxies, list marker) render after the semantic children,
+        // like the controls did while they were still DOM children — but never enter the DOM.
+        if (element is HTMLElement host)
+            foreach (var sidecar in host.VisualSidecars)
+            {
+                if (!sidecar.IsVisible || !sidecar.IsCssDisplayed()) continue;
+                var node = GetOrCreateNode(sidecar);
+                SynchronizeChildren(node, sidecar);
+                synchronized.Add(node);
+            }
 
         parent.Children.Clear();
         parent.Children.AddRange(synchronized);
@@ -588,6 +606,10 @@ public sealed class DisplayTree
     {
         var text = command.Text.Text;
         if (string.IsNullOrEmpty(text)) return null;
+        // HTML mixed text remembers the DOM Text node it came from so selection ranges can be
+        // built directly against the source node and its UTF-16 offsets.
+        var sourceNode = command.Text.SourceNode;
+        var sourceIdentity = sourceNode != null;
         if (command.Text.TryGetAuthoritativeSnapshot(out var authoritative))
         {
             var authoritativeCharacters = authoritative.Lines
@@ -621,7 +643,11 @@ public sealed class DisplayTree
                 authoritativeCharacters)
             {
                 Layout = command.Text,
-                LayoutOrigin = command.Origin
+                LayoutOrigin = command.Origin,
+                TextNode = sourceNode,
+                TextNodeOffset = sourceIdentity ? command.Text.SourceOffset : 0,
+                TextNodeCharOffsets = sourceIdentity ? command.Text.SourceCharOffsets : null,
+                TextNodeLength = sourceIdentity ? command.Text.SourceLength : -1
             };
         }
 
@@ -676,7 +702,11 @@ public sealed class DisplayTree
         return new TextFragment(element, text, command.Text.Font, boundsAll, characters)
         {
             Layout = command.Text,
-            LayoutOrigin = command.Origin
+            LayoutOrigin = command.Origin,
+            TextNode = sourceNode,
+            TextNodeOffset = sourceIdentity ? command.Text.SourceOffset : 0,
+            TextNodeCharOffsets = sourceIdentity ? command.Text.SourceCharOffsets : null,
+            TextNodeLength = sourceIdentity ? command.Text.SourceLength : -1
         };
     }
 

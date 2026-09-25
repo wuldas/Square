@@ -15,10 +15,7 @@ public sealed class TemplateCatalog
     public const string LocalNamespaceUri = "urn:square:local";
 
     private const string ExportAttributeName = "Square.UI.ElementExportAttribute";
-    private const string OrderAttributeName = "Square.UI.ElementNamespaceOrderAttribute";
-    private const string AliasAttributeName = "Square.UI.ElementNamespaceAliasAttribute";
-    /// <summary>所有 HTML 描述符共享的 CLR 类型；类型名本身不指向任何具体标签。</summary>
-    private const string HtmlElementTypeName = "Square.UI.Html.HtmlElement";
+    private const string CustomElementAttributeName = "Square.Html.HtmlCustomElementExportAttribute";
 
     private static readonly IReadOnlyDictionary<string, string> BuiltInTypeNames =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -64,6 +61,14 @@ public sealed class TemplateCatalog
             ["UI"] = "Square.UI.UIRootElement",
             ["Head"] = "Square.UI.UIHeadElement",
             ["Body"] = "Square.UI.UIBodyElement",
+            ["Show"] = "Square.Controls.View",
+            ["For"] = "Square.Controls.View",
+            ["Switch"] = "Square.Controls.View",
+            ["Match"] = "Square.Controls.View",
+            ["Index"] = "Square.Controls.View",
+            ["Slot"] = "Square.Controls.View",
+            ["Outlet"] = "Square.Controls.View",
+            ["Fragment"] = "Square.Controls.View",
             ["svg"] = "Square.UI.Svg.SVGSVGElement",
             ["g"] = "Square.UI.Svg.SVGGElement",
             ["path"] = "Square.UI.Svg.SVGPathElement",
@@ -78,23 +83,75 @@ public sealed class TemplateCatalog
     private static readonly IReadOnlyDictionary<string, string> PropertyAliases =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["id"] = "Id", ["class"] = "class", ["style"] = "style", ["ref"] = "ref", ["slot"] = "slot",
-            ["key"] = "key", ["when"] = "when", ["each"] = "each", ["fallback"] = "fallback", ["name"] = "name",
-            ["text"] = "TextContent", ["glyph"] = "Glyph", ["icon"] = "Icon", ["font-family"] = "FontFamily",
-            ["minimum"] = "Minimum", ["maximum"] = "Maximum", ["splitter-thickness"] = "SplitterThickness",
-            ["seamless"] = "IsSeamless", ["vertical"] = "IsVertical", ["reversed"] = "IsReversed",
-            ["value"] = "Value", ["checked"] = "IsChecked", ["disabled"] = "IsDisabled",
-            ["placeholder"] = "Placeholder", ["source"] = "Source", ["image"] = "ImageContent", ["group"] = "GroupName",
-            ["shortcut"] = "ShortcutText", ["checkable"] = "IsCheckable", ["stays-open-on-click"] = "StaysOpenOnClick",
-            ["options"] = "Options", ["items"] = "Items", ["selected-index"] = "SelectedIndex", ["item-height"] = "ItemHeight",
-            ["overscan-count"] = "OverscanCount", ["indent-size"] = "IndentSize", ["expanded"] = "IsExpanded",
-            ["loop"] = "Loop", ["to"] = "To", ["href"] = "Href", ["marker"] = "Marker", ["replace"] = "Replace",
-            ["color"] = "Color", ["background"] = "Background", ["underline"] = "Underline", ["type"] = "Type",
-            ["viewbox"] = "ViewBox", ["x"] = "X", ["y"] = "Y", ["width"] = "Width", ["height"] = "Height",
-            ["rx"] = "RadiusX", ["ry"] = "RadiusY", ["cx"] = "CenterX", ["cy"] = "CenterY", ["r"] = "Radius",
-            ["x1"] = "X1", ["y1"] = "Y1", ["x2"] = "X2", ["y2"] = "Y2", ["points"] = "Points", ["d"] = "Data",
-            ["transform"] = "Transform", ["fill"] = "Fill", ["stroke"] = "Stroke", ["stroke-width"] = "StrokeWidth",
-            ["opacity"] = "Opacity", ["fill-opacity"] = "FillOpacity", ["stroke-opacity"] = "StrokeOpacity"
+            ["id"] = "Id",
+            ["class"] = "class",
+            ["style"] = "style",
+            ["ref"] = "ref",
+            ["slot"] = "slot",
+            ["key"] = "key",
+            ["when"] = "when",
+            ["each"] = "each",
+            ["fallback"] = "fallback",
+            ["name"] = "name",
+            ["text"] = "TextContent",
+            ["glyph"] = "Glyph",
+            ["icon"] = "Icon",
+            ["font-family"] = "FontFamily",
+            ["minimum"] = "Minimum",
+            ["maximum"] = "Maximum",
+            ["splitter-thickness"] = "SplitterThickness",
+            ["seamless"] = "IsSeamless",
+            ["vertical"] = "IsVertical",
+            ["reversed"] = "IsReversed",
+            ["value"] = "Value",
+            ["checked"] = "IsChecked",
+            ["disabled"] = "IsDisabled",
+            ["placeholder"] = "Placeholder",
+            ["source"] = "Source",
+            ["image"] = "ImageContent",
+            ["group"] = "GroupName",
+            ["shortcut"] = "ShortcutText",
+            ["checkable"] = "IsCheckable",
+            ["stays-open-on-click"] = "StaysOpenOnClick",
+            ["options"] = "Options",
+            ["items"] = "Items",
+            ["selected-index"] = "SelectedIndex",
+            ["item-height"] = "ItemHeight",
+            ["overscan-count"] = "OverscanCount",
+            ["indent-size"] = "IndentSize",
+            ["expanded"] = "IsExpanded",
+            ["loop"] = "Loop",
+            ["to"] = "To",
+            ["href"] = "Href",
+            ["marker"] = "Marker",
+            ["replace"] = "Replace",
+            ["color"] = "Color",
+            ["background"] = "Background",
+            ["underline"] = "Underline",
+            ["type"] = "Type",
+            ["viewbox"] = "ViewBox",
+            ["x"] = "X",
+            ["y"] = "Y",
+            ["width"] = "Width",
+            ["height"] = "Height",
+            ["rx"] = "RadiusX",
+            ["ry"] = "RadiusY",
+            ["cx"] = "CenterX",
+            ["cy"] = "CenterY",
+            ["r"] = "Radius",
+            ["x1"] = "X1",
+            ["y1"] = "Y1",
+            ["x2"] = "X2",
+            ["y2"] = "Y2",
+            ["points"] = "Points",
+            ["d"] = "Data",
+            ["transform"] = "Transform",
+            ["fill"] = "Fill",
+            ["stroke"] = "Stroke",
+            ["stroke-width"] = "StrokeWidth",
+            ["opacity"] = "Opacity",
+            ["fill-opacity"] = "FillOpacity",
+            ["stroke-opacity"] = "StrokeOpacity"
         };
 
     private static readonly string[] CommonPropertyNames = { "id", "class", "style", "ref", "slot" };
@@ -108,23 +165,32 @@ public sealed class TemplateCatalog
     private static readonly IReadOnlyDictionary<string, string[]> TagPropertyNames =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Text"] = new[] { "text", "color" }, ["FontIcon"] = new[] { "glyph", "color", "font-family" },
-            ["Button"] = new[] { "text", "background" }, ["Input"] = new[] { "value", "placeholder", "type" },
-            ["TextArea"] = new[] { "value", "placeholder" }, ["CheckBox"] = new[] { "text", "checked" },
-            ["Radio"] = new[] { "text", "checked", "group" }, ["Select"] = new[] { "options", "value", "placeholder" },
+            ["Text"] = new[] { "text", "color" },
+            ["FontIcon"] = new[] { "glyph", "color", "font-family" },
+            ["Button"] = new[] { "text", "background" },
+            ["Input"] = new[] { "value", "placeholder", "type" },
+            ["TextArea"] = new[] { "value", "placeholder" },
+            ["CheckBox"] = new[] { "text", "checked" },
+            ["Radio"] = new[] { "text", "checked", "group" },
+            ["Select"] = new[] { "options", "value", "placeholder" },
             ["Image"] = new[] { "source", "image" },
             ["Splitter"] = new[] { "minimum", "maximum", "value", "vertical", "reversed" },
             ["SplitContainer"] = new[] { "minimum", "maximum", "value", "vertical", "splitter-thickness", "seamless" },
             ["List"] = new[] { "items", "selected-index" },
             ["VirtualList"] = new[] { "selected-index", "item-height", "overscan-count" },
             ["VirtualTree"] = new[] { "item-height", "overscan-count", "indent-size" },
-            ["TreeItem"] = new[] { "text", "expanded", "color" }, ["ListItem"] = new[] { "text", "marker", "color" },
+            ["TreeItem"] = new[] { "text", "expanded", "color" },
+            ["ListItem"] = new[] { "text", "marker", "color" },
             ["Swiper"] = new[] { "selected-index", "loop" },
             ["MenuItem"] = new[] { "text", "icon", "group", "shortcut", "checkable", "checked", "stays-open-on-click", "disabled" },
-            ["Link"] = new[] { "text", "href", "underline", "color" }, ["Show"] = new[] { "when", "fallback" },
-            ["For"] = new[] { "each", "key", "fallback" }, ["Index"] = new[] { "each", "fallback" },
-            ["Switch"] = new[] { "fallback" }, ["Match"] = new[] { "when" },
-            ["Slot"] = new[] { "name", "fallback" }, ["Outlet"] = new[] { "name", "fallback" },
+            ["Link"] = new[] { "text", "href", "underline", "color" },
+            ["Show"] = new[] { "when", "fallback" },
+            ["For"] = new[] { "each", "key", "fallback" },
+            ["Index"] = new[] { "each", "fallback" },
+            ["Switch"] = new[] { "fallback" },
+            ["Match"] = new[] { "when" },
+            ["Slot"] = new[] { "name", "fallback" },
+            ["Outlet"] = new[] { "name", "fallback" },
             ["svg"] = new[] { "viewbox", "width", "height", "fill", "stroke", "opacity" },
             ["g"] = new[] { "transform", "fill", "stroke", "opacity" },
             ["path"] = new[] { "d", "transform", "fill", "stroke", "stroke-width", "opacity" },
@@ -159,10 +225,10 @@ public sealed class TemplateCatalog
     private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _builtIns;
     /// <summary>精确小写键的 HTML 目录描述符；与 Square/SVG 内置表分开存放，避免大小写折叠覆盖同名控件。</summary>
     private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _htmlBuiltIns;
+    private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _customHtml;
+    private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _customizedBuiltIns;
     private readonly IReadOnlyList<TemplateComponentDescriptor> _exports;
     private readonly IReadOnlyList<TemplateComponentDescriptor> _localComponents;
-    private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _prefixes;
-    private readonly IReadOnlyList<string> _namespaceOrder;
     private readonly Compilation _compilation;
     private readonly IReadOnlyDictionary<string, INamedTypeSymbol> _exportedSymbols;
     private readonly Dictionary<INamedTypeSymbol, TemplateComponentContracts> _contracts;
@@ -171,10 +237,10 @@ public sealed class TemplateCatalog
     private TemplateCatalog(
         IReadOnlyDictionary<string, TemplateComponentDescriptor> builtIns,
         IReadOnlyDictionary<string, TemplateComponentDescriptor> htmlBuiltIns,
+        IReadOnlyDictionary<string, TemplateComponentDescriptor> customHtml,
+        IReadOnlyDictionary<string, TemplateComponentDescriptor> customizedBuiltIns,
         IReadOnlyList<TemplateComponentDescriptor> exports,
         IReadOnlyList<TemplateComponentDescriptor> localComponents,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> prefixes,
-        IReadOnlyList<string> namespaceOrder,
         IReadOnlyList<SquareDiagnostic> diagnostics,
         Compilation compilation,
         Dictionary<INamedTypeSymbol, TemplateComponentContracts> contracts,
@@ -183,10 +249,10 @@ public sealed class TemplateCatalog
         _builtIns = builtIns;
         _htmlBuiltIns = htmlBuiltIns ?? new ReadOnlyDictionary<string, TemplateComponentDescriptor>(
             new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal));
+        _customHtml = customHtml ?? new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
+        _customizedBuiltIns = customizedBuiltIns ?? new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
         _exports = exports;
         _localComponents = localComponents;
-        _prefixes = prefixes;
-        _namespaceOrder = namespaceOrder;
         Diagnostics = diagnostics;
         _compilation = compilation;
         _contracts = contracts ?? new Dictionary<INamedTypeSymbol, TemplateComponentContracts>(SymbolEqualityComparer.Default);
@@ -202,13 +268,14 @@ public sealed class TemplateCatalog
         new ReadOnlyCollection<TemplatePropertyDescriptor>(PropertyAliases.Select(pair =>
             new TemplatePropertyDescriptor(pair.Key, pair.Value, GetPropertyValueKind(pair.Key))).ToArray());
     public IReadOnlyCollection<TemplateComponentDescriptor> Components =>
-        new ReadOnlyCollection<TemplateComponentDescriptor>(_htmlBuiltIns.Values.Concat(_builtIns.Values).Concat(_exports).Concat(_localComponents)
+        new ReadOnlyCollection<TemplateComponentDescriptor>(_htmlBuiltIns.Values.Concat(_customHtml.Values)
+            .Concat(_builtIns.Values).Concat(_exports).Concat(_localComponents)
             .GroupBy(ComponentIdentity, StringComparer.Ordinal).Select(group => group.First()).ToArray());
 
     public static TemplateCatalog FromCompilation(
         Compilation compilation,
         IEnumerable<(string Path, string Content, string Namespace)> inputs) =>
-        FromCompilation(compilation, ParseInputs(inputs));
+        FromCompilation(compilation, ParseInputs(inputs, sectionsOnly: true));
 
     internal static TemplateCatalog FromCompilation(
         Compilation compilation,
@@ -221,12 +288,12 @@ public sealed class TemplateCatalog
             new TemplateSemanticAnalyzer().BuildGeneratedComponents(inputArray));
     }
 
-    /// <summary>把每个输入解析一次，供声明注入、组件发现与发射共用。</summary>
+    /// <summary>分区/脚本元数据可先于模板体扫描，用于构造供标签解析的目录。</summary>
     internal static IReadOnlyList<(string Path, string Content, string Namespace, SquareParseResult Parse)> ParseInputs(
-        IEnumerable<(string Path, string Content, string Namespace)> inputs) =>
+        IEnumerable<(string Path, string Content, string Namespace)> inputs, bool sectionsOnly = false) =>
         (inputs ?? Array.Empty<(string Path, string Content, string Namespace)>())
             .Select(input => (input.Path, input.Content, input.Namespace,
-                SquareDocumentService.ParseSyntax(input.Content, input.Path)))
+                SquareDocumentService.ParseSyntax(input.Content, input.Path, sectionsOnly)))
             .ToArray();
 
     internal static TemplateCatalog FromOutputCompilation(
@@ -249,8 +316,9 @@ public sealed class TemplateCatalog
         var elementSymbol = analysisCompilation.GetTypeByMetadataName("Square.UI.Element");
         var frameworkAssembly = elementSymbol?.ContainingAssembly;
         var exportAttribute = frameworkAssembly?.GetTypeByMetadataName(ExportAttributeName);
-        var orderAttribute = frameworkAssembly?.GetTypeByMetadataName(OrderAttributeName);
-        var aliasAttribute = frameworkAssembly?.GetTypeByMetadataName(AliasAttributeName);
+        var customAttribute = frameworkAssembly?.GetTypeByMetadataName(CustomElementAttributeName);
+        var customHtml = new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
+        var customizedBuiltIns = new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
 
         var exportedSymbols = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
         var declarations = new Dictionary<string, AttributeData>(StringComparer.Ordinal);
@@ -263,14 +331,20 @@ public sealed class TemplateCatalog
             }
             ReadExports(analysisCompilation.Assembly, exportAttribute, elementSymbol, exports, diagnostics, exportedSymbols, declarations);
         }
+        if (elementSymbol != null && customAttribute != null)
+        {
+            foreach (var reference in analysisCompilation.References)
+                if (analysisCompilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assembly)
+                    ReadCustomElements(assembly, customAttribute, elementSymbol, customHtml,
+                        customizedBuiltIns, diagnostics);
+            ReadCustomElements(analysisCompilation.Assembly, customAttribute, elementSymbol,
+                customHtml, customizedBuiltIns, diagnostics);
+        }
 
-        var aliases = ReadAliases(analysisCompilation.Assembly, aliasAttribute, exports, diagnostics);
-        var order = ReadOrder(analysisCompilation.Assembly, orderAttribute, exports, diagnostics);
         ValidateExportIdentities(exports, declarations, diagnostics);
         ValidateCrossAssemblyTypeNames(exports, declarations, diagnostics);
-        var prefixes = BuildPrefixes(exports, aliases, declarations, diagnostics);
         var distinctExports = exports.GroupBy(ComponentIdentity, StringComparer.Ordinal)
-            .Select(group => group.OrderBy(item => item.Prefix, StringComparer.OrdinalIgnoreCase).First())
+            .Select(group => group.First())
             .ToArray();
         exports.Clear();
         exports.AddRange(distinctExports);
@@ -314,10 +388,10 @@ public sealed class TemplateCatalog
         return new TemplateCatalog(
             builtIns,
             CreateHtmlDescriptors(),
+            customHtml,
+            customizedBuiltIns,
             new ReadOnlyCollection<TemplateComponentDescriptor>(exports.OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray()),
             new ReadOnlyCollection<TemplateComponentDescriptor>(locals.OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray()),
-            prefixes,
-            order,
             new ReadOnlyCollection<SquareDiagnostic>(frozenDiagnostics),
             analysisCompilation,
             contractCache,
@@ -327,20 +401,8 @@ public sealed class TemplateCatalog
     private static TemplateComponentDescriptor CopyWithSourcePath(TemplateComponentDescriptor component, string sourcePath) =>
         new(component.TagName, component.TypeName, component.TypeMetadataName, component.NamespaceUri, component.Prefix,
             component.LocalName, component.AssemblyName, sourcePath, component.Kind, component.IsBuiltIn,
-            component.RequiresBuildAfterAttach, component.IsTextContentElement, component.IsSlotHost);
-
-    public bool TryGetBuiltInComponent(string tagName, out TemplateComponentDescriptor descriptor)
-    {
-        descriptor = null;
-        if (string.IsNullOrWhiteSpace(tagName) || tagName.IndexOf(':') >= 0) return false;
-        // 精确小写先命中 HTML 目录（ordinal），其余大小写仍走 Square/SVG 大小写折叠表。
-        if (_htmlBuiltIns.TryGetValue(tagName, out descriptor)) return true;
-        return _builtIns.TryGetValue(tagName, out descriptor);
-    }
-
-    /// <summary>判断名字是否为目录中的 HTML 标签的精确小写拼写（不带前缀）。发射器用它避免把 <c>slot</c> 之类同名标签交给指令管线。</summary>
-    internal bool IsExactHtmlTag(string tagName) =>
-        !string.IsNullOrEmpty(tagName) && tagName.IndexOf(':') < 0 && _htmlBuiltIns.ContainsKey(tagName);
+            component.RequiresBuildAfterAttach, component.IsTextContentElement, component.IsSlotHost,
+            component.CustomElementName, component.CustomExtendsTag, component.ObservedAttributes, component.IsHtmlHost);
 
     public IReadOnlyList<TemplatePropDescriptor> GetProps(TemplateComponentDescriptor component) =>
         GetContracts(component).Props;
@@ -360,8 +422,8 @@ public sealed class TemplateCatalog
     internal INamedTypeSymbol GetComponentSymbol(TemplateComponentDescriptor component)
     {
         if (component == null || _compilation == null) return null;
-        // HTML 描述符共享 HtmlElement CLR 类型；不得把该类型当作组件契约来源。
-        if (component.Kind == TemplateElementKind.Html) return null;
+        // HTML attributes and events use the dedicated HTML surface, not CLR component contracts.
+        if (component.IsHtmlHost) return null;
         var frameworkAssembly = _compilation.GetTypeByMetadataName("Square.UI.Element")?.ContainingAssembly;
         return FindComponentSymbol(_compilation, component, frameworkAssembly?.GetTypeByMetadataName(ExportAttributeName), _exportedSymbols);
     }
@@ -369,7 +431,8 @@ public sealed class TemplateCatalog
     private TemplateComponentContracts GetContracts(TemplateComponentDescriptor component)
     {
         // HTML 元素没有 CLR 属性/事件契约：属性一律是小写 HTML attribute。
-        if (component == null || component.Kind == TemplateElementKind.Html) return TemplateComponentContracts.Empty;
+        if (component == null || component.IsHtmlHost)
+            return TemplateComponentContracts.Empty;
         var symbol = GetComponentSymbol(component);
         if (symbol == null) return TemplateComponentContracts.Empty;
         lock (_contractGate)
@@ -383,103 +446,118 @@ public sealed class TemplateCatalog
         }
     }
 
-    public IReadOnlyList<string> GetQualifiedNames(TemplateComponentDescriptor component)
+    public IReadOnlyList<string> GetQualifiedNames(TemplateComponentDescriptor component, TemplateResolutionContext context = null)
     {
         if (component == null) return Array.Empty<string>();
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (component.Kind == TemplateElementKind.ClrScoped) names.Add("local:" + component.TypeName);
-        else
-        {
-            foreach (var pair in _prefixes.Where(pair => pair.Value.Count == 1 && pair.Value.Contains(component.NamespaceUri, StringComparer.Ordinal)))
-                names.Add(pair.Key + ":" + component.LocalName);
-        }
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (context != null)
+            foreach (var binding in context.PrefixNamespaces)
+                if (binding.Value == component.NamespaceUri)
+                    names.Add(binding.Key + ":" + component.LocalName);
         var exact = ResolveExactClr(component.TypeName);
         if (exact.Status == TemplateElementResolutionStatus.Resolved &&
             ComponentAssemblyTypeIdentity(exact.Component) == ComponentAssemblyTypeIdentity(component))
             names.Add("global::" + component.TypeName);
-        return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+        return names.OrderBy(name => name, StringComparer.Ordinal).ToArray();
     }
 
     public TemplateElementResolution ResolveComponent(string tagName, TemplateResolutionContext context)
     {
         context ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
-        var parsedName = TemplateElementName.Parse(tagName, false);
-        if (parsedName.Status != TemplateElementNameStatus.Valid)
+        var name = TemplateElementName.Parse(tagName, false);
+        if (name.Status != TemplateElementNameStatus.Valid)
             return TemplateElementResolution.Failed(TemplateElementResolutionStatus.InvalidName);
-        if (parsedName.Kind == TemplateElementNameKind.ClrExact)
-            return ResolveExactClr(parsedName.ClrTypeName);
-        if (parsedName.Kind == TemplateElementNameKind.Local)
-            return SelectLocal(ResolveLocalCandidates(parsedName.ClrTypeName, context));
-        if (parsedName.Kind == TemplateElementNameKind.Qualified)
+        if (name.Kind == TemplateElementNameKind.ClrExact)
+            return ResolveExactClr(name.ClrTypeName);
+        if (name.Kind == TemplateElementNameKind.Qualified)
         {
-            var prefix = parsedName.Prefix;
-            var localName = parsedName.LocalName;
-            if (!_prefixes.TryGetValue(prefix, out var namespaceUris))
+            if (!context.PrefixNamespaces.TryGetValue(name.Prefix, out var uri))
                 return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownPrefix);
-            var candidates = _exports.Where(component => namespaceUris.Contains(component.NamespaceUri, StringComparer.Ordinal) &&
-                    component.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase))
-                .Concat(_builtIns.Values.Where(component => namespaceUris.Contains(component.NamespaceUri, StringComparer.Ordinal) &&
-                    component.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-            // html: 前缀显式指向 HTML 目录（大小写不敏感），且 html URI 保留给框架，不会与扩展导出冲突。
-            if (namespaceUris.Contains(HtmlNamespaceUri, StringComparer.Ordinal) &&
-                _htmlBuiltIns.TryGetValue(localName.ToLowerInvariant(), out var htmlCandidate))
-                candidates.Add(htmlCandidate);
-            var ordered = candidates.OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray();
-            var orderedUris = namespaceUris.OrderBy(uri => uri, StringComparer.Ordinal).ToArray();
-            if (ordered.Length == 1 && namespaceUris.Count == 1)
-                return TemplateElementResolution.Resolved(ordered[0]);
-            if (ordered.Length == 0)
-                return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement, ordered, orderedUris);
-            return TemplateElementResolution.Failed(TemplateElementResolutionStatus.Ambiguous, ordered, orderedUris);
+            return SelectUriCandidates(Candidates(name.LocalName, context, uri), uri);
         }
 
-        var unqualifiedName = parsedName.LocalName;
-        // 精确小写先命中 HTML；其余大小写（BUTTON/Button）继续匹配 Square/SVG 内置表。
-        if (_htmlBuiltIns.TryGetValue(unqualifiedName, out var htmlBuiltIn)) return TemplateElementResolution.Resolved(htmlBuiltIn);
-        if (_builtIns.TryGetValue(unqualifiedName, out var builtIn)) return TemplateElementResolution.Resolved(builtIn);
+        var preferred = Candidates(name.LocalName, context, context.DefaultElementNamespaceUri);
+        if (preferred.Count > 0)
+            return SelectUriCandidates(preferred, context.DefaultElementNamespaceUri);
+        var candidates = Candidates(name.LocalName, context);
+        if (candidates.Count == 1) return TemplateElementResolution.Resolved(candidates[0]);
+        return TemplateElementResolution.Failed(
+            candidates.Count == 0 ? TemplateElementResolutionStatus.UnknownElement : TemplateElementResolutionStatus.Ambiguous,
+            candidates, candidates.Select(candidate => candidate.Kind == TemplateElementKind.ClrScoped
+                ? LocalNamespaceUri : candidate.NamespaceUri).Distinct(StringComparer.Ordinal).OrderBy(uri => uri, StringComparer.Ordinal));
+    }
 
-        var extensionCandidates = _exports.Where(component => component.LocalName.Equals(unqualifiedName, StringComparison.OrdinalIgnoreCase)).ToList();
-        extensionCandidates.AddRange(ResolveLocalCandidates(unqualifiedName, context));
-        if (extensionCandidates.Count == 0) return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement);
-        if (extensionCandidates.Count == 1) return TemplateElementResolution.Resolved(extensionCandidates[0]);
+    public TemplateElementResolution ResolveCustomizedBuiltIn(TemplateElementResolution baseResolution, string isName)
+    {
+        if (baseResolution?.Status != TemplateElementResolutionStatus.Resolved ||
+            baseResolution.Component.Kind != TemplateElementKind.Html ||
+            !_customizedBuiltIns.TryGetValue(baseResolution.Component.LocalName + "\0" + isName, out var custom))
+            return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement);
+        return TemplateElementResolution.Resolved(custom);
+    }
 
-        var candidateUris = extensionCandidates
-            .Select(candidate => candidate.Kind == TemplateElementKind.ClrScoped ? LocalNamespaceUri : candidate.NamespaceUri)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(uri => uri, StringComparer.Ordinal)
-            .ToArray();
-        var selectedNamespace = _namespaceOrder.FirstOrDefault(uri => candidateUris.Contains(uri, StringComparer.Ordinal));
-        if (selectedNamespace == null)
-            return TemplateElementResolution.Failed(
-                TemplateElementResolutionStatus.Ambiguous,
-                extensionCandidates.OrderBy(ComponentSortKey, StringComparer.Ordinal),
-                candidateUris);
-        var selected = extensionCandidates.Where(candidate =>
-            (candidate.Kind == TemplateElementKind.ClrScoped ? LocalNamespaceUri : candidate.NamespaceUri).Equals(selectedNamespace, StringComparison.Ordinal)).ToArray();
-        return selected.Length == 1
-            ? TemplateElementResolution.Resolved(selected[0])
-            : TemplateElementResolution.Failed(
-                TemplateElementResolutionStatus.Ambiguous,
-                selected.OrderBy(ComponentSortKey, StringComparer.Ordinal),
-                candidateUris);
+    internal TemplateComponentDescriptor FindCustomDefinitionFor(TemplateComponentDescriptor component) =>
+        _customHtml.Values.Concat(_customizedBuiltIns.Values).FirstOrDefault(custom =>
+            custom.AssemblyName == component.AssemblyName && custom.TypeMetadataName == component.TypeMetadataName);
+
+    private static TemplateElementResolution SelectUriCandidates(IReadOnlyList<TemplateComponentDescriptor> candidates, string uri) =>
+        candidates.Count == 1 ? TemplateElementResolution.Resolved(candidates[0]) :
+        TemplateElementResolution.Failed(candidates.Count == 0
+            ? TemplateElementResolutionStatus.UnknownElement : TemplateElementResolutionStatus.Ambiguous,
+            candidates, new[] { uri });
+
+    private IReadOnlyList<TemplateComponentDescriptor> Candidates(
+        string localName, TemplateResolutionContext context, string namespaceUri = null)
+    {
+        var result = new List<TemplateComponentDescriptor>();
+        if ((namespaceUri == null || namespaceUri == HtmlNamespaceUri) &&
+            _htmlBuiltIns.TryGetValue(AsciiLower(localName), out var html)) result.Add(html);
+        if ((namespaceUri == null || namespaceUri == HtmlNamespaceUri) &&
+            _customHtml.TryGetValue(localName, out var custom)) result.Add(custom);
+        if (namespaceUri == null || namespaceUri == SquareNamespaceUri || namespaceUri == SvgNamespaceUri)
+            result.AddRange(_builtIns.Values.Where(candidate =>
+                (namespaceUri == null || candidate.NamespaceUri == namespaceUri) &&
+                candidate.LocalName.Equals(localName, candidate.NamespaceUri == SvgNamespaceUri
+                    ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)));
+        result.AddRange(_exports.Where(candidate =>
+            (namespaceUri == null || candidate.NamespaceUri == namespaceUri) &&
+            candidate.LocalName.Equals(localName, StringComparison.Ordinal)));
+        if (namespaceUri == null || namespaceUri == LocalNamespaceUri)
+            result.AddRange(ResolveLocalCandidates(localName, context));
+        return DistinctComponents(result);
+    }
+
+    private static string AsciiLower(string name)
+    {
+        char[] characters = null;
+        for (var index = 0; index < name.Length; index++)
+            if (name[index] is >= 'A' and <= 'Z')
+            {
+                characters ??= name.ToCharArray();
+                characters[index] = (char)(name[index] + ('a' - 'A'));
+            }
+        return characters == null ? name : new string(characters);
     }
 
     public string MapPropertyName(string markupName) =>
         !string.IsNullOrWhiteSpace(markupName) && PropertyAliases.TryGetValue(markupName, out var propertyName) ? propertyName : markupName;
 
-    public IReadOnlyCollection<TemplatePropertyDescriptor> GetPropertiesForTag(string tagName)
+    public IReadOnlyCollection<TemplatePropertyDescriptor> GetPropertiesForTag(
+        string tagName, TemplateResolutionContext context = null)
     {
         if (string.IsNullOrWhiteSpace(tagName)) return Properties;
-        if (IsExactHtmlTag(tagName))
-        {
-            // HTML 标签只补全标准全局属性；不套用 Square 控件别名（text/checked/disabled → CLR 属性）。
-            return HtmlGlobalAttributeNames.Select(name =>
-                new TemplatePropertyDescriptor(name, name, GetPropertyValueKind(name))).ToArray();
-        }
+        var resolution = ResolveComponent(tagName,
+            context ?? new TemplateResolutionContext(string.Empty, Array.Empty<string>()));
+        if (resolution.Status == TemplateElementResolutionStatus.Resolved &&
+            resolution.Component.IsHtmlHost)
+            return HtmlGlobalAttributeNames.Concat(resolution.Component.ObservedAttributes)
+                .Distinct(StringComparer.Ordinal)
+                .Select(name => new TemplatePropertyDescriptor(name, name, GetPropertyValueKind(name))).ToArray();
+        var localName = resolution.Status == TemplateElementResolutionStatus.Resolved
+            ? resolution.Component.LocalName : tagName;
         var names = new HashSet<string>(CommonPropertyNames, StringComparer.OrdinalIgnoreCase);
-        if (!NonUiElementTags.Contains(tagName)) names.UnionWith(UiElementPropertyNames);
-        if (TagPropertyNames.TryGetValue(tagName, out var tagProperties)) names.UnionWith(tagProperties);
+        if (!NonUiElementTags.Contains(localName)) names.UnionWith(UiElementPropertyNames);
+        if (TagPropertyNames.TryGetValue(localName, out var tagProperties)) names.UnionWith(tagProperties);
         return Properties.Where(property => names.Contains(property.Name)).ToArray();
     }
 
@@ -488,12 +566,14 @@ public sealed class TemplateCatalog
 
     private TemplateElementResolution ResolveExactClr(string typeName)
     {
-        // HtmlElement 只有 HtmlElement(string) 构造且被 113 个标签共享；
-        // CLR 全名本身不指向任何标签，必须用 html:<name> 或精确小写拼写。
-        if (string.Equals(typeName, HtmlElementTypeName, StringComparison.Ordinal))
-            return TemplateElementResolution.Failed(TemplateElementResolutionStatus.UnknownElement);
         var builtIn = _builtIns.Values.FirstOrDefault(component => component.TypeName.Equals(typeName, StringComparison.Ordinal));
         if (builtIn != null) return TemplateElementResolution.Resolved(builtIn);
+        // 113 个 HTML 标签各映射唯一具体类型；CLR 全名本身即唯一身份。
+        var htmlBuiltIn = _htmlBuiltIns.Values.FirstOrDefault(component => component.TypeName.Equals(typeName, StringComparison.Ordinal));
+        if (htmlBuiltIn != null) return TemplateElementResolution.Resolved(htmlBuiltIn);
+        var customHtml = _customHtml.Values.Concat(_customizedBuiltIns.Values)
+            .FirstOrDefault(component => component.TypeName.Equals(typeName, StringComparison.Ordinal));
+        if (customHtml != null) return TemplateElementResolution.Resolved(customHtml);
         var known = DistinctComponents(_exports.Concat(_localComponents)
             .Where(component => component.TypeName.Equals(typeName, StringComparison.Ordinal)));
         if (known.Count == 1) return TemplateElementResolution.Resolved(known[0]);
@@ -544,26 +624,22 @@ public sealed class TemplateCatalog
         components.GroupBy(component => ComponentAssemblyTypeIdentity(component) + "\0" + component.TypeName, StringComparer.Ordinal)
             .Select(group => group.First()).OrderBy(ComponentSortKey, StringComparer.Ordinal).ToArray();
 
-    private static TemplateCatalog CreateBuiltIn()
-    {
-        var prefixes = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["html"] = new[] { HtmlNamespaceUri }, ["ui"] = new[] { SquareNamespaceUri },
-            ["svg"] = new[] { SvgNamespaceUri }, ["local"] = new[] { LocalNamespaceUri }
-        };
-        return new TemplateCatalog(CreateBuiltInDescriptors(), CreateHtmlDescriptors(), Array.Empty<TemplateComponentDescriptor>(),
-            Array.Empty<TemplateComponentDescriptor>(), prefixes, Array.Empty<string>(), Array.Empty<SquareDiagnostic>(), null,
+    private static TemplateCatalog CreateBuiltIn() =>
+        new(CreateBuiltInDescriptors(), CreateHtmlDescriptors(),
+            new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal),
+            new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal),
+            Array.Empty<TemplateComponentDescriptor>(), Array.Empty<TemplateComponentDescriptor>(),
+            Array.Empty<SquareDiagnostic>(), null,
             new Dictionary<INamedTypeSymbol, TemplateComponentContracts>(SymbolEqualityComparer.Default),
             new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal));
-    }
 
-    /// <summary>为共享目录中的每个 HTML 标签建立描述符；全部共用 Square.UI.Html.HtmlElement（按规范化小写标签构造）。</summary>
+    /// <summary>为目录中的每个 HTML 标签建立描述符；每个标签唯一具体 CLR 类型（见 HtmlTagCatalog.TypeNames）。</summary>
     private static IReadOnlyDictionary<string, TemplateComponentDescriptor> CreateHtmlDescriptors()
     {
         var components = new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
-        foreach (var tag in Square.UI.Html.HtmlTagCatalog.Tags)
-            components[tag] = new TemplateComponentDescriptor(
-                tag, HtmlElementTypeName, HtmlElementTypeName, HtmlNamespaceUri, "html", tag,
+        foreach (var pair in Square.Html.HtmlTagCatalog.TypeNames)
+            components[pair.Key] = new TemplateComponentDescriptor(
+                pair.Key, pair.Value, pair.Value, HtmlNamespaceUri, "html", pair.Key,
                 "Square", string.Empty, TemplateElementKind.Html, true, false, false, false);
         return new ReadOnlyDictionary<string, TemplateComponentDescriptor>(components);
     }
@@ -674,6 +750,84 @@ public sealed class TemplateCatalog
         return false;
     }
 
+    private static void ReadCustomElements(
+        IAssemblySymbol assembly,
+        INamedTypeSymbol customAttribute,
+        INamedTypeSymbol elementSymbol,
+        IDictionary<string, TemplateComponentDescriptor> autonomous,
+        IDictionary<string, TemplateComponentDescriptor> customized,
+        ICollection<SquareDiagnostic> diagnostics)
+    {
+        var htmlBase = elementSymbol.ContainingAssembly.GetTypeByMetadataName("Square.Html.HTMLElement");
+        foreach (var attribute in assembly.GetAttributes())
+        {
+            if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, customAttribute)) continue;
+            if (attribute.ConstructorArguments.Length != 2 ||
+                attribute.ConstructorArguments[0].Value is not string name ||
+                attribute.ConstructorArguments[1].Value is not INamedTypeSymbol type ||
+                !Square.Html.HtmlCustomElementNames.IsValid(name))
+            {
+                AddDiagnostic(diagnostics, "SQXE001", "Invalid HTML custom element name or declaration.", attribute);
+                continue;
+            }
+            if (!IsValidExportType(type, htmlBase))
+            {
+                AddDiagnostic(diagnostics, "SQXE001",
+                    "Custom HTML element types must be public, concrete, derive from HTMLElement and have a public parameterless constructor.", attribute);
+                continue;
+            }
+            var extendsTag = attribute.NamedArguments.FirstOrDefault(item => item.Key == "ExtendsTag").Value.Value as string;
+            if (extendsTag != null &&
+                (!Square.Html.HtmlTagCatalog.TypeNames.TryGetValue(extendsTag, out var builtInTypeName) ||
+                 elementSymbol.ContainingAssembly.GetTypeByMetadataName(builtInTypeName) is not { } builtInType ||
+                 SymbolEqualityComparer.Default.Equals(type, builtInType) || !DerivesFrom(type, builtInType)))
+            {
+                AddDiagnostic(diagnostics, "SQXE001", "Customized built-ins must inherit the concrete HTML type named by ExtendsTag.", attribute);
+                continue;
+            }
+            var observed = new List<string>();
+            var invalidObserved = false;
+            foreach (var named in attribute.NamedArguments.Where(item => item.Key == "ObservedAttributes"))
+            {
+                if (named.Value.Kind != TypedConstantKind.Array || named.Value.IsNull)
+                {
+                    invalidObserved = true;
+                    break;
+                }
+                foreach (var item in named.Value.Values)
+                {
+                    if (item.Value is not string observedName || string.IsNullOrWhiteSpace(observedName) ||
+                        observedName.Any(character => char.IsWhiteSpace(character) || character is '<' or '>' or '/' or '=' or '\'' or '"') ||
+                        observed.Contains(observedName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        invalidObserved = true;
+                        break;
+                    }
+                    observed.Add(observedName.ToLowerInvariant());
+                }
+            }
+            if (invalidObserved)
+            {
+                AddDiagnostic(diagnostics, "SQXE001", "ObservedAttributes must contain distinct valid HTML attribute names.", attribute);
+                continue;
+            }
+            var tag = extendsTag ?? name;
+            var key = extendsTag == null ? name : extendsTag + "\0" + name;
+            var definitions = extendsTag == null ? autonomous : customized;
+            if (definitions.ContainsKey(key))
+            {
+                AddDiagnostic(diagnostics, "SQXE005", "Duplicate HTML custom element definition '" + name + "'.", attribute);
+                continue;
+            }
+            var typeName = ToCSharpTypeName(type);
+            definitions.Add(key, new TemplateComponentDescriptor(
+                tag, typeName, GetMetadataName(type), HtmlNamespaceUri, "html", tag,
+                type.ContainingAssembly.Identity.Name,
+                type.DeclaringSyntaxReferences.FirstOrDefault()?.SyntaxTree.FilePath ?? string.Empty,
+                TemplateElementKind.HtmlCustom, false, false, false, false, name, extendsTag, observed.ToArray()));
+        }
+    }
+
     private static void ReadExports(
         IAssemblySymbol assembly,
         INamedTypeSymbol exportAttribute,
@@ -686,19 +840,18 @@ public sealed class TemplateCatalog
         foreach (var attribute in assembly.GetAttributes())
         {
             if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, exportAttribute)) continue;
-            if (attribute.ConstructorArguments.Length != 4 ||
+            if (attribute.ConstructorArguments.Length != 3 ||
                 attribute.ConstructorArguments[0].Value is not string namespaceUri ||
-                attribute.ConstructorArguments[1].Value is not string prefix ||
-                attribute.ConstructorArguments[2].Value is not string localName ||
-                attribute.ConstructorArguments[3].Value is not INamedTypeSymbol elementType)
+                attribute.ConstructorArguments[1].Value is not string localName ||
+                attribute.ConstructorArguments[2].Value is not INamedTypeSymbol elementType)
             {
                 AddDiagnostic(diagnostics, "SQXE001", "ElementExport has invalid constructor arguments.", attribute);
                 continue;
             }
-            if (string.IsNullOrWhiteSpace(namespaceUri) || IsReservedNamespace(namespaceUri) ||
-                IsReservedPrefix(prefix) || !IsMarkupName(prefix) || !IsMarkupName(localName))
+            if (!Uri.TryCreate(namespaceUri, UriKind.Absolute, out _) || IsReservedNamespace(namespaceUri) ||
+                !IsMarkupName(localName))
             {
-                AddDiagnostic(diagnostics, "SQXE001", "Invalid or reserved element export '" + prefix + ":" + localName + "' for URI '" + namespaceUri + "'.", attribute);
+                AddDiagnostic(diagnostics, "SQXE001", "Invalid or reserved element export '" + localName + "' for URI '" + namespaceUri + "'.", attribute);
                 continue;
             }
             if (!IsValidExportType(elementType, elementSymbol))
@@ -709,127 +862,15 @@ public sealed class TemplateCatalog
             var sourcePath = elementType.DeclaringSyntaxReferences.FirstOrDefault()?.SyntaxTree.FilePath ?? string.Empty;
             var uiElementSymbol = elementSymbol.ContainingAssembly.GetTypeByMetadataName("Square.UI.UIElement");
             var descriptor = new TemplateComponentDescriptor(
-                localName, ToCSharpTypeName(elementType), GetMetadataName(elementType), namespaceUri, prefix, localName,
+                localName, ToCSharpTypeName(elementType), GetMetadataName(elementType), namespaceUri, string.Empty, localName,
                 elementType.ContainingAssembly.Identity.Name, sourcePath, TemplateElementKind.Extension, false, true, false,
-                DerivesFrom(elementType, uiElementSymbol));
+                DerivesFrom(elementType, uiElementSymbol),
+                isHtmlHost: DerivesFrom(elementType,
+                    elementSymbol.ContainingAssembly.GetTypeByMetadataName("Square.Html.HTMLElement")));
             exports.Add(descriptor);
             exportedSymbols[ComponentAssemblyTypeIdentity(descriptor)] = elementType;
             declarations[ComponentAssemblyTypeIdentity(descriptor)] = attribute;
         }
-    }
-
-    private static IReadOnlyDictionary<string, string> ReadAliases(
-        IAssemblySymbol assembly,
-        INamedTypeSymbol aliasAttribute,
-        IReadOnlyCollection<TemplateComponentDescriptor> exports,
-        ICollection<SquareDiagnostic> diagnostics)
-    {
-        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (aliasAttribute == null) return new ReadOnlyDictionary<string, string>(aliases);
-        var aliasDeclarations = new Dictionary<string, AttributeData>(StringComparer.Ordinal);
-        var knownUris = new HashSet<string>(exports.Select(item => item.NamespaceUri), StringComparer.Ordinal);
-        foreach (var attribute in assembly.GetAttributes().Where(item =>
-                     SymbolEqualityComparer.Default.Equals(item.AttributeClass, aliasAttribute)))
-        {
-            if (attribute.ConstructorArguments.Length != 2 || attribute.ConstructorArguments[0].Value is not string uri ||
-                attribute.ConstructorArguments[1].Value is not string prefix || string.IsNullOrWhiteSpace(uri) ||
-                !knownUris.Contains(uri) || IsReservedPrefix(prefix) || !IsMarkupName(prefix) || aliases.ContainsKey(uri))
-            {
-                AddDiagnostic(diagnostics, "SQXE001", "Invalid, duplicate, or unknown element namespace alias.", attribute);
-                continue;
-            }
-            aliases.Add(uri, prefix);
-            aliasDeclarations[uri] = attribute;
-        }
-        foreach (var conflict in aliases.GroupBy(item => item.Value, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1))
-            foreach (var uri in conflict.Select(item => item.Key).OrderBy(item => item, StringComparer.Ordinal))
-            {
-                aliasDeclarations.TryGetValue(uri, out var declaration);
-                AddDiagnostic(diagnostics, "SQXE001",
-                    "Element namespace alias prefix '" + conflict.Key + "' is assigned to multiple URIs.",
-                    declaration);
-            }
-        return new ReadOnlyDictionary<string, string>(aliases);
-    }
-
-    private static IReadOnlyList<string> ReadOrder(
-        IAssemblySymbol assembly,
-        INamedTypeSymbol orderAttribute,
-        IReadOnlyCollection<TemplateComponentDescriptor> exports,
-        ICollection<SquareDiagnostic> diagnostics)
-    {
-        if (orderAttribute == null) return Array.Empty<string>();
-        var attributes = assembly.GetAttributes().Where(item =>
-            SymbolEqualityComparer.Default.Equals(item.AttributeClass, orderAttribute)).ToArray();
-        if (attributes.Length == 0) return Array.Empty<string>();
-        if (attributes.Length > 1)
-            foreach (var attribute in attributes)
-                AddDiagnostic(diagnostics, "SQXE001", "ElementNamespaceOrder may only be declared once.", attribute);
-        var knownUris = new HashSet<string>(exports.Select(item => item.NamespaceUri), StringComparer.Ordinal) { LocalNamespaceUri };
-        var result = new List<string>();
-        var argument = attributes[0].ConstructorArguments.FirstOrDefault();
-        if (argument.Kind != TypedConstantKind.Array || argument.IsNull)
-        {
-            AddDiagnostic(diagnostics, "SQXE001", "ElementNamespaceOrder must contain a non-null URI array.", attributes[0]);
-            return Array.Empty<string>();
-        }
-        foreach (var value in argument.Values)
-        {
-            if (value.Value is not string uri || !knownUris.Contains(uri) || IsFrameworkNamespace(uri) || result.Contains(uri, StringComparer.Ordinal))
-            {
-                AddDiagnostic(diagnostics, "SQXE001", "ElementNamespaceOrder contains a duplicate, unknown, or fixed framework URI.", attributes[0]);
-                continue;
-            }
-            result.Add(uri);
-        }
-        return new ReadOnlyCollection<string>(result);
-    }
-
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildPrefixes(
-        IReadOnlyCollection<TemplateComponentDescriptor> exports,
-        IReadOnlyDictionary<string, string> aliases,
-        IReadOnlyDictionary<string, AttributeData> declarations,
-        ICollection<SquareDiagnostic> diagnostics)
-    {
-        var uriPrefixes = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var uriGroup in exports.GroupBy(item => item.NamespaceUri, StringComparer.Ordinal))
-        {
-            if (aliases.TryGetValue(uriGroup.Key, out var alias))
-            {
-                uriPrefixes[uriGroup.Key] = alias;
-                continue;
-            }
-            var defaults = uriGroup.Select(item => item.Prefix).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (defaults.Length == 1)
-            {
-                uriPrefixes[uriGroup.Key] = defaults[0];
-                continue;
-            }
-            foreach (var prefix in defaults.OrderBy(item => item, StringComparer.OrdinalIgnoreCase))
-                AddDiagnostic(diagnostics, "SQXE001",
-                    "Namespace URI '" + uriGroup.Key + "' declares inconsistent default prefixes; configure ElementNamespaceAlias.",
-                    FindDeclaration(declarations, uriGroup.First(item =>
-                        item.Prefix.Equals(prefix, StringComparison.OrdinalIgnoreCase))));
-        }
-        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["html"] = new[] { HtmlNamespaceUri }, ["ui"] = new[] { SquareNamespaceUri },
-            ["svg"] = new[] { SvgNamespaceUri }, ["local"] = new[] { LocalNamespaceUri }
-        };
-        foreach (var prefixGroup in uriPrefixes.GroupBy(item => item.Value, StringComparer.OrdinalIgnoreCase))
-        {
-            var uris = prefixGroup.Select(item => item.Key).OrderBy(item => item, StringComparer.Ordinal).ToArray();
-            if (uris.Length > 1 && uris.Any(aliases.ContainsKey))
-                foreach (var uri in uris)
-                    foreach (var component in exports.Where(item =>
-                                 item.NamespaceUri.Equals(uri, StringComparison.Ordinal) &&
-                                 item.Prefix.Equals(prefixGroup.Key, StringComparison.OrdinalIgnoreCase)))
-                        AddDiagnostic(diagnostics, "SQXE001",
-                            "Element namespace alias prefix '" + prefixGroup.Key + "' conflicts with another namespace prefix.",
-                            FindDeclaration(declarations, component));
-            result[prefixGroup.Key] = uris;
-        }
-        return new ReadOnlyDictionary<string, IReadOnlyList<string>>(result);
     }
 
     private static void ValidateExportIdentities(
@@ -837,7 +878,7 @@ public sealed class TemplateCatalog
         IReadOnlyDictionary<string, AttributeData> declarations,
         ICollection<SquareDiagnostic> diagnostics)
     {
-        foreach (var group in exports.GroupBy(item => item.NamespaceUri + "\0" + item.LocalName.ToUpperInvariant(), StringComparer.Ordinal))
+        foreach (var group in exports.GroupBy(item => item.NamespaceUri + "\0" + item.LocalName, StringComparer.Ordinal))
         {
             var types = group.GroupBy(ComponentAssemblyTypeIdentity, StringComparer.Ordinal).Select(item => item.First()).ToArray();
             if (types.Length <= 1) continue;
@@ -957,8 +998,8 @@ public sealed class TemplateCatalog
                 foreach (var attribute in assembly.GetAttributes().Where(attribute =>
                              SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, exportAttribute)))
                 {
-                    if (attribute.ConstructorArguments.Length != 4 ||
-                        attribute.ConstructorArguments[3].Value is not INamedTypeSymbol exportedType) continue;
+                    if (attribute.ConstructorArguments.Length != 3 ||
+                        attribute.ConstructorArguments[2].Value is not INamedTypeSymbol exportedType) continue;
                     if (exportedType.ContainingAssembly.Identity.Name.Equals(component.AssemblyName, StringComparison.Ordinal) &&
                         GetMetadataName(exportedType).Equals(component.TypeMetadataName, StringComparison.Ordinal) &&
                         ToCSharpTypeName(exportedType).Equals(component.TypeName, StringComparison.Ordinal))
@@ -1018,26 +1059,17 @@ public sealed class TemplateCatalog
         if (string.IsNullOrEmpty(value) || !(value[0] == '_' || char.IsLetter(value[0]))) return false;
         return value.Skip(1).All(character => character == '_' || character == '-' || char.IsLetterOrDigit(character));
     }
-    private static bool IsClrName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        return value.Split('.').All(part => part.Length > 0 && (part[0] == '_' || char.IsLetter(part[0])) &&
-            part.Skip(1).All(character => character == '_' || char.IsLetterOrDigit(character)));
-    }
-    private static bool IsReservedPrefix(string prefix) => prefix != null &&
-        (prefix.Equals("html", StringComparison.OrdinalIgnoreCase) || prefix.Equals("ui", StringComparison.OrdinalIgnoreCase) ||
-         prefix.Equals("svg", StringComparison.OrdinalIgnoreCase) || prefix.Equals("local", StringComparison.OrdinalIgnoreCase));
     private static bool IsFrameworkNamespace(string uri) => uri == HtmlNamespaceUri || uri == SquareNamespaceUri || uri == SvgNamespaceUri;
     private static bool IsReservedNamespace(string uri) => IsFrameworkNamespace(uri) || uri == LocalNamespaceUri;
     private static TemplatePropertyValueKind GetPropertyValueKind(string name) =>
         name.Equals("class", StringComparison.OrdinalIgnoreCase) ? TemplatePropertyValueKind.CssClass :
         BooleanPropertyNames.Contains(name) ||
-            Square.UI.Html.HtmlTagCatalog.BooleanAttributes.Contains((name ?? string.Empty).ToLowerInvariant())
+            Square.Html.HtmlTagCatalog.BooleanAttributes.Contains((name ?? string.Empty).ToLowerInvariant())
             ? TemplatePropertyValueKind.Boolean : TemplatePropertyValueKind.String;
-    private static string ComponentIdentity(TemplateComponentDescriptor item) => item.NamespaceUri + "\0" + item.LocalName.ToUpperInvariant() + "\0" + ComponentAssemblyTypeIdentity(item);
+    private static string ComponentIdentity(TemplateComponentDescriptor item) => item.NamespaceUri + "\0" + item.LocalName + "\0" + ComponentAssemblyTypeIdentity(item);
     private static string ComponentAssemblyTypeIdentity(TemplateComponentDescriptor item) =>
         item.AssemblyName + "\0" + item.TypeMetadataName + "\0" + item.TypeName;
-    private static string ComponentSortKey(TemplateComponentDescriptor item) => item.NamespaceUri + "\0" + item.LocalName.ToUpperInvariant() + "\0" + ComponentAssemblyTypeIdentity(item);
+    private static string ComponentSortKey(TemplateComponentDescriptor item) => item.NamespaceUri + "\0" + item.LocalName + "\0" + ComponentAssemblyTypeIdentity(item);
 
     private static void AddDiagnostic(ICollection<SquareDiagnostic> diagnostics, string id, string message, AttributeData attribute)
     {

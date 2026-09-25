@@ -2,7 +2,7 @@ using System.Text;
 using Square.Controls;
 using Square.Graphics;
 using Square.UI;
-using Square.UI.Html;
+using Square.Html;
 using ControlText = Square.Controls.Text;
 
 namespace Square.Rendering;
@@ -12,13 +12,21 @@ public sealed partial class LayoutEngine
     private static bool UsesCssNormalFlow(Element element)
     {
         var display = CssKeyword(element, "display");
-        if (display is "block" or "inline" or "inline-block") return true;
+        if (display is "block" or "inline" or "inline-block" or "list-item") return true;
         if (display is "flex" or "grid" or "none") return false;
+        // DOM Text only participates in the CSS line layout; a text-bearing HTML host must not
+        // fall back to the Yoga path, which cannot see text nodes.
+        if (element is HTMLElement { HasDirectTextContent: true, AcceptsDirectTextContent: true }) return true;
         if (CssKeyword(element, "float") is "left" or "right") return true;
         if (CssKeyword(element, "clear") is "left" or "right" or "both") return true;
 
         foreach (var child in element.Children)
             if (UsesCssNormalFlow(child)) return true;
+        // HTML sidecars (list marker, native proxies) keep their host in normal flow,
+        // exactly like when they were still laid out as children.
+        if (element is HTMLElement host)
+            foreach (var sidecar in host.VisualSidecars)
+                if (UsesCssNormalFlow(sidecar)) return true;
         return false;
     }
 
@@ -42,6 +50,15 @@ public sealed partial class LayoutEngine
                     ? fragments
                     : null;
             entry.Element.Arrange(entry.Bounds);
+        }
+
+        // DOM Text fragments are keyed by the source node; the arrange pass replaces the
+        // previous geometry so cleared/edited text never leaves stale fragments behind.
+        foreach (var pair in plan.HtmlTextFragments)
+        {
+            var data = HtmlTextLayoutStore.Get(pair.Key);
+            data.Fragments.Clear();
+            data.Fragments.AddRange(pair.Value);
         }
 
         foreach (var external in plan.ExternalLayouts)
@@ -97,22 +114,45 @@ public sealed partial class LayoutEngine
         var floats = new List<CssFloatArea>();
         var absolute = new List<Element>();
         var fixedPositioned = new List<Element>();
-        var inline = new List<Element>();
+        var inline = new List<CssFlowItem>();
         var y = content.Y;
         var previousBottomMargin = 0f;
         var hasBlock = false;
 
+        // The li list marker is a visual sidecar (never a DOM child); the line layout still needs
+        // it as the first inline piece so it consumes width and text flows after it.
+        HTMLElement? sidecarHost = container as HTMLElement;
+        if (sidecarHost != null && sidecarHost.TryGetListMarker(out var listMarker))
+        {
+            inline.Add(new CssFlowItem(listMarker));
+            sidecarHost.MarkListMarkerLaidByLine();
+        }
+
         void FlushInline()
         {
             if (inline.Count == 0) return;
+            // A whitespace-only run of DOM text between blocks must not open a line box nor
+            // break margin collapsing (Normal/Nowrap only; preserved modes keep their boxes).
+            if (inline.All(item => item.TextNode is { } text && text.Data.AsSpan().IsWhiteSpace()) &&
+                CssKeyword(container, "white-space") is not ("pre" or "pre-wrap" or "pre-line"))
+                return;
             y = LayoutInlineGroup(container, inline, content, y, floats, containingBlock, plan);
             inline.Clear();
             previousBottomMargin = 0;
             hasBlock = true;
         }
 
-        foreach (var child in container.Children)
+        // HTML containers walk ChildNodes so DOM Text participates in original order;
+        // Square containers only ever hold element children.
+        foreach (var node in container.ChildNodes)
         {
+            if (node is not Element child)
+            {
+                if (node is Square.UI.Text text &&
+                    container is HTMLElement { AcceptsDirectTextContent: true })
+                    inline.Add(new CssFlowItem(container, text));
+                continue;
+            }
             if (!child.IsVisible || CssKeyword(child, "display") == "none") continue;
             var position = CssKeyword(child, "position");
             if (position == "fixed")
@@ -136,9 +176,9 @@ public sealed partial class LayoutEngine
                 continue;
             }
             if (CssKeyword(child, "display") is "inline" or "inline-block" or "inline-table" ||
-                container is HtmlElement && child is Square.UI.Svg.SVGSVGElement)
+                container is HTMLElement && child is Square.UI.Svg.SVGSVGElement)
             {
-                inline.Add(child);
+                inline.Add(new CssFlowItem(child));
                 continue;
             }
 
@@ -162,6 +202,21 @@ public sealed partial class LayoutEngine
 
         FlushInline();
         if (hasBlock && !CanCollapseThrough(box)) y += previousBottomMargin;
+
+        // Control sidecars (input/select/img proxies) position at the host content box via
+        // HTMLElement.Arrange; here they only contribute their flow height, e.g. when the host
+        // itself is the normal-flow root inside a table cell or grid lane.
+        if (sidecarHost != null)
+            foreach (var sidecar in sidecarHost.VisualSidecars)
+            {
+                if (sidecarHost.IsListMarker(sidecar) ||
+                    !sidecar.IsVisible || CssKeyword(sidecar, "display") == "none") continue;
+                var sidecarBox = ResolveCssBox(sidecar, content.Width, float.NaN);
+                var sidecarOuterWidth = ResolveOuterWidth(sidecar, sidecarBox, content.Width, out _, out _);
+                var sidecarHeight = ResolveAtomicOuterHeight(sidecar, sidecarBox, sidecarOuterWidth, float.MaxValue);
+                y += sidecarBox.MarginTop + sidecarHeight + sidecarBox.MarginBottom;
+            }
+
         foreach (var child in absolute)
             LayoutAbsolute(child, containingBlock.Rect, plan);
         var viewport = new Rect(0, 0, Math.Max(0, _viewportWidth), Math.Max(0, _viewportHeight));
@@ -229,23 +284,19 @@ public sealed partial class LayoutEngine
         var childContainingBlock = EstablishesContainingBlock(element)
             ? new CssContainingBlock(PaddingBox(borderBounds, box))
             : containingBlock;
-        if (element is HtmlElement html && html.TagName is "img" or "input" or "textarea" or "select" or "video")
+        if (element is HTMLElement && element.TagName is "img" or "input" or "textarea" or "select" or "video")
         {
+            // The host is atomic; its control sidecars position at the content box when the
+            // entry below arranges the host (HTMLElement.Arrange).
             var proxyHeight = float.IsFinite(proposed.Height)
                 ? proposed.Height
                 : ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
             var bounds = new Rect(proposed.X, proposed.Y, proposed.Width, proxyHeight);
             plan.Set(element, bounds);
-            var inner = new Rect(bounds.X + box.BorderLeft + box.PaddingLeft,
-                bounds.Y + box.BorderTop + box.PaddingTop,
-                Math.Max(0, bounds.Width - box.BorderLeft - box.BorderRight - box.PaddingLeft - box.PaddingRight),
-                Math.Max(0, bounds.Height - box.BorderTop - box.BorderBottom - box.PaddingTop - box.PaddingBottom));
-            foreach (var child in element.Children)
-                if (html.IsInternalHtmlProxy(child)) plan.Set(child, inner);
             return proxyHeight;
         }
 
-        if (element.Children.Count > 0)
+        if (element.Children.Count > 0 || HasFlowContent(element))
         {
             var contentHeight = LayoutContainerContents(element, borderBounds, box, childContainingBlock, plan);
             naturalHeight = contentHeight + box.PaddingTop + box.PaddingBottom + box.BorderTop + box.BorderBottom;
@@ -261,25 +312,32 @@ public sealed partial class LayoutEngine
         return height;
     }
 
-    private float LayoutInlineGroup(Element container, List<Element> elements, Rect content, float startY,
+    private float LayoutInlineGroup(Element container, List<CssFlowItem> items, Rect content, float startY,
         List<CssFloatArea> floats, CssContainingBlock containingBlock, CssLayoutPlan plan)
     {
         var pieces = new List<CssInlinePiece>();
-        foreach (var element in elements)
+        foreach (var item in items)
         {
+            if (item.TextNode is { } textNode)
+            {
+                plan.HtmlTextFragments.TryAdd(textNode, []);
+                AddTextPieces(container, textNode.Data, CssBox.Empty, content.Width, pieces, null, null, textNode);
+                continue;
+            }
+            var element = item.Element;
             var box = ResolveCssBox(element, content.Width, float.NaN);
-            if (element is HtmlElement { TagName: "br" })
+            if (element is HTMLElement { TagName: "br" })
             {
                 pieces.Add(CssInlinePiece.LineBreak(element));
                 continue;
             }
-            if (element is HtmlElement { TagName: "wbr" }) continue;
+            if (element is HTMLElement { TagName: "wbr" }) continue;
             if (element is ControlText text)
             {
                 plan.TextFragments.TryAdd(text, []);
-                AddTextPieces(text, box, content.Width, pieces, null);
+                AddTextPieces(text, text.TextContent, box, content.Width, pieces, null, text, null);
             }
-            else if (element is HtmlElement && CssKeyword(element, "display") == "inline")
+            else if (element is HTMLElement && CssKeyword(element, "display") == "inline")
                 CollectHtmlInlinePieces(element, content.Width, [element], pieces, plan);
             else
                 pieces.Add(CreateAtomicInlinePiece(element, box, content.Width));
@@ -354,7 +412,14 @@ public sealed partial class LayoutEngine
                 var bounds = new Rect(x + piece.MarginLeft, top + piece.MarginTop,
                     Math.Max(0, piece.Width - piece.MarginLeft - piece.MarginRight),
                     Math.Max(0, piece.Height - piece.MarginTop - piece.MarginBottom));
-                if (piece.Text != null && piece.Element is ControlText text)
+                if (piece.SourceNode is { } sourceNode)
+                {
+                    plan.AddHtmlTextFragment(sourceNode, new HtmlTextFragment(
+                        piece.Text!, bounds, piece.SourceOffset, piece.SourceCharOffsets, piece.SourceLength,
+                        ControlDrawing.ResolveTextDirection(piece.Element),
+                        ControlDrawing.ResolveUnicodeBidi(piece.Element)));
+                }
+                else if (piece.Text != null && piece.Element is ControlText text)
                 {
                     plan.AddTextFragment(text, new TextLayoutFragment(
                         piece.Text,
@@ -389,21 +454,33 @@ public sealed partial class LayoutEngine
 
     /// <summary>
     /// Flattens HTML display:inline descendants into ordered text pieces and atomic inline boxes.
-    /// Square (non-HTML) inline elements stay atomic, preserving their existing behavior.
+    /// DOM Text nodes interleave in original order; Square (non-HTML) inline elements stay
+    /// atomic, preserving their existing behavior.
     /// </summary>
     private void CollectHtmlInlinePieces(Element container, float availableWidth, List<Element>? ancestors,
         List<CssInlinePiece> pieces, CssLayoutPlan plan)
     {
-        foreach (var child in container.Children)
+        foreach (var node in container.ChildNodes)
         {
+            if (node is not Element child)
+            {
+                if (node is Square.UI.Text textNode &&
+                    container is HTMLElement { AcceptsDirectTextContent: true })
+                {
+                    plan.HtmlTextFragments.TryAdd(textNode, []);
+                    AddTextPieces(container, textNode.Data, CssBox.Empty, availableWidth, pieces, ancestors, null, textNode);
+                }
+                continue;
+            }
             if (!child.IsVisible || CssKeyword(child, "display") == "none") continue;
             if (child is ControlText text)
             {
                 plan.TextFragments.TryAdd(text, []);
-                AddTextPieces(text, ResolveCssBox(text, availableWidth, float.NaN), availableWidth, pieces, ancestors);
+                AddTextPieces(text, text.TextContent, ResolveCssBox(text, availableWidth, float.NaN), availableWidth,
+                    pieces, ancestors, text, null);
                 continue;
             }
-            if (child is HtmlElement)
+            if (child is HTMLElement)
             {
                 // <br> forces a line break; <wbr> contributes no box — the piece boundary it creates
                 // between adjacent runs is already a wrapping opportunity in the line breaker.
@@ -426,42 +503,104 @@ public sealed partial class LayoutEngine
         }
     }
 
-    private void AddTextPieces(ControlText text, CssBox box, float availableWidth, List<CssInlinePiece> pieces,
-        List<Element>? ancestors)
+    /// <summary>
+    /// Splits one text run into inline pieces. For DOM Text sources every produced character
+    /// records its UTF-16 offset in the node's <c>data</c>, so whitespace collapse, text
+    /// transforms and later wrap splits keep original positions addressable.
+    /// </summary>
+    private void AddTextPieces(Element styleSource, string rawData, CssBox box, float availableWidth,
+        List<CssInlinePiece> pieces, List<Element>? ancestors, ControlText? controlText, Square.UI.Text? sourceNode)
     {
-        var value = text.TextContent.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        var font = ControlDrawing.ResolveFont(text, text.FontSize);
-        var lineHeight = ControlDrawing.GetStyledLineHeight(text, font.Size);
+        var (value, valueToData) = NormalizeLineBreaks(rawData);
+        var pieceElement = controlText ?? (Element)styleSource;
+        var defaultSize = controlText != null ? controlText.FontSize : HTMLElement.HtmlTextDefaultFontSize;
+        var font = ControlDrawing.ResolveFont(styleSource, defaultSize);
+        var lineHeight = ControlDrawing.GetStyledLineHeight(styleSource, font.Size);
         var baseline = TextMetrics.GetBaselineOffset(font, lineHeight);
-        var whiteSpace = ControlDrawing.ResolveWhiteSpace(text);
-        var letterSpacing = ControlDrawing.ResolveTextLength(text, "letter-spacing", font.Size);
-        var wordSpacing = ControlDrawing.ResolveTextLength(text, "word-spacing", font.Size);
-        var textTransform = ControlDrawing.ResolveTextTransform(text);
+        var whiteSpace = ControlDrawing.ResolveWhiteSpace(styleSource);
+        var letterSpacing = ControlDrawing.ResolveTextLength(styleSource, "letter-spacing", font.Size);
+        var wordSpacing = ControlDrawing.ResolveTextLength(styleSource, "word-spacing", font.Size);
+        var textTransform = ControlDrawing.ResolveTextTransform(styleSource);
+
+        // Per produced character, the UTF-16 offset of the source rune that yielded it.
+        // Kept in lockstep with the pending text builder; identity runs emit no array.
+        var pieceSources = new List<int>();
+        var valueIndex = 0;
+        var lastConsumedEnd = 0;
+
+        int DataIndexOf(int index) => valueToData == null
+            ? index
+            : index < valueToData.Length ? valueToData[index] : rawData.Length;
+
+        void AppendTo(StringBuilder builder, int sourceIndex, string transformed)
+        {
+            for (var i = 0; i < transformed.Length; i++) pieceSources.Add(sourceIndex);
+            builder.Append(transformed);
+        }
+
+        void StartCollapsedSpace(int sourceIndex)
+        {
+            pieceSources.Clear();
+            pieceSources.Add(sourceIndex);
+        }
+
+        CssInlinePiece MakePiece(string token, float tokenWidth, bool collapsible, bool preserve, bool allowWrap,
+            int sourceEnd)
+        {
+            int[]? charOffsets = null;
+            var sourceOffset = 0;
+            var sourceLength = 0;
+            if (sourceNode != null && pieceSources.Count > 0)
+            {
+                sourceOffset = pieceSources[0];
+                var identity = true;
+                for (var i = 0; i < pieceSources.Count; i++)
+                    if (pieceSources[i] != sourceOffset + i) { identity = false; break; }
+                if (!identity) charOffsets = pieceSources.ToArray();
+                sourceLength = Math.Max(0, sourceEnd - sourceOffset);
+            }
+            return new CssInlinePiece(pieceElement, token, tokenWidth, lineHeight, baseline,
+                box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom,
+                collapsible, false, preserve, allowWrap, ancestors,
+                sourceNode, sourceOffset, charOffsets, sourceLength);
+        }
 
         if (whiteSpace == TextWhiteSpaceMode.Nowrap)
         {
             var normalized = new StringBuilder();
             var pendingSpace = false;
+            var pendingSpaceSource = 0;
             var transformWordStart = true;
             foreach (var rune in value.EnumerateRunes())
             {
+                var sourceIndex = DataIndexOf(valueIndex);
+                valueIndex += rune.Utf16SequenceLength;
+                lastConsumedEnd = DataIndexOf(valueIndex);
                 if (Rune.IsWhiteSpace(rune))
                 {
-                    pendingSpace = normalized.Length > 0;
+                    if (!pendingSpace)
+                    {
+                        pendingSpace = normalized.Length > 0;
+                        if (pendingSpace) pendingSpaceSource = sourceIndex;
+                    }
                     transformWordStart = true;
                     continue;
                 }
 
-                if (pendingSpace) normalized.Append(' ');
-                normalized.Append(TextWrapping.TransformRune(rune, textTransform, ref transformWordStart));
+                if (pendingSpace)
+                {
+                    normalized.Append(' ');
+                    pieceSources.Add(pendingSpaceSource);
+                }
+                AppendTo(normalized, sourceIndex, TextWrapping.TransformRune(rune, textTransform, ref transformWordStart));
                 pendingSpace = false;
             }
 
             if (normalized.Length > 0)
             {
-                var width = ControlDrawing.MeasureRenderedTextWidth(normalized.ToString(), font, letterSpacing, wordSpacing);
-                pieces.Add(new CssInlinePiece(text, normalized.ToString(), width, lineHeight, baseline,
-                    box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, false, false, ancestors));
+                var token = normalized.ToString();
+                var width = ControlDrawing.MeasureRenderedTextWidth(token, font, letterSpacing, wordSpacing);
+                pieces.Add(MakePiece(token, width, collapsible: false, preserve: false, allowWrap: false, lastConsumedEnd));
             }
             return;
         }
@@ -471,28 +610,32 @@ public sealed partial class LayoutEngine
             var preserved = new StringBuilder();
             var transformWordStart = true;
 
-            void FlushPreserved()
+            void FlushPreserved(int sourceEnd)
             {
                 if (preserved.Length == 0) return;
                 var token = preserved.ToString();
                 var width = ControlDrawing.MeasureRenderedTextWidth(token, font, letterSpacing, wordSpacing);
-                pieces.Add(new CssInlinePiece(text, token, width, lineHeight, baseline,
-                    box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, true, false, ancestors));
+                pieces.Add(MakePiece(token, width, collapsible: false, preserve: true, allowWrap: false, sourceEnd));
                 preserved.Clear();
+                pieceSources.Clear();
             }
 
             foreach (var rune in value.EnumerateRunes())
             {
+                var previousEnd = lastConsumedEnd;
+                var sourceIndex = DataIndexOf(valueIndex);
+                valueIndex += rune.Utf16SequenceLength;
+                lastConsumedEnd = DataIndexOf(valueIndex);
                 if (rune.Value == '\n')
                 {
-                    FlushPreserved();
-                    pieces.Add(CssInlinePiece.LineBreak(text, ancestors));
+                    FlushPreserved(previousEnd);
+                    pieces.Add(CssInlinePiece.LineBreak(pieceElement, ancestors));
                     transformWordStart = true;
                     continue;
                 }
-                preserved.Append(TextWrapping.TransformRune(rune, textTransform, ref transformWordStart));
+                AppendTo(preserved, sourceIndex, TextWrapping.TransformRune(rune, textTransform, ref transformWordStart));
             }
-            FlushPreserved();
+            FlushPreserved(lastConsumedEnd);
             return;
         }
 
@@ -502,49 +645,89 @@ public sealed partial class LayoutEngine
         var preserveWhitespace = whiteSpace is TextWhiteSpaceMode.PreWrap;
         var preserveNewlines = whiteSpace is TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.PreWrap or TextWhiteSpaceMode.PreLine;
 
-        void Flush()
+        void Flush(int sourceEnd)
         {
             if (segment.Length == 0) return;
             var token = segment.ToString();
             var width = ControlDrawing.MeasureRenderedTextWidth(token, font, letterSpacing, wordSpacing);
-            pieces.Add(new CssInlinePiece(text, token, width, lineHeight, baseline,
-                box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, whitespace && !preserveWhitespace, false,
-                preserveWhitespace, whiteSpace is not (TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.Nowrap), ancestors));
+            pieces.Add(MakePiece(token, width, whitespace && !preserveWhitespace, preserveWhitespace,
+                whiteSpace is not (TextWhiteSpaceMode.Pre or TextWhiteSpaceMode.Nowrap), sourceEnd));
             segment.Clear();
+            pieceSources.Clear();
         }
 
         foreach (var rune in value.EnumerateRunes())
         {
+            var previousEnd = lastConsumedEnd;
+            var sourceIndex = DataIndexOf(valueIndex);
+            valueIndex += rune.Utf16SequenceLength;
+            lastConsumedEnd = DataIndexOf(valueIndex);
             if (rune.Value == '\n')
             {
-                Flush();
-                if (preserveNewlines) pieces.Add(CssInlinePiece.LineBreak(text, ancestors));
-                else if (!preserveWhitespace && !whitespace)
+                // A pending collapsed space keeps absorbing the newline; a word token or a
+                // preserved space ends here.
+                if (preserveWhitespace || !whitespace) Flush(previousEnd);
+                if (preserveNewlines)
                 {
-                    whitespace = true;
-                    segment.Append(' ');
+                    pieces.Add(CssInlinePiece.LineBreak(pieceElement, ancestors));
+                    whitespace = false;
                 }
-                else if (preserveWhitespace)
+                else if (!preserveWhitespace)
+                {
+                    if (!whitespace)
+                    {
+                        whitespace = true;
+                        segment.Clear();
+                        segment.Append(' ');
+                        StartCollapsedSpace(sourceIndex);
+                    }
+                }
+                else
                     whitespace = false;
                 atWordStart = true;
                 continue;
             }
             var isSpace = Rune.IsWhiteSpace(rune);
-            if (segment.Length > 0 && isSpace != whitespace) Flush();
+            if (segment.Length > 0 && isSpace != whitespace) Flush(previousEnd);
             if (isSpace && !preserveWhitespace)
             {
                 if (whitespace) continue;
                 whitespace = true;
                 segment.Clear();
                 segment.Append(' ');
+                StartCollapsedSpace(sourceIndex);
                 continue;
             }
-            if (isSpace && whitespace) Flush();
+            if (isSpace && whitespace) Flush(previousEnd);
             whitespace = isSpace;
-            var transformed = TextWrapping.TransformRune(rune, textTransform, ref atWordStart);
-            segment.Append(transformed);
+            AppendTo(segment, sourceIndex, TextWrapping.TransformRune(rune, textTransform, ref atWordStart));
         }
-        Flush();
+        Flush(lastConsumedEnd);
+    }
+
+    /// <summary>Normalizes CR/CRLF to LF; returns the per-character value→data offset map when non-identity.</summary>
+    private static (string Value, int[]? Map) NormalizeLineBreaks(string data)
+    {
+        if (!data.Contains('\r')) return (data, null);
+        var builder = new StringBuilder(data.Length);
+        var map = new int[data.Length];
+        var length = 0;
+        for (var i = 0; i < data.Length; i++)
+        {
+            var c = data[i];
+            if (c == '\r')
+            {
+                builder.Append('\n');
+                map[length++] = i;
+                if (i + 1 < data.Length && data[i + 1] == '\n') i++;
+            }
+            else
+            {
+                builder.Append(c);
+                map[length++] = i;
+            }
+        }
+        return (builder.ToString(), map);
     }
 
     private CssInlinePiece CreateAtomicInlinePiece(Element element, CssBox box, float availableWidth)
@@ -565,9 +748,12 @@ public sealed partial class LayoutEngine
 
     private CssTextSplit SplitTextPiece(CssInlinePiece piece, float availableWidth)
     {
-        if (piece.Text == null || piece.Element is not ControlText text || piece.Text.Length <= 1)
+        var text = piece.Element as ControlText;
+        if (piece.Text == null || (text == null && piece.SourceNode == null) || piece.Text.Length <= 1)
             return new CssTextSplit(piece, piece with { Text = "", Width = 0 });
-        var font = ControlDrawing.ResolveFont(text, text.FontSize);
+        var font = text != null
+            ? ControlDrawing.ResolveFont(text, text.FontSize)
+            : ControlDrawing.ResolveFont(piece.Element, HTMLElement.HtmlTextDefaultFontSize);
         var width = 0f;
         var offset = 0;
         foreach (var rune in piece.Text.EnumerateRunes())
@@ -580,12 +766,49 @@ public sealed partial class LayoutEngine
         if (offset == 0) offset = char.IsSurrogatePair(piece.Text, 0) ? 2 : 1;
         var headText = piece.Text[..offset];
         var tailText = piece.Text[offset..];
-        var letterSpacing = ControlDrawing.ResolveTextLength(text, "letter-spacing", font.Size);
-        var wordSpacing = ControlDrawing.ResolveTextLength(text, "word-spacing", font.Size);
-        var head = piece with { Text = headText, Width = ControlDrawing.MeasureRenderedTextWidth(headText, font, letterSpacing, wordSpacing) };
-        var tail = piece with { Text = tailText, Width = ControlDrawing.MeasureRenderedTextWidth(tailText, font, letterSpacing, wordSpacing) };
+        var letterSpacing = ControlDrawing.ResolveTextLength(piece.Element, "letter-spacing", font.Size);
+        var wordSpacing = ControlDrawing.ResolveTextLength(piece.Element, "word-spacing", font.Size);
+        var headLength = SourceLengthUpTo(piece, offset);
+        var head = piece with
+        {
+            Text = headText,
+            Width = ControlDrawing.MeasureRenderedTextWidth(headText, font, letterSpacing, wordSpacing),
+            SourceCharOffsets = SliceSourceOffsets(piece.SourceCharOffsets, 0, offset),
+            SourceLength = headLength
+        };
+        var tail = piece with
+        {
+            Text = tailText,
+            Width = ControlDrawing.MeasureRenderedTextWidth(tailText, font, letterSpacing, wordSpacing),
+            SourceOffset = piece.SourceOffset + headLength,
+            SourceCharOffsets = SliceSourceOffsets(piece.SourceCharOffsets, offset, piece.Text.Length),
+            SourceLength = Math.Max(0, piece.SourceLength - headLength)
+        };
         return new CssTextSplit(head, tail);
     }
+
+    /// <summary>UTF-16 source units consumed by the first <paramref name="charOffset"/> characters of a piece.</summary>
+    private static int SourceLengthUpTo(CssInlinePiece piece, int charOffset)
+    {
+        if (charOffset >= piece.Text!.Length) return Math.Max(0, piece.SourceLength);
+        return piece.SourceCharOffsets == null
+            ? charOffset
+            : Math.Max(0, piece.SourceCharOffsets[charOffset] - piece.SourceOffset);
+    }
+
+    private static int[]? SliceSourceOffsets(int[]? offsets, int start, int end)
+    {
+        if (offsets == null) return null;
+        var slice = new int[Math.Max(0, end - start)];
+        Array.Copy(offsets, start, slice, 0, slice.Length);
+        return slice;
+    }
+
+    /// <summary>Whether the element lays out flow content beyond <see cref="Element.Children"/>:
+    /// visual sidecars or direct DOM Text of an HTML host.</summary>
+    private static bool HasFlowContent(Element element) =>
+        element is HTMLElement host && (host.VisualSidecars.Count > 0 ||
+            host.HasDirectTextContent && host.AcceptsDirectTextContent);
 
     private void LayoutFloat(Element element, CssBox box, string side, Rect content, float y,
         List<CssFloatArea> floats, CssContainingBlock containingBlock, CssLayoutPlan plan)
@@ -604,7 +827,7 @@ public sealed partial class LayoutEngine
             : left + box.MarginLeft;
         var shifted = ApplyRelativeOffset(element, x, y, content.Width, height);
         var bounds = new Rect(shifted.X, shifted.Y, width, height);
-        if (element.Children.Count > 0)
+        if (element.Children.Count > 0 || HasFlowContent(element))
             LayoutBlock(element, box, bounds, containingBlock, plan);
         else
             plan.Set(element, bounds);
@@ -636,7 +859,8 @@ public sealed partial class LayoutEngine
             : !float.IsNaN(bottom) ? containing.Bottom - bottom - height - box.MarginBottom
             : containing.Y + box.MarginTop;
         var bounds = new Rect(x, y, width, height);
-        if (element.Children.Count > 0 && CssKeyword(element, "display") is not ("flex" or "grid"))
+        if ((element.Children.Count > 0 || HasFlowContent(element)) &&
+            CssKeyword(element, "display") is not ("flex" or "grid"))
             LayoutBlock(element, box, bounds, new CssContainingBlock(containing), plan);
         else if (CssKeyword(element, "display") is "flex" or "grid")
             plan.ExternalLayouts.Add(new CssLayoutEntry(element, bounds));
@@ -769,6 +993,21 @@ public sealed partial class LayoutEngine
         Math.Max(0, borderBounds.Width - box.BorderLeft - box.BorderRight),
         Math.Max(0, borderBounds.Height - box.BorderTop - box.BorderBottom));
 
+    /// <summary>
+    /// Content-box rect of an element's laid-out border box. HTML hosts use it to place their
+    /// visual sidecars (native proxies, list marker fallback) at the content origin.
+    /// </summary>
+    internal static Rect ResolveContentRect(Element element)
+    {
+        var geometry = element.Geometry;
+        var box = ResolveCssBox(element, geometry.Width, float.NaN);
+        return new Rect(
+            geometry.X + box.BorderLeft + box.PaddingLeft,
+            geometry.Y + box.BorderTop + box.PaddingTop,
+            Math.Max(0, geometry.Width - box.BorderLeft - box.BorderRight - box.PaddingLeft - box.PaddingRight),
+            Math.Max(0, geometry.Height - box.BorderTop - box.BorderBottom - box.PaddingTop - box.PaddingBottom));
+    }
+
     private static bool EstablishesContainingBlock(Element element)
     {
         var display = CssKeyword(element, "display");
@@ -865,6 +1104,7 @@ public sealed partial class LayoutEngine
         public List<CssLayoutEntry> Entries { get; } = [];
         public List<CssLayoutEntry> ExternalLayouts { get; } = [];
         public Dictionary<ControlText, List<TextLayoutFragment>> TextFragments { get; } = new();
+        public Dictionary<Square.UI.Text, List<HtmlTextFragment>> HtmlTextFragments { get; } = new();
         public HashSet<Element> FixedRoots { get; } = [];
         public Size DesiredSize { get; set; }
 
@@ -894,7 +1134,17 @@ public sealed partial class LayoutEngine
                 TextFragments[text] = fragments = [];
             fragments.Add(fragment);
         }
+
+        public void AddHtmlTextFragment(Square.UI.Text node, HtmlTextFragment fragment)
+        {
+            if (!HtmlTextFragments.TryGetValue(node, out var fragments))
+                HtmlTextFragments[node] = fragments = [];
+            fragments.Add(fragment);
+        }
     }
+
+    /// <summary>An inline-group member: either an element or a DOM Text node styled by its parent.</summary>
+    private readonly record struct CssFlowItem(Element Element, Square.UI.Text? TextNode = null);
 
     private readonly record struct CssLayoutEntry(Element Element, Rect Bounds);
     private readonly record struct CssFloatArea(string Side, float Left, float Top, float Width, float Height)
@@ -905,7 +1155,8 @@ public sealed partial class LayoutEngine
     private readonly record struct CssTextSplit(CssInlinePiece Head, CssInlinePiece Tail);
     private readonly record struct CssInlinePiece(Element Element, string? Text, float Width, float Height, float Baseline,
         float MarginLeft, float MarginTop, float MarginRight, float MarginBottom, bool IsCollapsibleSpace, bool ForceBreak,
-        bool PreserveWhitespace, bool AllowWrap, List<Element>? InlineAncestors = null)
+        bool PreserveWhitespace, bool AllowWrap, List<Element>? InlineAncestors = null,
+        Square.UI.Text? SourceNode = null, int SourceOffset = 0, int[]? SourceCharOffsets = null, int SourceLength = 0)
     {
         public static CssInlinePiece LineBreak(Element element, List<Element>? ancestors = null) =>
             new(element, null, 0, 0, 0, 0, 0, 0, 0, false, true, true, true, ancestors);
@@ -915,7 +1166,12 @@ public sealed partial class LayoutEngine
         float MarginTop, float MarginRight, float MarginBottom, float MarginLeft,
         bool MarginTopAuto, bool MarginRightAuto, bool MarginBottomAuto, bool MarginLeftAuto,
         float BorderTop, float BorderRight, float BorderBottom, float BorderLeft,
-        bool ContentBox);
+        bool ContentBox)
+    {
+        /// <summary>Zero-decoration box for DOM Text pieces (their parent already contributes its own box).</summary>
+        internal static readonly CssBox Empty = new(float.NaN, float.NaN, float.NaN, float.NaN,
+            0, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, 0, 0, 0, 0, true);
+    }
 
     private readonly record struct CssContainingBlock(Rect Rect);
 }

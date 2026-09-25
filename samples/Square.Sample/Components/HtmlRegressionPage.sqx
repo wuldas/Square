@@ -1,4 +1,4 @@
-<template>
+<template xmlns="http://www.w3.org/1999/xhtml">
   <View class="html-regression-page">
     <article class="html-regression-article">
       <h2>Square HTML5 regression</h2>

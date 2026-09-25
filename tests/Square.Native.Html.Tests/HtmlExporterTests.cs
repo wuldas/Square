@@ -1,8 +1,8 @@
 using Square.Controls;
 using Square.Graphics;
+using Square.Html;
 using Square.Native.Html;
 using Square.UI;
-using Square.UI.Html;
 using Square.UI.Svg;
 using Xunit;
 using SquareImage = Square.Controls.Image;
@@ -272,68 +272,109 @@ public sealed class HtmlExporterTests
     [Fact]
     public void ExportKeepsHtmlMixedTextVoidAndSvgOrder()
     {
-        var article = new HtmlElement("article");
-        var paragraph = new HtmlElement("p");
-        paragraph.Children.Add(new HtmlTextRun("Hello "));
-        var strong = new HtmlElement("strong");
-        strong.Children.Add(new HtmlTextRun("世界"));
-        paragraph.Children.Add(strong);
-        paragraph.Children.Add(new HtmlTextRun(" !"));
-        paragraph.Children.Add(new HtmlElement("br"));
-        paragraph.Children.Add(new HtmlTextRun("next"));
-        article.Children.Add(paragraph);
-        var checkbox = new HtmlElement("input");
-        checkbox.SetAttribute("type", "checkbox");
-        checkbox.SetAttribute("checked", "");
-        article.Children.Add(checkbox);
+        var article = new HTMLArticleElement();
+        var paragraph = new HTMLParagraphElement();
+        paragraph.ChildNodes.Add(new Square.UI.Text("Hello "));
+        var strong = new HTMLStrongElement();
+        strong.ChildNodes.Add(new Square.UI.Text("世界"));
+        paragraph.AppendChild(strong);
+        paragraph.ChildNodes.Add(new Square.UI.Text(" !"));
+        paragraph.AppendChild(new HTMLBRElement());
+        paragraph.ChildNodes.Add(new Square.UI.Text("next"));
+        article.AppendChild(paragraph);
+
+        // HTML 混合文本是真正的 DOM Text 节点：按原序进入 childNodes，children 只含元素。
+        Assert.Equal(
+        [
+            Node.NodeType.Text,
+            Node.NodeType.Element,
+            Node.NodeType.Text,
+            Node.NodeType.Element,
+            Node.NodeType.Text
+        ], paragraph.ChildNodes.Select(static node => node.NodeTypeValue).ToArray());
+        Assert.Equal(2, paragraph.Children.Count);
+        Assert.DoesNotContain(paragraph.ChildNodes, static node => node is Square.Controls.Text);
+
+        var checkbox = new HTMLInputElement { Type = "checkbox", Checked = true };
+        article.AppendChild(checkbox);
         var svg = new SVGSVGElement();
         var circle = new SVGCircleElement();
         circle.SetProperty("Radius", 8);
         svg.Children.Add(circle);
-        article.Children.Add(svg);
+        article.AppendChild(svg);
 
         var result = HtmlExporter.Export(article, new HtmlExportOptions { IncludeDocument = false });
 
         Assert.Contains("Hello ", result.BodyHtml);
         Assert.Contains("<strong", result.BodyHtml);
         Assert.Contains("世界</strong> !<br", result.BodyHtml);
+        Assert.Contains("next", result.BodyHtml);
         Assert.Contains("<input", result.BodyHtml);
         Assert.Contains(" checked", result.BodyHtml);
-        Assert.DoesNotContain("</br>", result.BodyHtml);
-        Assert.DoesNotContain("</input>", result.BodyHtml);
+        Assert.DoesNotContain("</br>", result.BodyHtml, StringComparison.Ordinal);
+        Assert.DoesNotContain("</input>", result.BodyHtml, StringComparison.Ordinal);
         Assert.Contains("<svg", result.BodyHtml);
         Assert.Contains("<circle", result.BodyHtml);
         Assert.Empty(result.Diagnostics);
     }
 
     [Fact]
+    public void ExportReflectsTypedFormStateOnHtmlHosts()
+    {
+        var root = new View();
+        var form = new HTMLFormElement();
+        form.AppendChild(new HTMLInputElement { Type = "text", Name = "name", Value = "Ada", Placeholder = "Name" });
+        form.AppendChild(new HTMLTextAreaElement { Value = "Line <one>" });
+        var select = new HTMLSelectElement { Value = "B" };
+        var first = new HTMLOptionElement { Value = "A" };
+        first.ChildNodes.Add(new Square.UI.Text("A"));
+        var second = new HTMLOptionElement { Value = "B", Selected = true };
+        second.ChildNodes.Add(new Square.UI.Text("B"));
+        select.AppendChild(first);
+        select.AppendChild(second);
+        form.AppendChild(select);
+        form.AppendChild(new HTMLInputElement { Type = "checkbox", Checked = true });
+        form.AppendChild(new HTMLDetailsElement { Open = true });
+        root.Children.Add(form);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions { IncludeDocument = false });
+
+        Assert.Contains("value=\"Ada\"", result.BodyHtml);
+        Assert.Matches(@"<textarea\b[^>]*>Line &lt;one&gt;</textarea>", result.BodyHtml);
+        Assert.Matches(@"<option\b(?=[^>]*\bvalue=""B"")(?=[^>]*\bselected(?:\s|>|=))[^>]*>", result.BodyHtml);
+        Assert.Matches(@"<input\b(?=[^>]*\btype=""checkbox"")(?=[^>]*\bchecked(?:\s|>|=))[^>]*>", result.BodyHtml);
+        Assert.Matches(@"<details\b[^>]*\bopen(?:\s|>|=)", result.BodyHtml);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
     public void ExportRejectsActiveHtmlPayloadAndUnsafeUrls()
     {
-        var root = new HtmlElement("article");
-        var link = new HtmlElement("a");
+        var root = new HTMLArticleElement();
+        var link = new HTMLAnchorElement();
         link.SetAttribute("href", "javascript:alert(1)");
         link.SetAttribute("onclick", "alert(2)");
         link.SetAttribute("data-state", "a&b");
         link.SetAttribute("title", "<safe>");
         link.Tooltip = "Square fallback";
-        link.Children.Add(new HtmlTextRun("<click>"));
-        root.Children.Add(link);
-        var image = new HtmlElement("img");
+        link.ChildNodes.Add(new Square.UI.Text("<click>"));
+        root.AppendChild(link);
+        var image = new HTMLImageElement();
         image.SetAttribute("srcset", "safe.png 1x, javascript:alert(3) 2x");
-        root.Children.Add(image);
-        var script = new HtmlElement("script");
-        script.Children.Add(new HtmlTextRun("alert(4)"));
-        root.Children.Add(script);
-        var iframe = new HtmlElement("iframe");
+        root.AppendChild(image);
+        var script = new HTMLScriptElement();
+        script.ChildNodes.Add(new Square.UI.Text("alert(4)"));
+        root.AppendChild(script);
+        var iframe = new HTMLIFrameElement();
         iframe.SetAttribute("src", "https://example.test/");
-        root.Children.Add(iframe);
+        root.AppendChild(iframe);
 
         var result = HtmlExporter.Export(root, new HtmlExportOptions { IncludeDocument = false });
 
         Assert.Contains("data-state=\"a&amp;b\"", result.BodyHtml);
         Assert.Contains("&lt;click&gt;", result.BodyHtml);
         Assert.Contains("title=\"&lt;safe&gt;\"", result.BodyHtml);
-        Assert.DoesNotContain("Square fallback", result.BodyHtml);
+        Assert.DoesNotContain("Square fallback", result.BodyHtml, StringComparison.Ordinal);
         Assert.DoesNotContain("javascript:", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("onclick", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("srcset", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
@@ -348,12 +389,13 @@ public sealed class HtmlExporterTests
     [InlineData("javascript:alert(1)")]
     public void HtmlHrefRejectsBrowserNormalizedScriptSchemes(string href)
     {
-        var link = new HtmlElement("a");
+        var link = new HTMLAnchorElement();
         link.SetAttribute("href", href);
-        link.Children.Add(new HtmlTextRun("safe text"));
+        link.ChildNodes.Add(new Square.UI.Text("safe text"));
 
         var result = HtmlExporter.Export(link, new HtmlExportOptions { IncludeDocument = false });
 
+        Assert.StartsWith("<a", result.BodyHtml, StringComparison.Ordinal);
         Assert.DoesNotContain(" href=", result.BodyHtml, StringComparison.OrdinalIgnoreCase);
         Assert.NotEmpty(result.Diagnostics);
     }
@@ -361,36 +403,39 @@ public sealed class HtmlExporterTests
     [Fact]
     public void ClosedDetailsRetainContentForBrowserDisclosure()
     {
-        var details = new HtmlElement("details");
-        var summary = new HtmlElement("summary");
-        summary.Children.Add(new HtmlTextRun("More"));
-        var content = new HtmlElement("p");
-        content.Children.Add(new HtmlTextRun("Hidden detail"));
-        details.Children.Add(summary);
-        details.Children.Add(content);
+        var details = new HTMLDetailsElement();
+        var summary = new HTMLSummaryElement();
+        summary.ChildNodes.Add(new Square.UI.Text("More"));
+        var content = new HTMLParagraphElement();
+        content.ChildNodes.Add(new Square.UI.Text("Hidden detail"));
+        details.AppendChild(summary);
+        details.AppendChild(content);
 
         var result = HtmlExporter.Export(details, new HtmlExportOptions { IncludeDocument = false });
 
         Assert.Contains("<details", result.BodyHtml);
         Assert.Contains("<summary", result.BodyHtml);
+        Assert.Contains("More", result.BodyHtml);
+        // 关闭的 details 内容仍进入导出 DOM：浏览器负责切换显示。
         Assert.Contains("Hidden detail", result.BodyHtml);
+        Assert.DoesNotContain(" open", result.BodyHtml, StringComparison.Ordinal);
     }
 
     [Fact]
     public void HtmlDocumentRootMergesHeadAndBodyIntoOneShell()
     {
-        var html = new HtmlElement("html");
+        var html = new HTMLHtmlElement();
         html.SetAttribute("lang", "zh");
-        var head = new HtmlElement("head");
-        var title = new HtmlElement("title");
-        title.Children.Add(new HtmlTextRun("文档标题"));
-        head.Children.Add(title);
-        html.Children.Add(head);
-        var body = new HtmlElement("body");
-        var paragraph = new HtmlElement("p");
-        paragraph.Children.Add(new HtmlTextRun("正文"));
-        body.Children.Add(paragraph);
-        html.Children.Add(body);
+        var head = new HTMLHeadElement();
+        var title = new HTMLTitleElement();
+        title.ChildNodes.Add(new Square.UI.Text("文档标题"));
+        head.AppendChild(title);
+        html.AppendChild(head);
+        var body = new HTMLBodyElement();
+        var paragraph = new HTMLParagraphElement();
+        paragraph.ChildNodes.Add(new Square.UI.Text("正文"));
+        body.AppendChild(paragraph);
+        html.AppendChild(body);
 
         var result = HtmlExporter.Export(html);
 

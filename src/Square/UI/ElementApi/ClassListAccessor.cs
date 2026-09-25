@@ -7,6 +7,8 @@ public sealed class ClassListAccessor
 {
     private readonly Element _owner;
     private HashSet<string>? _classes;
+    private int _mutationDepth;
+    private bool _pendingChange;
 
     internal ClassListAccessor(Element owner) { _owner = owner; }
 
@@ -14,14 +16,14 @@ public sealed class ClassListAccessor
     public void Add(string className)
     {
         _classes ??= [];
-        if (_classes.Add(className)) _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+        if (_classes.Add(className)) Changed();
     }
 
     /// <summary>移除 class。</summary>
     public void Remove(string className)
     {
         if (_classes == null) return;
-        if (_classes.Remove(className)) _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+        if (_classes.Remove(className)) Changed();
     }
 
     /// <summary>切换 class 有无。</summary>
@@ -50,9 +52,41 @@ public sealed class ClassListAccessor
         if (_classes == null) return;
         if (_classes.Count == 0) return;
         _classes.Clear();
-        _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+        Changed();
+    }
+
+    internal void SetFromAttribute(string value)
+    {
+        _mutationDepth++;
+        try
+        {
+            Clear();
+            foreach (var className in value.Split((char[]?)null,
+                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                Add(className);
+        }
+        finally
+        {
+            _mutationDepth--;
+            if (_mutationDepth == 0 && _pendingChange)
+            {
+                _pendingChange = false;
+                Changed();
+            }
+        }
     }
 
     /// <summary>返回全部 class 的只读集合。</summary>
     public IReadOnlyCollection<string> GetAll() => _classes ?? [];
+
+    private void Changed()
+    {
+        if (_mutationDepth > 0)
+        {
+            _pendingChange = true;
+            return;
+        }
+        if (_owner is Square.Html.HTMLElement html) html.NotifyDomAttributeMutation("class");
+        _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+    }
 }

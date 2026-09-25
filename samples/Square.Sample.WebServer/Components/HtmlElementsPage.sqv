@@ -1,0 +1,11 @@
+<template xmlns="http://www.w3.org/1999/xhtml" xmlns:ui="urn:square:ui" xmlns:my="urn:acme:widgets">
+  <article>
+    <p>Hello <strong>世界</strong> !<br>next</p>
+    <input type="checkbox" checked>
+    <svg width="20" height="20"><circle cx="10" cy="10" r="8" /></svg>
+    <ui:Button text="Square" />
+    <my:element status="ready" />
+    <acme-badge status="ready" />
+    <button is="acme-button">Custom button</button>
+  </article>
+</template>

@@ -1,6 +1,15 @@
 namespace Square.UI;
 
 /// <summary>
+/// Notified when character data inside this element changed. HTML form hosts use it to
+/// re-reconcile option lists, select values and textarea content derived from text children.
+/// </summary>
+internal interface ITextDataDependent
+{
+    void OnTextDataChanged(CharacterData node);
+}
+
+/// <summary>
 /// DOM character data node base, aligned with <c>CharacterData</c>.
 /// </summary>
 public abstract class CharacterData : Node
@@ -22,7 +31,9 @@ public abstract class CharacterData : Node
             var next = value ?? "";
             if (_data == next) return;
             _data = next;
-            ParentElement?.InvalidateLayout();
+            if (ParentElement is not { } parent) return;
+            parent.InvalidateLayout();
+            if (parent is ITextDataDependent dependent) dependent.OnTextDataChanged(this);
         }
     }
 

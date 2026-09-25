@@ -1,6 +1,7 @@
 <Project>
   <ItemGroup>
     <CompilerVisibleProperty Include="MSBuildProjectDirectory" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="SquareDefaultElementNamespace" Exclude="@(CompilerVisibleProperty)" />
     <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="Link" />
   </ItemGroup>
 </Project>

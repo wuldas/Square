@@ -14,7 +14,6 @@ internal enum TemplateElementNameKind
     Unqualified,
     Qualified,
     ClrExact,
-    Local
 }
 
 internal readonly struct TemplateElementName
@@ -59,24 +58,13 @@ internal readonly struct TemplateElementName
             var prefix = tagName.Substring(0, firstColon);
             var localName = tagName.Substring(firstColon + 1);
             if (!IsMarkupName(prefix)) return Invalid();
-            var kind = prefix.Equals("local", StringComparison.OrdinalIgnoreCase)
-                ? TemplateElementNameKind.Local
-                : TemplateElementNameKind.Qualified;
+            const TemplateElementNameKind kind = TemplateElementNameKind.Qualified;
             if (localName.Length == 0)
                 return atEndOfInput ? Incomplete(kind, prefix, localName) : Invalid();
-            var validLocal = kind == TemplateElementNameKind.Local
-                ? IsClrName(localName)
-                : IsMarkupName(localName);
-            return validLocal ? Valid(kind, prefix, localName, kind == TemplateElementNameKind.Local ? localName : string.Empty) : Invalid();
+            return IsMarkupName(localName) ? Valid(kind, prefix, localName) : Invalid();
         }
 
-        if (tagName.IndexOf('.') >= 0)
-        {
-            if (IsClrName(tagName)) return Valid(TemplateElementNameKind.ClrExact, clrTypeName: tagName);
-            if (atEndOfInput && IsIncompleteClrName(tagName))
-                return Incomplete(TemplateElementNameKind.ClrExact, clrTypeName: tagName);
-            return Invalid();
-        }
+        if (tagName.IndexOf('.') >= 0) return Invalid();
 
         return IsMarkupName(tagName)
             ? Valid(TemplateElementNameKind.Unqualified, localName: tagName)

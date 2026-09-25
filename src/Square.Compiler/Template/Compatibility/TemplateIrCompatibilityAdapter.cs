@@ -215,6 +215,7 @@ internal static class TemplateIrCompatibilityAdapter
             var slotElement = new SqxElement
             {
                 TagName = "template",
+                IsSlotTemplateWrapper = true,
                 Kind = SqxNodeKind.Element,
                 Line = location.Line,
                 Column = location.Column,
@@ -257,7 +258,9 @@ internal static class TemplateIrCompatibilityAdapter
         {
             var kind = SqxNodeKind.Element;
             string directiveId = null;
-            if (DirectiveCatalog.BuiltIn.TryGet(element.TagName, out var descriptor))
+            if (element.Resolution?.Component?.IsHtmlHost != true &&
+                element.Resolution?.Component?.Kind != LanguageServices.TemplateElementKind.Svg &&
+                DirectiveCatalog.BuiltIn.TryGet(element.TagName, out var descriptor))
             {
                 kind = SqxNodeKind.Directive;
                 directiveId = descriptor.TagName;
@@ -272,6 +275,7 @@ internal static class TemplateIrCompatibilityAdapter
                 TagNameLength = hasTagRange ? element.TagNameRange.Length : element.TagName.Length,
                 CloseTagNamePosition = hasCloseRange ? element.CloseTagNameRange.Offset : -1,
                 CloseTagNameLength = hasCloseRange ? element.CloseTagNameRange.Length : 0,
+                Resolution = element.Resolution,
                 DirectiveId = directiveId,
                 Kind = kind,
                 Attributes = element.Attributes.Select(ConvertAttribute).ToList(),

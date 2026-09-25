@@ -19,7 +19,7 @@ public sealed class LanguageServerHoverTests
 
         await Write(process, """{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///C:/Square/Hover.sqx"},"position":{"line":0,"character":13}}}""");
         var componentHover = await Read(process.StandardOutput);
-        Assert.Contains("Square.Controls.Button", componentHover, StringComparison.Ordinal);
+        Assert.Contains("Square.Html.HTMLButtonElement", componentHover, StringComparison.Ordinal);
         Assert.Contains("markdown", componentHover, StringComparison.Ordinal);
 
         await Write(process, """{"jsonrpc":"2.0","id":3,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///C:/Square/Hover.sqx"},"position":{"line":0,"character":21}}}""");

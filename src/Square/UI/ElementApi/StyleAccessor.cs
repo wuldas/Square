@@ -19,6 +19,7 @@ public sealed class StyleAccessor
     private Dictionary<string, string>? _animatedStyles;
     private Dictionary<string, string?>? _computedStyles;
     private HashSet<string>? _parentDependentStyles;
+    private int _cssTextDepth;
 
     internal StyleAccessor(Element owner) { _owner = owner; }
 
@@ -40,17 +41,26 @@ public sealed class StyleAccessor
         }
         set
         {
-            Clear();
-            if (string.IsNullOrWhiteSpace(value)) return;
-            foreach (var declaration in SplitDeclarations(value))
+            _cssTextDepth++;
+            try
             {
-                var separator = FindTopLevelColon(declaration);
-                if (separator <= 0) continue;
-                var property = declaration[..separator].Trim();
-                var propertyValue = declaration[(separator + 1)..].Trim();
-                if (property.Length == 0 || propertyValue.Length == 0) continue;
-                var important = TryRemoveImportant(ref propertyValue);
-                SetProperty(property, propertyValue, important ? "important" : "");
+                Clear();
+                if (!string.IsNullOrWhiteSpace(value))
+                    foreach (var declaration in SplitDeclarations(value))
+                    {
+                        var separator = FindTopLevelColon(declaration);
+                        if (separator <= 0) continue;
+                        var property = declaration[..separator].Trim();
+                        var propertyValue = declaration[(separator + 1)..].Trim();
+                        if (property.Length == 0 || propertyValue.Length == 0) continue;
+                        var important = TryRemoveImportant(ref propertyValue);
+                        SetProperty(property, propertyValue, important ? "important" : "");
+                    }
+            }
+            finally
+            {
+                _cssTextDepth--;
+                NotifyInlineStyleChanged();
             }
         }
     }
@@ -99,6 +109,7 @@ public sealed class StyleAccessor
         }
         foreach (var assignment in assignments)
             InvalidateIfEffectiveStyleChanged(assignment.Property, previous[assignment.Property]);
+        NotifyInlineStyleChanged();
     }
 
     /// <summary>读取内联声明值；未设置返回空字符串。</summary>
@@ -130,6 +141,7 @@ public sealed class StyleAccessor
             RemoveComputedStyle(name);
         }
         foreach (var name in properties) InvalidateIfEffectiveStyleChanged(name, previous[name]);
+        NotifyInlineStyleChanged();
         return entry.Value ?? "";
     }
 
@@ -257,7 +269,14 @@ public sealed class StyleAccessor
         foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
             InvalidateIfEffectiveStyleChanged(property, previous[property]);
+        NotifyInlineStyleChanged();
     }
+    private void NotifyInlineStyleChanged()
+    {
+        if (_cssTextDepth == 0 && _owner is Square.Html.HTMLElement html)
+            html.NotifyDomAttributeMutation("style");
+    }
+
 
     /// <summary>清除全部非内联级联候选。</summary>
     public void ClearCascaded()

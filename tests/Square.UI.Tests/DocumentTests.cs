@@ -11,8 +11,8 @@ using Square.Platform;
 using Square.Runtime.State;
 using Square.Rendering;
 using Square.UI;
-using Square.UI.Html;
 using Square.UI.Svg;
+using Square.Html;
 using Xunit;
 
 namespace Square.UI.Tests;
@@ -363,7 +363,8 @@ public class DocumentTests
     [Fact]
     public void SplitContainerRegistersFromElementRegistry()
     {
-        var container = Assert.IsType<SplitContainer>(ElementRegistry.Create("SplitContainer"));
+        var document = new UIDocument(ElementRegistry.SquareNamespaceUri);
+        var container = Assert.IsType<SplitContainer>(document.CreateElement("SplitContainer"));
         Assert.NotNull(container.First);
         Assert.NotNull(container.Second);
         Assert.NotNull(container.Splitter);
@@ -451,19 +452,17 @@ public class DocumentTests
         window.Load(root);
         var application = new DesktopApplication(window);
         SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
-        SetPrivateField<UIElement>(application, "_focusedInput", oldInput);
-        SetPrivateField<ITextEditor>(application, "_focusedEditor", oldInput);
-        oldInput.Focus();
-        oldInput.AddEventListener("blur", oldInput.Focus);
         var updateFocus = typeof(DesktopApplication).GetMethod(
             "UpdateFocus", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(updateFocus);
+        updateFocus!.Invoke(application, [oldInput, new Square.Graphics.Point(0, 0), false]);
+        Assert.True(oldInput.IsFocused);
+        oldInput.AddEventListener("blur", oldInput.Focus);
 
         updateFocus!.Invoke(application, [newInput, new Square.Graphics.Point(0, 0), false]);
 
         Assert.True(oldInput.IsFocused);
         Assert.False(newInput.IsFocused);
-        Assert.Same(oldInput, GetPrivateField<UIElement>(application, "_focusedInput"));
         SetPrivateField<IPlatformHost?>(application, "_host", null);
     }
 
@@ -490,7 +489,6 @@ public class DocumentTests
 
         Assert.False(input.IsFocused);
         Assert.Equal(2, focusCalls);
-        Assert.Null(GetPrivateField<UIElement>(application, "_focusedInput"));
         SetPrivateField<IPlatformHost?>(application, "_host", null);
     }
 
@@ -1156,12 +1154,48 @@ public class DocumentTests
 
         Assert.Equal(2, changes);
     }
+    [Fact]
+    public void DesktopHtmlSelectionPointsToOriginalDomTextNode()
+    {
+        var window = new AppWindow("Selection", 240, 80);
+        var root = new View();
+        root.Style.Set("display", "block");
+        root.Style.Set("user-select", "text");
+        var paragraph = new HTMLParagraphElement();
+        var duplicate = new Square.UI.Text("世界");
+        paragraph.ChildNodes.Add(duplicate);
+        var source = new Square.UI.Text("世界");
+        paragraph.ChildNodes.Add(source);
+        root.Children.Add(paragraph);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        window.WindowDocument.Build();
+        new LayoutEngine().MeasureAndArrange(window.WindowDocument.DocumentElement, new Size(240, 80));
+        var tree = GetPrivateField<DisplayTree>(application, "_displayTree")!;
+        tree.BuildFrom(application.Document.DocumentElement);
+        var fragment = Assert.Single(tree.CollectTextFragments(paragraph), item => ReferenceEquals(item.TextNode, source));
+        var point = new Square.Graphics.Point(fragment.Bounds.X + fragment.Bounds.Width / 2f,
+            fragment.Bounds.Y + fragment.Bounds.Height / 2f);
+        var beginSelection = typeof(DesktopApplication).GetMethod("TryStartTextSelection",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(beginSelection);
+        Assert.True(Assert.IsType<bool>(beginSelection!.Invoke(application, [paragraph, point, false])));
+
+        var selection = window.Document.GetSelection();
+        Assert.Equal(1, selection.RangeCount);
+        var range = selection.GetRangeAt(0);
+        Assert.Same(source, range.StartContainer);
+        Assert.NotSame(duplicate, range.StartContainer);
+        Assert.Same(source, range.EndContainer);
+        Assert.InRange(range.StartOffset, 0, source.Length);
+    }
+
 
     [Fact]
     public void CreateElementUsesRegistry()
     {
         var doc = new UIDocument();
-        var text = doc.CreateElement("Text");
+        var text = doc.CreateComponentElement(ElementRegistry.SquareNamespaceUri, "Text");
 
         Assert.IsType<Square.Controls.Text>(text);
         Assert.Same(doc, text.OwnerDocument);
@@ -1172,7 +1206,7 @@ public class DocumentTests
     {
         var doc = new UIDocument();
 
-        var scroller = doc.CreateElement("ScrollViewer");
+        var scroller = doc.CreateComponentElement(ElementRegistry.SquareNamespaceUri, "ScrollViewer");
 
         Assert.IsType<ScrollViewer>(scroller);
         Assert.Same(doc, scroller.OwnerDocument);
@@ -1185,7 +1219,7 @@ public class DocumentTests
     {
         var doc = new UIDocument();
 
-        var element = doc.CreateElement(tag);
+        var element = doc.CreateComponentElement(ElementRegistry.SquareNamespaceUri, tag);
 
         Assert.IsType(expectedType, element);
         Assert.Same(doc, element.OwnerDocument);
@@ -1196,7 +1230,7 @@ public class DocumentTests
     {
         var doc = new UIDocument();
 
-        var popup = doc.CreateElement("Popup");
+        var popup = doc.CreateComponentElement(ElementRegistry.SquareNamespaceUri, "Popup");
 
         Assert.IsType<Popup>(popup);
         Assert.Same(doc, popup.OwnerDocument);
@@ -1207,7 +1241,7 @@ public class DocumentTests
     {
         var doc = new UIDocument();
 
-        var dialog = doc.CreateElement("Dialog");
+        var dialog = doc.CreateComponentElement(ElementRegistry.SquareNamespaceUri, "Dialog");
 
         Assert.IsType<Dialog>(dialog);
         Assert.Same(doc, dialog.OwnerDocument);
@@ -1223,7 +1257,7 @@ public class DocumentTests
     {
         var doc = new UIDocument();
 
-        var element = doc.CreateElement(tag);
+        var element = doc.CreateComponentElement(ElementRegistry.SquareNamespaceUri, tag);
 
         Assert.Equal(expectedType, element.GetType());
         Assert.Same(doc, element.OwnerDocument);
@@ -1233,12 +1267,16 @@ public class DocumentTests
     public void HtmlElementsPreserveNamespaceAndAttributesWithoutReplacingSquareControls()
     {
         var document = new UIDocument();
-        var html = Assert.IsType<HtmlElement>(document.CreateElement("button"));
+        var html = Assert.IsType<HTMLButtonElement>(document.CreateElement("button"));
         Assert.Equal("http://www.w3.org/1999/xhtml", html.NamespaceURI);
         Assert.Same(document, html.OwnerDocument);
-        Assert.IsType<Button>(document.CreateElement("Button"));
-        Assert.IsType<Button>(document.CreateElement("BUTTON"));
-        Assert.Equal("button", Assert.IsType<HtmlElement>(document.CreateElement("HTML:BUTTON")).TagName);
+        // HTML names are ASCII case-insensitive: every casing resolves the XHTML concrete type.
+        Assert.IsType<HTMLButtonElement>(document.CreateElement("Button"));
+        Assert.IsType<HTMLButtonElement>(document.CreateElement("BUTTON"));
+        // Programmatic qualified names are rejected; a namespace is always carried by a URI call.
+        Assert.Throws<ArgumentException>(() => document.CreateElement("HTML:BUTTON"));
+        // Square controls keep their own resolution surface.
+        Assert.IsType<Button>(document.CreateComponentElement(ElementRegistry.SquareNamespaceUri, "Button"));
 
         html.SetAttribute("DATA-State", "on");
         html.SetAttribute("checked", "");
@@ -1260,14 +1298,46 @@ public class DocumentTests
         Assert.Equal("bound", html.GetAttribute("id"));
         html.RemoveProperty("id");
         Assert.False(html.HasAttribute("id"));
+        // Deprecated/unknown locals stay unregistered instead of degrading to a generic host.
         Assert.Throws<InvalidOperationException>(() => document.CreateElement("param"));
-        Assert.Throws<InvalidOperationException>(() => document.CreateElement("html:param"));
+        Assert.Throws<InvalidOperationException>(() => document.CreateElement("NoSuchTag"));
+    }
+
+    [Fact]
+    public void DocumentResolvesElementsUriFirst()
+    {
+        var xhtml = new UIDocument();
+        var ui = new UIDocument(ElementRegistry.SquareNamespaceUri);
+        Assert.Equal(ElementRegistry.HtmlNamespaceUri, xhtml.DefaultElementNamespaceUri);
+        Assert.Equal(ElementRegistry.SquareNamespaceUri, ui.DefaultElementNamespaceUri);
+
+        // The immutable default URI wins before any other candidate: the same spelling
+        // resolves to HTML or to a Square control depending on the document.
+        Assert.IsType<HTMLButtonElement>(xhtml.CreateElement("button"));
+        Assert.IsType<Button>(ui.CreateElement("button"));
+        Assert.IsType<HTMLMenuElement>(xhtml.CreateElement("Menu"));
+        Assert.IsType<Menu>(ui.CreateElement("Menu"));
+        Assert.IsType<HTMLDialogElement>(xhtml.CreateElement("Dialog"));
+        Assert.IsType<Dialog>(ui.CreateElement("Dialog"));
+
+        // DOM URIs go through CreateElementNS; component URIs through CreateComponentElement.
+        Assert.IsType<HTMLButtonElement>(xhtml.CreateElementNS(ElementRegistry.HtmlNamespaceUri, "button"));
+        Assert.IsType<SVGSVGElement>(xhtml.CreateElementNS(ElementRegistry.SvgNamespaceUri, "svg"));
+        Assert.Throws<ArgumentException>(() =>
+            xhtml.CreateElementNS(ElementRegistry.SquareNamespaceUri, "Button"));
+        Assert.Throws<ArgumentException>(() =>
+            ui.CreateComponentElement(ElementRegistry.HtmlNamespaceUri, "button"));
+
+        // Locals the default URI does not define fall back to the single other candidate.
+        Assert.IsType<Square.Controls.Text>(xhtml.CreateElement("Text"));
+
+        Assert.Throws<ArgumentException>(() => new UIDocument("square/ui"));
     }
 
     [Fact]
     public void HtmlAttributeSelectorsRespectPresenceAndKeepSquareControlSemantics()
     {
-        var html = new HtmlElement("input");
+        var html = new HTMLInputElement();
         html.SetAttribute("checked", "");
         html.SetAttribute("data-state", "on");
         var square = new Button();
@@ -1294,9 +1364,7 @@ public class DocumentTests
     {
         var root = new View();
         root.Style.Set("display", "block");
-        var progress = new HtmlElement("progress");
-        progress.SetAttribute("value", "50");
-        progress.SetAttribute("max", "100");
+        var progress = new HTMLProgressElement { Value = 50, Max = 100 };
         progress.Style.Set("width", "100px");
         progress.Style.Set("height", "16px");
         root.Children.Add(progress);
@@ -1317,21 +1385,96 @@ public class DocumentTests
     }
 
     [Fact]
+    public void HtmlCheckboxPaintsCheckedStateWithoutSemanticProxy()
+    {
+        static int BluePixels(bool isChecked, bool disableAppearanceAfterLayout = false)
+        {
+            var root = new View();
+            root.Style.Set("display", "block");
+            var input = new HTMLInputElement { Type = "checkbox", Checked = isChecked };
+            root.Children.Add(input);
+            new LayoutEngine().MeasureAndArrange(root, new Size(80, 40));
+            if (disableAppearanceAfterLayout)
+            {
+                input.Style.Set("appearance", "none");
+                new LayoutEngine().MeasureAndArrange(root, new Size(80, 40));
+            }
+            Assert.Empty(input.ChildNodes);
+            var tree = new DisplayTree();
+            tree.BuildFrom(root);
+            using var bitmap = new Bitmap(80, 40);
+            using var context = new RenderContext(bitmap, 1f);
+            context.Clear(Color.White);
+            tree.Render(context);
+            var blue = 0;
+            for (var y = 0; y < bitmap.Height; y++)
+                for (var x = 0; x < bitmap.Width; x++)
+                {
+                    var pixel = bitmap.GetPixel(x, y);
+                    if (pixel[0] > 200 && pixel[1] is > 70 and < 170 && pixel[2] < 80) blue++;
+                }
+            return blue;
+        }
+
+        Assert.True(BluePixels(true) > 0);
+        Assert.Equal(0, BluePixels(false));
+        Assert.Equal(0, BluePixels(true, disableAppearanceAfterLayout: true));
+    }
+
+    [Fact]
     public void HtmlDetailsSummaryTogglesContentVisibility()
     {
-        var details = new HtmlElement("details");
-        var summary = new HtmlElement("summary");
-        var body = new HtmlElement("p");
+        var details = new HTMLDetailsElement();
+        var summary = new HTMLSummaryElement();
+        var body = new HTMLParagraphElement();
         details.Children.Add(summary);
         details.Children.Add(body);
 
+        Assert.False(details.Open);
         Assert.False(body.IsVisible);
         summary.DispatchEvent(StandardEvents.CreateClick());
+        Assert.True(details.Open);
         Assert.True(details.HasAttribute("open"));
         Assert.True(body.IsVisible);
         summary.DispatchEvent(StandardEvents.CreateClick());
-        Assert.False(details.HasAttribute("open"));
+        Assert.False(details.Open);
         Assert.False(body.IsVisible);
+        summary.DispatchEvent(new KeyboardEvent(StandardEvents.KeyDown, 13));
+        Assert.True(details.Open);
+        Assert.True(body.IsVisible);
+    }
+
+    [Fact]
+    public void HtmlFocusAndTitleAreIndependentOfSquareAndSvgSiblings()
+    {
+        var root = new View();
+        var html = new HTMLButtonElement();
+        var ui = new Button();
+        var svg = new SVGSVGElement();
+        root.Children.Add(html);
+        root.Children.Add(ui);
+        root.Children.Add(svg);
+        var focus = 0;
+        var blur = 0;
+        html.AddEventListener(StandardEvents.Focus, () => focus++);
+        html.AddEventListener(StandardEvents.Blur, () => blur++);
+        html.SetAttribute("title", "HTML hint");
+
+        html.Focus();
+        Assert.True(html.IsFocused);
+        Assert.Equal("HTML hint", html.Tooltip);
+        Assert.Equal(1, focus);
+        Assert.False(ui.IsFocused);
+        Assert.False(svg.State.HasFlag(ElementState.Focus));
+
+        html.Unfocus();
+        html.Disabled = true;
+        html.Focus();
+        Assert.False(html.IsFocused);
+        Assert.Equal(1, blur);
+        Assert.Equal(1, focus);
+        ui.Focus();
+        Assert.True(ui.IsFocused);
     }
 
     [Fact]

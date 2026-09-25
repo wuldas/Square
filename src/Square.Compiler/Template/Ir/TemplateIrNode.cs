@@ -41,6 +41,7 @@ internal sealed class TemplateIrElement : TemplateIrNode
     public SquareSourceRange CloseTagNameRange { get; }
     /// <summary>目录归一化之前的源标签名（如内置别名的原始写法）。</summary>
     public string OriginalTagName { get; }
+    public TemplateElementResolution Resolution { get; set; }
 }
 
 internal sealed class TemplateIrText : TemplateIrNode

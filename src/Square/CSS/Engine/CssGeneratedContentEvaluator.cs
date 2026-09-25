@@ -44,8 +44,7 @@ internal static class CssGeneratedContentEvaluator
         ref int quoteDepth,
         HashSet<Element> changed)
     {
-        var generated = owner.Children.OfType<CssGeneratedPseudoElement>()
-            .FirstOrDefault(child => child.PseudoElementName == name);
+        var generated = FindGenerated(owner, name);
         if (generated == null) return;
 
         var contentValue = generated.Style.Get("content");
@@ -53,7 +52,7 @@ internal static class CssGeneratedContentEvaluator
             contentValue.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ||
             contentValue.Trim().Equals("normal", StringComparison.OrdinalIgnoreCase)))
         {
-            using (Element.SuppressInvalidation()) owner.Children.Remove(generated);
+            RemoveGenerated(owner, generated);
             changed.Add(owner);
             return;
         }
@@ -67,23 +66,28 @@ internal static class CssGeneratedContentEvaluator
             counters.Pop(resetCounters[i]);
         if (!hasContent)
         {
-            using (Element.SuppressInvalidation()) owner.Children.Remove(generated);
+            RemoveGenerated(owner, generated);
             changed.Add(owner);
             return;
         }
 
-        var targetIndex = name switch
+        // HTML list markers are visual sidecars: their inline position comes from the line
+        // layout, so the child-based ordering pass only applies to DOM children.
+        if (owner.Children.Contains(generated))
         {
-            "marker" => 0,
-            "before" => owner.Children.Any(child => child is CssGeneratedPseudoElement pseudo &&
-                pseudo.PseudoElementName == "marker") ? 1 : 0,
-            _ => owner.Children.Count - 1
-        };
-        var currentIndex = owner.Children.IndexOf(generated);
-        if (currentIndex != targetIndex)
-        {
-            using (Element.SuppressInvalidation()) owner.Children.Move(currentIndex, targetIndex);
-            changed.Add(owner);
+            var targetIndex = name switch
+            {
+                "marker" => 0,
+                "before" => owner.Children.Any(child => child is CssGeneratedPseudoElement pseudo &&
+                    pseudo.PseudoElementName == "marker") ? 1 : 0,
+                _ => owner.Children.Count - 1
+            };
+            var currentIndex = owner.Children.IndexOf(generated);
+            if (currentIndex != targetIndex)
+            {
+                using (Element.SuppressInvalidation()) owner.Children.Move(currentIndex, targetIndex);
+                changed.Add(owner);
+            }
         }
         if (generated.TextContent != content)
         {
@@ -94,6 +98,26 @@ internal static class CssGeneratedContentEvaluator
         {
             generated.IsNew = false;
             changed.Add(owner);
+        }
+    }
+
+    private static CssGeneratedPseudoElement? FindGenerated(Element owner, string name)
+    {
+        foreach (var child in owner.Children)
+            if (child is CssGeneratedPseudoElement generated && generated.PseudoElementName == name)
+                return generated;
+        return name == "marker" && owner is Square.Html.HTMLElement host ? host.FindListMarker() : null;
+    }
+
+    /// <summary>Removes a spent pseudo element from the DOM children or, for HTML markers, the host's sidecars.</summary>
+    private static void RemoveGenerated(Element owner, CssGeneratedPseudoElement generated)
+    {
+        using (Element.SuppressInvalidation())
+        {
+            if (owner.Children.Remove(generated)) return;
+            if (owner is Square.Html.HTMLElement host &&
+                ReferenceEquals(host.FindListMarker(), generated))
+                host.DetachListMarker();
         }
     }
 
@@ -131,7 +155,7 @@ internal static class CssGeneratedContentEvaluator
 
     private static int GetListItemIndex(Element owner)
     {
-        if (owner.Parent is Square.UI.Html.HtmlElement { TagName: "ol" } list)
+        if (owner.Parent is Square.Html.HTMLElement { TagName: "ol" } list)
         {
             var items = list.Children.Where(item => item.IsVisible &&
                 string.Equals(item.Style.Get("display")?.Trim(), "list-item", StringComparison.OrdinalIgnoreCase)).ToArray();

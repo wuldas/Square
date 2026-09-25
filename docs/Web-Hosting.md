@@ -108,6 +108,9 @@ finally
 | `Image.Source` / `Bitmap` | `img` / PNG data URI |
 | `List` / `ListItem` | `ul` / `li` |
 | 内联 SVG DOM | 原生 SVG 标签 |
+| `Square.Html` 元素（113 个 WHATWG 标签） | 对应原生语义标签，按 [HTML5-Elements.md](HTML5-Elements.md) 矩阵输出与禁用；混合文本按 `ChildNodes` 原序编码为裸文本 |
+
+包导出与已定义的自定义元素仅输出 `IHtmlStaticRepresentation` 返回的安全静态表示；本轮不输出浏览器 `customElements.define` 注册脚本或可升级的 `is` 标记。
 
 最终已应用样式默认去重为 head 中的 CSS class，也可通过 `UseInlineStyles` 输出 inline `style`。组件样式表无需在浏览器中重新执行 Square selector/cascade。交互页面在每次事件后同时返回当前页面 CSS，不使用共享 stylesheet endpoint 表达会话动态状态。
 
@@ -140,6 +143,7 @@ app.MapSquarePage<Main>("/", options =>
 - `Link` 仅允许相对 URL、fragment、HTTP、HTTPS 和 mailto。
 - `Image` 仅允许相对 URL、HTTP、HTTPS 和 `data:image/*`。
 - 不自动序列化任意 `PropertyStore` 值。
+- 模板 HTML 元素受相同导出限制：拒绝 `on*`、`srcdoc`、不安全 URL/`srcset`、提供者写入的 `data-square-*` 保留属性与所有 `is` 属性；`script`/`html:script` 内容与 `src` 永不输出。
 
 ## 6. 运行示例
 
@@ -147,7 +151,7 @@ app.MapSquarePage<Main>("/", options =>
 dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj
 ```
 
-访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面。
+访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面；`/html-elements` 混合页覆盖 HTML 元素、SVG、Square UI 与安全自定义元素静态表示。
 
 ## 7. 当前边界
 

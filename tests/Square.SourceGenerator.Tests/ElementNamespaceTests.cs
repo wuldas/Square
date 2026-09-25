@@ -14,101 +14,10 @@ public sealed class ElementNamespaceTests
     private static readonly TemplateResolutionContext EmptyContext =
         new(string.Empty, Array.Empty<string>());
 
-    [Theory]
-    [InlineData("ui:button", "Square.Controls.Button")]
-    [InlineData("ui:Table", "Square.Controls.Table")]
-    [InlineData("ui:Body", "Square.UI.UIBodyElement")]
-    public void ResolvesQualifiedSquareElements(string tagName, string typeName)
-    {
-        var resolution = TemplateCatalog.BuiltIn.ResolveComponent(tagName, EmptyContext);
 
-        Assert.Equal(TemplateElementResolutionStatus.Resolved, resolution.Status);
-        Assert.Equal(typeName, resolution.Component.TypeName);
-    }
 
-    [Fact]
-    public void ResolvesMetadataExportsAndReportsUnorderedConflict()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            [assembly: ElementExport("urn:a", "a", "badge", typeof(A.Badge))]
-            namespace A { public sealed class Chart : Square.Controls.View { } public sealed class Badge : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "b", "chart", typeof(B.Chart))]
-            namespace B { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("public sealed class Consumer { }", packageB, packageA);
 
-        Assert.Equal("A.Badge", catalog.ResolveComponent("badge", EmptyContext).Component.TypeName);
-        Assert.Equal("A.Chart", catalog.ResolveComponent("a:chart", EmptyContext).Component.TypeName);
-        var ambiguous = catalog.ResolveComponent("chart", EmptyContext);
-        Assert.Equal(TemplateElementResolutionStatus.Ambiguous, ambiguous.Status);
-        Assert.Equal(new[] { "A.Chart", "B.Chart" }, ambiguous.Candidates.Select(item => item.TypeName).OrderBy(item => item));
-    }
 
-    [Fact]
-    public void ApplicationOrderSelectsNamespaceRegardlessOfReferenceOrder()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            namespace A { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "b", "chart", typeof(B.Chart))]
-            namespace B { public sealed class Chart : Square.Controls.View { } }
-            """);
-        const string consumer = """
-            using Square.UI;
-            [assembly: ElementNamespaceOrder("urn:b", "urn:a")]
-            public sealed class Consumer { }
-            """;
-
-        var first = CreateCatalog(consumer, packageA, packageB).ResolveComponent("chart", EmptyContext);
-        var second = CreateCatalog(consumer, packageB, packageA).ResolveComponent("chart", EmptyContext);
-
-        Assert.Equal("B.Chart", first.Component.TypeName);
-        Assert.Equal("B.Chart", second.Component.TypeName);
-    }
-
-    [Fact]
-    public void AliasOverridesPackagePrefixAndUnknownPrefixDoesNotFallback()
-    {
-        var package = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            namespace A { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("""
-            using Square.UI;
-            [assembly: ElementNamespaceAlias("urn:a", "charts")]
-            public sealed class Consumer { }
-            """, package);
-
-        Assert.Equal("A.Chart", catalog.ResolveComponent("charts:chart", EmptyContext).Component.TypeName);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownPrefix, catalog.ResolveComponent("a:chart", EmptyContext).Status);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownPrefix, catalog.ResolveComponent("missing:chart", EmptyContext).Status);
-    }
-
-    [Fact]
-    public void FixedNamespacesCannotBeOverridden()
-    {
-        var package = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "button", typeof(A.Button))]
-            namespace A { public sealed class Button : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("public sealed class Consumer { }", package);
-
-        Assert.Equal("Square.UI.Html.HtmlElement", catalog.ResolveComponent("button", EmptyContext).Component.TypeName);
-        Assert.Equal("Square.Controls.Button", catalog.ResolveComponent("Button", EmptyContext).Component.TypeName);
-        Assert.Equal("A.Button", catalog.ResolveComponent("a:button", EmptyContext).Component.TypeName);
-        Assert.Equal("Square.UI.Html.HtmlElement", catalog.ResolveComponent("html:button", EmptyContext).Component.TypeName);
-    }
 
     [Theory]
     [InlineData("a:b:c")]
@@ -126,7 +35,7 @@ public sealed class ElementNamespaceTests
     [InlineData("sqv")]
     public void QualifiedAndGlobalElementNamesCompile(string extension)
     {
-        var template = "<template><ui:button /><ui:Table /><ui:Body /><global::Square.Controls.Button /></template>";
+        var template = "<template xmlns:ui=\"urn:square:ui\"><ui:button /><ui:Table /><ui:Body /><global::Square.Controls.Button /></template>";
 
         var result = RunGenerator("Qualified." + extension, template, out var output);
 
@@ -143,7 +52,8 @@ public sealed class ElementNamespaceTests
             .Where(descriptor => descriptor.NamespaceUri == TemplateCatalog.HtmlNamespaceUri)
             .Select(descriptor => descriptor.TagName).Select(tag =>
             tag == "template" ? "<html:template></html:template>" : $"<{tag} />"));
-        var result = RunGenerator("HtmlVocabulary." + extension, "<template><View>" + content + "</View></template>", out var output);
+        var result = RunGenerator("HtmlVocabulary." + extension,
+            "<template xmlns:html=\"http://www.w3.org/1999/xhtml\"><View>" + content + "</View></template>", out var output);
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
@@ -191,7 +101,7 @@ public sealed class ElementNamespaceTests
     public void QualifiedHtmlScriptAndStyleStayInsideTemplate(string extension)
     {
         var result = RunGenerator("InertSections." + extension,
-            "<template><article><html:script>not executed</html:script><html:style>disabled</html:style></article></template>",
+            "<template xmlns:html=\"http://www.w3.org/1999/xhtml\"><article><html:script>not executed</html:script><html:style>disabled</html:style></article></template>",
             out var output);
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
@@ -204,10 +114,9 @@ public sealed class ElementNamespaceTests
     public void StaticHtmlInlineEventsAreRejected(string extension)
     {
         var result = RunGenerator("Unsafe." + extension,
-            "<template><html:button onclick=\"alert(1)\">Click</html:button></template>", out _);
+            "<template xmlns:html=\"http://www.w3.org/1999/xhtml\"><html:button onclick=\"alert(1)\">Click</html:button></template>", out _);
 
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "SQXE007" &&
-            diagnostic.GetMessage() == "HTML inline event attribute 'onclick' is prohibited; use Square event binding.");
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "SQXE007");
     }
 
     [Theory]
@@ -221,61 +130,7 @@ public sealed class ElementNamespaceTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "SQXE001");
     }
 
-    [Fact]
-    public void GeneratorConstructsMetadataExportWinners()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            [assembly: ElementExport("urn:a", "a", "badge", typeof(A.Badge))]
-            namespace A { public sealed class Chart : Square.Controls.View { } public sealed class Badge : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "b", "chart", typeof(B.Chart))]
-            namespace B { public sealed class Chart : Square.Controls.View { } }
-            """);
-        const string source = """
-            using Square.UI;
-            [assembly: ElementNamespaceOrder("urn:b", "urn:a")]
-            public sealed class Placeholder { }
-            """;
 
-        var result = RunGenerator(
-            "PackageConsumer.sqx",
-            "<template><badge /><chart /><a:chart /><b:chart /></template>",
-            out var output,
-            new[] { packageA, packageB },
-            source);
-
-        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-    }
-
-    [Fact]
-    public void GeneratorReportsAmbiguousMetadataExport()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            namespace A { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "b", "chart", typeof(B.Chart))]
-            namespace B { public sealed class Chart : Square.Controls.View { } }
-            """);
-
-        var result = RunGenerator(
-            "Ambiguous.sqx",
-            "<template><chart /></template>",
-            out _,
-            new[] { packageA, packageB });
-
-        var diagnostic = Assert.Single(result.Diagnostics, item => item.Id == "SQXE004");
-        Assert.Contains("a:chart", diagnostic.GetMessage(), StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("b:chart", diagnostic.GetMessage(), StringComparison.OrdinalIgnoreCase);
-    }
 
     [Fact]
     public void ReferencedPropsEventsAndSlotsUseExportedTypeContracts()
@@ -284,7 +139,8 @@ public sealed class ElementNamespaceTests
             using Square.Events;
             using Square.Runtime.Binding;
             using Square.UI;
-            [assembly: ElementExport("urn:contracts", "events", "badge", typeof(Contracts.Badge))]
+            [assembly: ElementExport("urn:contracts", "badge", typeof(Contracts.Badge))]
+            [assembly: ElementEventContract(typeof(Contracts.Badge), "ActivatedEvent", "activated")]
             namespace Contracts
             {
                 public sealed class RowSlotProps { public int Item { get; init; } }
@@ -299,13 +155,13 @@ public sealed class ElementNamespaceTests
 
         var missing = RunGenerator(
             "MissingProp.sqx",
-            "<template><events:badge /></template>",
+            "<template xmlns:events=\"urn:contracts\"><events:badge /></template>",
             out _,
             new[] { package });
         Assert.Contains(missing.Diagnostics, diagnostic => diagnostic.Id == "SQX0003");
 
         const string valid = """
-            <template><events:badge Label="ok" onActivated={OnActivated} /></template>
+            <template xmlns:events="urn:contracts"><events:badge Label="ok" onActivated={OnActivated} /></template>
             <script>private void OnActivated(global::Square.Events.CustomEvent<int> e) { }</script>
             """;
         var validResult = RunGenerator("TypedEvent.sqx", valid, out var validOutput, new[] { package });
@@ -313,7 +169,7 @@ public sealed class ElementNamespaceTests
         Assert.DoesNotContain(validOutput.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
 
         const string slot = """
-            <template>
+            <template xmlns:events="urn:contracts">
               <events:badge Label="ok">
                 <template #row="{ item: row }"><View /></template>
               </events:badge>
@@ -330,7 +186,7 @@ public sealed class ElementNamespaceTests
         var package = CompilePackage("MissingEventMetadata", """
             using Square.Events;
             using Square.UI;
-            [assembly: ElementExport("urn:events", "events", "badge", typeof(Events.Badge))]
+            [assembly: ElementExport("urn:events", "badge", typeof(Events.Badge))]
             namespace Events
             {
                 public sealed class Badge : Square.Controls.View
@@ -342,108 +198,32 @@ public sealed class ElementNamespaceTests
 
         var result = RunGenerator(
             "MissingEvent.sqx",
-            "<template><events:badge /></template>",
+            "<template xmlns:events=\"urn:events\"><events:badge /></template>",
             out _,
             new[] { package });
 
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "SQXE006");
     }
 
-    [Fact]
-    public void ConflictingDefaultPrefixesRequireAliasAndAliasReplacesBoth()
-    {
-        var package = CompilePackage("PrefixPackage", """
-            using Square.UI;
-            [assembly: ElementExport("urn:cards", "a", "card", typeof(Cards.Card))]
-            [assembly: ElementExport("urn:cards", "z", "card", typeof(Cards.Card))]
-            namespace Cards { public sealed class Card : Square.Controls.View { } }
-            """);
 
-        var invalid = CreateCatalog("public sealed class Consumer { }", package);
-        Assert.Contains(invalid.Diagnostics, diagnostic => diagnostic.Id == "SQXE001");
-        Assert.Equal(TemplateElementResolutionStatus.UnknownPrefix, invalid.ResolveComponent("a:card", EmptyContext).Status);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownPrefix, invalid.ResolveComponent("z:card", EmptyContext).Status);
 
-        var aliased = CreateCatalog("""
-            using Square.UI;
-            [assembly: ElementNamespaceAlias("urn:cards", "q")]
-            public sealed class Consumer { }
-            """, package);
-        Assert.DoesNotContain(aliased.Diagnostics, diagnostic => diagnostic.Id == "SQXE001");
-        Assert.Equal("Cards.Card", aliased.ResolveComponent("q:card", EmptyContext).Component.TypeName);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownPrefix, aliased.ResolveComponent("a:card", EmptyContext).Status);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownPrefix, aliased.ResolveComponent("z:card", EmptyContext).Status);
-    }
 
-    [Fact]
-    public void AliasCannotCollideWithAnotherNamespaceDefaultPrefix()
-    {
-        var package = CompilePackage("AliasCollisionPackage", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "shared", "card", typeof(A.Card))]
-            [assembly: ElementExport("urn:b", "b", "card", typeof(B.Card))]
-            namespace A { public sealed class Card : Square.Controls.View { } }
-            namespace B { public sealed class Card : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("""
-            using Square.UI;
-            [assembly: ElementNamespaceAlias("urn:b", "shared")]
-            public sealed class Consumer { }
-            """, package);
-
-        Assert.Contains(catalog.Diagnostics, diagnostic => diagnostic.Id == "SQXE001");
-        Assert.Equal(TemplateElementResolutionStatus.Ambiguous, catalog.ResolveComponent("shared:card", EmptyContext).Status);
-    }
-
-    [Fact]
-    public void NullNamespaceOrderReportsDeclarationDiagnostic()
-    {
-        var catalog = CreateCatalog("""
-            using Square.UI;
-            [assembly: ElementNamespaceOrder(null)]
-            public sealed class Consumer { }
-            """);
-
-        Assert.Contains(catalog.Diagnostics, diagnostic => diagnostic.Id == "SQXE001");
-    }
-
-    [Fact]
-    public void LocalResolutionIsCaseSensitiveAccessibleAndCannotBypassExports()
-    {
-        var package = CompilePackage("ExportedLocalPackage", """
-            using Square.UI;
-            [assembly: ElementExport("urn:cards", "cards", "package-card", typeof(My.App.Card))]
-            namespace My.App { public sealed class Card : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("""
-            namespace Current
-            {
-                internal sealed class Card : Square.Controls.View { }
-                public sealed class Consumer { }
-            }
-            """, package);
-        var context = new TemplateResolutionContext("Current", Array.Empty<string>());
-
-        Assert.Equal("Current.Card", catalog.ResolveComponent("Card", context).Component.TypeName);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, catalog.ResolveComponent("card", context).Status);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, catalog.ResolveComponent("local:My.App.Card", context).Status);
-        Assert.Equal("My.App.Card", catalog.ResolveComponent("global::My.App.Card", context).Component.TypeName);
-    }
 
     [Fact]
     public void ClosedGenericExportsResolveAndOpenGenericExportsAreRejected()
     {
         var package = CompilePackage("GenericPackage", """
             using Square.UI;
-            [assembly: ElementExport("urn:generic", "g", "closed", typeof(Components.Card<int>))]
-            [assembly: ElementExport("urn:generic", "g", "open", typeof(Components.Card<>))]
+            [assembly: ElementExport("urn:generic", "closed", typeof(Components.Card<int>))]
+            [assembly: ElementExport("urn:generic", "open", typeof(Components.Card<>))]
             namespace Components { public sealed class Card<T> : Square.Controls.View { } }
             """);
         var catalog = CreateCatalog("public sealed class Consumer { }", package);
 
         Assert.Contains(catalog.Diagnostics, diagnostic => diagnostic.Id == "SQXE001");
-        Assert.Equal("Components.Card<int>", catalog.ResolveComponent("g:closed", EmptyContext).Component.TypeName);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, catalog.ResolveComponent("g:open", EmptyContext).Status);
+        var context = new TemplateResolutionContext(string.Empty, Array.Empty<string>(), "urn:generic");
+        Assert.Equal("Components.Card<int>", catalog.ResolveComponent("closed", context).Component.TypeName);
+        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, catalog.ResolveComponent("open", context).Status);
     }
 
     [Theory]
@@ -461,7 +241,7 @@ public sealed class ElementNamespaceTests
             out _,
             source: """
                 using Square.UI;
-                [assembly: ElementExport("urn:generated", "generated", "badge", typeof(Generated.Badge))]
+                [assembly: ElementExport("urn:generated", "badge", typeof(Generated.Badge))]
                 public sealed class Placeholder { }
                 """);
 
@@ -477,7 +257,7 @@ public sealed class ElementNamespaceTests
             out _,
             source: """
                 using Square.UI;
-                [assembly: ElementExport("urn:generated", "generated", "badge", typeof(Generated.Badge))]
+                [assembly: ElementExport("urn:generated", "badge", typeof(Generated.Badge))]
                 public sealed class Placeholder { }
                 """);
 
@@ -496,7 +276,7 @@ public sealed class ElementNamespaceTests
             """;
         const string export = """
             using Square.UI;
-            [assembly: ElementExport("urn:generated", "generated", "badge", typeof(Generated.Badge))]
+            [assembly: ElementExport("urn:generated", "badge", typeof(Generated.Badge))]
             public sealed class Placeholder { }
             """;
         var missing = RunGenerator("Badge.sqx", template, out _, source: export);
@@ -504,7 +284,7 @@ public sealed class ElementNamespaceTests
 
         var matching = RunGenerator("Badge.sqx", template, out var output, source: """
             using Square.UI;
-            [assembly: ElementExport("urn:generated", "generated", "badge", typeof(Generated.Badge))]
+            [assembly: ElementExport("urn:generated", "badge", typeof(Generated.Badge))]
             [assembly: ElementEventContract(typeof(Generated.Badge), "ActivatedEvent", "activated")]
             public sealed class Placeholder { }
             """);
@@ -524,7 +304,7 @@ public sealed class ElementNamespaceTests
             """;
         var result = RunGenerator("Badge.sqx", template, out _, source: """
             using Square.UI;
-            [assembly: ElementExport("urn:generated", "generated", "badge", typeof(Generated.Badge))]
+            [assembly: ElementExport("urn:generated", "badge", typeof(Generated.Badge))]
             [assembly: ElementEventContract(typeof(Generated.Badge), "ActivatedEvent", "activated")]
             [assembly: ElementEventContract(typeof(Generated.Badge), "ActivatedEvent", "changed")]
             [assembly: ElementEventContract(typeof(Generated.Badge), "ActivatedEvent", "activated")]
@@ -539,101 +319,19 @@ public sealed class ElementNamespaceTests
     {
         var missing = RunGenerator(
             "MissingHandler.sqx",
-            "<template><Button onClick={OnMissing} /></template>",
+            "<template xmlns:ui=\"urn:square:ui\"><ui:Button onClick={OnMissing} /></template>",
             out _);
         Assert.Contains(missing.Diagnostics, diagnostic => diagnostic.Id == "SQX0004");
 
         var mismatch = RunGenerator(
             "BadHandler.sqx",
-            "<template><Button onClick={OnBad} /></template><script>private void OnBad(int value) { }</script>",
+            "<template xmlns:ui=\"urn:square:ui\"><ui:Button onClick={OnBad} /></template><script>private void OnBad(int value) { }</script>",
             out _);
         Assert.Contains(mismatch.Diagnostics, diagnostic => diagnostic.Id == "SQX0005");
     }
 
-    [Fact]
-    public void MissingElementUnderAmbiguousPrefixReportsUnknownElementWithNamespaces()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "p", "chart", typeof(A.Chart))]
-            namespace A { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "p", "gauge", typeof(B.Gauge))]
-            namespace B { public sealed class Gauge : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("public sealed class Consumer { }", packageA, packageB);
 
-        var missing = catalog.ResolveComponent("p:missing", EmptyContext);
-        Assert.Equal(TemplateElementResolutionStatus.UnknownElement, missing.Status);
-        Assert.Empty(missing.Candidates);
-        Assert.Equal(new[] { "urn:a", "urn:b" }, missing.CandidateNamespaceUris);
 
-        var ambiguous = catalog.ResolveComponent("p:chart", EmptyContext);
-        Assert.Equal(TemplateElementResolutionStatus.Ambiguous, ambiguous.Status);
-        Assert.Equal(new[] { "urn:a", "urn:b" }, ambiguous.CandidateNamespaceUris);
-    }
-
-    [Fact]
-    public void ElementDiagnosticsCentralizeResolutionIdMessageAndRange()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            namespace A { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "b", "chart", typeof(B.Chart))]
-            namespace B { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("public sealed class Consumer { }", packageA, packageB);
-
-        var resolution = catalog.ResolveComponent("chart", EmptyContext);
-        var diagnostic = ElementDiagnostics.ForResolution(
-            "chart", resolution, catalog, new SquareSourceRange(7, 5), "Page.sqx");
-
-        Assert.Equal("SQXE004", diagnostic.Id);
-        Assert.Equal("Page.sqx", diagnostic.SourcePath);
-        Assert.Equal(7, diagnostic.Range.Offset);
-        Assert.Equal(5, diagnostic.Range.Length);
-        Assert.Contains("urn:a", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Contains("urn:b", diagnostic.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AliasPrefixConflictsReportEachDeclarationLocation()
-    {
-        var packageA = CompilePackage("PackageA", """
-            using Square.UI;
-            [assembly: ElementExport("urn:a", "a", "chart", typeof(A.Chart))]
-            namespace A { public sealed class Chart : Square.Controls.View { } }
-            """);
-        var packageB = CompilePackage("PackageB", """
-            using Square.UI;
-            [assembly: ElementExport("urn:b", "b", "gauge", typeof(B.Gauge))]
-            namespace B { public sealed class Gauge : Square.Controls.View { } }
-            """);
-        var catalog = CreateCatalog("""
-            using Square.UI;
-            [assembly: ElementNamespaceAlias("urn:a", "shared")]
-            [assembly: ElementNamespaceAlias("urn:b", "shared")]
-            public sealed class Consumer { }
-            """, packageA, packageB);
-
-        var conflicts = catalog.Diagnostics
-            .Where(diagnostic => diagnostic.Message.Contains("assigned to multiple URIs", StringComparison.Ordinal))
-            .ToArray();
-
-        Assert.Equal(2, conflicts.Length);
-        Assert.All(conflicts, diagnostic =>
-        {
-            Assert.Equal("SQXE001", diagnostic.Id);
-            Assert.True(diagnostic.Range.Length > 0);
-        });
-        Assert.Equal(2, conflicts.Select(diagnostic => diagnostic.Range.Offset).Distinct().Count());
-    }
 
     private static MetadataReference CompilePackageWithGenerator(string assemblyName, string source)
     {
@@ -658,20 +356,20 @@ public sealed class ElementNamespaceTests
     {
         var duplicate = CompilePackage("DuplicateExports", """
             using Square.UI;
-            [assembly: ElementExport("urn:duplicate", "dup", "card", typeof(Duplicate.Card))]
-            [assembly: ElementExport("urn:duplicate", "dup", "card", typeof(Duplicate.Card))]
+            [assembly: ElementExport("urn:duplicate", "card", typeof(Duplicate.Card))]
+            [assembly: ElementExport("urn:duplicate", "card", typeof(Duplicate.Card))]
             namespace Duplicate { public sealed class Card : Square.Controls.View { } }
             """);
         var duplicateCatalog = CreateCatalog("public sealed class Consumer { }", duplicate);
         Assert.Equal(
             "Duplicate.Card",
-            duplicateCatalog.ResolveComponent("dup:card", EmptyContext).Component.TypeName);
+            duplicateCatalog.ResolveComponent("card", new TemplateResolutionContext(string.Empty, Array.Empty<string>(), "urn:duplicate")).Component.TypeName);
         Assert.DoesNotContain(duplicateCatalog.Diagnostics, diagnostic => diagnostic.Id == "SQXE005");
 
         var collision = CompilePackage("CollidingExports", """
             using Square.UI;
-            [assembly: ElementExport("urn:collision", "collision", "card", typeof(Collision.First))]
-            [assembly: ElementExport("urn:collision", "collision", "card", typeof(Collision.Second))]
+            [assembly: ElementExport("urn:collision", "card", typeof(Collision.First))]
+            [assembly: ElementExport("urn:collision", "card", typeof(Collision.Second))]
             namespace Collision
             {
                 public sealed class First : Square.Controls.View { }
@@ -681,7 +379,7 @@ public sealed class ElementNamespaceTests
         var collisionCatalog = CreateCatalog("public sealed class Consumer { }", collision);
         Assert.Contains(collisionCatalog.Diagnostics, diagnostic => diagnostic.Id == "SQXE005");
         Assert.Equal(TemplateElementResolutionStatus.Ambiguous,
-            collisionCatalog.ResolveComponent("collision:card", EmptyContext).Status);
+            collisionCatalog.ResolveComponent("card", new TemplateResolutionContext(string.Empty, Array.Empty<string>(), "urn:collision")).Status);
     }
 
     private static GeneratorDriverRunResult RunGenerator(

@@ -120,20 +120,23 @@ public static class TemplateCompletionService
         "v-bind", "v-on", "v-slot"
     };
 
-    public static TemplateCompletionContext GetContext(string text, int offset, string sourcePath)
+    public static TemplateCompletionContext GetContext(string text, int offset, string sourcePath,
+        TemplateCatalog catalog = null, TemplateResolutionContext resolutionContext = null)
     {
         text ??= string.Empty;
         offset = Math.Min(Math.Max(offset, 0), text.Length);
         var isSqv = sourcePath != null && sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
-        var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
-        var document = result.ParsedSqxDocument;
+        resolutionContext ??= TemplateResolutionContext.FromTemplateText(text, sourcePath ?? string.Empty);
+        var syntax = ComponentSectionScanner.Scan(text, sourcePath ?? string.Empty,
+            isSqv ? ComponentDialect.Sqv : ComponentDialect.Sqx, tolerant: true,
+            catalog: catalog ?? TemplateCatalog.BuiltIn, context: resolutionContext).Document;
         var scriptContext = CSharpScriptCompletionService.GetContext(text, offset, sourcePath);
         if (scriptContext.Kind != CSharpScriptCompletionKind.None)
             return FromScriptContext(scriptContext, isSqv);
         var cssContext = CssCompletionService.GetContext(text, offset, sourcePath);
         if (cssContext.Kind != CssCompletionKind.None)
             return FromCssContext(cssContext, isSqv);
-        var template = document?.Syntax?.Template;
+        var template = syntax.Template;
         if (template != null &&
             (offset < template.ContentRange.Offset || offset > template.ContentRange.End))
             return new TemplateCompletionContext(TemplateCompletionKind.None, string.Empty, string.Empty, isSqv);
@@ -247,9 +250,9 @@ public static class TemplateCompletionService
         TemplateResolutionContext resolutionContext = null)
     {
         catalog ??= TemplateCatalog.BuiltIn;
-        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
         if (context == null) return Array.Empty<TemplateCompletionItem>();
         var inferredSourcePath = context.IsSqv ? "Completion.sqv" : "Completion.sqx";
+        resolutionContext ??= TemplateResolutionContext.FromTemplateText(text, inferredSourcePath);
         if (context.Kind is TemplateCompletionKind.CssProperty or
             TemplateCompletionKind.CssValue or
             TemplateCompletionKind.CssSelector or
@@ -295,7 +298,7 @@ public static class TemplateCompletionService
             case TemplateCompletionKind.ModelModifier:
                 return GetModelModifierItems(context);
             case TemplateCompletionKind.Directive:
-                return GetDirectiveItems(context);
+                return GetDirectiveItems(context, catalog, resolutionContext);
             case TemplateCompletionKind.Slot:
                 return new[] { "default" }
                     .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -307,37 +310,33 @@ public static class TemplateCompletionService
                     .Select(name => new TemplateCompletionItem(name, 12, "CSS class", name))
                     .ToArray();
             case TemplateCompletionKind.Attribute:
-                return GetAttributeItems(context, catalog);
+                return GetAttributeItems(context, catalog, resolutionContext);
             case TemplateCompletionKind.AttributeValue:
                 return GetAttributeValueItems(context);
             case TemplateCompletionKind.Binding:
-                return GetBindingItems(context, catalog);
+                return GetBindingItems(context, catalog, resolutionContext);
             case TemplateCompletionKind.Tag:
-            {
-                var componentItems = new List<TemplateCompletionItem>();
-                foreach (var component in catalog.Components)
                 {
-                    if (component.LocalName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
+                    var componentItems = new List<TemplateCompletionItem>();
+                    foreach (var component in catalog.Components)
                     {
-                        var shortResolution = catalog.ResolveComponent(component.LocalName, resolutionContext);
-                        if (shortResolution.Status == TemplateElementResolutionStatus.Resolved &&
-                            string.Equals(shortResolution.Component.AssemblyName, component.AssemblyName, StringComparison.Ordinal) &&
-                            string.Equals(shortResolution.Component.TypeMetadataName, component.TypeMetadataName, StringComparison.Ordinal))
-                            componentItems.Add(new TemplateCompletionItem(component.LocalName, component.IsBuiltIn ? 7 : 14, component.TypeName, component.LocalName));
+                        if (component.LocalName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var shortResolution = catalog.ResolveComponent(component.LocalName, resolutionContext);
+                            if (shortResolution.Status == TemplateElementResolutionStatus.Resolved &&
+                                string.Equals(shortResolution.Component.AssemblyName, component.AssemblyName, StringComparison.Ordinal) &&
+                                string.Equals(shortResolution.Component.TypeMetadataName, component.TypeMetadataName, StringComparison.Ordinal))
+                                componentItems.Add(new TemplateCompletionItem(component.LocalName, component.IsBuiltIn ? 7 : 14, component.TypeName, component.LocalName));
+                        }
+                        foreach (var qualifiedName in catalog.GetQualifiedNames(component, resolutionContext))
+                            if (qualifiedName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
+                                componentItems.Add(new TemplateCompletionItem(qualifiedName, component.IsBuiltIn ? 7 : 14, component.TypeName, qualifiedName));
                     }
-                    foreach (var qualifiedName in catalog.GetQualifiedNames(component))
-                        if (qualifiedName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
-                            componentItems.Add(new TemplateCompletionItem(qualifiedName, component.IsBuiltIn ? 7 : 14, component.TypeName, qualifiedName));
+                    var components = componentItems
+                        .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+                        .Select(group => group.First());
+                    return components.ToArray();
                 }
-                var components = componentItems
-                    .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group.First());
-                var structural = new[] { "Show", "For", "Index", "Switch", "Match", "Slot", "Outlet", "Fragment", "template" }
-                    .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
-                    .Select(name => new TemplateCompletionItem(name, 7, name, name));
-
-                return components.Concat(structural).ToArray();
-            }
             case TemplateCompletionKind.ClosingTag:
                 if (context.TagName.Length == 0 ||
                     !context.TagName.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -545,20 +544,30 @@ public static class TemplateCompletionService
     private static readonly IReadOnlyDictionary<string, string> SpecialTypeAliases =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["System.String"] = "string", ["System.Int32"] = "int", ["System.Int64"] = "long",
-            ["System.Int16"] = "short", ["System.UInt32"] = "uint", ["System.UInt64"] = "ulong",
-            ["System.UInt16"] = "ushort", ["System.Byte"] = "byte", ["System.SByte"] = "sbyte",
-            ["System.Single"] = "float", ["System.Double"] = "double", ["System.Decimal"] = "decimal",
-            ["System.Boolean"] = "bool", ["System.Char"] = "char", ["System.Object"] = "object"
+            ["System.String"] = "string",
+            ["System.Int32"] = "int",
+            ["System.Int64"] = "long",
+            ["System.Int16"] = "short",
+            ["System.UInt32"] = "uint",
+            ["System.UInt64"] = "ulong",
+            ["System.UInt16"] = "ushort",
+            ["System.Byte"] = "byte",
+            ["System.SByte"] = "sbyte",
+            ["System.Single"] = "float",
+            ["System.Double"] = "double",
+            ["System.Decimal"] = "decimal",
+            ["System.Boolean"] = "bool",
+            ["System.Char"] = "char",
+            ["System.Object"] = "object"
         };
 
     private static IReadOnlyList<TemplateCompletionItem> GetDirectiveItems(
-        TemplateCompletionContext context)
+        TemplateCompletionContext context, TemplateCatalog catalog, TemplateResolutionContext resolutionContext)
     {
         var existing = new HashSet<string>(
             context.ExistingAttributes.Select(NormalizeSqvDirectiveName),
             StringComparer.OrdinalIgnoreCase);
-        var directives = SupportsSqvModel(context.TagName)
+        var directives = SupportsSqvModel(context.TagName, catalog, resolutionContext)
             ? VueDirectives.Concat(new[] { "v-model" })
             : VueDirectives;
         return directives
@@ -574,18 +583,24 @@ public static class TemplateCompletionService
         return modifier < 0 ? name : name.Substring(0, modifier);
     }
 
-    private static bool SupportsSqvModel(string tagName) =>
-        tagName.Equals("Input", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("TextArea", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Select", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("CheckBox", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Radio", StringComparison.OrdinalIgnoreCase);
+    private static bool SupportsSqvModel(string tagName, TemplateCatalog catalog = null, TemplateResolutionContext resolutionContext = null)
+    {
+        var resolution = (catalog ?? TemplateCatalog.BuiltIn).ResolveComponent(tagName,
+            resolutionContext ?? new TemplateResolutionContext(string.Empty, Array.Empty<string>()));
+        if (resolution.Status != TemplateElementResolutionStatus.Resolved) return false;
+        var component = resolution.Component;
+        return component.Kind is TemplateElementKind.Html or TemplateElementKind.HtmlCustom
+            ? component.LocalName is "input" or "textarea" or "select"
+            : component.NamespaceUri == TemplateCatalog.SquareNamespaceUri &&
+              component.LocalName is "Input" or "TextArea" or "Select" or "CheckBox" or "Radio";
+    }
 
     private static IReadOnlyList<TemplateCompletionItem> GetAttributeItems(
         TemplateCompletionContext context,
-        TemplateCatalog catalog)
+        TemplateCatalog catalog,
+        TemplateResolutionContext resolutionContext)
     {
-        var propertyDescriptors = catalog.GetPropertiesForTag(context.TagName);
+        var propertyDescriptors = catalog.GetPropertiesForTag(context.TagName, resolutionContext);
         var existingProperties = new HashSet<string>(
             context.IsSqv
                 ? context.ExistingAttributes.Select(NormalizeSqvPropertyName)
@@ -627,7 +642,7 @@ public static class TemplateCompletionService
         return properties
             .Concat(dynamicProperties)
             .Concat(vueEvents)
-            .Concat(GetDirectiveItems(context))
+            .Concat(GetDirectiveItems(context, catalog, resolutionContext))
             .ToArray();
     }
 
@@ -645,12 +660,13 @@ public static class TemplateCompletionService
 
     private static IReadOnlyList<TemplateCompletionItem> GetBindingItems(
         TemplateCompletionContext context,
-        TemplateCatalog catalog)
+        TemplateCatalog catalog,
+        TemplateResolutionContext resolutionContext)
     {
         var existing = new HashSet<string>(
             context.ExistingAttributes.Select(NormalizeSqvPropertyName),
             StringComparer.OrdinalIgnoreCase);
-        return TemplateCatalog.BuiltIn.GetPropertiesForTag(context.TagName)
+        return catalog.GetPropertiesForTag(context.TagName, resolutionContext)
             .Where(property => !existing.Contains(property.Name))
             .Where(property => property.Name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))
             .Select(property => new TemplateCompletionItem(

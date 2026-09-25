@@ -1,3 +1,4 @@
+using Square.Compiler.LanguageServices;
 namespace Square.Compiler.Parser;
 
 /// <summary>
@@ -6,8 +7,9 @@ namespace Square.Compiler.Parser;
 /// </summary>
 internal static class SqvParser
 {
-    public static SqxDocument Parse(string source, string fileName) =>
-        SqvDocumentParser.Parse(source, fileName);
+    public static SqxDocument Parse(string source, string fileName, bool parseTemplateBody = true,
+        TemplateCatalog catalog = null, TemplateResolutionContext context = null) =>
+        SqvDocumentParser.Parse(source, fileName, parseTemplateBody: parseTemplateBody, catalog: catalog, context: context);
 
     public static SqxDocument ParseTolerant(string source, string fileName) =>
         SqvDocumentParser.Parse(source, fileName, tolerant: true);

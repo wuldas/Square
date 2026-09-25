@@ -25,6 +25,7 @@ public sealed class SqxGenerator : IIncrementalGenerator
                 var options = pair.Right;
                 options.GlobalOptions.TryGetValue("build_property.RootNamespace", out var rootNamespace);
                 options.GlobalOptions.TryGetValue("build_property.MSBuildProjectDirectory", out var projectDirectory);
+                options.GlobalOptions.TryGetValue("build_property.SquareDefaultElementNamespace", out var defaultElementNamespaceUri);
                 options.GetOptions(file).TryGetValue("build_metadata.AdditionalFiles.Link", out var logicalPath);
                 return new SqxInput(
                     file.Path,
@@ -33,7 +34,8 @@ public sealed class SqxGenerator : IIncrementalGenerator
                         rootNamespace ?? "Square.Sample",
                         file.Path,
                         projectDirectory,
-                        logicalPath));
+                        logicalPath),
+                    string.IsNullOrEmpty(defaultElementNamespaceUri) ? null : defaultElementNamespaceUri);
             })
             .Collect();
 
@@ -58,7 +60,8 @@ public sealed class SqxGenerator : IIncrementalGenerator
             var files = pair.Right;
             var semanticAnalyzer = new TemplateSemanticAnalyzer();
             var semanticInputs = files.Select(file => (file.Path, file.Content, file.Namespace)).ToArray();
-            var analysis = semanticAnalyzer.AnalyzeProject(compilation, semanticInputs, productionContext.CancellationToken);
+            var analysis = semanticAnalyzer.AnalyzeProject(compilation, semanticInputs,
+                productionContext.CancellationToken, files.Length > 0 ? files[0].DefaultElementNamespaceUri : null);
             var sourceTexts = files.ToDictionary(file => file.Path, file => file.Content, StringComparer.Ordinal);
             foreach (var diagnostic in analysis.Diagnostics)
                 ReportCatalogDiagnostics(productionContext, compilation, new[] { diagnostic }, sourceTexts);
@@ -122,12 +125,14 @@ public sealed class SqxGenerator : IIncrementalGenerator
         public string Path { get; }
         public string Content { get; }
         public string Namespace { get; }
+        public string DefaultElementNamespaceUri { get; }
 
-        public SqxInput(string path, string content, string namespaceName)
+        public SqxInput(string path, string content, string namespaceName, string defaultElementNamespaceUri)
         {
             Path = path;
             Content = content;
             Namespace = namespaceName;
+            DefaultElementNamespaceUri = defaultElementNamespaceUri;
         }
     }
 

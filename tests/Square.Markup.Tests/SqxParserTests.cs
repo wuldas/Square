@@ -11,7 +11,7 @@ public class SqxParserTests
     [Fact]
     public void ParsesSlotsWhileLegacyRouterTagsRemainOrdinaryElements()
     {
-        const string source = "<template><Router initialPath=\"/\"><Route path=\"/\" component={Shell}><Route path=\":id\" component={Page} /></Route></Router><Slot name=\"header\" /><Outlet /></template>";
+        const string source = "<template xmlns=\"urn:square:ui\"><Router initialPath=\"/\"><Route path=\"/\" component={Shell}><Route path=\":id\" component={Page} /></Route></Router><Slot name=\"header\" /><Outlet /></template>";
 
         var document = new SqxParser().Parse(source, "Composition.sqx");
 
@@ -145,7 +145,7 @@ public class SqxParserTests
 
         var document = new SqxParser().Parse(source, "Locations.sqx");
 
-        Assert.Equal(2, Assert.IsType<SqxElement>(Assert.Single(document.Template.Roots)).Line);
+        Assert.Equal(2, Assert.IsType<SqxElement>(Assert.Single(document.Template.Roots.OfType<SqxElement>())).Line);
         Assert.Equal(4, Assert.IsType<SqxScript>(document.Script).Line);
         Assert.True(document.Script.Column > 1);
         Assert.Equal(7, Assert.IsType<SqxStyle>(document.Style).Line);
@@ -257,7 +257,7 @@ public class SqxParserTests
     {
         const string source = "<template>\n<!-- first\nsecond -->\n<View />\n</template>";
 
-        var view = Assert.IsType<SqxElement>(Assert.Single(new SqxParser().Parse(source, "Comments.sqx").Template.Roots));
+        var view = Assert.IsType<SqxElement>(Assert.Single(new SqxParser().Parse(source, "Comments.sqx").Template.Roots.OfType<SqxElement>()));
 
         Assert.Equal(4, view.Line);
     }

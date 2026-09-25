@@ -24,6 +24,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>SafeAppNamespace</RootNamespace>
+    <SquareDefaultElementNamespace>urn:square:ui</SquareDefaultElementNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

@@ -21,6 +21,8 @@ app.MapSquareInteractivePage<Main>("/", options =>
     options.Html.AdditionalCss = ".session-list-scroll::-webkit-scrollbar,.conversation-scroll::-webkit-scrollbar{display:none;}";
 });
 
+app.MapSquarePage<HtmlElementsPage>("/html-elements");
+
 app.MapSquarePage("/hello/{name}", context =>
 {
     var page = new HelloPage();

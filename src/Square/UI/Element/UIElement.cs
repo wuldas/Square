@@ -12,10 +12,9 @@ public enum VerticalAlignment { Top, Center, Bottom, Stretch }
 /// <summary>
 /// Square 原生可交互控件基类：在 <see cref="Element"/> 之上增加盒模型尺寸、边距、插槽与焦点。
 /// </summary>
-public abstract class UIElement : Element
+public abstract class UIElement : Element, IFocusableElement
 {
-    private bool _isFocusing;
-    private bool _isUnfocusing;
+    private readonly ElementFocusState _focusState = new();
 
     /// <summary>具名/默认插槽集合（组件组合用，Square 扩展）。</summary>
     public SlotCollection Slots { get; } = new();
@@ -83,7 +82,7 @@ public abstract class UIElement : Element
     }
 
     /// <summary>是否拥有键盘焦点。</summary>
-    public bool IsFocused { get; private set; }
+    public bool IsFocused => _focusState.IsFocused;
 
     /// <summary>悬停提示文本（Square 扩展）。</summary>
     public string? Tooltip { get; set; }
@@ -134,52 +133,13 @@ public abstract class UIElement : Element
         => Focus(focusVisible: true);
 
     internal void Focus(bool focusVisible)
-    {
-        if (!IsEnabled || _isFocusing) return;
-        if (IsFocused)
-        {
-            SetState(ElementState.FocusVisible, focusVisible);
-            return;
-        }
-
-        _isFocusing = true;
-        try
-        {
-            OnBeforeFocus();
-            IsFocused = true;
-            SetState(ElementState.Focus, true);
-            SetState(ElementState.FocusVisible, focusVisible);
-            DispatchEvent(StandardEvents.CreateFocus());
-            if (IsFocused) DispatchEvent(StandardEvents.CreateFocusIn());
-        }
-        finally
-        {
-            _isFocusing = false;
-        }
-    }
+        => _focusState.Focus(this, focusVisible, OnBeforeFocus);
 
     /// <summary>
     /// 失去焦点：派发不冒泡的 <c>blur</c> 与冒泡的 <c>focusout</c>。
     /// </summary>
     public void Unfocus()
-    {
-        if (!IsFocused || _isUnfocusing) return;
-        _isUnfocusing = true;
-        try
-        {
-            OnBeforeUnfocus();
-            if (!IsFocused) return;
-            IsFocused = false;
-            SetState(ElementState.Focus, false);
-            SetState(ElementState.FocusVisible, false);
-            DispatchEvent(StandardEvents.CreateBlur());
-            if (!IsFocused) DispatchEvent(StandardEvents.CreateFocusOut());
-        }
-        finally
-        {
-            _isUnfocusing = false;
-        }
-    }
+        => _focusState.Unfocus(this, OnBeforeUnfocus);
 
     /// <summary>焦点事务开始、事件派发之前的控件准备钩子。</summary>
     protected virtual void OnBeforeFocus() { }
@@ -187,14 +147,18 @@ public abstract class UIElement : Element
     /// <summary>失焦事务开始前的控件提交钩子。</summary>
     protected virtual void OnBeforeUnfocus() { }
 
+    bool IFocusableElement.IsFocused => IsFocused;
+
+    bool IFocusableElement.IsEnabled => IsEnabled;
+
+    void IFocusableElement.Focus(bool focusVisible) => Focus(focusVisible);
+
+    void IFocusableElement.Unfocus() => Unfocus();
+
     /// <inheritdoc />
     protected override void OnDetachedCore()
     {
-        IsFocused = false;
-        SetState(ElementState.Focus, false);
-        SetState(ElementState.FocusVisible, false);
-        _isFocusing = false;
-        _isUnfocusing = false;
+        _focusState.Reset(this);
         base.OnDetachedCore();
     }
 

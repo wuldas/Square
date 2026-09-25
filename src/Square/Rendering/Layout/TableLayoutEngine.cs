@@ -3,7 +3,7 @@ using Square.Controls;
 using Square.Graphics;
 using Square.Rendering.Paint;
 using Square.UI;
-using Square.UI.Html;
+using Square.Html;
 
 namespace Square.Rendering;
 
@@ -205,9 +205,17 @@ internal sealed class TableLayoutEngine
             var width = SpanSize(columnWidths, cell.Column, cell.ColSpan, horizontalSpacing);
             var height = SpanSize(rowHeights, cell.Row, cell.RowSpan, verticalSpacing);
             var cellRect = new Rect(columnX[cell.Column], rowY[cell.Row], width, height);
-            cell.Element.Arrange(cellRect);
-            ArrangeCellContents(cell.Element, cellRect, cell.ContentSize,
-                collapseBorders ? cell.CollapsedBorder : null);
+            if (_layout.ArrangesAsCssNormalFlow(cell.Element))
+            {
+                // The cell carries DOM Text; its content lays out through the CSS line engine.
+                _layout.Arrange(cell.Element, cellRect);
+            }
+            else
+            {
+                cell.Element.Arrange(cellRect);
+                ArrangeCellContents(cell.Element, cellRect, cell.ContentSize,
+                    collapseBorders ? cell.CollapsedBorder : null);
+            }
         }
 
         y = gridY + gridHeight;
@@ -309,6 +317,11 @@ internal sealed class TableLayoutEngine
 
     private void ArrangeElementContents(Element element, Rect rect)
     {
+        if (_layout.ArrangesAsCssNormalFlow(element))
+        {
+            _layout.Arrange(element, rect);
+            return;
+        }
         element.Arrange(rect);
         var padding = ResolveBox(element, "padding", rect.Width, rect.Height);
         var border = ResolveBorder(element, rect.Width, rect.Height);
@@ -502,14 +515,14 @@ internal sealed class TableLayoutEngine
     private static int GetColSpan(Element element)
     {
         if (element is TableCell cell) return cell.ColSpan;
-        if (element is HtmlElement html) return ParseSpanAttribute(html.GetAttribute("colspan"), MaxHtmlColSpan);
+        if (element is HTMLElement html) return ParseSpanAttribute(html.GetAttribute("colspan"), MaxHtmlColSpan);
         return ParsePositiveInt(element.Style.Get("column-span"));
     }
 
     private static int GetRowSpan(Element element)
     {
         if (element is TableCell cell) return cell.RowSpan;
-        if (element is HtmlElement html) return ParseSpanAttribute(html.GetAttribute("rowspan"), MaxHtmlRowSpan);
+        if (element is HTMLElement html) return ParseSpanAttribute(html.GetAttribute("rowspan"), MaxHtmlRowSpan);
         return ParsePositiveInt(element.Style.Get("row-span"));
     }
 
@@ -798,6 +811,9 @@ internal sealed class TableLayoutEngine
     {
         element.ClearLayoutDirty();
         foreach (var child in element.Children) ClearDirtyRecursive(child);
+        if (element is HTMLElement host)
+            foreach (var sidecar in host.VisualSidecars)
+                ClearDirtyRecursive(sidecar);
     }
 
     private sealed class TableModel

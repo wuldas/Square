@@ -5,9 +5,9 @@ using System.Text.Unicode;
 using Square.Controls;
 using Square.Graphics;
 using Square.Graphics.Codecs;
+using Square.Html;
 using Square.Native;
 using Square.UI;
-using Square.UI.Html;
 using Square.UI.Svg;
 using SquareImage = Square.Controls.Image;
 using SquareText = Square.Controls.Text;
@@ -102,12 +102,12 @@ public static class HtmlExporter
     /// 定位穿过单一子节点链（Square 文档外壳、生成的组件包装）可达的唯一 HTML <c>html</c> 根；
     /// 找不到或存在多条分支时返回 null（嵌套 html/head/body 会被压平并诊断）。
     /// </summary>
-    private static HtmlElement? FindSoleHtmlRoot(NativeUiNode root)
+    private static HTMLElement? FindSoleHtmlRoot(NativeUiNode root)
     {
         var current = root;
         while (true)
         {
-            if (current.SourceElement is HtmlElement { TagName: "html" } html) return html;
+            if (current.SourceElement is HTMLElement { TagName: "html" } html) return html;
             if (current.Children.Count != 1) return null;
             current = current.Children[0];
         }
@@ -119,10 +119,19 @@ public static class HtmlExporter
         ExportContext context,
         bool isRoot = false,
         bool isSnapshotRoot = false,
-        bool includeHiddenHtmlChild = false)
+        bool includeHiddenHtmlChild = false,
+        Element? interactionSource = null)
     {
         var element = node.SourceElement;
         if ((!element.IsVisible && !includeHiddenHtmlChild) || element is UIHeadElement) return;
+
+        if (element.TemplateExportNamespaceUri != null ||
+            element is HTMLElement { IsDefinedCustomElement: true } ||
+            element is IHtmlStaticRepresentation)
+        {
+            WriteStaticRepresentation(output, node, context, isRoot, element);
+            return;
+        }
 
         if (element is UIRootElement or UIBodyElement)
         {
@@ -132,12 +141,8 @@ public static class HtmlExporter
 
         switch (element)
         {
-            case HtmlTextRun run:
-                // HTML 文本按原始顺序输出为转义裸文本，不包裹任何标签。
-                output.Append(Encode(run.TextContent));
-                return;
-            case HtmlElement host:
-                WriteHtmlElement(output, node, host, context, isRoot, isSnapshotRoot);
+            case HTMLElement host:
+                WriteHtmlElement(output, node, host, context, isRoot, isSnapshotRoot, interactionSource);
                 return;
             case Canvas:
             case Popup:
@@ -199,15 +204,80 @@ public static class HtmlExporter
         WriteUnsupported(output, node, context, isRoot);
     }
 
+    private static void WriteStaticRepresentation(
+        StringBuilder output, NativeUiNode node, ExportContext context, bool isRoot, Element source)
+    {
+        if (source is not IHtmlStaticRepresentation provider)
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                "Exported package or defined custom element has no safe static HTML representation."));
+            context.RepresentationFailures++;
+            return;
+        }
+        if (!context.ActiveRepresentationTypes.Add(source.GetType()))
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                "Recursive static HTML representation was rejected."));
+            context.RepresentationFailures++;
+            return;
+        }
+        try
+        {
+            var representation = provider.CreateHtmlRepresentation();
+            if (representation == null || ReferenceEquals(representation, source) ||
+                representation.ParentNode != null || representation.OwnerDocument != null ||
+                !HtmlTagCatalog.IsTag(representation.TagName) ||
+                HtmlTagCatalog.IsMetadata(representation.TagName) ||
+                representation.TagName is "html" or "body" or "iframe" or "object" or "embed")
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                    "Static HTML representation must return a new detached built-in HTML subtree."));
+                context.RepresentationFailures++;
+                return;
+            }
+            if (source is HTMLElement { CustomElementExtendsTag: { } extendsTag } &&
+                representation.TagName != extendsTag)
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                    "Customized built-in HTML representation must retain its original built-in tag."));
+                context.RepresentationFailures++;
+                return;
+            }
+            var failures = context.RepresentationFailures;
+            var safeOutput = new StringBuilder();
+            WriteNode(safeOutput, NativeUiTreeBuilder.Snapshot(representation), context, isRoot,
+                interactionSource: source);
+            if (context.RepresentationFailures == failures) output.Append(safeOutput);
+        }
+        catch (Exception exception)
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                "Static HTML representation failed: " + exception.Message));
+            context.RepresentationFailures++;
+        }
+        finally
+        {
+            context.ActiveRepresentationTypes.Remove(source.GetType());
+        }
+    }
+
     private static void WriteHtmlElement(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool isRoot,
-        bool isSnapshotRoot)
+        bool isSnapshotRoot,
+        Element? interactionSource)
     {
         var tag = host.TagName;
+        if (!HtmlTagCatalog.IsTag(tag))
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                "Unknown HTML tags require a safe static representation; raw custom tags are not exported."));
+            if (context.ActiveRepresentationTypes.Count > 0) context.RepresentationFailures++;
+            return;
+        }
         switch (tag)
         {
             case "html" when ReferenceEquals(host, context.DocumentHtmlRoot):
@@ -215,14 +285,14 @@ public static class HtmlExporter
                 // 唯一文档根并入生成壳：lang 合并，head 元数据入 head，其余进入 body。
                 var lang = host.GetAttribute("lang");
                 if (!string.IsNullOrWhiteSpace(lang)) context.HtmlLang = lang;
-                foreach (var child in node.Children) WriteNode(output, child, context, isRoot);
+                WriteHtmlChildren(output, node, host, context, isRoot);
                 return;
             }
             case "html" when isSnapshotRoot && !context.Options.IncludeDocument:
             case "head" when isSnapshotRoot && !context.Options.IncludeDocument:
             case "body" when isSnapshotRoot && !context.Options.IncludeDocument:
                 // 片段模式下文档根原样输出。
-                WriteHtmlGeneric(output, node, host, context, isRoot);
+                WriteHtmlGeneric(output, node, host, context, isRoot, interactionSource);
                 return;
             case "html":
                 context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
@@ -241,7 +311,7 @@ public static class HtmlExporter
                         "HTML body element outside the document root was flattened into the document body."));
                 goto case "flatten";
             case "flatten":
-                foreach (var child in node.Children) WriteNode(output, child, context, isRoot);
+                WriteHtmlChildren(output, node, host, context, isRoot);
                 return;
         }
 
@@ -261,14 +331,14 @@ public static class HtmlExporter
                 return;
         }
 
-        WriteHtmlGeneric(output, node, host, context, isRoot);
+        WriteHtmlGeneric(output, node, host, context, isRoot, interactionSource);
     }
 
     /// <summary>按目的把不可见元数据并入单一 head；被禁用的主动内容只留诊断。</summary>
     private static void WriteHtmlMetadata(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool isRoot)
     {
@@ -326,7 +396,7 @@ public static class HtmlExporter
         context.Options.IncludeDocument && !context.SuppressHeadHoist;
 
     /// <summary>校验并渲染安全的 meta；http-equiv、非 UTF-8 charset 一律拒绝并诊断。</summary>
-    private static string? RenderMeta(HtmlElement host, ExportContext context, bool hoist)
+    private static string? RenderMeta(HTMLElement host, ExportContext context, bool hoist)
     {
         if (host.GetAttribute("http-equiv") is { } httpEquiv)
         {
@@ -366,7 +436,7 @@ public static class HtmlExporter
     private static void WriteTemplate(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool hoist)
     {
@@ -378,7 +448,7 @@ public static class HtmlExporter
         context.SuppressHeadHoist = true;
         try
         {
-            foreach (var child in node.Children) WriteNode(target, child, context);
+            WriteHtmlChildren(target, node, host, context, isRoot: false);
         }
         finally
         {
@@ -391,48 +461,61 @@ public static class HtmlExporter
     private static void WriteHtmlGeneric(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
-        bool isRoot)
+        bool isRoot,
+        Element? interactionSource = null)
     {
         var tag = host.TagName;
         var isVoid = HtmlTagCatalog.IsVoid(tag);
         output.Append('<').Append(tag);
         if (context.Options.EnableInteractions) output.Append(" data-square-html=\"true\"");
-        WriteCommonAttributes(output, node, context, isRoot);
+        WriteCommonAttributes(output, node, context, isRoot, interactionSource: interactionSource);
         WriteHtmlAttributes(output, host, context, tag);
         output.Append('>');
         if (tag == "textarea")
         {
-            // 浏览器以元素内容作为 textarea 的值；当前值来自 value 属性（含交互回写）。
+            // 浏览器以元素内容作为 textarea 的值；当前值来自 value 属性（含交互回写），
+            // 缺席时回退到按 ChildNodes 顺序的文本子节点。
             var value = host.GetAttribute("value");
             if (value != null) output.Append(Encode(value));
-            else WriteHtmlChildren(output, node, host, context);
+            else WriteHtmlChildren(output, node, host, context, isRoot);
         }
         else if (!isVoid)
         {
-            WriteHtmlChildren(output, node, host, context);
+            WriteHtmlChildren(output, node, host, context, isRoot, includeHiddenHtmlChild: tag == "details");
         }
         if (!isVoid) output.Append("</").Append(tag).Append('>');
     }
 
-    private static void WriteHtmlChildren(StringBuilder output, NativeUiNode node, HtmlElement host, ExportContext context)
+    /// <summary>
+    /// 按 DOM ChildNodes 顺序输出 HTML 混合内容：Text 节点编码为裸文本，元素按快照匹配输出。
+    /// 快照只包含可见元素，文本直接取自语义子节点；details 的隐藏子元素仍需导出（由交互切换）。
+    /// </summary>
+    private static void WriteHtmlChildren(
+        StringBuilder output,
+        NativeUiNode node,
+        HTMLElement host,
+        ExportContext context,
+        bool isRoot,
+        bool includeHiddenHtmlChild = false)
     {
-        if (host.TagName == "details")
+        var snapshots = node.Children;
+        foreach (var child in host.ChildNodes)
         {
-            foreach (var child in host.Children)
+            if (child is Square.UI.Text text)
             {
-                if (host.IsInternalHtmlProxy(child)) continue;
-                var snapshot = node.Children.FirstOrDefault(item => ReferenceEquals(item.SourceElement, child))
-                    ?? NativeUiTreeBuilder.Snapshot(child);
-                WriteNode(output, snapshot, context, includeHiddenHtmlChild: true);
+                output.Append(Encode(text.Data));
+                continue;
             }
-            return;
-        }
-        foreach (var child in node.Children)
-        {
-            if (host.IsInternalHtmlProxy(child.SourceElement)) continue;
-            WriteNode(output, child, context);
+            if (child is not Element element) continue;
+            var snapshot = snapshots.FirstOrDefault(item => ReferenceEquals(item.SourceElement, element));
+            if (snapshot == null)
+            {
+                if (!includeHiddenHtmlChild) continue;
+                snapshot = NativeUiTreeBuilder.Snapshot(element);
+            }
+            WriteNode(output, snapshot, context, isRoot, includeHiddenHtmlChild: includeHiddenHtmlChild);
         }
     }
 
@@ -441,15 +524,16 @@ public static class HtmlExporter
     /// URL 属性逐项走安全校验，<c>srcset</c> 任一候选不安全则整体省略。id/class/style/title 由
     /// WriteCommonAttributes 输出，不重复。
     /// </summary>
-    private static void WriteHtmlAttributes(StringBuilder output, HtmlElement host, ExportContext context, string tag)
+    private static void WriteHtmlAttributes(StringBuilder output, HTMLElement host, ExportContext context, string tag)
     {
         foreach (var (name, value) in host.GetAttributes())
         {
             if (name is "id" or "class" or "style" or "title") continue;
             if (tag == "textarea" && name == "value") continue;
-            if (name == "data-square-html" && context.Options.EnableInteractions)
+            if (name == "is" || name.StartsWith("data-square-", StringComparison.Ordinal))
             {
-                context.Diagnostics.Add(new HtmlExportDiagnostic(tag, "Rejected reserved HTML interaction attribute."));
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    $"Rejected reserved HTML attribute '{name}'."));
                 continue;
             }
             if (!IsValidAttributeName(name) || name is "srcdoc" || name.StartsWith("on", StringComparison.Ordinal))
@@ -530,7 +614,7 @@ public static class HtmlExporter
     private static void WriteObjectFallback(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool isRoot)
     {
@@ -545,11 +629,7 @@ public static class HtmlExporter
         output.Append("<div");
         WriteCommonAttributes(output, node, context, isRoot);
         output.Append(" data-square-kind=\"object\">");
-        foreach (var child in node.Children)
-        {
-            if (host.IsInternalHtmlProxy(child.SourceElement)) continue;
-            WriteNode(output, child, context);
-        }
+        WriteHtmlChildren(output, node, host, context, isRoot);
         output.Append("</div>");
     }
 
@@ -567,7 +647,11 @@ public static class HtmlExporter
             builder.Append(text.TextContent);
             return;
         }
-        foreach (var child in element.Children) AppendTextContent(child, builder);
+        foreach (var child in element.ChildNodes)
+        {
+            if (child is Square.UI.Text domText) builder.Append(domText.Data);
+            else if (child is Element childElement) AppendTextContent(childElement, builder);
+        }
     }
 
     private static void WriteContainer(
@@ -756,13 +840,14 @@ public static class HtmlExporter
         output.Append("</div>");
     }
 
-    private static void WriteCommonAttributes(StringBuilder output, NativeUiNode node, ExportContext context, bool isRoot, bool hostChoiceInput = false)
+    private static void WriteCommonAttributes(StringBuilder output, NativeUiNode node, ExportContext context,
+        bool isRoot, bool hostChoiceInput = false, Element? interactionSource = null)
     {
         var element = node.SourceElement;
         if (context.Options.EnableInteractions)
         {
-            output.Append(" data-square-id=\"").Append(element.DebugId).Append('"');
-            var eventTypes = element.RegisteredEventTypes;
+            output.Append(" data-square-id=\"").Append((interactionSource ?? element).DebugId).Append('"');
+            var eventTypes = (interactionSource ?? element).RegisteredEventTypes;
             if (eventTypes.Count > 0)
                 output.Append(" data-square-events=\"")
                     .Append(Encode(string.Join(' ', eventTypes.Select(static type => type.ToLowerInvariant()))))
@@ -791,13 +876,9 @@ public static class HtmlExporter
         if (classes.Count > 0)
             output.Append(" class=\"").Append(Encode(string.Join(' ', classes.Distinct(StringComparer.Ordinal)))).Append('"');
 
-        if (element is UIElement ui)
-        {
-            var title = element is HtmlElement html && html.HasAttribute("title")
-                ? html.GetAttribute("title") : ui.Tooltip;
-            if (!string.IsNullOrWhiteSpace(title))
-                output.Append(" title=\"").Append(Encode(title)).Append('"');
-        }
+        var title = element is HTMLElement html ? html.GetAttribute("title") : (element as UIElement)?.Tooltip;
+        if (!string.IsNullOrWhiteSpace(title))
+            output.Append(" title=\"").Append(Encode(title)).Append('"');
     }
 
     private static void WriteWidgetAppearance(StringBuilder output, NativeUiNode node, ExportContext context)
@@ -964,9 +1045,11 @@ public static class HtmlExporter
         public HtmlExportOptions Options { get; }
         public List<HtmlExportDiagnostic> Diagnostics { get; }
         public GeneratedStyleSheet Styles { get; } = new();
+        public HashSet<Type> ActiveRepresentationTypes { get; } = [];
+        public int RepresentationFailures { get; set; }
 
         /// <summary>文档模式下穿过单一包装找到的唯一 HTML html 根。</summary>
-        public HtmlElement? DocumentHtmlRoot { get; init; }
+        public HTMLElement? DocumentHtmlRoot { get; init; }
         /// <summary>文档根的 body 宿主；其公共属性并入壳层 body 标签。</summary>
         public NativeUiNode? BodyHostNode { get; set; }
         /// <summary>HTML html 根的 lang 属性，优先于 options.Language。</summary>

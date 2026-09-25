@@ -2,7 +2,7 @@ using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
 using Xunit;
-using Square.UI.Html;
+using Square.Html;
 
 namespace Square.UI.Tests;
 
@@ -92,24 +92,27 @@ public class TableLayoutTests
     [Fact]
     public void HtmlTableCellSpansUseNativeGridPlacement()
     {
-        var table = new HtmlElement("table");
+        var table = new HTMLTableElement();
         table.Style.Set("width", "200px");
         table.Style.Set("table-layout", "fixed");
-        var firstRow = new HtmlElement("tr");
-        var spanning = new HtmlElement("td");
-        spanning.SetAttribute("colspan", "2");
+        var firstRow = new HTMLTableRowElement();
+        var spanning = new HTMLTdElement
+        {
+            ColSpan = 2
+        };
         spanning.Style.Set("height", "25px");
-        firstRow.Children.Add(spanning);
-        var secondRow = new HtmlElement("tr");
-        var left = new HtmlElement("td");
-        var right = new HtmlElement("td");
-        secondRow.Children.Add(left);
-        secondRow.Children.Add(right);
-        table.Children.Add(firstRow);
-        table.Children.Add(secondRow);
+        firstRow.ChildNodes.Add(spanning);
+        var secondRow = new HTMLTableRowElement();
+        var left = new HTMLTdElement();
+        var right = new HTMLTdElement();
+        secondRow.ChildNodes.Add(left);
+        secondRow.ChildNodes.Add(right);
+        table.ChildNodes.Add(firstRow);
+        table.ChildNodes.Add(secondRow);
 
         Layout(table, new Size(200, 100), new Rect(0, 0, 200, 100));
 
+        Assert.Equal("2", spanning.GetAttribute("colspan"));
         Assert.Equal(left.Geometry.X, spanning.Geometry.X);
         Assert.Equal(right.Geometry.Right, spanning.Geometry.Right);
         Assert.True(spanning.Geometry.Height >= 25);

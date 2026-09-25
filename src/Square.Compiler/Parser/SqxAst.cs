@@ -1,3 +1,4 @@
+using Square.Compiler.LanguageServices;
 using Square.Compiler.Syntax;
 
 namespace Square.Compiler.Parser
@@ -38,6 +39,8 @@ namespace Square.Compiler.Parser
         public List<SqxAttribute> Attributes = new List<SqxAttribute>();
         public List<SqxNode> Children = new List<SqxNode>();
         public TemplateSlotScope SlotScope;
+        public TemplateElementResolution Resolution;
+        public bool IsSlotTemplateWrapper;
     }
 
     internal class SqxText : SqxNode

@@ -1,13 +1,13 @@
-# HTML 元素类型与可配置默认命名空间（拟议）
+# HTML 元素类型与可配置默认命名空间
 
-> 状态：设计文档，**尚未实现**。本文件规定目标契约；[HTML5-Elements.md](HTML5-Elements.md) 记录现有实现与其 113 标签行为矩阵。两者冲突时，不能把本文件描述为当前行为。未获实施指令前不修改运行时、编译器、样例或测试。
+> 状态：**已实现**。本文描述 `Square.Html` 类型家族与 URI 优先模板解析的当前行为；[HTML5-Elements.md](HTML5-Elements.md) 记录 113 标签的已支持与禁用行为矩阵。两者冲突时以行为矩阵为准。
 
 ## 目标与边界
 
-- 按 [WHATWG 2026-09-22 符合规范元素索引](https://html.spec.whatwg.org/multipage/indices.html#elements-3) 冻结 **113 个 HTML 标签**，每个标签有唯一可引用的具体 CLR 类型；不把 SVG、MathML、过时 param 或第三方元素计入 113。标签与类型映射见末尾全量表。
-- HTML 类型不继承 Square 的 UIElement：Square.UI.Element 是布局、树、事件和绘制的共同根；拟议 Square.Html.HTMLElement : Square.UI.Element，Square.UI.UIElement 与 Square.UI.Svg.SVGElement 是并列家族。独立的是继承关系和属性/焦点语义，不是再造第二棵树或浏览器引擎。
-- 保留现有“主动内容禁用”边界：模板脚本执行、媒体解码、嵌入文档/插件、Canvas 2D/WebGL 和桌面网络表单提交不因增加类型而获得实现；必须有明确诊断或文档化降级，不能仅凭类型名宣称浏览器兼容。现有安全 URL、HTML 编码和 Web framework-owned 桥接策略不放松。
-- 这是一项破坏性类型与模板语义迁移；目标不是在现有单一 HtmlElement 上增加 113 个别名，也不是恢复 Square.Extensions.Html 的自研浏览内核。
+- 按 [WHATWG 2026-09-22 符合规范元素索引](https://html.spec.whatwg.org/multipage/indices.html#elements-3) 冻结 **113 个 HTML 标签**，每个标签恰有一个可引用的具体 CLR 类型；不计 SVG、MathML、过时 `param` 或第三方元素。标签与类型映射见末尾全量表。
+- HTML 类型不继承 Square 的 `UIElement`：`Square.UI.Element` 是布局、树、事件和绘制的共同根；`Square.Html.HTMLElement : Square.UI.Element`，`Square.UI.UIElement` 与 `Square.UI.Svg.SVGElement` 是并列家族。独立的是继承关系和属性/焦点语义，不是第二棵树或浏览器引擎。
+- “主动内容禁用”边界不变：模板脚本执行、媒体解码、嵌入文档/插件、Canvas 2D/WebGL 和桌面网络表单提交没有实现，只保留明确诊断或文档化降级。类型名不构成浏览器兼容承诺；安全 URL、HTML 编码与 framework-owned Web 桥接策略不放松。
+- 旧 API 已删除，不保留别名：`Square.UI.Html.HtmlElement(string)` 通用字符串构造、`HtmlTextRun : Square.Controls.Text`、旧 `Square.UI.HTMLElement`、`ElementNamespaceOrderAttribute`、`ElementNamespaceAliasAttribute`、四参数 `ElementExport` 与 `local:` 前缀捷径。
 
 ## 类型模型
 
@@ -16,7 +16,7 @@ Square.UI.Element
 ├── Square.Html.HTMLElement                 // XHTML 命名空间，HTML Attr API；不继承 UIElement
 │   ├── Square.Html.HTMLButtonElement       // button 的具体类型
 │   ├── Square.Html.HTMLInputElement        // input 的具体类型
-│   ├── Square.Html.HTMLHeadingElement      // 共享的抽象 DOM 接口层
+│   ├── Square.Html.HTMLHeadingElement      // 共享抽象基类
 │   │   ├── Square.Html.HTMLH1Element       // h1 的具体类型
 │   │   └── Square.Html.HTMLH2Element       // h2；h3…h6 同理
 │   └── …                                   // 其余 concrete 类型见映射表
@@ -24,17 +24,18 @@ Square.UI.Element
 └── Square.UI.Svg.SVGElement                // SVG 原有类型
 ```
 
-- **具体类一标签一型**，TagName/LocalName 固定；例如 article 是 HTMLArticleElement、button 是 HTMLButtonElement。TagName 不再由传入字符串决定，编译器直接构造解析出的具体类型。不得保留“任意标签共用 HtmlElement(string)”作为公开替代入口。
-- WHATWG 的 DOM Interface 列**并非一标签一接口**。同一接口服务多个标签时，Square 以它作为抽象共享基类，再加每标签具体类：HTMLHeadingElement→HTMLH1Element…HTMLH6Element、HTMLQuoteElement→HTMLBlockquoteElement/HTMLQElement、HTMLTableCellElement→HTMLTdElement/HTMLThElement 等。WHATWG 仅列 HTMLElement 的标签也有 Square 特有的具体类型；不得把 HTMLArticleElement 冒称为标准浏览器接口。
-- 属性 API 由 HTMLElement 和共享语义基类实现；有标准专属属性的类暴露强类型属性（例如 HTMLInputElement.Value/Checked、HTMLAnchorElement.Href），属性与 Attr 存储只有一个事实来源。普通无差异标签的具体类负责**类型身份**，不复制 113 套布局/绘制代码。
-- HTML 文本仍是 DOM Text 节点（Node），不是 UIElement 控件；当前 HtmlTextRun : Square.Controls.Text 和 HTML 元素内部的 Square 控件代理不能作为最终 HTML 语义子节点。共用测量/绘制算法可以复用，但焦点、尺寸、disabled、事件和属性由 HTML 自己的契约处理。
-- 第三方扩展 HTML 类可以继承 HTMLElement 或允许扩展的 HTMLButtonElement 等具体类。公共类不能一律 sealed；构造与生命周期受注册定义约束。
+- **具体类一标签一型**，`TagName`/`LocalName` 固定为小写、`NamespaceURI` 固定为 XHTML。编译产物直接 `new global::Square.Html.HTMLButtonElement()`，不经字符串构造；不存在“任意标签共用 HtmlElement(string)”的公开入口。
+- WHATWG 的 DOM Interface 列**并非一标签一接口**。同一接口服务多个标签时，Square 以它作为抽象共享基类，再加每标签具体类：`HTMLHeadingElement`→`HTMLH1Element`…`HTMLH6Element`、`HTMLQuoteElement`→`HTMLBlockquoteElement`/`HTMLQElement`、`HTMLTableColElement`→`HTMLColElement`/`HTMLColgroupElement`、`HTMLModElement`→`HTMLDelElement`/`HTMLInsElement`、`HTMLTableSectionElement`→`HTMLTheadElement`/`HTMLTbodyElement`/`HTMLTfootElement`、`HTMLTableCellElement`→`HTMLTdElement`/`HTMLThElement`。WHATWG 仅列 HTMLElement 的标签也有 Square 特有的具体类型；`HTMLArticleElement` 不是标准浏览器接口。
+- 属性 API 由 `HTMLElement` 和共享语义基类实现；有标准专属属性的类暴露强类型薄属性（如 `HTMLInputElement.Value/Checked/Type`、`HTMLAnchorElement.Href`、`HTMLSelectElement.Value`、`HTMLOptionElement.Selected`、`HTMLDetailsElement.Open`、`HTMLImageElement.Src/Alt`、`HTMLTableCellElement.ColSpan/RowSpan`），属性与 Attr 存储只有一个事实来源。布尔用存在性表示，数值按 invariant 解析/格式，缺席与无效值保留可空的降级语义。普通无差异标签的具体类负责**类型身份**，不复制 113 套布局/绘制代码。
+- HTML 混合文本是真正的 DOM Text：`Square.UI.Text : CharacterData : Node` 子节点挂在 HTML 父元素的 `ChildNodes`，`Children` 不含文本控件。生成器对已解析 HTML 父节点发射 `parent.ChildNodes.Add(new global::Square.UI.Text(...))`；响应式文本经 `Square.Html.HtmlTextBinding.Bind`。布局按原位消费 Text 片段（记录源节点与 UTF-16 偏移），桌面选区直接构造指向源 Text 节点的 Range；空文本留在 DOM 但无可见片段。
+- 表单/图片宿主的内部 Square 控件是 HTMLElement 私有**视觉 sidecar**：负责测量、绘制与输入，但对 `ChildNodes`、`Children`、DOM 查询和 Web 导出不可见；输入/选择按监听回写 HTML host。焦点、disabled、title/tooltip、`checked`/`open` 状态与事件由 HTMLElement 自身持有，不借 UIElement 继承。
+- 第三方扩展 HTML 类可以继承 `HTMLElement` 或允许扩展的具体类（如 `HTMLButtonElement`）。具体类公开无参构造且不 sealed；任意标签字符串构造不公开，构造与生命周期受注册定义约束（见下节）。
 
 ## 命名空间、配置与解析
 
-三个内置解析 URI：HTML = http://www.w3.org/1999/xhtml；Square UI = urn:square:ui；SVG = http://www.w3.org/2000/svg。第三方组件由包 URI（例如 urn:acme:widgets）导出。配置存 **URI**，而不是 Html/Ui/Extension 枚举；URI/局部名是模板解析键。
+三个内置解析 URI：HTML = `http://www.w3.org/1999/xhtml`；Square UI = `urn:square:ui`；SVG = `http://www.w3.org/2000/svg`。第三方组件由包 URI（例如 `urn:acme:widgets`）导出。配置存 **URI**，不是 Html/Ui/Extension 枚举；URI/局部名是模板解析键。
 
-拟议项目属性（**不是当前已存在的 MSBuild 属性**）：
+项目属性（已实现，加入 `CompilerVisibleProperty`，与 `RootNamespace` 独立）：
 
 ```xml
 <PropertyGroup>
@@ -42,12 +43,12 @@ Square.UI.Element
 </PropertyGroup>
 ```
 
-默认值按以下顺序选择：模板根 `<template xmlns="URI">` → 项目 `SquareDefaultElementNamespace` → HTML URI。每个模板选择一个**优先命中的默认 URI**；其他家族的名称在候选唯一时也可省前缀，碰撞时才需显式指定。本轮设计不引入子树中途重定义默认 `xmlns`，避免解析范围歧义。
+默认值按以下顺序选择：模板根 `<template xmlns="URI">` → 项目 `SquareDefaultElementNamespace` → HTML URI。每个模板冻结一个**优先命中的默认 URI**；其他家族的名称在候选唯一时也可省前缀，碰撞时才需显式指定。不支持子树中途重定义默认 `xmlns`（报 `SQXE001`）。根 `<template>` 上的 `xmlns`/`xmlns:prefix` 只在编译期消费，不导出为 HTML 属性。
 
 | 项目属性值 / 模板 `xmlns` | 同名候选的默认选择 | 默认空间未命中时 |
 | --- | --- | --- |
-| `http://www.w3.org/1999/xhtml` | `<button>` → `HTMLButtonElement` | `<View>` 只有 UI 候选、`<element>` 只有一个包导出时均可省前缀 |
-| `urn:square:ui` | `<button>` → Square `Button` | `<article>` 只有 HTML 候选时可省前缀 |
+| `http://www.w3.org/1999/xhtml` | `<button>`（含 `<Button>`）→ `HTMLButtonElement` | `<View>` 只有 UI 候选、`<element>` 只有一个包导出时均可省前缀 |
+| `urn:square:ui` | `<button>`/`<Button>` → Square `Button` | `<article>` 只有 HTML 候选时可省前缀 |
 | `urn:acme:widgets` | `<element>` → 该包导出的具体类型 | `<button>` 同时命中 HTML/UI 且包内无此名时有歧义，必须写 `<html:button>` 或 `<ui:button>` |
 
 ```xml
@@ -56,62 +57,61 @@ Square.UI.Element
           xmlns:svg="http://www.w3.org/2000/svg"
           xmlns:my="urn:acme:widgets">
   <button>HTML；同名 Square 控件须显式写 ui:button</button>
-  <ui:button>Square</ui:button>
+  <ui:Button>Square</ui:Button>
   <View /> <!-- 仅 Square 有此名称，可省前缀 -->
   <my:element /> <!-- 若只有该包导出 element，也可写 element -->
   <svg><circle r="8" /></svg>
 </template>
 ```
 
-若默认 URI 改为 `urn:square:ui`，则无前缀 `<button>`（也包括 `<Button>`）是 Square Button；要选同名 HTML 按钮才写 `<html:button>`，并声明 `xmlns:html`。若默认 URI 为 `urn:acme:widgets`，则 `<element>` 优先查该包；若包内没有 `<button>` 而 HTML/UI 均有，就必须加前缀。HTML 名按 ASCII 大小写不敏感归一到小写；Square 维持现有控件大小写别名；第三方局部名按导出契约严格匹配。
+若默认 URI 为 `urn:square:ui`，无前缀 `<button>`（含 `<Button>`）是 Square Button；选同名 HTML 按钮才写 `<html:button>`，并声明 `xmlns:html`。若默认 URI 为 `urn:acme:widgets`，`<element>` 优先查该包；包内没有 `<button>` 而 HTML/UI 均有时必须加前缀。HTML 名按 ASCII 大小写不敏感归一到小写；Square 维持现有控件大小写别名；第三方局部名按导出契约严格 ordinal 匹配。
 
-解析规则：先读模板声明与项目默认 URI。有前缀时**只**查绑定 URI。无前缀时先查默认 URI：命中唯一描述符即选定（即使其他空间同名）；未命中则在可见的内置目录、当前/引用组件及包导出中查找，**唯一候选自动解析**，零候选报未知，多个候选报歧义并要求前缀。默认空间内重复导出直接报错，不因其他候选掩盖。配置消解同名冲突，不靠 PascalCase 猜 UI，也不靠程序集声明的 prefix 抢占模板前缀；新包引入第二个同级候选必须转成诊断，不能静默重定向。未知前缀、保留前缀重绑定、重复 URI+local 导出都报明确诊断；`html:`/`ui:`/`svg:` 是保留含义的可声明前缀，不得重绑定到第三方 URI。
+解析规则：先读模板声明与项目默认 URI。有前缀时**只**查绑定 URI。无前缀时先查默认 URI：命中唯一描述符即选定（即使其他空间同名）；未命中则在可见的内置目录、当前/引用组件及包导出中查找，**唯一候选自动解析**，零候选报 `SQXE003`，多个候选报 `SQXE004` 并要求前缀。默认空间内重复导出报 `SQXE005`，不因其他候选掩盖。前缀只在模板根声明后可用；`html:`/`ui:`/`svg:` 是保留含义的可声明前缀，不得重绑定到其他 URI；空值/非绝对 URI/重复绑定/未知前缀报 `SQXE001`/`SQXE002`。不存在程序集 prefix 隐式注入，也没有 order/alias 覆盖歧义。
 
-顶层 `<template>` 是 SQX/SQV 文件的模板分区，`xmlns` 仅在编译期消费、不导出到 HTML。顶层 `<script>/<style>` 仍是 C# / 组件 CSS 分区；模板内部嵌套 `<template>/<script>/<style>` 遵循上述默认优先、唯一候选规则：HTML 默认时分别选 `HTMLTemplateElement`、受禁用 `HTMLScriptElement`、受禁用 `HTMLStyleElement`，不再把嵌套 `<template>` 当片段包装。Square 的 `Fragment`、`Show`、`For`、`Slot` 等结构原语归 UI 空间；独有名称 `<Show>` 可省前缀，冲突时写 `<ui:Show>`。HTML 默认下同名 `<slot>` 是 `HTMLSlotElement`，Square 插槽写 `<ui:Slot>`；`v-if`/`v-for` 等属性级指令按原方言规则。
+顶层 `<template>` 是 SQX/SQV 文件的模板分区；模板内部嵌套 `<template>/<script>/<style>` 遵循上述默认优先、唯一候选规则：HTML 默认时分别选 `HTMLTemplateElement`、受禁用的 `HTMLScriptElement`、受禁用的 `HTMLStyleElement`。Square 片段包装改用独有的 `<Fragment>`（或 `<ui:Fragment>`）。`Show`/`For`/`Switch`/`Match`/`Index`/`Slot`/`Outlet`/`Fragment` 等结构原语归 UI 空间；HTML 默认下 `<slot>` 是 `HTMLSlotElement`，Square 插槽写 `<ui:Slot>`；`v-if`/`v-for`/`template #slot` 等方言指令按原规则。
 
-`<svg>` 在只有 SVG 候选时无需前缀；选中 SVG 根后其后代进入 SVG 空间。HTML 默认空间中的 `<svg>` 同样按 HTML 外来内容集成点切换；若未来另一空间也导出同名元素，默认 URI 或显式 `<svg:svg>` 决定选择，不按子标签名猜。
+`<svg>` 在只有 SVG 候选时无需前缀；选中 SVG 根后其后代进入 SVG 空间。若另一空间也导出同名元素，由默认 URI 或显式 `<svg:svg>` 决定选择，不按子标签名猜。
 
 ## 扩展元素：借鉴 WHATWG Custom Elements，而非混同两种语法
 
-WHATWG 区分 [自主自定义元素](https://html.spec.whatwg.org/multipage/custom-elements.html#autonomous-custom-element)（如 `<acme-badge>`，通过 `customElements.define` 注册）和 [定制内建元素](https://html.spec.whatwg.org/multipage/custom-elements.html#customized-built-in-element)（如 `<button is="acme-button">`，继承 `HTMLButtonElement`）。合法浏览器自定义元素名称需小写、包含连字符等；`<my:element>` **不是**浏览器 Custom Elements 的名称。
+WHATWG 区分[自主自定义元素](https://html.spec.whatwg.org/multipage/custom-elements.html#autonomous-custom-element)（如 `<acme-badge>`）和[定制内建元素](https://html.spec.whatwg.org/multipage/custom-elements.html#customized-built-in-element)（如 `<button is="acme-button">`）。合法浏览器自定义元素名称需小写、包含连字符等；`<my:element>` **不是**浏览器 Custom Elements 的名称。
 
-- `<my:element>` 是 Square **模板包解析**：`xmlns:my` 的包 URI+local name 找到已引用程序集的公开 `Element` 导出。当前 `ElementExport(namespaceUri, prefix, localName, type)` 可作为迁移来源；包自报的 prefix 不能覆盖模板作者的 `xmlns:my`。该包若是同名唯一候选，`<element>` 也能直接解析；只有碰撞或需要选择非默认同名类型时才要求声明/书写前缀。装配时保证类型可构造、导出唯一、AOT 可登记、卸载资源不泄漏。
-- 包 URI 是模板里的解析键，**不自动等于运行时 DOM NamespaceURI**：一个包可导出 HTMLElement 派生类（真实 DOM NamespaceURI 仍为 XHTML）或 Square UI 类型。不能把 urn:acme:widgets 作为浏览器 XHTML custom element 的 NamespaceURI；若需原生 DOM createElementNS，该 API 只处理真实 DOM 命名空间。程序化包组件实例化另走按包 URI+local name 的组件工厂。
-- Square 内核可参照 Custom Elements 定义受观察属性、connected/disconnected、属性旧值→新值、移动/重挂载等生命周期；与现有 Element 生命周期对接，规定初始化一次、通知顺序和重复连接语义。仅对注册的属性发送变化，不从所有 PropertyStore 写入臆造 HTML 属性；第三方处理异常须产生可定位的诊断。
-- 自主 HTML 扩展类型继承 HTMLElement；定制内建类型继承具体 HTML 类且保留原本 tag/语义，以 is/定义名识别。这两种不同于任意 Square UI 控件导出。表单关联、ElementInternals/ARIA 默认状态、Shadow DOM 不是注册时自动具备的能力；若不实现，应明示限制。
-- 无前缀 `<acme-badge>` 遵循相同候选规则：可命中已注册的自主 HTML 扩展，或唯一的 Square 包导出；后者**不因此变成**浏览器 Custom Element。只有前者可采用浏览器同名标签的语义与合规连字符命名；任意未知标签不能静默降级为普通 `HTMLElement`。同一类型的 `<my:element>` 包别名与 HTML 扩展名必须由定义显式关联，不能凭字符串相似推导。
-- 定制内建元素仅通过 `<button is="acme-button">`（或非 HTML 默认空间下 `<html:button is="acme-button">`）选择；注册定义必须声明 `extends=button` 且类型继承 `HTMLButtonElement`。改变现有元素的 `is` 属性不触发重新升级，不能把 `<my:element>` 当作等价写法。
-- Web 导出默认由包提供**安全、静态可展开的 HTML 表示**，并受核心 exporter 的编码与 URL/脚本策略约束；无表示时报诊断，不输出看似可用的未知占位。要输出浏览器真正可升级的 `<acme-badge>` 或 `<button is="acme-button">`，必须同时有合规连字符名称和受信的客户端定义/注册机制；这会改变当前禁用模板主动脚本的安全边界，需要单独授权，不能把第三方 JS 悄悄混入页面。
-- 仓库现有 Square.Extensions.WebView 是操作系统 WebView 包装；文档提及的 Square.Extensions.Html 轻量内核仍是后续设想，**不是**这次核心类型/包注册方案的依赖。
+- `<my:element>` 是 Square **模板包解析**：`xmlns:my` 的包 URI + local name 找到引用程序集的公开 `Element` 导出，声明为三参数 `[assembly: ElementExport("urn:acme:widgets", "element", typeof(AcmeBadgeElement))]`。包自报前缀的旧机制已删除；该包若是同名唯一候选，`<element>` 也能直接解析，只有碰撞时才要求前缀。
+- 包 URI 是模板解析键，**不等于运行时 DOM NamespaceURI**：包可导出 HTMLElement 派生类（DOM `NamespaceURI` 仍为 XHTML）或 Square UI 类型。不能把 `urn:acme:widgets` 写成浏览器 XHTML 元素的 NamespaceURI。
+- 装配级自定义元素定义：`[assembly: HtmlCustomElementExport("acme-badge", typeof(AcmeBadge), ObservedAttributes = new[] { "status" })]`；定制内建加 `ExtendsTag = "button"`，要求类型继承对应具体类。模板以此识别无前缀自主元素与 `<button is="acme-button">`；`is` 在创建后改变不重新升级。程序化路径 `UIDocument.CustomElements.DefineAutonomous<T>(name, factory, observedAttributes)` / `DefineCustomizedBuiltIn<T>(name, extendsTag, factory, observedAttributes)` 登记同一套定义与校验（合法名称、重复定义、`extendsTag` 为 113 内建标签、实际继承对应具体类）。
+- `HTMLElement` 提供受保护 `ConnectedCallback()`、`DisconnectedCallback()`、`AttributeChangedCallback(string name, string? oldValue, string? newValue)`：定义初始化仅一次；只对注册 observed 属性的实际 old→new 变化通知（含 `id`/`class`/内联 style，不把一般 PropertyStore 项伪装成属性）；顺序为属性初始化→connected，移除时子先于父 disconnected，移除后重挂重新触发断开/连接。回调异常记录到 `UIDocument.CustomElements.Diagnostics`（含源位置）。ElementInternals、Shadow DOM、表单关联不提供。
+- 无前缀 `<acme-badge>` 遵循相同候选规则：可命中已注册的自主 HTML 扩展或唯一的包导出；后者不因此变成浏览器 Custom Element。未知标签不能静默降级为普通 `HTMLElement`。
+- Web 导出**只输出安全静态表示**：包导出与已定义自定义元素必须实现 `Square.Html.IHtmlStaticRepresentation`，返回新的分离 HTML 子树，再经 exporter 既有的编码与 URL/脚本策略归一化输出；无表示、表示抛异常或递归时报 `HtmlExportDiagnostic`，不输出伪可用占位。本轮不向浏览器输出 `customElements.define` 或可升级的 `<acme-badge>`/`is` 注册脚本——那需要单独授权的受信客户端注册机制，当前安全边界不允许。
+- 仓库现有 Square.Extensions.WebView 是操作系统 WebView 包装，与本机制无关。
 
 ## 运行时与输出边界
 
-- `UIDocument.CreateElement(name)` 使用文档绑定的默认解析 URI，未命中时按同一“唯一候选或歧义”规则选择（不读可变进程全局变量）；显式 DOM `createElementNS` 只创建真实 HTML/SVG 等 DOM 命名空间元素。UI/第三方包也可通过其解析 URI 的组件工厂显式创建；两条路径必须与生成代码落到相同具体类型。
-- Element/Node 保留统一子树、CSS、事件、LayoutEngine 与 DisplayTree 管线。HTML 盒模型、焦点管理和文本布局不能靠继承 UIElement 获得；HTML 元素及纯 DOM Text 必须能独立参与原有管线。旧控件和 SVG 的渲染/事件路径不被 HTML UA 规则覆盖。
-- Web 输出先按运行时**具体类型及真实 DOM namespace**分派：HTML 为安全原生小写标签，SVG 为 SVG；Square UI 控件按既有映射；模板包前缀不是响应中的 HTML 标签前缀。主动内容继续受 HTML5-Elements.md 的安全矩阵约束。
-- 113 种具体类型是类型身份与适用属性覆盖的范围，**不是** 113 套独立 painter 或完整浏览器 API。每类必须有确定的 native 像素/交互、非视觉标准职责或有诊断的禁用行为；共享布局、替代绘制与语义基类实现，禁止空类型掩盖未支持行为。
+- `new UIDocument(defaultElementNamespaceUri = "http://www.w3.org/1999/xhtml")` 保存不可变文档默认 URI；构造时确保 `ControlRegistration.RegisterDefaults()` 执行一次。内置 UI/SVG 与 113 个 HTML 标签经 `ElementRegistry.Register(namespaceUri, localName, factory)` 显式 AOT 工厂登记；同 URI+local 冲突拒绝，重注册同一工厂幂等；无可变进程级默认。
+- `CreateElement(string localName, string? isName = null)` 按模板相同的默认优先/唯一候选规则创建；`CreateElementNS(namespaceUri, localName)` 只处理 XHTML/SVG 真 DOM 命名空间；`CreateComponentElement(namespaceUri, localName)` 处理 UI/包解析 URI。程序化 QName（`prefix:local`）一律拒绝；未知名称报文档默认 URI，歧义名称列出候选 URI。生成代码与两条运行时路径落到相同具体类型。
+- Element/Node 保留统一子树、CSS、事件、LayoutEngine 与 DisplayTree 管线；HTML 元素与 DOM Text 独立参与原有管线，旧控件和 SVG 的渲染/事件路径不被 HTML UA 规则覆盖。
+- Web 输出按运行时**具体类型及真实 DOM namespace**分派：HTML 为安全原生小写标签，文本按 `ChildNodes` 原序编码为裸文本；SVG 为 SVG；Square UI 控件按既有映射；模板包前缀不出现在响应标签中。导出拒绝 `on*`、`srcdoc`、畸形属性名、不安全 URL/`srcset`，并额外拒绝提供者写入的保留 `data-square-*` 属性与所有 `is` 属性（本轮不提供可信客户端注册）。
+- 113 种具体类型是类型身份与属性覆盖的范围，**不是** 113 套独立 painter 或完整浏览器 API；共享布局、替代绘制与语义基类实现，禁用行为保留诊断。
 
-## 与当前实现的差异及迁移
+## 与旧实现的差异（已完成迁移）
 
-| 当前已实现行为 | 目标行为 / 迁移动作 |
+| 旧实现 | 现实现 |
 | --- | --- |
-| HTMLElement : UIElement；一个 HtmlElement(string) 表示 113 标签，HTML 文字 HtmlTextRun : Controls.Text | HTMLElement : Element；113 个具体 HTML 类型，DOM Text 非 UIElement；移除通用 string 构造语义和内部 UI 控件语义子节点 |
-| 无前缀精确小写 HTML 优先，其余大小写可回退 Square（`<Button>` 等） | 无前缀先查配置的默认 URI，再查其他空间的唯一候选；HTML 默认下同名 `<Button>` 是 HTML button，选 Square 才需 `<ui:Button>`；独有的 `<View>` 仍可省前缀 |
-| 组件文件没有 `xmlns` 语法；导出包可在唯一候选时使用无前缀名 | 引入模板 `xmlns` / 项目默认 URI；**保留**唯一包候选的无前缀用法，冲突后要求前缀；原 `<acme:chart>` 等显式包前缀使用点迁为模板 `xmlns:acme` 声明，不再靠程序集 prefix 隐式注入 |
-| 无前缀嵌套 `<template>` 是片段包装 | 顶层 `<template>` 仍是文件分区；嵌套标签遵循默认优先/唯一候选规则；Square 片段改为独有的 `<Fragment>` 或显式 `<ui:Fragment>` |
-| 文档说明与补全/生成器、ElementRegistry 各有大小写与前缀特例 | 同一 URI+local 解析结果贯穿语法树、lowerer、分析器、补全/hover、生成器、运行时工厂和导出；过时规则与文档在实施时一起迁移，不留下双重约定 |
+| `HTMLElement : UIElement`；`HtmlElement(string)` 表示 113 标签；HTML 文字 `HtmlTextRun : Controls.Text` | `HTMLElement : Element`；113 个具体 HTML 类型；`Square.UI.Text` DOM 子节点 + 视觉 sidecar |
+| 无前缀精确小写 HTML 优先，其余大小写回退 Square | 无前缀先查默认 URI，再接受唯一候选；HTML ASCII 大小写不敏感；XHTML 默认下 `<Button>` 是 HTML button，Square 控件走 `ui:` 或项目默认 `urn:square:ui` |
+| 组件文件无 `xmlns` 语法；包 prefix 由程序集隐式注入；四参数 `ElementExport` | 根 `xmlns`/`xmlns:prefix` 声明 + 项目 `SquareDefaultElementNamespace`；三参数 `ElementExport(namespaceUri, localName, type)` |
+| 无前缀嵌套 `<template>` 是片段包装 | 嵌套 `<template>` 在 HTML 默认下是 `HTMLTemplateElement`；片段用 `<Fragment>`/`<ui:Fragment>` |
+| `ElementNamespaceOrder`/`ElementNamespaceAlias` 与各处大小写/前缀特例 | 同一 URI+local 解析贯穿语法树、分析器、LSP、生成器与运行时工厂；冲突一律转诊断 |
 
-这份拟议文档**不覆盖**当前代码已实现的事实。特别是 docs/Sqx-Spec.md §2.3 仍写“无需 xmlns”且称 html: 为空，和当前代码已有的 113 标签实现都不完全一致；实施此设计时必须一并修正 Sqx-Spec.md、HTML5-Elements.md、API 文档、样例和既有测试，而不是先把旧文档改成未实现的承诺。
+## 验证
 
-## 完成判据（实施阶段；本次仅编写文档）
+- 113 行逐项核对：每个标签 `UIDocument.CreateElement` 与 `.sqx`/`.sqv` 两方言编译结果均为表中唯一具体类型，`LocalName` 固定、XHTML URI、不是 `UIElement`；六种共享接口继承链与表一致。
+- 各默认 URI（HTML、UI、包）下的 `.sqx`/`.sqv` 解析 fixture：同名元素由默认空间确定，唯一候选省前缀，歧义报 `SQXE004`，显式前缀恒定命中声明 URI；未知/重绑/重复导出有准确诊断。
+- DOM Text 场景：`<p>Hello <strong>世界</strong> !<br>next</p>` 的 `ChildNodes` 顺序为 Text/strong/Text/br/Text，桌面选区 Range 指向源 Text 节点，Web 编码输出一致。
+- `samples/Square.Sample.WebServer` 的 `/html-elements` 用真实 Chromium 检查 DOM 顺序、namespace、void 元素与自定义元素静态表示；桌面用 `--html-regression --screenshot` 截图复核。
 
-1. 对下表 113 行逐一证明：唯一 concrete CLR 类型、TagName 与 XHTML NamespaceURI 固定、不是 UIElement；WHATWG 多标签共享接口的继承链与表一致。保留 HTML 非视觉/禁用行为的诚实诊断。
-2. 对每种默认 URI（HTML、UI、包）分别编译 `.sqx`/`.sqv`：同名元素由默认空间确定，默认未命中时唯一候选可省前缀、多个候选需前缀；显式 `ui:`/`html:`/`my:` 恒定命中声明 URI。覆盖 `<Button>`/`<button>`、独有 `<View>`/`<article>`/包 `<element>`、嵌套 `template`、SVG 子树、未知/冲突前缀；项目配置被模板 `xmlns` 覆盖，不同模板/文档不会互相污染。
-3. 已有 UI/SVG 模板中**受同名冲突、默认配置或旧片段语法影响**的使用点迁移并通过原有测试/实际桌面截图；独有名称的旧调用保持可用。HTML Native 布局/焦点/事件/属性绑定、Web 原生标签安全输出、第三方包实例化与生命周期用真实行为验证。浏览器 DOM 检查自定义元素输出安全；未授权浏览器注册脚本不得出现。
+## 113 标签 → Square.Html 具体类型 → WHATWG DOM 接口
 
-## 113 标签 → 拟议具体 CLR 类型 → WHATWG DOM 接口
-
-第三列来自冻结的 WHATWG 索引；第二列是 Square 拟议类型，不是声称浏览器已有同名接口。对共享 WHATWG 接口，第二列具体类型继承第三列命名的抽象共享基类；第三列为 HTMLElement 时直接继承 Square.Html.HTMLElement。
+第三列来自冻结的 WHATWG 索引；第二列是已实现的 Square 类型。对共享 WHATWG 接口，具体类型继承第三列命名的抽象共享基类；第三列为 HTMLElement 时直接继承 `Square.Html.HTMLElement`。
 
 | 标签 | Square 具体类（Square.Html） | WHATWG DOM 接口 | 当前矩阵分组 |
 | --- | --- | --- | --- |

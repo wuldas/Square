@@ -1,7 +1,8 @@
 using Square.Controls;
 using Square.Graphics;
+using Square.UI;
 
-namespace Square.UI.Html;
+namespace Square.Html;
 
 /// <summary>
 /// Paints disclosure markers, text decoration, gauges, and static disabled-content placeholders.
@@ -10,11 +11,11 @@ internal static class HtmlElementPainting
 {
 
     /// <summary>Disclosure triangle for a summary inside a details element.</summary>
-    public static void PaintDisclosureMarker(IRenderContext ctx, HtmlElement summary)
+    public static void PaintDisclosureMarker(IRenderContext ctx, HTMLElement summary)
     {
         bool open = false, inDetails = false;
         for (Element? current = summary.Parent; current != null; current = current.Parent)
-            if (current is HtmlElement { TagName: "details" } details)
+            if (current is HTMLElement { TagName: "details" } details)
             {
                 inDetails = true;
                 open = details.HasAttribute("open");
@@ -32,26 +33,39 @@ internal static class HtmlElementPainting
 
     /// <summary>
     /// Underline (a, u, ins) or line-through (s, del) drawn under each laid-out fragment of the
-    /// descendant text runs; runs without fragment geometry keep their own painting.
+    /// descendant text runs and DOM Text nodes; runs without fragment geometry keep their own
+    /// painting.
     /// </summary>
-    public static void PaintRunDecoration(IRenderContext ctx, HtmlElement host, bool lineThrough)
+    public static void PaintRunDecoration(IRenderContext ctx, HTMLElement host, bool lineThrough)
     {
         foreach (var run in DescendantTextRuns(host))
         {
             if (!ElementLayoutStore.TryGet(run, out var data) || data.CssTextFragments == null) continue;
-            var color = ControlDrawing.GetStyledColor(run, "color", Color.Black);
-            foreach (var fragment in data.CssTextFragments)
-            {
-                var bounds = fragment.Bounds;
-                if (bounds.Width <= 0) continue;
-                var y = lineThrough ? bounds.Y + bounds.Height / 2f : bounds.Bottom - 1f;
-                ctx.FillRect(new Rect(bounds.X, y, bounds.Width, 1f), new SolidColorBrush(color));
-            }
+            PaintDecorationFragments(ctx, lineThrough,
+                data.CssTextFragments.Select(fragment =>
+                    (fragment.Bounds, ControlDrawing.GetStyledColor(run, "color", Color.Black))));
+        }
+        foreach (var (node, owner) in DescendantDomTextNodes(host))
+        {
+            if (!Square.Rendering.HtmlTextLayoutStore.TryGet(node, out var data)) continue;
+            PaintDecorationFragments(ctx, lineThrough, data.Fragments.Select(fragment =>
+                (fragment.Bounds, ControlDrawing.GetStyledColor(owner, "color", Color.Black))));
+        }
+    }
+
+    private static void PaintDecorationFragments(IRenderContext ctx, bool lineThrough,
+        IEnumerable<(Rect Bounds, Color Color)> fragments)
+    {
+        foreach (var (bounds, color) in fragments)
+        {
+            if (bounds.Width <= 0) continue;
+            var y = lineThrough ? bounds.Y + bounds.Height / 2f : bounds.Bottom - 1f;
+            ctx.FillRect(new Rect(bounds.X, y, bounds.Width, 1f), new SolidColorBrush(color));
         }
     }
 
     /// <summary>Typographic quotes drawn around the q element's laid-out content box.</summary>
-    public static void PaintQuotes(IRenderContext ctx, HtmlElement host)
+    public static void PaintQuotes(IRenderContext ctx, HTMLElement host)
     {
         if (host.Geometry.Width <= 0 && host.Geometry.Height <= 0) return;
         var font = ControlDrawing.ResolveFont(host, 16f);
@@ -67,7 +81,7 @@ internal static class HtmlElementPainting
     /// Labeled static region for content Square does not decode or load: audio/video playback,
     /// and iframe/object/embed documents. <paramref name="dark"/> switches the media chrome look.
     /// </summary>
-    public static void PaintUnavailableRegion(IRenderContext ctx, HtmlElement host, string message, bool dark)
+    public static void PaintUnavailableRegion(IRenderContext ctx, HTMLElement host, string message, bool dark)
     {
         var rect = host.Geometry;
         ctx.FillRect(rect, new SolidColorBrush(dark ? Color.FromRgb(32, 32, 32) : Color.FromRgb(242, 242, 242)));
@@ -77,7 +91,7 @@ internal static class HtmlElementPainting
     }
 
     /// <summary>Broken/absent image box showing the alt text when no source is present.</summary>
-    public static void PaintAltText(IRenderContext ctx, HtmlElement img)
+    public static void PaintAltText(IRenderContext ctx, HTMLElement img)
     {
         var rect = img.Geometry;
         ctx.DrawRect(rect, Pen.FromColor(Color.FromRgb(192, 192, 192)));
@@ -88,7 +102,7 @@ internal static class HtmlElementPainting
     }
 
     /// <summary>Static progress gauge; without a value attribute the fill stays empty (no animation).</summary>
-    public static void PaintProgress(IRenderContext ctx, HtmlElement host)
+    public static void PaintProgress(IRenderContext ctx, HTMLElement host)
     {
         var rect = host.Geometry;
         if (rect.Width <= 0 || rect.Height <= 0) return;
@@ -103,7 +117,7 @@ internal static class HtmlElementPainting
     }
 
     /// <summary>Static bounded meter gauge colored by the optimum zone of the current value.</summary>
-    public static void PaintMeter(IRenderContext ctx, HtmlElement host)
+    public static void PaintMeter(IRenderContext ctx, HTMLElement host)
     {
         var rect = host.Geometry;
         if (rect.Width <= 0 || rect.Height <= 0) return;
@@ -165,6 +179,23 @@ internal static class HtmlElementPainting
             if (!child.IsVisible) continue;
             if (child is Square.Controls.Text run) yield return run;
             foreach (var nested in DescendantTextRuns(child)) yield return nested;
+        }
+    }
+
+    /// <summary>DOM Text nodes in the subtree with their styling parent (the owning element),
+    /// skipping hidden branches so decorations only cover rendered text.</summary>
+    private static IEnumerable<(Square.UI.Text Node, Element Owner)> DescendantDomTextNodes(Element element)
+    {
+        foreach (var node in element.ChildNodes)
+        {
+            if (node is Square.UI.Text text)
+            {
+                yield return (text, element);
+                continue;
+            }
+            if (node is not HTMLElement nested || !nested.IsVisible || !nested.IsCssDisplayed()) continue;
+            foreach (var descendant in DescendantDomTextNodes(nested))
+                yield return descendant;
         }
     }
 }

@@ -7,7 +7,7 @@ public sealed class TemplateCatalogTests
 {
     [Theory]
     [InlineData("View", "Square.Controls.View")]
-    [InlineData("BUTTON", "Square.Controls.Button")]
+    [InlineData("BUTTON", "Square.Html.HTMLButtonElement")]
     [InlineData("svg", "Square.UI.Svg.SVGSVGElement")]
     [InlineData("SplitContainer", "Square.Controls.SplitContainer")]
     public void ResolvesBuiltInComponentType(string tagName, string expectedTypeName)
@@ -53,7 +53,7 @@ public sealed class TemplateCatalogTests
     {
         Assert.True(TemplateCatalog.BuiltIn.ResolveComponent(
             tagName,
-            new TemplateResolutionContext(string.Empty, Array.Empty<string>())).Component.IsTextContentElement);
+            new TemplateResolutionContext(string.Empty, Array.Empty<string>(), TemplateCatalog.SquareNamespaceUri)).Component.IsTextContentElement);
     }
 
     [Fact]

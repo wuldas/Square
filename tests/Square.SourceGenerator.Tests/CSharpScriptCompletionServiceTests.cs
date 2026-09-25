@@ -80,7 +80,9 @@ public sealed class CSharpScriptCompletionServiceTests
         var eventItems = TemplateCompletionService.GetItems(eventSource, eventOffset, "Editing.sqx");
         Assert.Contains(eventItems, item => item.Label == "StopPropagation");
 
-        const string refSource = "<template><Button ref={SaveButton} /></template><script>private void Save() { SaveButton.Te }</script>";
+        // urn:square:ui keeps the ref typed as Square.Controls.Button, whose control members
+        // (TextContent) this assertion exercises; an unprefixed <Button> is a native HTML element.
+        const string refSource = "<template xmlns=\"urn:square:ui\"><Button ref={SaveButton} /></template><script>private void Save() { SaveButton.Te }</script>";
         var refOffset = refSource.IndexOf("SaveButton.Te", StringComparison.Ordinal) + "SaveButton.Te".Length;
         var refContext = TemplateCompletionService.GetContext(refSource, refOffset, "Editing.sqx");
         var refItems = TemplateCompletionService.GetItems(refContext, refSource);

@@ -37,18 +37,18 @@ internal sealed class TemplateDocumentAnalysis
     internal TemplateDocumentAnalysis(
         SqxDocument document,
         TemplateResolutionContext context,
-        IReadOnlyDictionary<string, TemplateElementResolution> resolutions,
+        IReadOnlyDictionary<int, TemplateElementResolution> resolutions,
         bool canEmit)
     {
         Document = document;
         Context = context;
-        Resolutions = resolutions ?? new Dictionary<string, TemplateElementResolution>(StringComparer.Ordinal);
+        Resolutions = resolutions ?? new Dictionary<int, TemplateElementResolution>();
         CanEmit = canEmit;
     }
 
     internal SqxDocument Document { get; }
     internal TemplateResolutionContext Context { get; }
-    internal IReadOnlyDictionary<string, TemplateElementResolution> Resolutions { get; }
+    internal IReadOnlyDictionary<int, TemplateElementResolution> Resolutions { get; }
     internal bool CanEmit { get; }
 }
 

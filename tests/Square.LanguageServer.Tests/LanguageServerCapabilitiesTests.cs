@@ -24,7 +24,7 @@ public sealed class LanguageServerCapabilitiesTests
             "{\"textDocument\":{\"uri\":\"" + uri + "\"},\"position\":{\"line\":0,\"character\":12}}");
 
         Assert.Contains("\"kind\":\"plaintext\"", hover, StringComparison.Ordinal);
-        Assert.Contains("Square.Controls.Button", hover, StringComparison.Ordinal);
+        Assert.Contains("Square.Html.HTMLButtonElement", hover, StringComparison.Ordinal);
         Assert.DoesNotContain("markdown", hover, StringComparison.Ordinal);
         Assert.Equal(0, await session.ShutdownAsync());
     }
@@ -115,9 +115,9 @@ public sealed class LanguageServerCapabilitiesTests
             "textDocument/completion",
             "{\"textDocument\":{\"uri\":\"" + uri + "\"},\"position\":{\"line\":0,\"character\":14}}");
 
-        var button = ItemDocumentation(completion, "Button");
+        var button = ItemDocumentation(completion, "button");
         Assert.Equal("markdown", button.Kind);
-        Assert.Contains("Square.Controls.Button", button.Value, StringComparison.Ordinal);
+        Assert.Contains("Square.Html.HTMLButtonElement", button.Value, StringComparison.Ordinal);
         Assert.Contains("built-in", button.Value, StringComparison.Ordinal);
         Assert.Equal(0, await session.ShutdownAsync());
     }

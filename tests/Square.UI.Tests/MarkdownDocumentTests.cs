@@ -502,9 +502,7 @@ public class MarkdownDocumentTests
     {
         MarkdownRegistration.RegisterDefaults();
 
-        var create = typeof(ElementRegistry).GetMethod(
-            "Create",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-        Assert.IsType<MarkdownViewer>(create.Invoke(null, ["MarkdownViewer"]));
+        var document = new UIDocument();
+        Assert.IsType<MarkdownViewer>(document.CreateComponentElement("urn:square:markdown", "MarkdownViewer"));
     }
 }

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Square.Compiler.LanguageServices;
+using Square.Compiler.Syntax;
 using Square.Compiler.Template.Ir;
 
 namespace Square.LanguageServer;
@@ -324,40 +325,12 @@ public sealed class LanguageServerHost
             _documentProjects[uri] = project?.ProjectPath;
         }
         await ReportWorkspaceWarningAsync(project, cancellationToken);
-        if (project?.IsComplete == true && project.Analysis != null)
+        if (project?.Analysis != null)
         {
-            static string DiagnosticKey(string id, int line, int character, string message) =>
-                id + "|" + line + ":" + character + "|" + message;
-            var localKeys = new HashSet<string>(result.Diagnostics.Select(d =>
-            {
-                var span = d.GetLinePositionSpan(result.SourceText);
-                return DiagnosticKey(d.Id, span.Start.Line, span.Start.Character, d.Message);
-            }), StringComparer.Ordinal);
-            int OffsetToLine(int offset)
-            {
-                var line = 0;
-                for (var index = 0; index < offset && index < document.Text.Length; index++)
-                    if (document.Text[index] == '\n') line++;
-                return line;
-            }
+            diagnostics.Clear();
             foreach (var diagnostic in project.Analysis.Diagnostics.Where(item =>
                          string.IsNullOrWhiteSpace(item.SourcePath) || PathEquals(item.SourcePath, sourcePath)))
             {
-                if (!result.IsSuccess && diagnostic.Id is "SQX0001" or "SQV0001") continue;
-                int line, character;
-                if (diagnostic.Range.Offset <= 0)
-                {
-                    line = 0;
-                    character = 0;
-                }
-                else
-                {
-                    var clamped = Math.Min(diagnostic.Range.Offset, document.Text.Length);
-                    line = OffsetToLine(clamped);
-                    var lastNewline = clamped > 0 ? document.Text.LastIndexOf('\n', clamped - 1) : -1;
-                    character = clamped - lastNewline - 1;
-                }
-                if (localKeys.Contains(DiagnosticKey(diagnostic.Id, line, character, diagnostic.Message))) continue;
                 var range = string.IsNullOrWhiteSpace(diagnostic.SourcePath)
                     ? ToRange(document.Text, 0, 0)
                     : ToRange(document.Text, diagnostic.Range.Offset, diagnostic.Range.End);
@@ -370,6 +343,18 @@ public sealed class LanguageServerHost
                     message = diagnostic.Message
                 });
             }
+        }
+        else if (project?.ShouldReportWarning == true && project.Catalog == null)
+        {
+            diagnostics.Clear();
+            diagnostics.Add(new
+            {
+                range = ToRange(document.Text, 0, 0),
+                severity = 1,
+                code = "SQXE001",
+                source = "square",
+                message = project.Warning ?? "Unable to evaluate the template project."
+            });
         }
 
         if (!_documents.TryGet(uri, out var current) || current == null || current.Version != document.Version) return;
@@ -655,18 +640,21 @@ public sealed class LanguageServerHost
         var sourcePath = GetSourcePath(uri);
         var project = await GetProjectContextAsync(sourcePath, cancellationToken);
         await ReportWorkspaceWarningAsync(project, cancellationToken);
+        if (project?.Catalog == null && project?.ShouldReportWarning == true)
+            return new { isIncomplete = true, items = Array.Empty<object>() };
         var position = parameters.GetProperty("position");
         var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
-        var context = TemplateCompletionService.GetContext(document.Text, offset, sourcePath);
         var resolutionContext = CreateResolutionContext(project, document.Text, sourcePath);
-        var resolved = project?.Catalog?.ResolveComponent(context.TagName, resolutionContext);
+        var context = TemplateCompletionService.GetContext(document.Text, offset, sourcePath,
+            project?.Catalog ?? TemplateCatalog.BuiltIn, resolutionContext);
+        var selectedComponent = ResolveComponentAt(project, sourcePath, offset, context.TagName, resolutionContext);
         TemplateComponentEventDescriptor? currentComponentEvent = null;
         TemplateComponentEventDescriptor[] componentEvents = Array.Empty<TemplateComponentEventDescriptor>();
         TemplatePropDescriptor[] componentProps = Array.Empty<TemplatePropDescriptor>();
-        if (resolved?.Status == TemplateElementResolutionStatus.Resolved)
+        if (selectedComponent != null && project?.Catalog != null)
         {
-            componentEvents = project!.Catalog!.GetEvents(resolved.Component).ToArray();
-            componentProps = project.Catalog.GetProps(resolved.Component).ToArray();
+            componentEvents = project.Catalog.GetEvents(selectedComponent).ToArray();
+            componentProps = project.Catalog.GetProps(selectedComponent).ToArray();
         }
         else if (project?.Catalog == null)
         {
@@ -740,11 +728,7 @@ public sealed class LanguageServerHost
                     item.Name)));
         }
 
-        // 无工程上下文时 resolved 为空，但内置组件仍可解析——补全文档应能标明成员所属的组件。
-        var documentationComponent = resolved?.Component;
-        if (documentationComponent == null && project?.Catalog == null)
-            documentationComponent = ResolveComponentDescriptor(
-                TemplateCatalog.BuiltIn, context.TagName, resolutionContext);
+        var documentationComponent = selectedComponent;
 
         var items = completionItems
             .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
@@ -803,11 +787,8 @@ public sealed class LanguageServerHost
         ProjectTemplateContext? project,
         TemplateResolutionContext resolutionContext)
     {
-        var catalog = project?.Catalog ?? TemplateCatalog.BuiltIn;
-        var component = ResolveComponentDescriptor(catalog, label, resolutionContext)
-            ?? catalog.Components.FirstOrDefault(candidate =>
-                candidate.LocalName.Equals(label, StringComparison.OrdinalIgnoreCase) ||
-                label.EndsWith(":" + candidate.LocalName, StringComparison.OrdinalIgnoreCase));
+        var catalog = project?.Catalog ?? (project == null || !project.ShouldReportWarning ? TemplateCatalog.BuiltIn : null);
+        var component = ResolveComponentDescriptor(catalog, label, resolutionContext);
         if (component == null) return null;
         var builder = new StringBuilder();
         builder.Append("**`<").Append(label).Append(">`**\n\n`").Append(component.TypeName).Append('`');
@@ -903,17 +884,17 @@ public sealed class LanguageServerHost
         string text,
         string sourcePath)
     {
-        var parsed = SquareDocumentService.ParseSyntaxTree(text, sourcePath).ParsedSqxDocument;
-        var currentNamespace = !string.IsNullOrWhiteSpace(parsed?.Namespace)
-            ? parsed.Namespace
-            : project?.CurrentNamespace ?? string.Empty;
-        var usings = parsed?.Syntax?.Script?.CSharp.Usings
-            .Where(directive => directive.Alias == null && directive.StaticKeyword.RawKind == 0)
-            .Select(directive => directive.Name?.ToString())
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Select(name => name!)
-            .ToArray() ?? Array.Empty<string>();
-        return new TemplateResolutionContext(currentNamespace, usings);
+        var standalone = TemplateResolutionContext.FromTemplateText(text, sourcePath);
+        if (project?.Analysis?.Documents.TryGetValue(sourcePath, out var analyzed) != true)
+            return standalone;
+        var analyzedContext = analyzed!.Context;
+        var dialect = sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase)
+            ? ComponentDialect.Sqv : ComponentDialect.Sqx;
+        var sections = ComponentSectionScanner.Scan(text, sourcePath, dialect,
+            tolerant: true, parseTemplateBody: false).Document;
+        return TemplateResolutionContext.Create(analyzedContext.CurrentNamespace,
+            analyzedContext.UsingNamespaces, analyzedContext.DefaultElementNamespaceUri,
+            sections.Template?.XmlnsDeclarations!, new List<SquareDiagnostic>(), sourcePath);
     }
 
     private async Task ReportWorkspaceWarningAsync(ProjectTemplateContext? project, CancellationToken cancellationToken)
@@ -1054,6 +1035,7 @@ public sealed class LanguageServerHost
         var sourcePath = GetSourcePath(uri);
         var project = await GetProjectContextAsync(sourcePath, cancellationToken);
         await ReportWorkspaceWarningAsync(project, cancellationToken);
+        if (project?.Catalog == null && project?.ShouldReportWarning == true) return null;
         var position = parameters.GetProperty("position");
         var offset = GetOffset(document.Text, position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
         var resolutionContext = CreateResolutionContext(project, document.Text, sourcePath);
@@ -1070,18 +1052,19 @@ public sealed class LanguageServerHost
             return CreateHoverResult(document.Text, "```csharp\n" + scriptDetail + "\n```", scriptDetail, tokenStart, tokenEnd);
 
         var lexicalContext = tokenStart > 0 ? document.Text[tokenStart - 1] : '\0';
-        var completionContext = TemplateCompletionService.GetContext(document.Text, offset, sourcePath);
+        var completionContext = TemplateCompletionService.GetContext(document.Text, offset, sourcePath,
+            project?.Catalog ?? TemplateCatalog.BuiltIn, resolutionContext);
         (string? Markdown, string? Plain) hover;
         if (lexicalContext == '@')
-            hover = DescribeEventHover(project, token, completionContext, resolutionContext);
+            hover = DescribeEventHover(project, token, completionContext, resolutionContext, sourcePath, tokenStart);
         else if (lexicalContext == '<' || IsInsideTagName(document.Text, tokenStart))
         {
             var tagName = TemplateDefinitionService.GetTagNameAt(document.Text, sourcePath, offset);
             if (string.IsNullOrWhiteSpace(tagName)) tagName = token;
-            hover = DescribeTagHover(tagName, project, CreateResolutionContext(project, document.Text, sourcePath));
+            hover = DescribeTagHover(tagName, project, resolutionContext, sourcePath, tokenStart);
         }
         else
-            hover = DescribeAttributeHover(project, token, completionContext, resolutionContext);
+            hover = DescribeAttributeHover(project, token, completionContext, resolutionContext, sourcePath, tokenStart);
 
         if (hover.Markdown == null) return null;
         return CreateHoverResult(document.Text, hover.Markdown, hover.Plain ?? hover.Markdown, tokenStart, tokenEnd);
@@ -1102,9 +1085,11 @@ public sealed class LanguageServerHost
     private static (string? Markdown, string? Plain) DescribeTagHover(
         string tagName,
         ProjectTemplateContext? project,
-        TemplateResolutionContext resolutionContext)
+        TemplateResolutionContext resolutionContext,
+        string sourcePath,
+        int offset)
     {
-        var component = ResolveComponentDescriptor(project?.Catalog, tagName, resolutionContext);
+        var component = ResolveComponentAt(project, sourcePath, offset, tagName, resolutionContext);
         if (component == null) return (null, null);
         // 标签名放入反引号，避免 markdown 渲染器把 <Button> 当原始 HTML 吞掉。
         return ("**`<" + tagName + ">`**\n\n`" + component.TypeName + "`",
@@ -1115,9 +1100,11 @@ public sealed class LanguageServerHost
         ProjectTemplateContext? project,
         string token,
         TemplateCompletionContext completionContext,
-        TemplateResolutionContext resolutionContext)
+        TemplateResolutionContext resolutionContext,
+        string sourcePath,
+        int offset)
     {
-        var component = ResolveComponentDescriptor(project?.Catalog, completionContext.TagName, resolutionContext);
+        var component = ResolveComponentAt(project, sourcePath, offset, completionContext.TagName, resolutionContext);
         var componentEvent = component == null || project?.Catalog == null
             ? null
             : project.Catalog.GetEvents(component).FirstOrDefault(item =>
@@ -1139,7 +1126,9 @@ public sealed class LanguageServerHost
         ProjectTemplateContext? project,
         string token,
         TemplateCompletionContext completionContext,
-        TemplateResolutionContext resolutionContext)
+        TemplateResolutionContext resolutionContext,
+        string sourcePath,
+        int offset)
     {
         if (completionContext.Kind is TemplateCompletionKind.None or TemplateCompletionKind.Tag or
             TemplateCompletionKind.ClosingTag or TemplateCompletionKind.CssClass or
@@ -1155,7 +1144,7 @@ public sealed class LanguageServerHost
         if (!propertyName.EndsWith(token, StringComparison.OrdinalIgnoreCase) &&
             !attributeName.EndsWith(token, StringComparison.OrdinalIgnoreCase)) return (null, null);
 
-        var component = ResolveComponentDescriptor(project?.Catalog, completionContext.TagName, resolutionContext);
+        var component = ResolveComponentAt(project, sourcePath, offset, completionContext.TagName, resolutionContext);
         TemplateComponentEventDescriptor[] events = Array.Empty<TemplateComponentEventDescriptor>();
         TemplatePropDescriptor[] props = Array.Empty<TemplatePropDescriptor>();
         if (component != null && project?.Catalog != null)
@@ -1198,6 +1187,30 @@ public sealed class LanguageServerHost
         return ("**`" + attributeName + "`**\n\n`" + aliasDetail + "`", attributeName + " — " + aliasDetail);
     }
 
+    private static TemplateComponentDescriptor? ResolveComponentAt(
+        ProjectTemplateContext? project, string sourcePath, int offset, string tagName,
+        TemplateResolutionContext context)
+    {
+        if (project?.Analysis?.Documents.TryGetValue(sourcePath, out var document) == true &&
+            document.Document?.Syntax?.Template?.Ir != null)
+        {
+            var element = EnumerateTemplateElements(document.Document.Syntax.Template.Ir.Roots)
+                .Where(candidate => candidate.TagNameRange.Offset <= offset && offset < candidate.TagNameRange.End ||
+                    candidate.CloseTagNameRange.Length > 0 && candidate.CloseTagNameRange.Offset <= offset &&
+                    offset < candidate.CloseTagNameRange.End)
+                .OrderBy(candidate => candidate.Origin.Length)
+                .FirstOrDefault() ?? EnumerateTemplateElements(document.Document.Syntax.Template.Ir.Roots)
+                .Where(candidate => candidate.Origin.Offset <= offset && offset < candidate.Origin.End &&
+                    (candidate.TagName == tagName || candidate.OriginalTagName == tagName))
+                .OrderBy(candidate => candidate.Origin.Length)
+                .FirstOrDefault();
+            if (element != null && document.Resolutions.TryGetValue(element.TagNameRange.Offset, out var decision))
+                return decision.Status == TemplateElementResolutionStatus.Resolved ? decision.Component : null;
+        }
+        var catalog = project?.Catalog ?? (project == null || !project.ShouldReportWarning ? TemplateCatalog.BuiltIn : null);
+        return ResolveComponentDescriptor(catalog, tagName, context);
+    }
+
     private static TemplateComponentDescriptor? ResolveComponentDescriptor(
         TemplateCatalog? catalog,
         string tagName,
@@ -1206,7 +1219,7 @@ public sealed class LanguageServerHost
         if (string.IsNullOrWhiteSpace(tagName)) return null;
         var resolution = catalog?.ResolveComponent(tagName, resolutionContext);
         if (resolution?.Status == TemplateElementResolutionStatus.Resolved) return resolution.Component;
-        return TemplateCatalog.BuiltIn.TryGetBuiltInComponent(tagName, out var builtIn) ? builtIn : null;
+        return null;
     }
 
     private static bool IsInsideTagName(string text, int tokenStart)
@@ -1257,6 +1270,7 @@ public sealed class LanguageServerHost
 
         var sourcePath = GetSourcePath(uri);
         var project = await GetProjectContextAsync(sourcePath, cancellationToken);
+        if (project?.Catalog == null && project?.ShouldReportWarning == true) return Array.Empty<object>();
         var resolutionContext = CreateResolutionContext(project, document.Text, sourcePath);
         var children = TemplateDocumentSymbols.GetSymbols(
                 document.Text,
@@ -1308,6 +1322,8 @@ public sealed class LanguageServerHost
 
         var sourcePath = GetSourcePath(uri);
         var project = await GetProjectContextAsync(sourcePath, cancellationToken);
+        if (project?.Catalog == null && project?.ShouldReportWarning == true)
+            return new { data = Array.Empty<int>() };
         return new
         {
             data = TemplateSemanticTokens.Encode(
@@ -1400,17 +1416,18 @@ public sealed class LanguageServerHost
         if (string.IsNullOrWhiteSpace(token)) return Array.Empty<object>();
         var project = await GetProjectContextAsync(sourcePath, cancellationToken);
         await ReportWorkspaceWarningAsync(project, cancellationToken);
-        var resolution = project?.Catalog?.ResolveComponent(token, CreateResolutionContext(project, document.Text, sourcePath));
-        if (resolution?.Status == TemplateElementResolutionStatus.Resolved &&
-            !string.IsNullOrWhiteSpace(resolution.Component.SourcePath) &&
-            File.Exists(resolution.Component.SourcePath))
+        GetTokenAt(document.Text, offset, out var tokenStart, out _);
+        var component = ResolveComponentAt(project, sourcePath, tokenStart, token,
+            CreateResolutionContext(project, document.Text, sourcePath));
+        if (component != null && !string.IsNullOrWhiteSpace(component.SourcePath) &&
+            File.Exists(component.SourcePath))
         {
-            var targetPath = Path.GetFullPath(resolution.Component.SourcePath);
+            var targetPath = Path.GetFullPath(component.SourcePath);
             var definitionUri = new Uri(targetPath).AbsoluteUri;
-            return new[] { CreateDefinitionResult(definitionUri, ReadSourceText(targetPath), resolution.Component.LocalName) };
+            return new[] { CreateDefinitionResult(definitionUri, ReadSourceText(targetPath), component.LocalName) };
         }
 
-        if (project?.IsComplete == true && project.Analysis != null) return Array.Empty<object>();
+        if (project?.Catalog != null || project?.ShouldReportWarning == true) return Array.Empty<object>();
         foreach (var candidate in _documents.All)
         {
             if (candidate.Uri.Equals(uri, StringComparison.OrdinalIgnoreCase)) continue;

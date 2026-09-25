@@ -3,8 +3,8 @@ using Square.Backends;
 using Square.Graphics;
 using Square.Rendering;
 using Square.UI;
-using Square.UI.Html;
 using Square.UI.Svg;
+using Square.Html;
 using Xunit;
 
 namespace Square.UI.Tests;
@@ -130,35 +130,86 @@ public class CssInlineFormattingTests
     public void NestedHtmlInlineTextAndBreakStayInDocumentOrder()
     {
         var root = InlineRoot(180);
-        var paragraph = new HtmlElement("p");
-        var before = new HtmlTextRun("Hello ");
-        var emphasis = new HtmlElement("strong");
-        var middle = new HtmlTextRun("世界");
-        var after = new HtmlTextRun(" !");
-        var next = new HtmlTextRun("next");
-        emphasis.Children.Add(middle);
-        paragraph.Children.Add(before);
-        paragraph.Children.Add(emphasis);
-        paragraph.Children.Add(after);
-        paragraph.Children.Add(new HtmlElement("br"));
-        paragraph.Children.Add(next);
+        var paragraph = new HTMLParagraphElement();
+        var before = new Square.UI.Text("Hello ");
+        var emphasis = new HTMLStrongElement();
+        var middle = new Square.UI.Text("世界");
+        var after = new Square.UI.Text(" !");
+        var brk = new HTMLBRElement();
+        var next = new Square.UI.Text("next");
+        emphasis.ChildNodes.Add(middle);
+        paragraph.ChildNodes.Add(before);
+        paragraph.ChildNodes.Add(emphasis);
+        paragraph.ChildNodes.Add(after);
+        paragraph.ChildNodes.Add(brk);
+        paragraph.ChildNodes.Add(next);
         root.Children.Add(paragraph);
 
-        CssBlockFormattingTests.Layout(root, 180, 100);
+        // DOM shape: Text/strong/Text/br/Text order; Children holds only the two elements.
+        Assert.Equal(5, paragraph.ChildNodes.Count);
+        Assert.Equal(new Element[] { emphasis, brk }, paragraph.Children.ToArray());
+        Assert.Equal(
+            new[]
+            {
+                Node.NodeType.Text, Node.NodeType.Element, Node.NodeType.Text,
+                Node.NodeType.Element, Node.NodeType.Text
+            },
+            paragraph.ChildNodes.Select(node => node.NodeTypeValue).ToArray());
 
-        Assert.True(before.Geometry.Width > 0);
-        Assert.True(emphasis.Geometry.Width > 0, $"strong={emphasis.Geometry}, middle={middle.Geometry}, before={before.Geometry}, display={emphasis.Style.Get("display")}");
-        Assert.True(middle.Geometry.X >= before.Geometry.Right);
-        Assert.True(after.Geometry.X >= middle.Geometry.Right);
-        Assert.True(next.Geometry.Y > middle.Geometry.Y, $"next={next.Geometry}, middle={middle.Geometry}, after={after.Geometry}");
-        Assert.Contains(ElementLayoutStore.Get(middle).CssTextFragments!, fragment => fragment.Text == "世界");
+        CssBlockFormattingTests.Layout(root, 180, 100);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        var fragments = tree.CollectTextFragments(paragraph)
+            .OrderBy(fragment => fragment.Bounds.Y)
+            .ThenBy(fragment => fragment.Bounds.X)
+            .ToArray();
+
+        Assert.Equal("Hello 世界 !next", string.Concat(fragments.Select(fragment => fragment.Text)));
+        Assert.Equal(new Square.UI.Text[] { before, middle, after, next },
+            fragments.Select(fragment => Assert.IsType<Square.UI.Text>(fragment.TextNode)).Distinct().ToArray());
+        var middleFragment = Assert.Single(fragments, fragment => ReferenceEquals(fragment.TextNode, middle));
+        var nextFragment = Assert.Single(fragments, fragment => ReferenceEquals(fragment.TextNode, next));
+        Assert.Equal("世界", middleFragment.Text);
+        Assert.Equal("next", nextFragment.Text);
+        Assert.Equal(0, middleFragment.TextNodeOffset);
+        Assert.Same(emphasis, middleFragment.Element);
+        Assert.True(middleFragment.Bounds.X >= fragments.Last(fragment => ReferenceEquals(fragment.TextNode, before)).Bounds.Right);
+        Assert.True(fragments.First(fragment => ReferenceEquals(fragment.TextNode, after)).Bounds.X >= middleFragment.Bounds.Right);
+        Assert.True(nextFragment.Bounds.Y > middleFragment.Bounds.Y);
+    }
+
+    [Fact]
+    public void HtmlDomTextDataEditsInvalidateLayoutAndUpdateFragments()
+    {
+        var root = InlineRoot(200);
+        var paragraph = new HTMLParagraphElement();
+        var text = new Square.UI.Text("first");
+        paragraph.ChildNodes.Add(text);
+        root.Children.Add(paragraph);
+
+        CssBlockFormattingTests.Layout(root, 200, 40);
+        root.ClearLayoutDirty();
+
+        text.Data = "second value";
+
+        Assert.True(paragraph.IsLayoutDirty);
+
+        CssBlockFormattingTests.Layout(root, 200, 40);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        var fragments = tree.CollectTextFragments(paragraph).OrderBy(fragment => fragment.Bounds.X).ToArray();
+        Assert.Equal("second value", string.Concat(fragments.Select(fragment => fragment.Text)));
+        Assert.All(fragments, fragment => Assert.Same(text, fragment.TextNode));
+        Assert.Equal(0, fragments[0].TextNodeOffset);
+        Assert.Equal(text.Data.Length, fragments[^1].MapCharacterOffsetToTextNode(fragments[^1].Text.Length));
     }
 
     [Fact]
     public void HtmlFlowArrangesAndPaintsEmbeddedSvg()
     {
         var root = InlineRoot(200);
-        var article = new HtmlElement("article");
+        var article = new HTMLArticleElement();
         var svg = new SVGSVGElement { ViewBox = "0 0 90 45" };
         svg.SetProperty("Width", 90);
         svg.SetProperty("Height", 45);

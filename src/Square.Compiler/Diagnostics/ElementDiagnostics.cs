@@ -75,9 +75,14 @@ public static class ElementDiagnostics
         var namespaces = resolution.CandidateNamespaceUris.Count == 0
             ? string.Empty
             : " Namespaces: " + string.Join(", ", resolution.CandidateNamespaceUris);
-        var guidance = resolution.Status == TemplateElementResolutionStatus.Ambiguous
-            ? " Configure ElementNamespaceOrder/ElementNamespaceAlias or use an explicit prefix."
-            : string.Empty;
+        var guidance = resolution.Status switch
+        {
+            TemplateElementResolutionStatus.Ambiguous =>
+                " Set SquareDefaultElementNamespace or declare xmlns:html / xmlns:ui on the root <template> and qualify the tag.",
+            TemplateElementResolutionStatus.UnknownPrefix =>
+                " Declare this prefix with xmlns:prefix=\"absolute-URI\" on the root <template>.",
+            _ => string.Empty
+        };
         return "Element '" + tagName + "' could not be resolved." + candidates + namespaces + guidance;
     }
 }

@@ -3,17 +3,18 @@ using System.Globalization;
 using Square.Controls;
 using Square.Events;
 using Square.Graphics;
+using Square.UI;
 using ImageControl = Square.Controls.Image;
 
-namespace Square.UI.Html;
+namespace Square.Html;
 
 /// <summary>Native proxy controls, form-state synchronization and host activation behavior.</summary>
-public sealed partial class HtmlElement
+public abstract partial class HTMLElement
 {
     /// <summary>Creates listeners that give the semantic host its activation behavior.</summary>
     private void WireInteractions()
     {
-        switch (_tagName)
+        switch (_localName)
         {
             case "button":
                 AddEventListener(StandardEvents.Click, _ => Focus(focusVisible: false));
@@ -32,6 +33,14 @@ public sealed partial class HtmlElement
                     Focus(focusVisible: false);
                     ToggleAncestorDetails();
                 });
+                AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+                {
+                    if (e.KeyCode is 13 or 32 && IsEnabled)
+                    {
+                        e.PreventDefault();
+                        DispatchEvent(StandardEvents.CreateClick());
+                    }
+                });
                 break;
             case "label":
                 AddEventListener(StandardEvents.Click, ActivateLabel);
@@ -44,7 +53,11 @@ public sealed partial class HtmlElement
                 });
                 AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
                 {
-                    if (e.KeyCode == 13 && IsEnabled) ActivateSafeHref(GetAttribute("href"));
+                    if (e.KeyCode == 13 && IsEnabled)
+                    {
+                        e.PreventDefault();
+                        DispatchEvent(StandardEvents.CreateClick());
+                    }
                 });
                 break;
             case "img":
@@ -58,7 +71,7 @@ public sealed partial class HtmlElement
     {
         for (Element? current = Parent; current != null; current = current.Parent)
         {
-            if (current is not HtmlElement { TagName: "details" } details) continue;
+            if (current is not HTMLElement { TagName: "details" } details) continue;
             if (details.HasAttribute("open")) details.RemoveAttribute("open");
             else details.SetAttribute("open", "");
             return;
@@ -73,7 +86,7 @@ public sealed partial class HtmlElement
     {
         var target = FindLabeledControl();
         if (target == null || WithinSubtree(e.Target, target)) return;
-        if (e.Target is HtmlElement host && host._proxies.Contains(target)) return;
+        if (e.Target is HTMLElement host && host._visualSidecars.Contains(target)) return;
         ActivateControl(target);
     }
 
@@ -90,21 +103,35 @@ public sealed partial class HtmlElement
     private static UIElement? ResolveLabelable(Element element) => element switch
     {
         Input or TextArea or Select or CheckBox or Radio => (UIElement)element,
-        HtmlElement host => host._proxies.FirstOrDefault(),
+        HTMLElement host => host.FirstProxySidecar,
         _ => null
     };
 
+    /// <summary>Root of the semantic tree; sidecars (no ParentNode) continue through VisualParent.</summary>
     private static Element? FindRootOf(Element element)
     {
         Element? root = element;
-        while (root.Parent != null) root = root.Parent;
+        while (true)
+        {
+            if (root.Parent != null) root = root.Parent;
+            else if (root.VisualParent != null) root = root.VisualParent;
+            else break;
+        }
         return root;
     }
 
     private static bool WithinSubtree(EventTarget? node, Element root)
     {
-        for (EventTarget? current = node; current != null; current = current is Element element ? element.Parent : null)
+        for (EventTarget? current = node; current != null;)
+        {
             if (ReferenceEquals(current, root)) return true;
+            current = current switch
+            {
+                Element { Parent: { } parent } => parent,
+                Element { VisualParent: { } visualParent } => visualParent,
+                _ => null
+            };
+        }
         return false;
     }
 
@@ -124,7 +151,7 @@ public sealed partial class HtmlElement
         foreach (var child in element.Children)
         {
             if (child is Input or TextArea or Select or CheckBox or Radio) return (UIElement)child;
-            if (child is HtmlElement host && host._proxies.FirstOrDefault() is { } proxy) return proxy;
+            if (child is HTMLElement host && host.FirstProxySidecar is { } proxy) return proxy;
             if (FindLabelableDescendant(child) is { } nested) return nested;
         }
         return null;
@@ -180,24 +207,24 @@ public sealed partial class HtmlElement
         var relative = new Point(e.ClientX - Geometry.X, e.ClientY - Geometry.Y);
         foreach (var child in map.Children)
         {
-            if (child is not HtmlElement { TagName: "area" } area) continue;
+            if (child is not HTMLElement { TagName: "area" } area) continue;
             if (!HitTestArea(area, relative, Geometry.Size)) continue;
             ActivateSafeHref(area.GetAttribute("href"));
             return;
         }
     }
 
-    private static HtmlElement? FindImageMap(Element element, string name)
+    private static HTMLElement? FindImageMap(Element element, string name)
     {
         foreach (var child in element.Children)
         {
-            if (child is HtmlElement { TagName: "map" } map && map.GetAttribute("name") == name) return map;
+            if (child is HTMLElement { TagName: "map" } map && map.GetAttribute("name") == name) return map;
             if (FindImageMap(child, name) is { } nested) return nested;
         }
         return null;
     }
 
-    private static bool HitTestArea(HtmlElement area, Point point, Size imageSize)
+    private static bool HitTestArea(HTMLElement area, Point point, Size imageSize)
     {
         var shape = (area.GetAttribute("shape") ?? "rect").Trim().ToLowerInvariant();
         var coords = ParseCoords(area.GetAttribute("coords"));
@@ -241,7 +268,7 @@ public sealed partial class HtmlElement
         return result;
     }
 
-    // ----- proxy reconciliation -----
+    // ----- proxy reconciliation (visual sidecars) -----
 
     private void SyncImage()
     {
@@ -266,16 +293,19 @@ public sealed partial class HtmlElement
         var proxy = EnsureFormControlProxy();
         if (proxy == null) return;
         proxy.IsEnabled = IsEnabled;
-        if (_tagName == "input" && proxy is Radio radio) SetRadioGroup(radio);
+        if (_localName == "input" && proxy is Radio radio) SetRadioGroup(radio);
         if (proxy is TextEditorBase editor)
         {
-            SetValue(editor, GetAttribute("value") ?? "");
+            // Textarea content: the value attribute (interactive write-back) wins; otherwise the
+            // text children are the default value, mirroring the HTML content-as-value model.
+            var content = _localName == "textarea" ? GetAttribute("value") ?? Text : GetAttribute("value") ?? "";
+            SetValue(editor, content);
             editor.Placeholder = GetAttribute("placeholder") ?? "";
         }
         if (proxy is CheckBox checkBox) SetChecked(checkBox, HasAttribute("checked"));
         if (proxy is Radio radioChecked) SetChecked(radioChecked, HasAttribute("checked"));
         if (proxy is Square.Controls.Button formButton) SetFormButtonText(formButton);
-        if (_tagName == "textarea") SyncTextAreaExtent();
+        if (_localName == "textarea") SyncTextAreaExtent();
     }
 
     private void SetFormButtonText(Square.Controls.Button formButton)
@@ -306,17 +336,33 @@ public sealed partial class HtmlElement
         else radio.IsChecked = false;
     }
 
-    /// <summary>Unchecks same-group radios and clears their hosts' checked attributes.</summary>
+    /// <summary>
+    /// Unchecks same-group radios and clears their hosts' checked attributes. Radios are visual
+    /// sidecars of their hosts, so the sweep enumerates sidecars too and maps each radio back to
+    /// its host through <see cref="Square.UI.Element.VisualParent"/>.
+    /// </summary>
     private static void SweepRadioGroup(Radio radio)
     {
         if (string.IsNullOrEmpty(radio.GroupName) || FindRootOf(radio) is not { } root) return;
-        foreach (var other in root.QueryAll<Radio>())
+        foreach (var other in EnumerateSubtreeRadios(root))
         {
-            if (other == radio || other.GroupName != radio.GroupName) continue;
+            if (ReferenceEquals(other, radio) || other.GroupName != radio.GroupName) continue;
             other.IsChecked = false;
-            if (other.Parent is HtmlElement host && host.HasAttribute("checked"))
+            var host = other.Parent as HTMLElement ?? other.VisualParent as HTMLElement;
+            if (host != null && host.HasAttribute("checked"))
                 host.RemoveAttribute("checked");
         }
+    }
+
+    private static IEnumerable<Radio> EnumerateSubtreeRadios(Element element)
+    {
+        if (element is Radio radio) yield return radio;
+        foreach (var child in element.Children)
+            foreach (var nested in EnumerateSubtreeRadios(child))
+                yield return nested;
+        foreach (var sidecar in element.VisualSidecars)
+            foreach (var nested in EnumerateSubtreeRadios(sidecar))
+                yield return nested;
     }
 
     private void SetRadioGroup(Radio radio)
@@ -377,7 +423,7 @@ public sealed partial class HtmlElement
     {
         var open = HasAttribute("open");
         foreach (var child in Children)
-            SetChildVisible(child, open || child is HtmlElement { TagName: "summary" });
+            SetChildVisible(child, open || child is HTMLElement { TagName: "summary" });
     }
 
     /// <summary>
@@ -395,13 +441,13 @@ public sealed partial class HtmlElement
     {
         foreach (var child in element.Children)
         {
-            if (child is HtmlElement { TagName: "option" } option)
+            if (child is HTMLElement { TagName: "option" } option)
                 result.Add((OptionString(option), option.HasAttribute("selected")));
             else CollectOptions(child, result);
         }
     }
 
-    private static string OptionString(HtmlElement option) => option.GetAttribute("value") ?? option.Text;
+    private static string OptionString(HTMLElement option) => option.GetAttribute("value") ?? option.Text;
 
     /// <summary>
     /// Creates or replaces the native proxy for the current input type. type=hidden yields no proxy
@@ -409,7 +455,7 @@ public sealed partial class HtmlElement
     /// </summary>
     private UIElement? EnsureFormControlProxy()
     {
-        if (_tagName == "textarea") return EnsureOnlyProxy<TextArea>();
+        if (_localName == "textarea") return EnsureOnlyProxy<TextArea>();
         var type = (GetAttribute("type") ?? "text").Trim().ToLowerInvariant();
         switch (type)
         {
@@ -423,13 +469,13 @@ public sealed partial class HtmlElement
             case "button" or "submit" or "reset":
                 return EnsureOnlyProxy<Square.Controls.Button>();
             default:
-            {
-                var input = EnsureOnlyProxy<Input>();
-                if (input == null) return null;
-                var mapped = type == "password" ? "password" : type == "number" ? "number" : "text";
-                if (input.Type != mapped) input.Type = mapped;
-                return input;
-            }
+                {
+                    var input = EnsureOnlyProxy<Input>();
+                    if (input == null) return null;
+                    var mapped = type == "password" ? "password" : type == "number" ? "number" : "text";
+                    if (input.Type != mapped) input.Type = mapped;
+                    return input;
+                }
         }
     }
 
@@ -442,59 +488,112 @@ public sealed partial class HtmlElement
 
     private void RemoveNonProxies<TKeep>() where TKeep : UIElement
     {
-        for (var i = _proxies.Count - 1; i >= 0; i--)
+        for (var i = _visualSidecars.Count - 1; i >= 0; i--)
         {
-            if (_proxies[i] is TKeep) continue;
-            var proxy = _proxies[i];
-            _proxies.RemoveAt(i);
-            Children.Remove(proxy);
+            var sidecar = _visualSidecars[i];
+            if (sidecar is TKeep || ReferenceEquals(sidecar, _listMarker)) continue;
+            DetachSidecar(sidecar);
         }
     }
 
     private void RemoveAllProxies()
     {
-        foreach (var proxy in _proxies) Children.Remove(proxy);
-        _proxies.Clear();
+        for (var i = _visualSidecars.Count - 1; i >= 0; i--)
+        {
+            if (ReferenceEquals(_visualSidecars[i], _listMarker)) continue;
+            DetachSidecar(_visualSidecars[i]);
+        }
     }
 
-    /// <summary>Returns the proxy of the requested kind, creating it as the last child on first use.</summary>
+    /// <summary>
+    /// Returns the proxy of the requested kind, creating it as a visual sidecar on first use. The
+    /// sidecar never becomes a DOM child: it rides on <see cref="Square.UI.Element.VisualParent"/>
+    /// for invalidation/events and inherits the host's attach/load lifecycle.
+    /// </summary>
     private T? EnsureProxy<T>() where T : UIElement, new()
     {
-        foreach (var proxy in _proxies)
-            if (proxy is T typed) return typed;
+        foreach (var sidecar in _visualSidecars)
+            if (sidecar is T typed) return typed;
         var created = new T();
         PrepareProxy(created);
-        _proxies.Add(created);
-        Children.Add(created);
+        AttachSidecar(created);
         AttachProxyListeners(created);
         return created;
     }
 
-    /// <summary>Proxy chrome: neutral margins so the host box equals the widget box.</summary>
-    private static void PrepareProxy(UIElement proxy) =>
+    /// <summary>Proxy chrome inherits the host's widget appearance without becoming a DOM child.</summary>
+    private void PrepareProxy(UIElement proxy)
+    {
         proxy.Style.SetCascaded("margin", "0", int.MinValue);
+        if (proxy is Square.Controls.Button or CheckBox or Radio or Select or TextEditorBase)
+            proxy.Style.SetCascaded("appearance", Style.Get("appearance") ?? "auto", int.MinValue);
+    }
+    private void SyncProxyAppearance()
+    {
+        if (_visualSidecars.Count == 0) return;
+        var appearance = Style.Get("appearance") ?? "auto";
+        foreach (var sidecar in _visualSidecars)
+            if (sidecar is UIElement proxy &&
+                proxy is Square.Controls.Button or CheckBox or Radio or Select or TextEditorBase &&
+                proxy.Style.Get("appearance") != appearance)
+                proxy.Style.SetCascaded("appearance", appearance, int.MinValue);
+    }
 
+
+    /// <summary>
+    /// Listener set per proxy: value/checked/selected write-backs to the host's attribute surface
+    /// plus focus mirroring (the host owns the HTML pseudo state and focus events). Handles are
+    /// tracked and disposed by <see cref="DetachSidecar"/> when the proxy is replaced or removed.
+    /// </summary>
     private void AttachProxyListeners(UIElement proxy)
     {
+        var handles = new List<IDisposable>
+        {
+            proxy.Listen(StandardEvents.Focus, () => SyncProxyFocus(proxy)),
+            proxy.Listen(StandardEvents.Blur, () => SyncProxyBlur(proxy)),
+            // The host dispatches the semantic focusin/focusout transaction when this proxy
+            // gains or loses focus; the proxy's own bubbling event must not duplicate it.
+            proxy.Listen(StandardEvents.FocusIn, e => e.StopPropagation()),
+            proxy.Listen(StandardEvents.FocusOut, e => e.StopPropagation())
+        };
         switch (proxy)
         {
             case TextEditorBase editor:
-                editor.AddEventListener(StandardEvents.Input, _ => WriteBackValue(editor));
-                editor.AddEventListener(StandardEvents.Change, _ => WriteBackValue(editor));
+                handles.Add(editor.Listen(StandardEvents.Input, () => WriteBackValue(editor)));
+                handles.Add(editor.Listen(StandardEvents.Change, () => WriteBackValue(editor)));
                 break;
             case CheckBox checkBox:
-                checkBox.AddEventListener(StandardEvents.Change, _ => WriteBackChecked("checked", checkBox.IsChecked));
+                handles.Add(checkBox.Listen(StandardEvents.Change, () => WriteBackChecked("checked", checkBox.IsChecked)));
                 break;
             case Radio radio:
-                radio.AddEventListener(StandardEvents.Change, _ => WriteBackRadioChecked(radio));
+                handles.Add(radio.Listen(StandardEvents.Change, () => WriteBackRadioChecked(radio)));
                 break;
             case Select select:
-                select.AddEventListener(StandardEvents.Change, () => WriteBackSelected(select));
+                handles.Add(select.Listen(StandardEvents.Change, () => WriteBackSelected(select)));
                 break;
             case Square.Controls.Button:
                 // Activation handlers belong to template event bindings; desktop submit stays unavailable.
                 break;
         }
+        (_proxyListeners ??= [])[proxy] = handles;
+    }
+
+    /// <summary>Proxy gained focus: mirror the focus state (and focus-visible) onto the host once.</summary>
+    private void SyncProxyFocus(UIElement proxy)
+    {
+        if (IsFocused) return;
+        Focus(focusVisible: proxy.HasState(ElementState.FocusVisible));
+    }
+
+    /// <summary>Proxy lost focus: unfocus the host unless another proxy still holds focus.</summary>
+    private void SyncProxyBlur(UIElement proxy)
+    {
+        if (!IsFocused) return;
+        foreach (var sidecar in _visualSidecars)
+            if (sidecar is UIElement control && !ReferenceEquals(control, proxy) &&
+                control.HasState(ElementState.Focus))
+                return;
+        Unfocus();
     }
 
     private void WriteBackValue(TextEditorBase editor)
@@ -525,7 +624,7 @@ public sealed partial class HtmlElement
     {
         foreach (var child in Children)
         {
-            if (child is not HtmlElement { TagName: "option" } option) continue;
+            if (child is not HTMLElement { TagName: "option" } option) continue;
             var matches = OptionString(option) == select.Value;
             if (option.HasAttribute("selected") == matches) continue;
             if (matches) option.SetAttribute("selected", "");
@@ -551,8 +650,25 @@ public sealed partial class HtmlElement
             builder.Append(run.TextContent);
             return;
         }
-        foreach (var child in element.Children)
-            AppendText(child, builder);
+        foreach (var child in element.ChildNodes)
+        {
+            if (child is Square.UI.Text text) builder.Append(text.Data);
+            else if (child is Element childElement) AppendText(childElement, builder);
+        }
+    }
+
+    /// <summary>
+    /// Character data inside this host changed: an option's text feeds the nearest select
+    /// ancestor's option list; select and textarea reconcile their native proxy from content.
+    /// </summary>
+    void ITextDataDependent.OnTextDataChanged(CharacterData node)
+    {
+        for (Element? current = this; current != null; current = current.Parent)
+        {
+            if (current is not HTMLElement { TagName: "select" or "textarea" } host) continue;
+            host._syncPending = true;
+            break;
+        }
     }
 
     private static int ParsePositiveInt(string? raw, int fallback) =>

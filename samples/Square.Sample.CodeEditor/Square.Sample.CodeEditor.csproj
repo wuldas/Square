@@ -6,6 +6,7 @@
     <OutputType Condition="'$(IsWindowsBuild)' == 'false'">Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Square.Sample.CodeEditorApp</RootNamespace>
+    <SquareDefaultElementNamespace>urn:square:ui</SquareDefaultElementNamespace>
     <Description>Square CodeEditor Demo</Description>
     <PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
     <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>

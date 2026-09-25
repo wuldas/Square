@@ -316,9 +316,10 @@ internal sealed class ProjectTemplateWorkspace : IDisposable
                         compilationReference.Properties.Aliases,
                         compilationReference.Properties.EmbedInteropTypes));
             }
-            var inputs = await BuildTemplateInputsAsync(candidate, cancellationToken).ConfigureAwait(false);
+            var (inputs, defaultElementNamespaceUri) = await BuildTemplateInputsAsync(candidate, cancellationToken).ConfigureAwait(false);
             namespaces[projectId] = inputs;
-            analyses[projectId] = new TemplateSemanticAnalyzer().AnalyzeProject(compilation, inputs, cancellationToken);
+            analyses[projectId] = new TemplateSemanticAnalyzer().AnalyzeProject(
+                compilation, inputs, cancellationToken, defaultElementNamespaceUri!);
         }
 
         if (!analyses.TryGetValue(project.Id, out var analysis))
@@ -378,12 +379,14 @@ internal sealed class ProjectTemplateWorkspace : IDisposable
                display.IndexOf("Square.Compiler", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private static async Task<List<(string Path, string Content, string Namespace)>> BuildTemplateInputsAsync(
+    private static async Task<(List<(string Path, string Content, string Namespace)> Inputs, string? DefaultElementNamespaceUri)> BuildTemplateInputsAsync(
         Project project,
         CancellationToken cancellationToken)
     {
         var globalOptions = project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GlobalOptions;
         globalOptions.TryGetValue("build_property.RootNamespace", out var rootNamespace);
+        globalOptions.TryGetValue("build_property.SquareDefaultElementNamespace", out var defaultElementNamespaceUri);
+        if (defaultElementNamespaceUri?.Length == 0) defaultElementNamespaceUri = null;
         globalOptions.TryGetValue("build_property.MSBuildProjectDirectory", out var projectDirectory);
         rootNamespace = string.IsNullOrWhiteSpace(rootNamespace) ? "Square.Sample" : rootNamespace;
         projectDirectory = string.IsNullOrWhiteSpace(projectDirectory) ? Path.GetDirectoryName(project.FilePath) : projectDirectory;
@@ -406,7 +409,7 @@ internal sealed class ProjectTemplateWorkspace : IDisposable
                     projectDirectory ?? string.Empty,
                     logicalPath ?? string.Empty)));
         }
-        return inputs;
+        return (inputs, defaultElementNamespaceUri);
     }
 
     private IReadOnlyList<string> FindCandidateProjects(string documentPath, out bool exhausted)

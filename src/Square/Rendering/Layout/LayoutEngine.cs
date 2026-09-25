@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Buffers;
 using Facebook.Yoga;
 using Square.Graphics;
+using Square.Html;
 using Square.UI;
 using Square.Controls;
 using static Facebook.Yoga.YGConfigAPI;
@@ -456,6 +457,19 @@ public sealed partial class LayoutEngine
             return node;
         }
 
+        if (element is HTMLElement { HasDirectTextContent: true, AcceptsDirectTextContent: true } &&
+            UsesCssNormalFlow(element))
+        {
+            // DOM Text only exists in the CSS line engine: the host becomes a measure leaf and
+            // ArrangeCore runs the normal-flow pass at arrange time (see ApplyYogaLayout).
+            // No intrinsic min sizes: block hosts must keep wrapping at the stretched width.
+            YGNodeStyleSetDisplay(node, YGDisplay.Flex);
+            YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
+            ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            YGNodeSetMeasureFunc(node, LeafMeasureCallback);
+            return node;
+        }
+
         if (string.Equals(display, "flex", StringComparison.OrdinalIgnoreCase))
         {
             YGNodeStyleSetDisplay(node, YGDisplay.Flex);
@@ -624,6 +638,15 @@ public sealed partial class LayoutEngine
         };
     }
 
+    /// <summary>
+    /// Whether the element must run the CSS line engine at arrange because it carries DOM Text
+    /// (Yoga cannot see text nodes). Used by the Yoga apply pass and the table engine to
+    /// delegate those hosts to the normal-flow layout.
+    /// </summary>
+    internal bool ArrangesAsCssNormalFlow(Element element) =>
+        element is HTMLElement { HasDirectTextContent: true, AcceptsDirectTextContent: true } &&
+        UsesCssNormalFlow(element);
+
     private void ApplyYogaLayout(Element element, YogaNode yoga, float parentAbsX, float parentAbsY)
     {
         var left = YGNodeLayoutGetLeft(yoga);
@@ -648,6 +671,14 @@ public sealed partial class LayoutEngine
         if (IsTableRoot(ParseDisplayMode(display)))
         {
             new TableLayoutEngine(this).Arrange(element, rect, element.GetReservedScrollbarGutter());
+            UpdateScrollContentSize(element, rect);
+            return;
+        }
+
+        if (ArrangesAsCssNormalFlow(element))
+        {
+            // DOM Text hosts run their CSS line layout here; their children are not Yoga nodes.
+            ArrangeCore(element, rect);
             UpdateScrollContentSize(element, rect);
             return;
         }
@@ -1837,6 +1868,9 @@ public sealed partial class LayoutEngine
         element.ClearLayoutDirty();
         foreach (var child in element.Children)
             ClearDirtyRecursive(child);
+        if (element is HTMLElement host)
+            foreach (var sidecar in host.VisualSidecars)
+                ClearDirtyRecursive(sidecar);
     }
 
     private static int CollectVisibleChildren(Element element, Span<Element> destination)
@@ -1852,10 +1886,12 @@ public sealed partial class LayoutEngine
 
     private static (Element[] Array, int Count) RentVisibleChildren(Element element)
     {
-        var total = 0;
-        foreach (var _ in element.Children) total++;
+        Element marker = null!;
+        var hasMarker = element is HTMLElement host && host.TryGetListMarker(out marker);
+        var total = element.Children.Count + (hasMarker ? 1 : 0);
         var array = ArrayPool<Element>.Shared.Rent(Math.Max(1, total));
         var count = 0;
+        if (hasMarker) array[count++] = marker!;
         foreach (var child in element.Children)
         {
             if (child.IsVisible)

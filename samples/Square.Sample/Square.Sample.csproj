@@ -4,6 +4,7 @@
     <OutputType Condition="'$(IsWindowsBuild)' != 'false'">WinExe</OutputType>
     <OutputType Condition="'$(IsWindowsBuild)' == 'false'">Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
+    <SquareDefaultElementNamespace>urn:square:ui</SquareDefaultElementNamespace>
     <Description>Square Sample Application</Description>
     <IsPackable>false</IsPackable>
     <PublishAot Condition="'$(SquareSamplePublishAot)' == 'true'">true</PublishAot>

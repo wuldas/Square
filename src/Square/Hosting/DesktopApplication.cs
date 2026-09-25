@@ -5,6 +5,7 @@ using Square.Controls;
 using Square.CSS.Engine;
 using Square.Events;
 using Square.Graphics;
+using Square.Html;
 using Square.Rendering;
 using Square.Platform;
 using Square.Runtime;
@@ -32,7 +33,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private double _lastAnimationTickSeconds;
     private IPlatformHost? _host;
     private IRenderContext? _renderContext;
-    private UIElement? _focusedInput;
+    private Element? _focusedElement;
     private ITextEditor? _focusedEditor;
     private TextSelectionState? _textSelection;
     private Point? _pendingTextSelectionPoint;
@@ -50,11 +51,11 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private Element? _lastClickTarget;
     private Point _lastClickPoint;
     private double _lastClickSeconds = double.NegativeInfinity;
-    private readonly List<UIElement> _hoverPath = [];
+    private readonly List<Element> _hoverPath = [];
     private Element? _hoveringScrollbar;
-    private readonly List<UIElement> _activePath = [];
+    private readonly List<Element> _activePath = [];
     private readonly TooltipPopup _tooltipPopup;
-    private UIElement? _tooltipTarget;
+    private Element? _tooltipTarget;
     private bool _renderRequested;
     private KeyModifiers? _devToolsModifiers;
     private int? _inspectorHighlightDebugId;
@@ -533,7 +534,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (_host == null || _sessionSuspended) return false;
         if (!_displayTree.DismissTopmostPopupOnEscape()) return false;
-        SyncFocusedInputFromTree();
+        SyncFocusedElementFromTree();
         RequestRender();
         ProcessSessionFrame();
         return true;
@@ -631,8 +632,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void ClearInputInteractionState()
     {
-        _focusedInput?.Unfocus();
-        _focusedInput = null;
+        (_focusedElement as IFocusableElement)?.Unfocus();
+        _focusedElement = null;
         _focusedEditor = null;
         _isSelectingText = false;
         _pendingTextSelectionPoint = null;
@@ -913,7 +914,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 if (hadPendingTextSelection && !textSelectionChanged && _pendingRendererCaptures.Count == 0)
                 {
                     if (_focusedEditor != null)
-                        _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+                        _host.SetTextInputRect(MapContentRectToScreen(_focusedElement, _focusedEditor.CaretRect));
                     return;
                 }
                 // 无节点标脏时仍全量重绘一帧，避免“状态已变但未 InvalidatePaint”时界面卡住
@@ -962,7 +963,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
 
         if (_focusedEditor != null)
-            _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+            _host.SetTextInputRect(MapContentRectToScreen(_focusedElement, _focusedEditor.CaretRect));
         CompleteRendererCaptures();
         FramePresented?.Invoke();
     }
@@ -1428,7 +1429,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             _host.Cursor = ResolveCursor(hit, point);
             if (_isSelectingText && _focusedEditor != null)
             {
-                _focusedEditor.HandlePointerMove(MapPointerPoint(_focusedInput, point));
+                _focusedEditor.HandlePointerMove(MapPointerPoint(_focusedElement, point));
                 needsRender = true;
             }
             else if (_textSelection is { IsSelecting: true })
@@ -1462,7 +1463,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             if (_isSelectingText && _focusedEditor != null)
             {
-                _focusedEditor.HandlePointerUp(MapPointerPoint(_focusedInput, point));
+                _focusedEditor.HandlePointerUp(MapPointerPoint(_focusedElement, point));
                 _isSelectingText = false;
             }
 
@@ -1548,22 +1549,22 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         var focusTarget = FindFocusableAncestor(hit);
 
-        if (_focusedInput != focusTarget)
+        if (_focusedElement != focusTarget)
         {
-            var previous = _focusedInput;
-            previous?.Unfocus();
-            if (previous?.IsFocused == true)
+            var previous = _focusedElement;
+            (previous as IFocusableElement)?.Unfocus();
+            if (previous is IFocusableElement { IsFocused: true })
             {
-                _focusedInput = previous;
+                _focusedElement = previous;
                 _focusedEditor = previous as ITextEditor;
                 return;
             }
-            _focusedInput = focusTarget;
+            _focusedElement = focusTarget;
             _focusedEditor = focusTarget as ITextEditor;
-            focusTarget?.Focus(focusVisible: false);
-            if (focusTarget?.IsFocused != true)
+            (focusTarget as IFocusableElement)?.Focus(focusVisible: false);
+            if (focusTarget is not IFocusableElement { IsFocused: true })
             {
-                _focusedInput = null;
+                _focusedElement = null;
                 _focusedEditor = null;
             }
         }
@@ -1585,8 +1586,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (TryStartTextSelection(hit, point, selectWord))
         {
-            _focusedInput?.Unfocus();
-            _focusedInput = null;
+            (_focusedElement as IFocusableElement)?.Unfocus();
+            _focusedElement = null;
             _focusedEditor = null;
             _isSelectingText = false;
             return;
@@ -1616,7 +1617,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             return targetPopup.MapPointToContent(point);
         if (target?.IsFixedPositioned() == true) return point;
         var mapped = point;
-        for (var current = target?.Parent; current != null; current = current.Parent)
+        for (var current = target == null ? null : VisualAncestorOf(target); current != null; current = VisualAncestorOf(current))
         {
             if (current is IPopupElement popup)
             {
@@ -1641,7 +1642,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (!element.IsAttached || !ReferenceEquals(element.OwnerDocument, _document) ||
             !element.IsEffectivelyVisible) return false;
-        for (var current = element; current != null; current = current.Parent)
+        for (var current = element; current != null; current = VisualAncestorOf(current))
             if (current is IPopupElement popup && !popup.IsPopupOpen) return false;
         if (element is ITextEditor customEditor && customEditor.OwnsScrollbarChrome)
             return customEditor.IsScrollbarInteractionUsable(part);
@@ -1660,7 +1661,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static Rect MapContentRectToScreen(Element? target, Rect rect)
     {
-        for (var current = target?.Parent; current != null; current = current.Parent)
+        for (var current = target == null ? null : VisualAncestorOf(target); current != null; current = VisualAncestorOf(current))
         {
             if (current is not IPopupElement popup) continue;
             var origin = popup.MapPointToContent(Point.Zero);
@@ -1673,17 +1674,29 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return rect;
     }
 
-    private static UIElement? FindFocusableAncestor(Element? hit)
+    private static Element? FindFocusableAncestor(Element? hit)
     {
-        for (var current = hit; current != null; current = current.Parent)
-            if (current is UIElement element && IsFocusable(element))
-                return element;
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
+        {
+            // UIElement 的可聚焦判定保持原样；HTML host 以 Element 焦点目标身份参与。
+            if (current is UIElement element && IsFocusable(element)) return element;
+            if (current is IFocusableElement { IsEnabled: true } && current is HTMLElement host &&
+                IsHtmlFocusableTag(host.LocalName))
+                return current;
+        }
         return null;
     }
 
+    /// <summary>本地名对应的 HTML host 是否可作为键盘焦点目标（对齐 Square 已支持的交互控件）。</summary>
+    private static bool IsHtmlFocusableTag(string localName) =>
+        localName is "button" or "input" or "textarea" or "select" or "a" or "summary";
+
+    /// <summary>命中路径的上一跳：先语义父级，内部视觉 sidecar 则回到其宿主。</summary>
+    private static Element? VisualAncestorOf(Element element) => element.Parent ?? element.VisualParent;
+
     private static T? FindAncestor<T>(Element? hit) where T : Element
     {
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
             if (current is T match) return match;
         return null;
     }
@@ -1702,7 +1715,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static CursorKind ResolveCursor(Element? hit, Point point)
     {
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
             var value = current.Style.Get("cursor")?.Trim();
             if (!string.IsNullOrEmpty(value))
@@ -1719,7 +1732,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             }
         }
 
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
             if (current is Link link) return link.IsEnabled ? CursorKind.Hand : CursorKind.Arrow;
             if (current is Splitter splitter)
@@ -1754,7 +1767,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private void UpdateTooltip(Element? hit)
     {
         var target = FindTooltipTarget(hit);
-        var text = target?.Tooltip;
+        var text = target switch
+        {
+            UIElement uiElement => uiElement.Tooltip,
+            HTMLElement htmlElement => htmlElement.Tooltip,
+            _ => null
+        };
         if (ReferenceEquals(_tooltipTarget, target) &&
             (target == null || string.Equals(_tooltipPopup.Message, text, StringComparison.Ordinal)))
             return;
@@ -1775,12 +1793,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         RequestRender();
     }
 
-    private static UIElement? FindTooltipTarget(Element? hit)
+    private static Element? FindTooltipTarget(Element? hit)
     {
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
-            if (current is UIElement element && !string.IsNullOrWhiteSpace(element.Tooltip))
-                return element;
+            var tooltip = current switch
+            {
+                UIElement uiElement => uiElement.Tooltip,
+                HTMLElement htmlElement => htmlElement.Tooltip,
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(tooltip))
+                return current;
         }
 
         return null;
@@ -1790,13 +1814,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private bool ClearActivePath() => UpdateStatePath(_activePath, null, ElementState.Active);
 
-    private static bool UpdateStatePath(List<UIElement> currentPath, Element? hit, ElementState state)
+    private static bool UpdateStatePath(List<Element> currentPath, Element? hit, ElementState state)
     {
-        UIElement? pathStart = null;
-        for (var current = hit; current != null; current = current.Parent)
+        Element? pathStart = null;
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
-            if (current is not UIElement uiElement) continue;
-            pathStart = uiElement;
+            if (!IsStatePathElement(current)) continue;
+            pathStart = current;
             break;
         }
 
@@ -1824,16 +1848,19 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return true;
     }
 
-    private static List<UIElement> BuildElementPath(Element? hit)
+    /// <summary>参与 hover/active 伪状态路径的元素：原生 UI 控件与 HTML host。</summary>
+    private static bool IsStatePathElement(Element element) => element is UIElement or HTMLElement;
+
+    private static List<Element> BuildElementPath(Element? hit)
     {
-        var path = new List<UIElement>();
-        for (var current = hit; current != null; current = current.Parent)
-            if (current is UIElement uiElement)
-                path.Add(uiElement);
+        var path = new List<Element>();
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
+            if (IsStatePathElement(current))
+                path.Add(current);
         return path;
     }
 
-    private static bool PathsEqual(List<UIElement> left, List<UIElement> right)
+    private static bool PathsEqual(List<Element> left, List<Element> right)
     {
         if (left.Count != right.Count) return false;
         for (var i = 0; i < left.Count; i++)
@@ -1860,14 +1887,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (action == KeyAction.Down && keyCode == 27 && _displayTree.DismissTopmostPopupOnEscape())
         {
-            SyncFocusedInputFromTree();
+            SyncFocusedElementFromTree();
             RenderFrame();
             return;
         }
 
-        SyncFocusedInputFromTree();
+        SyncFocusedElementFromTree();
 
-        _focusedInput?.DispatchTrusted(
+        _focusedElement?.DispatchTrusted(
             action == KeyAction.Down
                 ? StandardEvents.CreateKeyDown(keyCode, shift, control, alt)
                 : StandardEvents.CreateKeyUp(keyCode, shift, control, alt));
@@ -1919,18 +1946,33 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         RenderFrame();
     }
 
-    private void SyncFocusedInputFromTree()
+    private void SyncFocusedElementFromTree()
     {
-        var focused = _root.QueryAll<UIElement>().LastOrDefault(element => element.IsFocused);
-        if (ReferenceEquals(_focusedInput, focused)) return;
-        _focusedInput = focused;
+        Element? focused = null;
+        CollectFocusedElement(_root, ref focused);
+        if (ReferenceEquals(_focusedElement, focused)) return;
+        _focusedElement = focused;
         _focusedEditor = focused as ITextEditor;
+    }
+
+    /// <summary>
+    /// 深度优先寻找最后一个持有焦点的可聚焦元素（与原 QueryAll 的文档序 LastOrDefault 一致），
+    /// 并经由 <see cref="HTMLElement.VisualSidecars"/> 覆盖不在语义 DOM 里的原生代理。
+    /// </summary>
+    private static void CollectFocusedElement(Element element, ref Element? last)
+    {
+        if (element is IFocusableElement { IsFocused: true }) last = element;
+        foreach (var child in element.Children)
+            CollectFocusedElement(child, ref last);
+        if (element is not HTMLElement host) return;
+        foreach (var sidecar in host.VisualSidecars)
+            CollectFocusedElement(sidecar, ref last);
     }
 
     private void HandleTextInput(string text)
     {
         if (_sessionSuspended) return;
-        SyncFocusedInputFromTree();
+        SyncFocusedElementFromTree();
         _focusedEditor?.HandleTextInput(text);
         RenderFrame();
     }
@@ -2043,6 +2085,27 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (!element.IsVisible || !element.IsUserSelectText()) return;
         var selectableStart = items.Count;
+
+        if (element is HTMLElement host)
+        {
+            // All painted fragments of a host share it as their element; walking ChildNodes once
+            // keeps Text/Element/Text items in document order instead of per-element command order.
+            fragmentsByElement.TryGetValue(element, out var hostFragments);
+            foreach (var node in host.ChildNodes)
+            {
+                if (node is Square.UI.Text { Data.Length: > 0 } text &&
+                    host.AcceptsDirectTextContent && hostFragments != null)
+                {
+                    foreach (var fragment in hostFragments)
+                        if (ReferenceEquals(fragment.TextNode, text))
+                            items.Add(new TextSelectionItem(element, fragment.Text, fragment.Bounds, fragment, text));
+                }
+                else if (node is Element child)
+                    CollectSelectableText(child, items, fragmentsByElement);
+            }
+            return;
+        }
+
         if (fragmentsByElement.TryGetValue(element, out var fragments))
         {
             if (element is ITextSelectable selectable && !string.IsNullOrEmpty(selectable.SelectableText))
@@ -2063,7 +2126,9 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                         fragment.Text,
                         fragment.Bounds,
                         fragment,
-                        FindTextNode(element, fragment.Text)));
+                        // Square control text keeps the text-equality lookup; its fragments carry
+                        // no source DOM Text node.
+                        fragment.TextNode ?? FindTextNode(element, fragment.Text)));
             }
         }
         else if (element is ITextSelectable selectable && !string.IsNullOrEmpty(selectable.SelectableText))
@@ -2236,8 +2301,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var range = _document.CreateRange();
         if (startItem.TextNode is { } startText && endItem.TextNode is { } endText)
         {
-            range.SetStart(startText, Math.Clamp(startPoint.Offset, 0, startText.Length));
-            range.SetEnd(endText, Math.Clamp(endPoint.Offset, 0, endText.Length));
+            range.SetStart(startText, MapSelectionOffsetToNode(startItem, startPoint.Offset, startText));
+            range.SetEnd(endText, MapSelectionOffsetToNode(endItem, endPoint.Offset, endText));
         }
         else if (startItem.TextNode == null || endItem.TextNode == null)
         {
@@ -2254,6 +2319,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         documentSelection.SetRange(range);
     }
+
+    /// <summary>Maps a fragment-relative selection offset onto the source Text node's UTF-16
+    /// coordinates, honoring whitespace collapse and text-transform expansion.</summary>
+    private static int MapSelectionOffsetToNode(TextSelectionItem item, int offset, Square.UI.Text node) =>
+        Math.Clamp(
+            item.Fragment != null ? item.Fragment.MapCharacterOffsetToTextNode(offset) : offset,
+            0,
+            node.Length);
 
     private static Square.UI.Text? FindTextNode(Element element, string text)
     {

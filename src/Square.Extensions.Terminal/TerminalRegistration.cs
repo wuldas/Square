@@ -1,6 +1,6 @@
 using Square.UI;
 
-[assembly: ElementExport("urn:square:terminal", "terminal", "TerminalView", typeof(Square.Extensions.Terminal.TerminalView))]
+[assembly: ElementExport("urn:square:terminal", "TerminalView", typeof(Square.Extensions.Terminal.TerminalView))]
 
 namespace Square.Extensions.Terminal;
 
@@ -14,6 +14,6 @@ public static class TerminalRegistration
     {
         if (_registered) return;
         _registered = true;
-        ElementRegistry.Register("TerminalView", static () => new TerminalView());
+        ElementRegistry.Register("urn:square:terminal", "TerminalView", static () => new TerminalView());
     }
 }

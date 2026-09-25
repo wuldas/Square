@@ -55,6 +55,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private readonly List<IDisposable> _bindings = [];
     private List<IDisposable>? _generatedResources;
     private int _debugId;
+    private string? _templateExportNamespaceUri;
+    private string? _templateExportLocalName;
 
     [ThreadStatic]
     private static int _invalidationSuppressionDepth;
@@ -75,6 +77,24 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
 
     /// <summary>设置调试来源信息。</summary>
     public void SetDebugInfo(ElementDebugInfo? debugInfo) => DebugInfo = debugInfo;
+    /// <summary>Only package-exported template instances carry an explicit URI/local identity.</summary>
+    public string? TemplateExportNamespaceUri => _templateExportNamespaceUri;
+    public string? TemplateExportLocalName => _templateExportLocalName;
+
+    /// <summary>Marks an element constructed for a package export, before attribute binding.</summary>
+    public void MarkTemplateExport(string namespaceUri, string localName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceUri);
+        ElementRegistry.ValidateLocalName(localName);
+        if (!Uri.TryCreate(namespaceUri, UriKind.Absolute, out _) ||
+            namespaceUri is ElementRegistry.HtmlNamespaceUri or ElementRegistry.SvgNamespaceUri or ElementRegistry.SquareNamespaceUri)
+            throw new ArgumentException("Package exports require a non-framework absolute resolution URI.", nameof(namespaceUri));
+        if (_templateExportNamespaceUri != null &&
+            (_templateExportNamespaceUri != namespaceUri || _templateExportLocalName != localName))
+            throw new InvalidOperationException("The exported template identity cannot be changed.");
+        _templateExportNamespaceUri = namespaceUri;
+        _templateExportLocalName = localName;
+    }
 
     /// <summary>布局是否失效（Square 扩展；引擎在脏时重新 Measure/Arrange）。</summary>
     public bool IsLayoutDirty => _isLayoutDirty;
@@ -113,6 +133,9 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>标签名（对齐 <c>tagName</c>；默认取运行时类型名）。</summary>
     public virtual string TagName => GetType().Name;
 
+    /// <summary>本地名（对齐 <c>localName</c>；默认与 <see cref="TagName"/> 一致，HTML 元素为固定小写名）。</summary>
+    public virtual string LocalName => TagName;
+
     /// <inheritdoc />
     public override NodeType NodeTypeValue => NodeType.Element;
 
@@ -138,6 +161,19 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         get => ParentNode as Element;
         internal set => ParentNode = value;
     }
+
+    /// <summary>
+    /// 内部视觉父级（Square 扩展）：HTML host 的视觉 sidecar（原生代理控件、CSS 列表标记）
+    /// 经由它向宿主传播失效与事件，且绝不写入 <see cref="Node.ParentNode"/>，因此
+    /// <see cref="ParentElement"/>、<see cref="ChildNodes"/>、DOM 查询与 Web 导出均不可见。
+    /// </summary>
+    internal Element? VisualParent { get; set; }
+
+    /// <summary>
+    /// 内部视觉 sidecar 子节点（Square 扩展；HTML host 覆写以暴露原生代理与列表标记）。
+    /// 仅用于绘制/命中/布局的视觉枚举，不属于语义树。
+    /// </summary>
+    internal virtual IReadOnlyList<Element> VisualSidecars => Array.Empty<Element>();
 
     /// <summary>第一个子元素（对齐 <c>firstElementChild</c>）。</summary>
     public Element? FirstElementChild => Children.Count > 0 ? Children[0] : null;
@@ -487,10 +523,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     {
         if (string.Equals(name, "class", StringComparison.OrdinalIgnoreCase))
         {
-            ClassList.Clear();
             var text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
-            foreach (var className in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                ClassList.Add(className);
+            ClassList.SetFromAttribute(text);
             return true;
         }
         if (string.Equals(name, "style", StringComparison.OrdinalIgnoreCase))
@@ -572,10 +606,10 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         return inside && !visibilityHidden ? this : null;
     }
 
-    /// <summary>当前元素及其祖先是否参与 CSS display 渲染与命中。</summary>
+    /// <summary>当前元素及其祖先是否参与 CSS display 渲染与命中（sidecar 沿 VisualParent 检查宿主链）。</summary>
     internal bool IsCssDisplayed()
     {
-        for (Element? current = this; current != null; current = current.Parent)
+        for (Element? current = this; current != null; current = current.Parent ?? current.VisualParent)
             if (string.Equals(current.Style.Get("display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase))
                 return false;
         return true;
@@ -584,10 +618,10 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     internal bool IsFixedPositioned() =>
         string.Equals(Style.Get("position")?.Trim(), "fixed", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>按最近声明解析 CSS visibility；隐藏自身但不阻止后代覆盖为 visible。</summary>
+    /// <summary>按最近声明解析 CSS visibility；隐藏自身但不阻止后代覆盖为 visible（sidecar 沿 VisualParent 检查宿主链）。</summary>
     internal bool IsCssVisibilityHidden()
     {
-        for (Element? current = this; current != null; current = current.Parent)
+        for (Element? current = this; current != null; current = current.Parent ?? current.VisualParent)
         {
             var value = current.Style.Get("visibility")?.Trim();
             if (string.IsNullOrEmpty(value)) continue;
@@ -600,9 +634,21 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private HitTestEntry[] GetHitTestChildren()
     {
         if (_hitTestChildren != null) return _hitTestChildren;
-        _hitTestChildren = Children
-            .Select((element, index) => new HitTestEntry(element, index))
-            .ToArray();
+        var sidecars = VisualSidecars;
+        if (sidecars.Count == 0)
+        {
+            _hitTestChildren = Children
+                .Select((element, index) => new HitTestEntry(element, index))
+                .ToArray();
+        }
+        else
+        {
+            // sidecar 排在语义子节点之后（最上层）：原生代理控件浮于宿主内容之上。
+            _hitTestChildren = Children
+                .Select((element, index) => new HitTestEntry(element, index))
+                .Concat(sidecars.Select((sidecar, index) => new HitTestEntry(sidecar, Children.Count + index)))
+                .ToArray();
+        }
         Array.Sort(_hitTestChildren, HitTestEntryComparer.Instance);
         return _hitTestChildren;
     }
@@ -704,10 +750,10 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             axes.scrollY && _scrollContentSize.Height > viewport.Height + 0.01f;
     }
 
-    /// <summary>当前元素或祖先的 <c>user-select</c> 是否允许文本选择。</summary>
+    /// <summary>当前元素或祖先的 <c>user-select</c> 是否允许文本选择（sidecar 沿 VisualParent 检查宿主链）。</summary>
     public bool IsUserSelectText()
     {
-        for (var current = this; current != null; current = current.Parent)
+        for (var current = this; current != null; current = current.Parent ?? current.VisualParent)
         {
             var value = current.Style.Get("user-select")?.Trim();
             if (string.Equals(value, "text", StringComparison.OrdinalIgnoreCase)) return true;
@@ -1321,15 +1367,16 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             child.QueryAllInternal(className, result);
     }
 
-    /// <summary>标记布局与绘制失效，并向父级传播布局脏（Square 扩展）。</summary>
+    /// <summary>标记布局与绘制失效，并向父级传播布局脏（Square 扩展；sidecar 经 VisualParent 传播到宿主）。</summary>
     public void InvalidateLayout()
     {
         _isLayoutDirty = true;
         _needsPaint = true;
         _paintFullDirty = true;
         _paintDirtyRects?.Clear();
-        if (Parent != null)
-            Parent.InvalidateLayout();
+        var parent = Parent ?? VisualParent;
+        if (parent != null)
+            parent.InvalidateLayout();
         else
             RequestRenderIfAttached();
     }
@@ -1478,7 +1525,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     protected override void OnDefaultAction(Event e)
     {
         if (e is not WheelEvent wheel) return;
-        for (Element? current = this; current != null; current = current.Parent)
+        for (Element? current = this; current != null; current = current.Parent ?? current.VisualParent)
         {
             if (!current.IsScrollContainer()) continue;
             var scrolled = wheel.IsPrecise || wheel.IsInertial

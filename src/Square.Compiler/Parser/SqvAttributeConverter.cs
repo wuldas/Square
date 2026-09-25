@@ -1,364 +1,8 @@
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
 using Square.Compiler.LanguageServices;
-using Square.UI.Html;
 
 namespace Square.Compiler.Parser;
-
-/// <summary>
-/// Vue 模板解析器：消费 <see cref="SqvLexer"/> 产出的 token，直接构造 <see cref="SqxNode"/> 树，
-/// 并把 <c>v-for</c> / <c>v-if</c> 链降低为共享模板 IR。
-/// 不依赖 <c>SqxCoreParser</c> / <c>SqxParser</c>。
-/// </summary>
-internal sealed class SqvTemplateParser
-{
-    private readonly List<SqvToken> _tokens;
-    private readonly int _baseOffset;
-    private readonly bool _tolerant;
-    private int _index;
-
-    private SqvTemplateParser(List<SqvToken> tokens, int baseOffset, bool tolerant)
-    {
-        _tokens = tokens;
-        _baseOffset = baseOffset;
-        _tolerant = tolerant;
-    }
-
-    public static List<SqxNode> Parse(string templateSource, int baseOffset = 0, bool tolerant = false)
-    {
-        var tokens = new SqvLexer(templateSource, baseOffset, tolerant).Tokenize();
-        return new SqvTemplateParser(tokens, baseOffset, tolerant).ParseRoots();
-    }
-
-    private List<SqxNode> ParseRoots()
-    {
-        var raw = new List<SqxNode>();
-        while (Peek().Type != SqvTokenType.Eof)
-        {
-            var node = ParseNode(htmlContext: false);
-            if (node != null) raw.Add(node);
-        }
-        return _tolerant ? raw : RewriteSiblings(raw);
-    }
-
-    private SqxNode ParseNode(bool htmlContext)
-    {
-        var token = Peek();
-        switch (token.Type)
-        {
-            case SqvTokenType.OpenTag:
-                return ParseElement();
-            case SqvTokenType.Text:
-                _index++;
-                if (!htmlContext && string.IsNullOrWhiteSpace(token.Text)) return null;
-                // HTML 上下文保留有意义的空白（混合文本与 pre/textarea 原文）；
-                // 其余上下文保持既有的首尾修剪行为。
-                return new SqxText
-                {
-                    Text = htmlContext ? token.Text : token.Text.Trim(),
-                    Kind = SqxNodeKind.Text,
-                    Line = token.Line,
-                    Column = token.Column,
-                    Position = Absolute(token.Offset)
-                };
-            case SqvTokenType.Interpolation:
-                _index++;
-                return new SqxExpression { Expression = token.Text, Kind = SqxNodeKind.Expression, Line = token.Line, Column = token.Column, Position = Absolute(token.Offset) };
-            case SqvTokenType.EndTag:
-                if (_tolerant)
-                {
-                    _index++;
-                    return null;
-                }
-                throw Error("Unexpected closing tag </" + token.Text + ">", token.Offset);
-            default:
-                _index++;
-                return null;
-        }
-    }
-
-    private SqxElement ParseElement()
-    {
-        var open = Expect(SqvTokenType.OpenTag);
-        var nameToken = Expect(SqvTokenType.Identifier);
-        var tagName = nameToken.Text;
-        ValidateElementName(nameToken, false);
-        var element = new SqxElement
-        {
-            TagName = tagName,
-            Kind = SqxNodeKind.Element,
-            Line = open.Line,
-            Column = open.Column + 1,
-            Position = Absolute(open.Offset)
-        };
-
-        while (Peek().Type is not (SqvTokenType.CloseTag or SqvTokenType.CloseSelfTag or SqvTokenType.Eof))
-        {
-            var attr = ParseAttribute();
-            if (attr != null) element.Attributes.Add(attr);
-            foreach (var pending in _pendingAttrs) element.Attributes.Add(pending);
-            _pendingAttrs.Clear();
-        }
-
-        if (!_tolerant)
-            SqvAttributeConverter.ApplyVModel(element);
-        var slotScopeAttribute = element.Attributes.FirstOrDefault(attribute => attribute.Name == "__sqv_slot_scope");
-        if (slotScopeAttribute != null)
-        {
-            element.SlotScope = SqvAttributeConverter.ParseSlotScope(
-                slotScopeAttribute.RawValue,
-                slotScopeAttribute.ValuePosition >= 0 ? slotScopeAttribute.ValuePosition : slotScopeAttribute.Position);
-            element.Attributes.Remove(slotScopeAttribute);
-        }
-
-        if (Peek().Type == SqvTokenType.CloseSelfTag)
-        {
-            _index++;
-            return element;
-        }
-
-        Expect(SqvTokenType.CloseTag);
-        if (IsHtmlVoidElement(tagName))
-        {
-            // 识别的 HTML void 元素（精确小写或 html: 前缀）在 '>' 处即完整，
-            // 后续兄弟节点不会被吞入子节点列表。
-            return element;
-        }
-        var childContext = IsHtmlElement(tagName);
-        while (true)
-        {
-            var t = Peek();
-            if (t.Type == SqvTokenType.Eof)
-            {
-                if (_tolerant) return element;
-                break;
-            }
-            if (t.Type == SqvTokenType.EndTag)
-            {
-                ValidateElementName(t, true);
-                if (!string.Equals(t.Text, tagName, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (_tolerant) return element;
-                    throw Error("Closing tag </" + t.Text + "> does not match <" + tagName + ">", t.Offset);
-                }
-                _index++;
-                return element;
-            }
-            var child = ParseNode(childContext);
-            if (child != null) element.Children.Add(child);
-        }
-        throw Error("Unclosed element <" + tagName + ">", open.Offset);
-    }
-
-    private SqxAttribute ParseAttribute()
-    {
-        var nameToken = Peek();
-        if (nameToken.Type != SqvTokenType.Identifier)
-        {
-            _index++;
-            return null;
-        }
-        _index++;
-
-        if (Peek().Type != SqvTokenType.Equals)
-        {
-            // 无值属性（如 v-else、disabled）也要经过 Vue 属性转换。
-            var noValue = ConvertAttribute(nameToken.Text, null, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset));
-            return noValue ?? new SqxAttribute { Name = nameToken.Text, Line = nameToken.Line, Position = Absolute(nameToken.Offset) };
-        }
-
-        _index++;
-        var valueToken = Peek();
-        string rawValue = null;
-        var valueOffset = -1;
-        if (valueToken.Type == SqvTokenType.StringLiteral)
-        {
-            _index++;
-            rawValue = valueToken.Text;
-            valueOffset = Absolute(valueToken.Offset) + 1;
-        }
-        else if (valueToken.Type == SqvTokenType.Identifier)
-        {
-            _index++;
-            rawValue = valueToken.Text;
-            valueOffset = Absolute(valueToken.Offset);
-        }
-
-        // v-if / v-else-if 需要同时产出 kind 与 cond 两个标记属性，通过 _pendingAttrs 追加。
-        var converted = ConvertAttribute(nameToken.Text, rawValue, nameToken.Line, nameToken.Column, Absolute(nameToken.Offset));
-        if (converted != null && valueOffset >= 0) converted.ValuePosition = valueOffset;
-        if (converted != null) converted.ValueLength = rawValue?.Length ?? 0;
-        return converted;
-    }
-
-    private SqxAttribute ConvertAttribute(string name, string value, int line, int column, int position)
-    {
-        try
-        {
-            return SqvAttributeConverter.Convert(name, value, line, column, position, _pendingAttrs);
-        }
-        catch (SqxParseException) when (_tolerant)
-        {
-            _pendingAttrs.Clear();
-            return new SqxAttribute { Name = name, RawValue = value, Line = line, Position = position };
-        }
-    }
-
-    /// <summary>仅精确小写的 HTML 目录 void 标签或 html: 前缀标签被视为无闭合元素；大写 Square 名称不适用。</summary>
-    private static bool IsHtmlVoidElement(string tagName)
-    {
-        if (string.IsNullOrEmpty(tagName)) return false;
-        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            return HtmlTagCatalog.IsVoid(tagName.Substring("html:".Length).ToLowerInvariant());
-        return HtmlTagCatalog.IsVoid(tagName);
-    }
-
-    /// <summary>精确小写命中 HTML 目录或带 html: 前缀即 HTML 元素；不带前缀的 template 是既有片段包装，不算 HTML。</summary>
-    private static bool IsHtmlElement(string tagName)
-    {
-        if (string.IsNullOrEmpty(tagName)) return false;
-        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            return HtmlTagCatalog.IsTag(tagName.Substring("html:".Length).ToLowerInvariant());
-        if (tagName.Equals("template", StringComparison.Ordinal)) return false;
-        return HtmlTagCatalog.IsTag(tagName);
-    }
-
-    private void ValidateElementName(SqvToken token, bool closing)
-    {
-        var parsed = TemplateElementName.Parse(token.Text, false);
-        if (parsed.Status == TemplateElementNameStatus.Valid || _tolerant) return;
-        throw new SqxParseException(
-            "Invalid element name '" + token.Text + "'.",
-            Absolute(closing ? token.Offset + 2 : token.Offset),
-            "SQXE001",
-            token.Text.Length);
-    }
-
-    private readonly List<SqxAttribute> _pendingAttrs = new();
-
-    /// <summary>把兄弟节点中的 v-for / v-if 链重组为 Vue 专属指令节点（与旧 SqvParser.RewriteVueDirectives 等价）。</summary>
-    private static List<SqxNode> RewriteSiblings(List<SqxNode> nodes)
-    {
-        var rewritten = new List<SqxNode>(nodes.Count);
-        TemplateIfChainDirective currentChain = null;
-
-        for (var i = 0; i < nodes.Count; i++)
-        {
-            var node = nodes[i];
-            if (node is not SqxElement element)
-            {
-                currentChain = null;
-                rewritten.Add(node);
-                continue;
-            }
-
-            element.Children = RewriteSiblings(element.Children);
-
-            var vfor = FindAttr(element, "__vfor_src");
-            if (vfor != null)
-            {
-                if (element.Attributes.Count(attribute => attribute.Name == "__vfor_key") > 1)
-                {
-                    var duplicateKey = element.Attributes.Last(attribute => attribute.Name == "__vfor_key");
-                    throw new SqxParseException(
-                        "Duplicate key binding on <" + element.TagName + ">",
-                        duplicateKey.Position,
-                        "SQV0005");
-                }
-                var key = FindAttr(element, "__vfor_key");
-                var directive = new TemplateForDirective
-                {
-                    SourceExpression = vfor.RawValue ?? "",
-                    ItemName = FindAttr(element, "__vfor_item")?.RawValue ?? "item",
-                    IndexName = FindAttr(element, "__vfor_index")?.RawValue,
-                    KeyExpression = key?.RawValue,
-                    KeyPosition = key?.Position ?? 0,
-                    Position = vfor.Position,
-                    Children = new List<SqxNode> { element }
-                };
-                StripVueMarkerAttributes(element);
-                currentChain = null;
-                rewritten.Add(directive);
-                continue;
-            }
-
-            var orphanedKey = FindAttr(element, "__vfor_key");
-            if (orphanedKey != null)
-                throw new SqxParseException(
-                    "Vue key bindings are only supported on elements with v-for",
-                    orphanedKey.Position,
-                    "SQV0002");
-
-            var vifKind = FindAttr(element, "__vif_kind")?.RawValue;
-            if (vifKind != null)
-            {
-                var cond = FindAttr(element, "__vif_cond")?.RawValue;
-                var position = FindAttr(element, "__vif_kind")?.Position ?? 0;
-                StripVueMarkerAttributes(element);
-
-                if (vifKind == "if")
-                {
-                    currentChain = new TemplateIfChainDirective { Position = position };
-                    currentChain.Branches.Add(new TemplateIfBranch { Condition = cond ?? "false", Position = position, Children = new List<SqxNode> { element } });
-                    rewritten.Add(currentChain);
-                }
-                else if (vifKind == "elseif" && currentChain != null)
-                {
-                    currentChain.Branches.Add(new TemplateIfBranch { Condition = cond ?? "false", Position = position, Children = new List<SqxNode> { element } });
-                }
-                else if (vifKind == "else" && currentChain != null)
-                {
-                    currentChain.Branches.Add(new TemplateIfBranch { IsElse = true, Position = position, Children = new List<SqxNode> { element } });
-                    currentChain = null;
-                }
-                else
-                {
-                    throw new SqxParseException(
-                        "v-" + (vifKind == "elseif" ? "else-if" : "else") + " must immediately follow a v-if or v-else-if branch",
-                        position,
-                        "SQV0004");
-                }
-                continue;
-            }
-
-            currentChain = null;
-            rewritten.Add(element);
-        }
-        return rewritten;
-    }
-
-    private static void StripVueMarkerAttributes(SqxElement element) =>
-        element.Attributes.RemoveAll(a =>
-            a.Name == "__vfor_src" || a.Name == "__vfor_item" || a.Name == "__vfor_index" ||
-            a.Name == "__vfor_key" ||
-            a.Name == "__vif_kind" || a.Name == "__vif_cond");
-
-    private static SqxAttribute FindAttr(SqxElement element, string name) =>
-        element.Attributes.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.Ordinal));
-
-    private SqvToken Peek() => _index < _tokens.Count ? _tokens[_index] : _tokens[_tokens.Count - 1];
-
-    private SqvToken Expect(SqvTokenType type)
-    {
-        var token = Peek();
-        if (token.Type != type)
-        {
-            if (_tolerant)
-            {
-                _index++;
-                return token;
-            }
-            throw Error("Expected " + type + " but got " + token.Type, token.Offset);
-        }
-        _index++;
-        return token;
-    }
-
-    private int Absolute(int position) => _baseOffset + position;
-
-    private SqxParseException Error(string message, int position) =>
-        new(message, Absolute(position), "SQV0001");
-}
 
 /// <summary>把原始 Vue 属性名/值转换为 emitter 可消费的 SqxAttribute 形式。</summary>
 internal static class SqvAttributeConverter
@@ -715,24 +359,30 @@ internal static class SqvAttributeConverter
 
     private static ModelProperty? GetModelProperty(SqxElement element)
     {
-        if (IsHtmlCheckableInput(element)) return new ModelProperty("checked");
-        var tagName = GetBuiltInLocalName(element.TagName) ?? element.TagName;
-        if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
-            return new ModelProperty("checked");
-        if (string.Equals(tagName, "Input", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tagName, "TextArea", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tagName, "Select", StringComparison.OrdinalIgnoreCase))
-            return new ModelProperty("value");
-        return IsBuiltInTag(tagName) ? null : new ModelProperty("Value");
+        var component = element.Resolution?.Component;
+        if (component == null) return null;
+        if (component.Kind is TemplateElementKind.Html or TemplateElementKind.HtmlCustom)
+        {
+            if (IsHtmlCheckableInput(element)) return new ModelProperty("checked");
+            return component.LocalName is "input" or "textarea" or "select"
+                ? new ModelProperty("value") : null;
+        }
+        if (component.NamespaceUri == TemplateCatalog.SquareNamespaceUri)
+        {
+            if (component.LocalName is "CheckBox" or "Radio") return new ModelProperty("checked");
+            if (component.LocalName is "Input" or "TextArea" or "Select") return new ModelProperty("value");
+            return null;
+        }
+        return new ModelProperty("Value");
     }
 
     private static string GetModelEvent(SqxElement element, bool lazy)
     {
         if (IsHtmlCheckableInput(element)) return "change";
-        var tagName = GetBuiltInLocalName(element.TagName) ?? element.TagName;
-        if (string.Equals(tagName, "Input", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tagName, "TextArea", StringComparison.OrdinalIgnoreCase))
+        var component = element.Resolution?.Component;
+        if (component?.LocalName is "input" or "textarea" &&
+            component.Kind is TemplateElementKind.Html or TemplateElementKind.HtmlCustom ||
+            component?.LocalName is "Input" or "TextArea" && component.NamespaceUri == TemplateCatalog.SquareNamespaceUri)
             return lazy ? "change" : "input";
         return "change";
     }
@@ -740,35 +390,20 @@ internal static class SqvAttributeConverter
     private static string GetModelMember(SqxElement element)
     {
         if (IsHtmlCheckableInput(element)) return "checked";
-        var tagName = GetBuiltInLocalName(element.TagName) ?? element.TagName;
-        if (string.Equals(tagName, "CheckBox", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tagName, "Radio", StringComparison.OrdinalIgnoreCase))
-            return "IsChecked";
-        return "Value";
+        return element.Resolution?.Component?.NamespaceUri == TemplateCatalog.SquareNamespaceUri &&
+            element.Resolution.Component.LocalName is "CheckBox" or "Radio" ? "IsChecked" : "Value";
     }
 
     private static bool IsHtmlCheckableInput(SqxElement element)
     {
-        var tag = element.TagName;
-        if (tag != "input" && !(tag.StartsWith("html:", StringComparison.OrdinalIgnoreCase) &&
-                                  tag.Substring(5).Equals("input", StringComparison.OrdinalIgnoreCase))) return false;
+        if (element.Resolution?.Component?.Kind is not (TemplateElementKind.Html or TemplateElementKind.HtmlCustom) ||
+            element.Resolution.Component.LocalName != "input") return false;
         var type = element.Attributes.FirstOrDefault(attribute =>
             attribute.Name.Equals("type", StringComparison.OrdinalIgnoreCase))?.RawValue;
         return type is not null && (type.Equals("checkbox", StringComparison.OrdinalIgnoreCase) ||
                                     type.Equals("radio", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool IsBuiltInTag(string tagName) => GetBuiltInLocalName(tagName) != null;
-
-    private static string GetBuiltInLocalName(string tagName)
-    {
-        var resolution = TemplateCatalog.BuiltIn.ResolveComponent(
-            tagName,
-            new TemplateResolutionContext(string.Empty, Array.Empty<string>()));
-        return resolution.Status == TemplateElementResolutionStatus.Resolved && resolution.Component.IsBuiltIn
-            ? resolution.Component.LocalName
-            : null;
-    }
 
     private static HashSet<string> GetModifiers(string name)
     {

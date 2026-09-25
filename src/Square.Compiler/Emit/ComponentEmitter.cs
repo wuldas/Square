@@ -17,10 +17,9 @@ namespace Square.Compiler.Emit
         private readonly DirectiveCatalog _catalog;
         private readonly TemplateCatalog _templateCatalog;
         private readonly Compilation _compilation;
-        private readonly Dictionary<string, string> _variableTags = new Dictionary<string, string>();
-        private readonly Dictionary<string, TemplateComponentDescriptor> _resolvedComponents =
+        private readonly Dictionary<string, TemplateComponentDescriptor> _variableComponents =
             new Dictionary<string, TemplateComponentDescriptor>(StringComparer.Ordinal);
-        private readonly IReadOnlyDictionary<string, TemplateElementResolution> _resolutions;
+        private readonly IReadOnlyDictionary<int, TemplateElementResolution> _resolutions;
         private readonly List<TemplateGeneratedSourceMapping> _sourceMappings = new List<TemplateGeneratedSourceMapping>();
         private DirectiveEmitPipeline _pipeline;
         private int _vforIndex;
@@ -30,7 +29,6 @@ namespace Square.Compiler.Emit
         private bool _hasObjectBindings;
         /// <summary>当前发射位置是否处于 HTML pre/textarea 祖先内；只有这里保留纯空白文本。</summary>
         private bool _preserveWhitespace;
-        private bool? _htmlTextRunAvailable;
 
         public ComponentEmitter(
             SqxDocument doc,
@@ -39,7 +37,7 @@ namespace Square.Compiler.Emit
             Compilation compilation,
             TemplateCatalog templateCatalog,
             TemplateResolutionContext resolutionContext,
-            IReadOnlyDictionary<string, TemplateElementResolution> resolutions)
+            IReadOnlyDictionary<int, TemplateElementResolution> resolutions)
             : this(TemplateDocument.From(doc), namespaceName, catalog, compilation, templateCatalog, resolutionContext, resolutions)
         {
         }
@@ -51,7 +49,7 @@ namespace Square.Compiler.Emit
             Compilation compilation,
             TemplateCatalog templateCatalog,
             TemplateResolutionContext resolutionContext,
-            IReadOnlyDictionary<string, TemplateElementResolution> resolutions)
+            IReadOnlyDictionary<int, TemplateElementResolution> resolutions)
         {
             _doc = doc ?? throw new ArgumentNullException(nameof(doc));
             _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
@@ -133,11 +131,10 @@ namespace Square.Compiler.Emit
             _slotCounter = 0;
             _hasObjectBindings = false;
             _preserveWhitespace = false;
-            _htmlTextRunAvailable = null;
             _vforIndex = 0;
             _vifIndex = 0;
             _refs.Clear();
-            _variableTags.Clear();
+            _variableComponents.Clear();
             _sourceMappings.Clear();
             _sb.Clear();
             _pipeline = new DirectiveEmitPipeline(
@@ -160,7 +157,7 @@ namespace Square.Compiler.Emit
                     if (refAttr != null && !string.IsNullOrWhiteSpace(refAttr.RawValue) &&
                         !_refs.Exists(item => item.Name == refAttr.RawValue))
                     {
-                        _refs.Add(new RefInfo(refAttr.RawValue, MapTagName(element.TagName)));
+                        _refs.Add(new RefInfo(refAttr.RawValue, MapTagName(ResolveDescriptor(element))));
                     }
                     CollectRefs(element.Children);
                 }
@@ -195,12 +192,15 @@ namespace Square.Compiler.Emit
                     // 纯缩进空白只保留在 pre/textarea 祖先内；其余纯空白忽略。
                     if (!_preserveWhitespace && string.IsNullOrWhiteSpace(text.Text)) continue;
                     var textName = EmitText(text.Text, indent, htmlContext);
-                    _sb.AppendLine(indent + parentName + ".Children.Add(" + textName + ");");
+                    _sb.AppendLine(indent + parentName +
+                        (htmlContext ? ".ChildNodes.Add(" : ".Children.Add(") + textName + ");");
                 }
                 else if (node is SqxExpression expression)
                 {
-                    var textName = EmitExpressionText(expression.Expression, indent, localNames, IsHtmlParent(parentName));
-                    _sb.AppendLine(indent + parentName + ".Children.Add(" + textName + ");");
+                    var htmlContext = IsHtmlParent(parentName);
+                    var textName = EmitExpressionText(expression.Expression, indent, localNames, parentName, htmlContext);
+                    _sb.AppendLine(indent + parentName +
+                        (htmlContext ? ".ChildNodes.Add(" : ".Children.Add(") + textName + ");");
                 }
                 else if (node is SqxElement element)
                 {
@@ -211,8 +211,10 @@ namespace Square.Compiler.Emit
                     }
 
                     // Catalog-driven structural directives (Show/For/Switch/Slot/Router/…)。
-                    // 精确小写的 HTML 标签（如 <slot>）优先按目录元素发射，不进指令管线。
-                    if (!_templateCatalog.IsExactHtmlTag(element.TagName) && _catalog.IsDirective(element.TagName))
+                    // Resolved HTML/SVG elements never enter Square's directive pipeline.
+                    if (element.Resolution?.Component?.IsHtmlHost != true &&
+                        element.Resolution?.Component?.Kind != TemplateElementKind.Svg &&
+                        _catalog.IsDirective(element.TagName))
                     {
                         _pipeline.TryEmit(element, indent, parentName, localNames);
                         continue;
@@ -220,7 +222,7 @@ namespace Square.Compiler.Emit
 
                     var elementName = EmitControl(element, indent, localNames, parentName);
                     _sb.AppendLine(indent + parentName + ".Children.Add(" + elementName + ");");
-                    if (RequiresBuildAfterAttach(element.TagName))
+                    if (ResolveDescriptor(element).RequiresBuildAfterAttach)
                         _sb.AppendLine(indent + elementName + ".BuildElementTree();");
                 }
                 else if (node is TemplateForDirective forDirective)
@@ -239,13 +241,11 @@ namespace Square.Compiler.Emit
             var refAttr = FindAttr(element, "ref");
             var isRef = refAttr != null && !string.IsNullOrWhiteSpace(refAttr.RawValue);
             var variableName = isRef ? refAttr.RawValue : NextVariable();
-            var descriptor = ResolveDescriptor(element.TagName);
-            // HTML 描述符共享 HtmlElement：规范化小写标签通过构造参数传入，而不是无参 new。
-            var tagName = descriptor.Kind == TemplateElementKind.Html
-                ? "global::" + descriptor.TypeName + "(\"" + Escape(descriptor.TagName) + "\")"
-                : "global::" + descriptor.TypeName + "()";
+            var descriptor = ResolveDescriptor(element);
+            // 113 个 HTML 标签各映射唯一具体类型，与 Square 控件一样无参构造。
+            var tagName = "global::" + descriptor.TypeName + "()";
             var usesSlots = descriptor.IsSlotHost;
-            _variableTags[variableName] = element.TagName;
+            _variableComponents[variableName] = descriptor;
 
             if (isRef)
                 _sb.AppendLine(indent + variableName + " = new " + tagName + ";");
@@ -259,6 +259,19 @@ namespace Square.Compiler.Emit
                 ", \"" + Escape(string.IsNullOrEmpty(element.OriginalTagName) ? element.TagName : element.OriginalTagName) +
                 "\", \"" + Escape(_doc.Name) + "\", sourcePath: \"" +
                 Escape(_doc.SourcePath) + "\"));");
+            if (descriptor.Kind == TemplateElementKind.Extension)
+                _sb.AppendLine(indent + variableName + ".MarkTemplateExport(\"" + Escape(descriptor.NamespaceUri) +
+                    "\", \"" + Escape(descriptor.LocalName) + "\");");
+            var customDefinition = descriptor.CustomElementName != null
+                ? descriptor : _templateCatalog.FindCustomDefinitionFor(descriptor);
+            if (customDefinition != null)
+            {
+                var observed = string.Join(", ", customDefinition.ObservedAttributes.Select(name => "\"" + Escape(name) + "\""));
+                _sb.AppendLine(indent + "global::Square.Html.HtmlCustomElementRegistry.InitializeGenerated(" +
+                    variableName + ", \"" + Escape(customDefinition.CustomElementName) + "\", " +
+                    (customDefinition.CustomExtendsTag == null ? "null" : "\"" + Escape(customDefinition.CustomExtendsTag) + "\"") +
+                    ", new string[] { " + observed + " });");
+            }
 
             // Initialize properties before events, then let v-model write back before user handlers.
             // Property hooks may emit events, so model listeners must not exist during initialization.
@@ -277,7 +290,7 @@ namespace Square.Compiler.Emit
             {
                 var parentPreserveWhitespace = _preserveWhitespace;
                 _preserveWhitespace = parentPreserveWhitespace ||
-                    (descriptor.Kind == TemplateElementKind.Html && IsPreformattedTag(descriptor.TagName));
+                    (descriptor.IsHtmlHost && IsPreformattedTag(descriptor.TagName));
                 if (!EmitTextContent(element, variableName, indent, localNames))
                     EmitNodes(element.Children, indent, variableName, localNames);
                 _preserveWhitespace = parentPreserveWhitespace;
@@ -293,8 +306,8 @@ namespace Square.Compiler.Emit
 
         private void EmitAttribute(string variableName, SqxAttribute attribute, string indent, IReadOnlyList<string> localNames)
         {
-            if (attribute.Name == "ref" || attribute.Name == "slot") return;
             var isHtml = IsHtmlVariable(variableName);
+            if (attribute.Name == "ref" || attribute.Name == "slot" && !isHtml) return;
 
             if (attribute.IsDynamicProperty)
             {
@@ -350,9 +363,9 @@ namespace Square.Compiler.Emit
                     var componentEvent = FindComponentEvent(variableName, eventName);
                     var eventArgument = componentEvent == null
                         ? "\"" + eventName + "\""
-                        : MapTagName(_variableTags[variableName]) + "." + componentEvent.MemberName;
+                        : MapTagName(_variableComponents[variableName]) + "." + componentEvent.MemberName;
                     var handlerExpression = attribute.IsModelEvent
-                        ? BuildModelWriteBack(attribute, _variableTags[variableName])
+                        ? BuildModelWriteBack(attribute, _variableComponents[variableName])
                         : attribute.RawValue;
                     var start = MappingStart();
                     EmitSourceMappedLine(indent, attribute.Line,
@@ -365,7 +378,7 @@ namespace Square.Compiler.Emit
                     // HTML 动态属性绑定小写 attribute 名；Square 控件继续走别名映射。
                     var propertyName = isHtml
                         ? attribute.Name.ToLowerInvariant()
-                        : MapPropName(_variableTags[variableName], attribute.Name);
+                        : MapPropName(_variableComponents[variableName], attribute.Name);
                     var start = MappingStart();
                     if (IsLocalExpression(attribute.RawValue, localNames))
                         EmitSourceMappedLine(indent, attribute.Line,
@@ -378,14 +391,14 @@ namespace Square.Compiler.Emit
                 return;
             }
 
-            var propName = MapPropName(_variableTags.TryGetValue(variableName, out var elementTag) ? elementTag : string.Empty, attribute.Name);
+            var propName = MapPropName(_variableComponents.TryGetValue(variableName, out var elementType) ? elementType : null, attribute.Name);
             var rawValue = attribute.RawValue ?? "";
             if (isHtml && !attribute.Name.Equals("id", StringComparison.OrdinalIgnoreCase))
             {
                 // HTML 静态属性直接落 attribute：不做 bool/int 强转；布尔属性写 "false" 表示缺席；
                 // 空值/裸写保留为空字符串 attribute（存在即真）。id 继续走既有 Id 属性通道。
                 var attributeName = attribute.Name.ToLowerInvariant();
-                if (Square.UI.Html.HtmlTagCatalog.BooleanAttributes.Contains(attributeName) &&
+                if (Square.Html.HtmlTagCatalog.BooleanAttributes.Contains(attributeName) &&
                     rawValue.Equals("false", StringComparison.OrdinalIgnoreCase))
                     return;
                 _sb.AppendLine(indent + variableName + ".SetAttribute(\"" + Escape(attributeName) + "\", \"" + Escape(rawValue) + "\");");
@@ -403,7 +416,7 @@ namespace Square.Compiler.Emit
 
         private bool EmitTextContent(SqxElement element, string variableName, string indent, IReadOnlyList<string> localNames)
         {
-            if (!ResolveDescriptor(element.TagName).IsTextContentElement) return false;
+            if (!ResolveDescriptor(element).IsTextContentElement) return false;
             if (FindAttr(element, "text") != null) return true;
 
             var content = element.Children.Where(node => !IsWrapperExpression(node)).ToList();
@@ -591,7 +604,9 @@ namespace Square.Compiler.Emit
         {
             if (node is SqxElement element)
             {
-                if (_templateCatalog.IsExactHtmlTag(element.TagName) || !_catalog.IsDirective(element.TagName))
+                if (element.Resolution?.Component?.IsHtmlHost == true ||
+                    element.Resolution?.Component?.Kind == TemplateElementKind.Svg ||
+                    !_catalog.IsDirective(element.TagName))
                     return EmitControl(element, indent, localNames);
                 var wrapper = NextVariable();
                 _sb.AppendLine(indent + "var " + wrapper + " = new global::Square.Controls.View();");
@@ -601,7 +616,7 @@ namespace Square.Compiler.Emit
             if (node is SqxText text)
                 return EmitText(text.Text, indent);
             if (node is SqxExpression expression)
-                return EmitExpressionText(expression.Expression, indent, localNames);
+                return EmitExpressionText(expression.Expression, indent, localNames, null!, htmlContext: false);
 
             // Vue 专属指令作为工厂根：用 View 包装，使其可作为 Element 返回。
             if (node is TemplateForDirective or TemplateIfChainDirective)
@@ -620,17 +635,26 @@ namespace Square.Compiler.Emit
         private string EmitText(string value, string indent, bool htmlContext = false)
         {
             var variableName = NextVariable();
-            // HTML 父节点下使用 HtmlTextRun（可用时）并保留原文空白；Square 父节点维持原有 Trim 行为。
-            var textTypeName = htmlContext && HasHtmlTextRun ? "global::Square.UI.Html.HtmlTextRun" : "global::Square.Controls.Text";
+            // HTML 父节点下混合文本是真正的 DOM Text 节点（保留原文空白）；Square 父节点维持 Trim 后的控件文本。
+            var textTypeName = htmlContext ? "global::Square.UI.Text" : "global::Square.Controls.Text";
             _sb.AppendLine(indent + "var " + variableName + " = new " + textTypeName + "(\"" + Escape(htmlContext ? value : NormalizeText(value)) + "\");");
             return variableName;
         }
 
-        private string EmitExpressionText(string expression, string indent, IReadOnlyList<string> localNames, bool htmlContext = false)
+        private string EmitExpressionText(string expression, string indent, IReadOnlyList<string> localNames, string parentName, bool htmlContext)
         {
             var variableName = NextVariable();
-            var textTypeName = htmlContext && HasHtmlTextRun ? "global::Square.UI.Html.HtmlTextRun" : "global::Square.Controls.Text";
-            _sb.AppendLine(indent + "var " + variableName + " = new " + textTypeName + "();");
+            if (htmlContext)
+            {
+                // 已解析 HTML 父节点下动态文本是 DOM Text：静态局部表达式一次赋值，其余经 HtmlTextBinding 订阅。
+                _sb.AppendLine(indent + "var " + variableName + " = new global::Square.UI.Text();");
+                if (IsLocalExpression(expression, localNames))
+                    _sb.AppendLine(indent + variableName + ".Data = $\"{(" + expression + ")}\";");
+                else
+                    _sb.AppendLine(indent + "global::Square.Html.HtmlTextBinding.Bind(" + parentName + ", " + variableName + ", " + expression + ");");
+                return variableName;
+            }
+            _sb.AppendLine(indent + "var " + variableName + " = new global::Square.Controls.Text();");
             if (IsLocalExpression(expression, localNames))
                 _sb.AppendLine(indent + variableName + ".SetProperty(\"TextContent\", $\"{(" + expression + ")}\");");
             else
@@ -776,7 +800,6 @@ namespace Square.Compiler.Emit
 
         private static bool IsLocalExpression(string expression, IReadOnlyList<string> localNames)
         {
-            if (localNames.Count == 0 || string.IsNullOrWhiteSpace(expression)) return false;
             var value = expression.Trim();
             foreach (var localName in localNames)
                 if (value == localName || value.StartsWith(localName + ".", StringComparison.Ordinal) ||
@@ -791,13 +814,10 @@ namespace Square.Compiler.Emit
             return value.EndsWith("=>", StringComparison.Ordinal) || value == "}";
         }
 
-        private static bool IsTemplateFragment(SqxElement element)
-        {
-            // 带前缀的名字（html:template 及任何 html:<tag>）都是普通目录元素，不是片段包装。
-            if (element.TagName.IndexOf(':') >= 0) return false;
-            return string.Equals(element.TagName, "Fragment", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(element.TagName, "template", StringComparison.OrdinalIgnoreCase);
-        }
+        private static bool IsTemplateFragment(SqxElement element) =>
+            element.IsSlotTemplateWrapper ||
+            element.Resolution?.Component?.NamespaceUri == TemplateCatalog.SquareNamespaceUri &&
+            element.Resolution.Component.LocalName == "Fragment";
 
         private static SqxAttribute FindAttr(SqxElement element, string name) =>
             element.Attributes.FirstOrDefault(attribute => string.Equals(attribute.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -951,16 +971,16 @@ namespace Square.Compiler.Emit
         }
 
         /// <summary>用解析出的组件类型重建 v-model 写回表达式（cast 只能在 descriptor 解析后进行）。</summary>
-        private string BuildModelWriteBack(SqxAttribute attribute, string tagName)
+        private static string BuildModelWriteBack(SqxAttribute attribute, TemplateComponentDescriptor descriptor)
         {
             var member = string.IsNullOrWhiteSpace(attribute.ModelMemberName) ? "Value" : attribute.ModelMemberName;
-            // HTML 宿主没有同名 CLR 成员；写回值来自同步后的 attribute（value/checked/...）。
-            var isHtml = ResolveDescriptor(tagName).Kind == TemplateElementKind.Html;
+            var isHtml = descriptor.IsHtmlHost;
+            var typeName = MapTagName(descriptor);
             var expression = isHtml && member.Equals("checked", StringComparison.OrdinalIgnoreCase)
-                ? "((" + MapTagName(tagName) + ")e.Target!).HasAttribute(\"checked\")"
+                ? "((" + typeName + ")e.Target!).HasAttribute(\"checked\")"
                 : isHtml
-                    ? "((" + MapTagName(tagName) + ")e.Target!).GetAttribute(\"" + Escape(member.ToLowerInvariant()) + "\")"
-                    : "((" + MapTagName(tagName) + ")e.Target!)." + member;
+                    ? "((" + typeName + ")e.Target!).GetAttribute(\"" + Escape(member.ToLowerInvariant()) + "\")"
+                    : "((" + typeName + ")e.Target!)." + member;
             foreach (var modifier in attribute.ModelModifiers ?? Array.Empty<string>())
             {
                 if (string.Equals(modifier, "trim", StringComparison.OrdinalIgnoreCase)) expression += ".Trim()";
@@ -970,12 +990,11 @@ namespace Square.Compiler.Emit
             return "e => " + attribute.RawValue + ".Value = " + expression;
         }
 
-        private string MapTagName(string tag) => "global::" + ResolveDescriptor(tag).TypeName;
+        private static string MapTagName(TemplateComponentDescriptor component) => "global::" + component.TypeName;
 
         private TemplateComponentEventDescriptor FindComponentEvent(string variableName, string eventName)
         {
-            if (!_variableTags.TryGetValue(variableName, out var tagName)) return null;
-            var descriptor = ResolveDescriptor(tagName);
+            if (!_variableComponents.TryGetValue(variableName, out var descriptor)) return null;
             var events = _templateCatalog.GetEvents(descriptor);
 
             var alias = NormalizeEventAlias(eventName);
@@ -989,33 +1008,27 @@ namespace Square.Compiler.Emit
                 .Select(char.ToLowerInvariant)
                 .ToArray());
 
-        private TemplateComponentDescriptor ResolveDescriptor(string tag)
+        private TemplateComponentDescriptor ResolveDescriptor(SqxElement element)
         {
-            if (_resolvedComponents.TryGetValue(tag, out var cached)) return cached;
-            if (!_resolutions.TryGetValue(tag, out var resolution) ||
-                resolution.Status != TemplateElementResolutionStatus.Resolved || resolution.Component == null)
+            var resolution = element.Resolution;
+            if (resolution == null) _resolutions.TryGetValue(element.TagNamePosition, out resolution);
+            if (resolution?.Status != TemplateElementResolutionStatus.Resolved || resolution.Component == null)
                 throw new InvalidOperationException(
-                    "Element '" + tag + "' was not resolved before emission in namespace '" + _namespace + "'.");
-            _resolvedComponents[tag] = resolution.Component;
+                    "Element '" + element.TagName + "' was not resolved at source offset " + element.TagNamePosition + ".");
             return resolution.Component;
         }
 
         /// <summary>变量对应的元素是否为 HTML 目录元素（属性按小写 attribute 处理）。</summary>
         private bool IsHtmlVariable(string variableName) =>
-            _variableTags.TryGetValue(variableName, out var tag) &&
-            ResolveDescriptor(tag).Kind == TemplateElementKind.Html;
+            _variableComponents.TryGetValue(variableName, out var component) &&
+            component.IsHtmlHost;
 
-        /// <summary>parentName 变量是否为 HTML 元素：决定文本用 HtmlTextRun 并保留空白。</summary>
+        /// <summary>parentName 变量是否为 HTML 元素：决定混合文本发射为 DOM Text 并保留空白。</summary>
         private bool IsHtmlParent(string parentName) =>
             !string.IsNullOrEmpty(parentName) && IsHtmlVariable(parentName);
 
-        /// <summary>编译引用中是否存在 Square.UI.Html.HtmlTextRun；不存在时退回 Square.Controls.Text。</summary>
-        private bool HasHtmlTextRun =>
-            _htmlTextRunAvailable ??= _compilation?.GetTypeByMetadataName("Square.UI.Html.HtmlTextRun") != null;
-
         private static bool IsPreformattedTag(string tag) => tag == "pre" || tag == "textarea";
 
-        private bool RequiresBuildAfterAttach(string tag) => ResolveDescriptor(tag).RequiresBuildAfterAttach;
 
         private static string EscapeInterpolatedText(string value)
         {
@@ -1036,15 +1049,11 @@ namespace Square.Compiler.Emit
             return builder.ToString();
         }
 
-        private string MapPropName(string tagName, string name)
+        private string MapPropName(TemplateComponentDescriptor component, string name)
         {
-            if (!string.IsNullOrWhiteSpace(tagName) &&
-                _resolutions.TryGetValue(tagName, out var resolution) &&
-                resolution.Status == TemplateElementResolutionStatus.Resolved &&
-                resolution.Component != null &&
-                !resolution.Component.IsBuiltIn)
+            if (component != null && !component.IsBuiltIn)
             {
-                var prop = _templateCatalog.GetProps(resolution.Component)
+                var prop = _templateCatalog.GetProps(component)
                     .FirstOrDefault(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
                 if (prop != null) return prop.Name;
             }

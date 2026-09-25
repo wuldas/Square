@@ -131,7 +131,7 @@ public partial class UserCard
 
 `Canvas.RequestFrame()` 请求宿主在下一次平台 Tick 渲染新帧。请求通过 Element Tree 冒泡并合并，同一 Tick 内的多个请求只需触发一次窗口渲染。它用于 Canvas 时钟、游戏循环和后续动画系统；该方法只请求下一帧，不会自动形成持续循环。持续绘制应在每帧完成后再次调用 `RequestFrame()`。
 
-命名：PascalCase 控件类型（C# 习惯），`.sqx` 内标签同名。
+命名：PascalCase 控件类型（C# 习惯），`.sqx` 内标签同名。这些内置控件属于 `urn:square:ui` 命名空间；模板默认 URI 由根 `xmlns` 或项目属性 `SquareDefaultElementNamespace`（默认 XHTML）决定，使用 UI 控件的模板项目应将该属性设为 `urn:square:ui`，否则无前缀 `<button>`（ASCII 大小写不敏感）会解析为 `Square.Html.HTMLButtonElement`。独有名称（如 `<View>`、`<Show>`）在候选唯一时无需前缀。
 
 SVG 标签使用与浏览器一致的小写名称。模板编译器将它们直接映射到 `Square.UI.Svg` 下的 `SVGSVGElement`、`SVGGElement`、`SVGPathElement` 等类型。SVG 子树不是自定义组件，不使用 Slot，也不调用运行时模板解析。
 
@@ -179,22 +179,18 @@ SVG 标签使用与浏览器一致的小写名称。模板编译器将它们直�
 引用程序集可显式导出组件：
 
 ```csharp
-[assembly: ElementExport("urn:acme:charts", "acme", "chart", typeof(Acme.Chart))]
+[assembly: ElementExport("urn:acme:charts", "chart", typeof(Acme.Chart))]
 ```
 
-消费者引用该包后可写 `<chart />`（候选唯一时）或 `<acme:chart />`，无需模板 `xmlns`、脚本 `using` 或启动注册。应用程序集可用以下属性处理冲突：
+消费者引用该包后可写 `<chart />`（同名唯一候选或默认命名空间命中时），或在模板根声明 `xmlns:acme="urn:acme:charts"` 后写 `<acme:chart />`。无需脚本 `using` 或启动注册；`ElementNamespaceOrderAttribute`/`ElementNamespaceAliasAttribute` 与程序集隐式前缀注入已删除，同名冲突由默认 URI 或显式前缀消解。
 
-```csharp
-[assembly: ElementNamespaceOrder("urn:acme:charts", "urn:square:local")]
-[assembly: ElementNamespaceAlias("urn:acme:charts", "charts")]
-```
-
-- `ui:`、`svg:`、`html:` 和 `local:` 是保留前缀；当前 `html:` 元素集为空。
-- `prefix:localName` 只查绑定的 URI，不回退到短名称。
-- `global::Namespace.Type` 和带 `.` 的完整 CLR 名是大小写敏感的精确路径。
-- 未导出类型仍可通过当前 CLR 命名空间、脚本 `using` 或完整 CLR 名使用；真正未知或歧义的名称会产生 `SQXE001`–`SQXE004`。
+- 无前缀名称先查模板默认 URI（根 `xmlns` → 项目属性 `SquareDefaultElementNamespace` → XHTML），未命中时接受全部空间中的唯一候选；零候选报 `SQXE003`，多候选报 `SQXE004`，默认空间内重复导出报 `SQXE005`。重新声明默认/前缀 `xmlns`、绑定错误 URI 或使用未声明前缀报 `SQXE001`/`SQXE002`。
+- `ui:`、`svg:`、`html:` 是保留含义的可声明前缀（分别绑定 `urn:square:ui`、`http://www.w3.org/2000/svg`、`http://www.w3.org/1999/xhtml`），不得重绑定到第三方 URI；`html:` 现在包含 113 个 `Square.Html` 内建元素。不存在 `local:` 捷径。
+- `prefix:localName` 只查绑定的 URI，不回退到短名称；第三方局部名严格 ordinal 匹配。
+- `global::Namespace.Type` 是大小写敏感的精确 CLR 路径；不接受省略 `global::` 的带点全名。
+- 未导出类型仍可通过当前 CLR 命名空间、脚本 `using` 下的唯一短名称，或 `global::Namespace.Type` 选择。
 - 事件属性（`onInput` 等）只校验组件显式声明的 `ComponentEvent` 契约；标准事件（`click`、`input`、`change`、`scroll`、`focus` 等）在任意组件上均可用，组件通过 `DispatchEvent(StandardEvents.CreateXxx())` 派发即可。
-- 自动发现只影响模板编译；`UIDocument.CreateElement(string)` 仍要求显式运行时注册。
+- 自动发现只影响模板编译。运行时经 `ElementRegistry.Register(namespaceUri, localName, factory)` 显式注册工厂；`UIDocument.CreateElement(localName)` 按文档默认 URI 解析，包组件用 `CreateComponentElement(namespaceUri, localName)`。HTML 自定义元素与安全静态表示见 [HTML-Element-Types-and-Namespaces.md](HTML-Element-Types-and-Namespaces.md)。
 
 ### 2.4 结构原语（编译期处理，非运行时组件）
 

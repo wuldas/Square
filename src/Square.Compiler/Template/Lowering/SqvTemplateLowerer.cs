@@ -2,7 +2,7 @@ using Square.Compiler.Parser;
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Syntax;
 using Square.Compiler.Template.Ir;
-using Square.UI.Html;
+using Square.Html;
 
 namespace Square.Compiler.Template.Lowering;
 
@@ -30,6 +30,12 @@ internal static class SqvTemplateLowerer
                 loopElement.Attributes.FirstOrDefault(attribute => attribute.Name == "v-for") is { } loopAttribute &&
                 TryParseLoop(loopAttribute.Value, out var source, out var item, out var loopIndex))
             {
+                var duplicateKey = loopElement.Attributes
+                    .Where(attribute => attribute.Name is ":key" or "v-bind:key")
+                    .Skip(1).FirstOrDefault();
+                if (duplicateKey != null)
+                    throw new SqxParseException("Duplicate key binding on <" + loopElement.TagName + ">",
+                        duplicateKey.NameRange.Offset, "SQV0005", duplicateKey.NameRange.Length);
                 var key = loopElement.Attributes.FirstOrDefault(attribute =>
                     attribute.Name is ":key" or "v-bind:key")?.Value;
                 result.Add(new TemplateIrFor(
@@ -63,6 +69,18 @@ internal static class SqvTemplateLowerer
                 index = cursor - 1;
                 result.Add(new TemplateIrIfChain(branches.ToArray(), chainStart));
                 continue;
+            }
+            if (nodes[index] is SqvElementSyntax unmatched)
+            {
+                var orphanedBranch = FindConditional(unmatched);
+                if (orphanedBranch?.Name is "v-else-if" or "v-else")
+                    throw new SqxParseException("Vue branch requires a preceding v-if.",
+                        orphanedBranch.NameRange.Offset, "SQV0004", orphanedBranch.NameRange.Length);
+                var orphanedKey = unmatched.Attributes.FirstOrDefault(attribute =>
+                    attribute.Name is ":key" or "v-bind:key");
+                if (orphanedKey != null)
+                    throw new SqxParseException("Vue key bindings require v-for.",
+                        orphanedKey.NameRange.Offset, "SQV0002", orphanedKey.NameRange.Length);
             }
             var lowered = LowerNode(nodes[index], htmlContext, preserveAll);
             if (lowered != null) result.Add(lowered);
@@ -123,7 +141,7 @@ internal static class SqvTemplateLowerer
         bool htmlContext,
         bool preserveAll)
     {
-        var converted = new SqxElement { TagName = element.TagName };
+        var converted = new SqxElement { TagName = element.TagName, Resolution = element.Resolution };
         foreach (var attribute in element.Attributes)
         {
             if (excludedAttributes != null && excludedAttributes.Contains(attribute.Name)) continue;
@@ -150,19 +168,22 @@ internal static class SqvTemplateLowerer
         var origins = element.Attributes.ToDictionary(
             attribute => attribute.NameRange.Offset,
             attribute => attribute.FullRange);
-        return new TemplateIrElement(
-            ResolveTagName(element.TagName),
+        var lowered = new TemplateIrElement(
+            element.Resolution?.Component?.TagName ?? element.TagName,
             converted.Attributes.Select(attribute => LowerAttribute(
                 attribute,
                 origins.TryGetValue(attribute.Position, out var origin) ? origin : element.Origin)).ToArray(),
             LowerNodes(
                 element.Children,
-                htmlContext || IsHtmlElement(element.TagName),
-                preserveAll || IsSpacePreservingHtmlElement(element.TagName)),
+                htmlContext || TemplateTagResolver.IsHtml(element.Resolution),
+                preserveAll || TemplateTagResolver.IsHtml(element.Resolution) &&
+                    element.Resolution.Component.LocalName is "pre" or "textarea"),
             element.Origin,
             element.TagNameRange,
             element.CloseTagNameRange,
             element.TagName);
+        lowered.Resolution = element.Resolution;
+        return lowered;
     }
 
     private static TemplateIrAttribute LowerAttribute(SqxAttribute attribute, Square.Compiler.LanguageServices.SquareSourceRange origin)
@@ -199,46 +220,6 @@ internal static class SqvTemplateLowerer
             modelModifiers: attribute.ModelModifiers);
     }
 
-    /// <summary>
-    /// HTML 标签身份解析：html: 前缀（大小写不敏感）与精确小写 HTML 目录名保留 HTML 规范名，
-    /// 不经大小写不敏感的 Square 内建归一化；其余标签维持既有解析。
-    /// </summary>
-    private static string ResolveTagName(string tagName)
-    {
-        if (!string.IsNullOrEmpty(tagName))
-        {
-            if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            {
-                var local = tagName.Substring("html:".Length).ToLowerInvariant();
-                if (HtmlTagCatalog.IsTag(local)) return local;
-            }
-            else if (HtmlTagCatalog.IsTag(tagName))
-            {
-                return tagName;
-            }
-        }
-        return TemplateCatalog.BuiltIn.TryGetBuiltInComponent(tagName, out var descriptor)
-            ? descriptor.TagName
-            : tagName;
-    }
-
-    /// <summary>精确小写命中 HTML 目录或带 html: 前缀即 HTML 元素；不带前缀的 template 是既有片段包装，不算 HTML。</summary>
-    private static bool IsHtmlElement(string tagName)
-    {
-        if (string.IsNullOrEmpty(tagName)) return false;
-        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            return HtmlTagCatalog.IsTag(tagName.Substring("html:".Length).ToLowerInvariant());
-        if (tagName.Equals("template", StringComparison.Ordinal)) return false;
-        return HtmlTagCatalog.IsTag(tagName);
-    }
-
-    /// <summary>HTML 上下文中 pre/textarea 保留换行与缩进。</summary>
-    private static bool IsSpacePreservingHtmlElement(string tagName)
-    {
-        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            tagName = tagName.Substring("html:".Length).ToLowerInvariant();
-        return tagName is "pre" or "textarea";
-    }
 
     private static SqvAttributeSyntax FindConditional(SqvElementSyntax element) =>
         element.Attributes.FirstOrDefault(attribute => ConditionalAttributes.Contains(attribute.Name));

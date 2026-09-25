@@ -793,11 +793,11 @@ public sealed class CssEngine
         if (selector.AttributeOperator == AttributeSelectorOperator.Invalid || selector.Name.Length == 0)
             return false;
         if (selector.AttributeOperator == AttributeSelectorOperator.Presence)
-            return Element is Square.UI.Html.HtmlElement htmlPresence
+            return Element is Square.Html.HTMLElement htmlPresence
                 ? htmlPresence.HasAttribute(selector.Name)
                 : Element.Properties.HasValue(selector.Name);
 
-        var actualValue = Element is Square.UI.Html.HtmlElement html
+        var actualValue = Element is Square.Html.HTMLElement html
             ? html.GetAttribute(selector.Name)
             : Convert.ToString(Element.GetProperty<object>(selector.Name), CultureInfo.InvariantCulture);
         var expected = selector.AttributeValue;
@@ -974,17 +974,30 @@ public sealed class CssEngine
 
     private static CssGeneratedPseudoElement EnsurePseudoElement(Element owner, string name)
     {
-        var existing = owner.Children.OfType<CssGeneratedPseudoElement>()
-            .FirstOrDefault(child => child.PseudoElementName == name);
+        var existing = FindGenerated(owner, name);
         if (existing != null) return existing;
 
         var generated = new CssGeneratedPseudoElement(name);
         using (Element.SuppressInvalidation())
         {
-            if (name is "before" or "marker") owner.Children.Insert(0, generated);
+            // HTML hosts keep the list marker out of the semantic tree: it becomes a visual
+            // sidecar of the host instead of a ChildNodes member. Square controls keep the
+            // existing child-based pseudo path unchanged.
+            if (name == "marker" && owner is Square.Html.HTMLElement host)
+                host.AttachListMarker(generated);
+            else if (name is "before" or "marker") owner.Children.Insert(0, generated);
             else owner.Children.Add(generated);
         }
         return generated;
+    }
+
+    /// <summary>Finds an existing generated pseudo element; HTML markers live in the host's sidecars.</summary>
+    private static CssGeneratedPseudoElement? FindGenerated(Element owner, string name)
+    {
+        foreach (var child in owner.Children)
+            if (child is CssGeneratedPseudoElement generated && generated.PseudoElementName == name)
+                return generated;
+        return name == "marker" && owner is Square.Html.HTMLElement host ? host.FindListMarker() : null;
     }
 
     internal static IReadOnlyCollection<Element> FinalizePseudoElements(Element root) =>
