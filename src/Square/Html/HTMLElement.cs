@@ -615,6 +615,7 @@ public abstract partial class HTMLElement : Square.UI.Element, IFocusableElement
             }
         }
         SyncProxyAppearance();
+        SyncProxyTypography();
     }
 
     /// <summary>

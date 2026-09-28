@@ -23,6 +23,7 @@ public static class HtmlExporter
         .square-root{min-width:0;}
         .square-root img,.square-root svg{max-width:100%;}
         button,input,select,textarea{appearance:auto;}
+        :where(.sq-default-button):active:not(:disabled){background-color:#dedede;}
         [data-square-unsupported="true"]{padding:.75rem;border:1px dashed #b42318;color:#b42318;background:#fff5f5;font-family:system-ui,sans-serif;}
         """;
 
@@ -858,6 +859,13 @@ public static class HtmlExporter
 
         var classes = node.Classes.ToList();
         if (isRoot) classes.Add("square-root");
+        // Only unstyled native buttons receive Square's visible pressed-face baseline; authored
+        // backgrounds and appearance:none keep full control of their active appearance.
+        if ((element is Button { IsEnabled: true } or HTMLElement { TagName: "button", IsDisabled: false }) &&
+            HasAutoAppearance(node.Style) &&
+            !element.Style.IsAuthorSpecified("background") &&
+            !element.Style.IsAuthorSpecified("background-color"))
+            classes.Add("sq-default-button");
 
         var styles = CompactStyles(MergeStyles(node, hostChoiceInput));
         if (styles.Count > 0 && context.Options.UseInlineStyles)
@@ -869,8 +877,10 @@ public static class HtmlExporter
         }
         else if (styles.Count > 0 && !context.Options.UseInlineStyles)
         {
-            var generatedClass = context.Styles.AddRule(classes, styles);
-            if (generatedClass != null) classes.Add(generatedClass);
+            // 每个元素的求值样式挂独立的生成签名类；绝不能并入共享 author 类选择器，
+            // 否则共享类（如 .comparison-card）会带上最后一个节点的声明，在浏览器里
+            // 后置生成的规则会覆盖各变体类（.comparison-blue 等）的真实配色。
+            classes.Add(context.Styles.GetClass(styles));
         }
 
         if (classes.Count > 0)
@@ -901,14 +911,25 @@ public static class HtmlExporter
 
     private static Dictionary<string, string> MergeStyles(NativeUiNode node, bool hostChoiceInput = false)
     {
+        var element = node.SourceElement;
         var styles = new Dictionary<string, string>(node.Style, StringComparer.Ordinal);
         if (hostChoiceInput)
+        {
+            // 选择控件的样式挂在 label 包装上；label 不是原生控件，appearance 无意义。
             styles.Remove("appearance");
-        else if (IsNativeFormWidget(node.SourceElement) &&
-                 styles.TryGetValue("appearance", out var appearance) &&
-                 appearance.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
+        }
+        else if (IsNativeFormWidget(element) && HasAutoAppearance(styles))
+        {
+            // appearance:auto 的表单控件由浏览器 UA 呈现系统外观（包括 3D 边框与 :active 状态）。
+            // Square UA 级默认声明（border/background/font/padding 等）若以 author 级输出，
+            // 会压过浏览器 UA 的 :active 规则并冻结原生外观，因此只输出作者真实声明的属性；
+            // 作者自定义 border/background/font/padding 与 appearance:none 均原样保留。
+            foreach (var property in styles.Keys.ToArray())
+                if (!element.Style.IsAuthorSpecified(property))
+                    styles.Remove(property);
             styles.Remove("appearance");
-        if (node.SourceElement is UIElement ui)
+        }
+        if (element is UIElement ui)
         {
             AddPixels(styles, "width", ui.Width, float.NaN);
             AddPixels(styles, "height", ui.Height, float.NaN);
@@ -928,8 +949,15 @@ public static class HtmlExporter
         return styles;
     }
 
+    /// <summary>Square 控件与 HTML 同名宿主都属于交给浏览器 UA 呈现的表单控件。</summary>
     private static bool IsNativeFormWidget(Element element) =>
-        element is Button or Input or TextArea or Select;
+        element is Button or Input or TextArea or Select ||
+        element is HTMLElement { TagName: "button" or "input" or "textarea" or "select" };
+
+    /// <summary>appearance 缺席与显式 auto 都表示控件沿用浏览器原生外观。</summary>
+    private static bool HasAutoAppearance(IReadOnlyDictionary<string, string> styles) =>
+        !styles.TryGetValue("appearance", out var appearance) ||
+        appearance.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
 
     private static bool TryGetAppearance(NativeUiNode node, out string appearance)
     {
@@ -1069,20 +1097,6 @@ public static class HtmlExporter
         private readonly Dictionary<string, string> _classesBySignature = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IReadOnlyList<KeyValuePair<string, string>>> _rules = new(StringComparer.Ordinal);
 
-        public string? AddRule(IReadOnlyList<string> classes, IReadOnlyList<KeyValuePair<string, string>> styles)
-        {
-            var selector = classes.FirstOrDefault(static name =>
-                !string.Equals(name, "square-root", StringComparison.Ordinal) &&
-                !name.StartsWith("sq-style-", StringComparison.Ordinal));
-            if (selector != null)
-            {
-                MergeRule(SelectorFor(selector), styles);
-                return null;
-            }
-
-            return GetClass(styles);
-        }
-
         public string GetClass(IReadOnlyList<KeyValuePair<string, string>> styles)
         {
             var signature = string.Join("\u001f", styles.Select(static pair => pair.Key + "\u001e" + pair.Value));
@@ -1093,7 +1107,8 @@ public static class HtmlExporter
             var suffix = 1;
             while (_rules.ContainsKey(SelectorFor(className))) className = baseName + "-" + suffix++;
             _classesBySignature[signature] = className;
-            MergeRule(SelectorFor(className), styles);
+            // 仅当完整声明集合一致时才去重到同一个签名类；选择器唯一，直接落规则。
+            _rules[SelectorFor(className)] = styles;
             return className;
         }
 
@@ -1114,21 +1129,8 @@ public static class HtmlExporter
             return css.ToString();
         }
 
-        /// <summary>author 类名只作为 CSS 标识符进入选择器，杜绝选择器注入。</summary>
+        /// <summary>生成类名在 CSS 选择器中统一编码，避免选择器注入。</summary>
         private static string SelectorFor(string className) => "." + EncodeCssIdentifier(className);
-
-        private void MergeRule(string selector, IReadOnlyList<KeyValuePair<string, string>> styles)
-        {
-            if (_rules.TryGetValue(selector, out var existing))
-            {
-                var merged = existing.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
-                foreach (var pair in styles) merged[pair.Key] = pair.Value;
-                _rules[selector] = merged.OrderBy(static pair => pair.Key, StringComparer.Ordinal).ToArray();
-                return;
-            }
-
-            _rules[selector] = styles;
-        }
 
         private static string StableHash(string value)
         {

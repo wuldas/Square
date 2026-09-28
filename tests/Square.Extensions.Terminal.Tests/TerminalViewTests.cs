@@ -4,6 +4,7 @@ using Square.Graphics;
 using Square.Hosting;
 using Square.Platform;
 using Square.Text;
+using Square.UI;
 using System.Numerics;
 using System.Reflection;
 using Xunit;
@@ -155,13 +156,11 @@ public sealed class TerminalViewTests
     {
         TerminalRegistration.RegisterDefaults();
         TerminalRegistration.RegisterDefaults();
-        var window = new AppWindow("terminal-test");
-
-        var createElement = window.Document.GetType().GetMethod("CreateElement", [typeof(string)]);
-        Assert.NotNull(createElement);
-        var element = createElement.Invoke(window.Document, ["TerminalView"]);
+        var document = Assert.IsType<UIDocument>(new AppWindow("terminal-test").Document);
+        var element = document.CreateComponentElement("urn:square:terminal", "TerminalView");
 
         Assert.IsType<TerminalView>(element);
+        Assert.Same(document, element.OwnerDocument);
     }
 
     [Fact]

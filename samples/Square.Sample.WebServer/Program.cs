@@ -34,14 +34,17 @@ app.Run();
 
 static void RunDesktop(string[] args)
 {
-    var width = GetIntOption(args, "--width", 1600);
-    var height = GetIntOption(args, "--height", 900);
-    var window = new AppWindow("PiSquared", width, height)
+    var htmlElements = HasOption(args, "--html-elements");
+    var width = GetIntOption(args, "--width", htmlElements ? 900 : 1600);
+    var height = GetIntOption(args, "--height", htmlElements ? 960 : 900);
+    var window = new AppWindow(htmlElements ? "HTML elements" : "PiSquared", width, height)
     {
         TitleStyle = TitleStyle.Hidden,
         BorderStyle = BorderStyle.None
     };
-    window.Load(new Main());
+    if (htmlElements) window.Load(new HtmlElementsPage());
+    else window.Load(new Main());
+    if (htmlElements) Console.WriteLine($"HTML elements desktop loaded ({width}x{height}).");
 
     var screenshotPath = GetOption(args, "--screenshot");
     var inspectionPath = GetOption(args, "--inspection");

@@ -4,6 +4,7 @@ using Square.Controls;
 using Square.Events;
 using Square.Graphics;
 using Square.UI;
+using Square.UI.ElementApi;
 using ImageControl = Square.Controls.Image;
 
 namespace Square.Html;
@@ -537,6 +538,41 @@ public abstract partial class HTMLElement
                 proxy is Square.Controls.Button or CheckBox or Radio or Select or TextEditorBase &&
                 proxy.Style.Get("appearance") != appearance)
                 proxy.Style.SetCascaded("appearance", appearance, int.MinValue);
+    }
+
+    /// <summary>Host-computed text style mirrored into text-field sidecars at UA priority.</summary>
+    private static readonly string[] ProxyTypographyProperties =
+        ["font-family", "font-size", "font-weight", "font-style", "line-height", "color"];
+
+    /// <summary>
+    /// Sidecars live outside the DOM cascade, so a text-field proxy would otherwise keep its
+    /// control defaults (14px) while the host border box is sized and styled for the host's
+    /// computed font — the source of the clipped, misaligned input glyphs. This copies the
+    /// host's winning font-family/size/weight/style, line-height and color into each
+    /// TextEditorBase sidecar at UA priority with <c>authorSpecified: false</c>: the proxy
+    /// keeps its default widget measurement (the UA copy must not read as author-specified)
+    /// while drawing with the host font. Authorship is mirrored through
+    /// <see cref="Square.Controls.TextEditorBase.HostSpecifiesTextMetrics"/> so a genuinely
+    /// authored larger host font still grows the box. Writes are guarded by a value compare,
+    /// which keeps this per-pass call (like <see cref="SyncProxyAppearance"/>) loop-free.
+    /// </summary>
+    private void SyncProxyTypography()
+    {
+        foreach (var sidecar in _visualSidecars)
+        {
+            if (sidecar is not TextEditorBase editor) continue;
+            foreach (var property in ProxyTypographyProperties)
+            {
+                var value = Style.Get(property);
+                if (value == null ||
+                    string.Equals(editor.Style.Get(property), value, StringComparison.Ordinal)) continue;
+                editor.Style.SetCascaded(
+                    property, value, new CssSpecificity(0, 0, 0), important: false, persistent: true,
+                    origin: CssCascadeOrigin.UserAgent, authorSpecified: false);
+            }
+            editor.HostSpecifiesTextMetrics =
+                Input.AuthorVerticalTextProperties.Any(Style.IsAuthorSpecified);
+        }
     }
 
 

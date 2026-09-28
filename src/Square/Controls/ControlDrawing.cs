@@ -147,20 +147,13 @@ internal static class ControlDrawing
     internal static float MeasureRenderedTextWidth(string text, Font font, float letterSpacing = 0, float wordSpacing = 0)
     {
         if (string.IsNullOrEmpty(text)) return 0;
-        var lineWidth = 0f;
-        var maxWidth = 0f;
-        foreach (var rune in text.EnumerateRunes())
+        // Keep the advance used for inline backgrounds and wrapping on the same shaping path as DrawText.
+        return new TextLayout(text, font)
         {
-            if (rune.Value == '\n')
-            {
-                maxWidth = Math.Max(maxWidth, lineWidth);
-                lineWidth = 0;
-                continue;
-            }
-            lineWidth += MeasureRenderedRuneAdvance(rune, font) + letterSpacing +
-                (Rune.IsWhiteSpace(rune) ? wordSpacing : 0);
-        }
-        return Math.Max(maxWidth, lineWidth);
+            WhiteSpace = TextWhiteSpaceMode.Pre,
+            LetterSpacing = letterSpacing,
+            WordSpacing = wordSpacing
+        }.Measure().Width;
     }
 
     internal static float MeasureRenderedRuneAdvance(Rune rune, Font font)

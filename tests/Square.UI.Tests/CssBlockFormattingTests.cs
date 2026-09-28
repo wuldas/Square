@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.Html;
 using Square.Graphics;
 using Square.Rendering;
 using Xunit;
@@ -122,6 +123,38 @@ public class CssBlockFormattingTests
 
         Assert.Equal(30, container.Geometry.Height);
         Assert.Equal(100, root.Geometry.Height);
+    }
+
+    [Fact]
+    public void FlexRowInHtmlBlockFlowUsesLaidOutCrossAxisHeight()
+    {
+        var article = new HTMLArticleElement();
+        var row = new HTMLDivElement();
+        row.Style.Set("display", "flex");
+        row.Style.Set("flex-direction", "row");
+        row.Style.Set("gap", "12px");
+        for (var i = 0; i < 2; i++)
+        {
+            var panel = new HTMLDivElement();
+            panel.Style.Set("min-height", "72px");
+            panel.Style.Set("min-width", "0");
+            panel.Style.Set("flex-grow", "1");
+            panel.Style.Set("flex-basis", "0");
+            panel.Style.Set("box-sizing", "border-box");
+            panel.Style.Set("padding", "10px");
+            panel.Style.Set("border", "2px solid #2563eb");
+            panel.ChildNodes.Add(new Square.UI.Text("Panel"));
+            row.Children.Add(panel);
+        }
+        var following = new HTMLDivElement();
+        following.Style.Set("height", "10px");
+        article.Children.Add(row);
+        article.Children.Add(following);
+
+        new LayoutEngine().MeasureAndArrange(article, new Size(830, 200));
+
+        Assert.Equal(72, row.Geometry.Height);
+        Assert.Equal(row.Geometry.Bottom, following.Geometry.Y);
     }
 
     [Fact]

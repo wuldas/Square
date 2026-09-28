@@ -136,9 +136,13 @@ public sealed partial class LayoutEngine
             if (inline.All(item => item.TextNode is { } text && text.Data.AsSpan().IsWhiteSpace()) &&
                 CssKeyword(container, "white-space") is not ("pre" or "pre-wrap" or "pre-line"))
                 return;
+            // A line box does not collapse margins with the preceding block, so the pending
+            // bottom margin applies in full before the first real inline line; block-to-block
+            // transitions still collapse it through CollapseMargins below.
+            y += previousBottomMargin;
+            previousBottomMargin = 0;
             y = LayoutInlineGroup(container, inline, content, y, floats, containingBlock, plan);
             inline.Clear();
-            previousBottomMargin = 0;
             hasBlock = true;
         }
 
@@ -176,7 +180,8 @@ public sealed partial class LayoutEngine
                 continue;
             }
             if (CssKeyword(child, "display") is "inline" or "inline-block" or "inline-table" ||
-                container is HTMLElement && child is Square.UI.Svg.SVGSVGElement)
+                container is HTMLElement && (child is Square.UI.Svg.SVGSVGElement ||
+                    child is Square.Controls.Button && CssKeyword(child, "display") == ""))
             {
                 inline.Add(new CssFlowItem(child));
                 continue;
@@ -264,7 +269,7 @@ public sealed partial class LayoutEngine
         {
             var measured = new TableLayoutEngine(this).Measure(element,
                 new Size(Math.Max(0, proposed.Width), float.PositiveInfinity));
-            var width = float.IsNaN(box.Width) ? Math.Max(proposed.Width, measured.Width) : proposed.Width;
+            var width = float.IsNaN(box.Width) ? measured.Width : proposed.Width;
             var bounds = new Rect(proposed.X, proposed.Y, width, measured.Height);
             plan.ExternalLayouts.Add(new CssLayoutEntry(element, bounds));
             return bounds.Height;
@@ -272,7 +277,15 @@ public sealed partial class LayoutEngine
 
         if (display is "flex" or "grid")
         {
-            var atomicHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
+            // HTML intrinsic Measure stacks children, but a flex row's auto height comes from
+            // its laid-out cross axis. Measure it with Yoga before positioning later blocks.
+            float atomicHeight;
+            if (display == "flex")
+            {
+                using var measured = BuildYogaTree(element, proposed.Width, float.NaN);
+                atomicHeight = Facebook.Yoga.YGNodeLayoutAPI.YGNodeLayoutGetHeight(measured.Root);
+            }
+            else atomicHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
             var bounds = new Rect(proposed.X, proposed.Y, proposed.Width, atomicHeight);
             plan.ExternalLayouts.Add(new CssLayoutEntry(element, bounds));
             return atomicHeight;
@@ -739,10 +752,31 @@ public sealed partial class LayoutEngine
         var outerHeight = tableSize != Size.Zero
             ? tableSize.Height
             : ResolveAtomicOuterHeight(element, box, outerWidth, float.MaxValue);
+        var baseline = outerHeight + box.MarginTop;
+        if (element is Square.Controls.Button or HTMLElement { TagName: "button" })
+        {
+            var font = ControlDrawing.ResolveFont(element,
+                element is Square.Controls.Button ? 14f : HTMLElement.HtmlTextDefaultFontSize);
+            baseline = box.MarginTop + Math.Min(outerHeight, box.BorderTop + box.PaddingTop +
+                TextMetrics.GetBaselineOffset(font, ControlDrawing.GetStyledLineHeight(element, font.Size)));
+        }
+        else if (element is HTMLElement { TagName: "input" } host &&
+                 host.VisualSidecars.Count > 0 && host.VisualSidecars[0] is Square.Controls.Input)
+        {
+            // A text input's inline baseline is its editor baseline, not the bottom of its
+            // border box. The host already owns its CSS border/padding around the editor.
+            var font = ControlDrawing.ResolveFont(host, HTMLElement.HtmlTextDefaultFontSize);
+            var lineHeight = ControlDrawing.GetStyledLineHeight(host, font.Size);
+            var contentHeight = Math.Max(0, outerHeight - box.BorderTop - box.BorderBottom -
+                box.PaddingTop - box.PaddingBottom);
+            var lineTop = box.BorderTop + box.PaddingTop + (contentHeight - lineHeight) / 2f;
+            baseline = box.MarginTop + Math.Clamp(lineTop +
+                TextMetrics.GetBaselineOffset(font, lineHeight), 0, outerHeight);
+        }
         return new CssInlinePiece(element, null,
             outerWidth + box.MarginLeft + box.MarginRight,
             outerHeight + box.MarginTop + box.MarginBottom,
-            outerHeight + box.MarginTop,
+            baseline,
             box.MarginLeft, box.MarginTop, box.MarginRight, box.MarginBottom, false, false, true, true);
     }
 
@@ -754,20 +788,31 @@ public sealed partial class LayoutEngine
         var font = text != null
             ? ControlDrawing.ResolveFont(text, text.FontSize)
             : ControlDrawing.ResolveFont(piece.Element, HTMLElement.HtmlTextDefaultFontSize);
+        var letterSpacing = ControlDrawing.ResolveTextLength(piece.Element, "letter-spacing", font.Size);
+        var wordSpacing = ControlDrawing.ResolveTextLength(piece.Element, "word-spacing", font.Size);
+        var layout = new TextLayout(piece.Text, font)
+        {
+            WhiteSpace = TextWhiteSpaceMode.Pre,
+            LetterSpacing = letterSpacing,
+            WordSpacing = wordSpacing
+        };
+        layout.TryGetAuthoritativeSnapshot(out var snapshot);
+        var startX = snapshot?.MeasureOffset(0) ?? 0f;
         var width = 0f;
         var offset = 0;
         foreach (var rune in piece.Text.EnumerateRunes())
         {
-            var advance = ControlDrawing.MeasureRenderedRuneAdvance(rune, font);
-            if (offset > 0 && width + advance > availableWidth) break;
-            width += advance;
-            offset += rune.Utf16SequenceLength;
+            var nextOffset = offset + rune.Utf16SequenceLength;
+            var nextWidth = snapshot != null ? Math.Abs(snapshot.MeasureOffset(nextOffset) - startX) :
+                width + ControlDrawing.MeasureRenderedRuneAdvance(rune, font) + letterSpacing +
+                (Rune.IsWhiteSpace(rune) ? wordSpacing : 0);
+            if (offset > 0 && nextWidth > availableWidth) break;
+            width = nextWidth;
+            offset = nextOffset;
         }
         if (offset == 0) offset = char.IsSurrogatePair(piece.Text, 0) ? 2 : 1;
         var headText = piece.Text[..offset];
         var tailText = piece.Text[offset..];
-        var letterSpacing = ControlDrawing.ResolveTextLength(piece.Element, "letter-spacing", font.Size);
-        var wordSpacing = ControlDrawing.ResolveTextLength(piece.Element, "word-spacing", font.Size);
         var headLength = SourceLengthUpTo(piece, offset);
         var head = piece with
         {

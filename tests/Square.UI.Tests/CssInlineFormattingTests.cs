@@ -1,5 +1,6 @@
 using Square.Controls;
 using Square.Backends;
+using Square.CSS.Engine;
 using Square.Graphics;
 using Square.Rendering;
 using Square.UI;
@@ -39,6 +40,111 @@ public class CssInlineFormattingTests
 
         Assert.Equal(new Rect(0, 0, 60, 10), first.Geometry);
         Assert.Equal(new Rect(0, 10, 60, 10), second.Geometry);
+    }
+
+    [Fact]
+    public void BlockMarginSeparatesFollowingInlineButCollapsesThroughWhitespaceBeforeBlock()
+    {
+        static HTMLParagraphElement Paragraph()
+        {
+            var paragraph = new HTMLParagraphElement();
+            paragraph.Style.Set("height", "10px");
+            paragraph.Style.Set("margin", "0 0 16px");
+            return paragraph;
+        }
+
+        var inlineRoot = new HTMLArticleElement();
+        var first = Paragraph();
+        var inline = new HTMLSpanElement();
+        inline.Style.Set("display", "inline-block");
+        inline.Style.Set("width", "20px");
+        inline.Style.Set("height", "10px");
+        inlineRoot.Children.Add(first);
+        inlineRoot.Children.Add(inline);
+        new LayoutEngine().MeasureAndArrange(inlineRoot, new Size(100, 80));
+        Assert.Equal(first.Geometry.Bottom + 16, inline.Geometry.Y);
+
+        var blockRoot = new HTMLArticleElement();
+        var preceding = Paragraph();
+        var following = new HTMLDivElement();
+        following.Style.Set("height", "10px");
+        following.Style.Set("margin-top", "8px");
+        blockRoot.Children.Add(preceding);
+        blockRoot.ChildNodes.Add(new Square.UI.Text(" \n "));
+        blockRoot.Children.Add(following);
+        new LayoutEngine().MeasureAndArrange(blockRoot, new Size(100, 80));
+        Assert.Equal(preceding.Geometry.Bottom + 16, following.Geometry.Y);
+    }
+
+    [Fact]
+    public void SquareButtonInHtmlFlowsBesideSvgAtItsTextBaseline()
+    {
+        var article = new HTMLArticleElement();
+        var svg = new SVGSVGElement();
+        svg.SetProperty("Width", 20);
+        svg.SetProperty("Height", 20);
+        var button = new Button("Square");
+        button.Style.Set("appearance", "auto");
+        button.Style.Set("font-size", "13.3333px");
+        button.Style.Set("padding", "1px 6px");
+        button.Style.Set("border", "2px outset #d4d4d4");
+        article.Children.Add(svg);
+        article.Children.Add(button);
+
+        new LayoutEngine().MeasureAndArrange(article, new Size(200, 80));
+
+        Assert.Equal(svg.Geometry.Right, button.Geometry.X);
+        Assert.True(button.Geometry.Y > svg.Geometry.Y);
+        Assert.True(button.Geometry.Width < article.Geometry.Width);
+    }
+
+    [Fact]
+    public void HtmlCheckableInputsKeepWidgetSizeAndAuthorPaddingWins()
+    {
+        var article = new HTMLArticleElement();
+        var checkbox = new HTMLInputElement { Type = "checkbox" };
+        var radio = new HTMLInputElement { Type = "radio" };
+        var text = new HTMLInputElement { Type = "text" };
+        article.Children.Add(checkbox);
+        article.Children.Add(radio);
+        article.Children.Add(text);
+        new CssEngine().ApplyStylesToTree(article);
+
+        var layout = new LayoutEngine();
+        layout.MeasureAndArrange(article, new Size(400, 80));
+        Assert.Equal(new Size(13, 13), checkbox.Geometry.Size);
+        Assert.Equal(new Size(13, 13), radio.Geometry.Size);
+        Assert.Equal(4, checkbox.Geometry.X);
+        Assert.True(text.Geometry.Width > checkbox.Geometry.Width);
+
+        checkbox.Style.Set("padding", "2px");
+        layout.MeasureAndArrange(article, new Size(400, 80));
+        Assert.Equal(17, checkbox.Geometry.Width);
+    }
+
+    [Fact]
+    public void InlineTextInputSharesBaselineWithItsLabel()
+    {
+        var article = new HTMLArticleElement();
+        article.Style.Set("font-family", "Arial");
+        var label = new HTMLLabelElement();
+        label.ChildNodes.Add(new Square.UI.Text("Text "));
+        var input = new HTMLInputElement { Type = "text", Value = "Editable text" };
+        label.Children.Add(input);
+        article.Children.Add(label);
+        new CssEngine().ApplyStylesToTree(article);
+        new LayoutEngine().MeasureAndArrange(article, new Size(400, 60));
+
+        var editor = Assert.IsType<Input>(Assert.Single(input.VisualSidecars));
+        var tree = new DisplayTree();
+        tree.BuildFrom(article);
+        var labelText = Assert.Single(tree.CollectTextFragments(label), fragment => fragment.Text == "Text");
+        var inputText = Assert.Single(tree.CollectTextFragments(editor),
+            fragment => fragment.Text == "Editable text");
+        var labelBaseline = labelText.Bounds.Y + TextMetrics.GetBaselineOffset(labelText.Font, labelText.Bounds.Height);
+        var inputBaseline = inputText.Bounds.Y + TextMetrics.GetBaselineOffset(inputText.Font, inputText.Bounds.Height);
+
+        Assert.InRange(Math.Abs(labelBaseline - inputBaseline), 0, 1f);
     }
 
     [Fact]

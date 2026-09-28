@@ -8,7 +8,8 @@ internal static class CssUserAgentStyles
     // Chrome html.css form-control subset for light color-scheme.
     // Source: chromium third_party/blink/renderer/core/html/resources/html.css
     // Internal Blink features (-internal-*, @supports blink-feature, AppearanceBase)
-    // are omitted; Square maps Button/Input/TextArea/Select/CheckBox/Radio selectors.
+    // are omitted; Square maps Button/Input/TextArea/Select/CheckBox/Radio selectors, with
+    // type-qualified Input selectors (input[type=checkbox i]/[type=radio i]) covering the HTML hosts.
     internal const string Source = """
         Button, Input, TextArea, Select {
             margin: 0;
@@ -24,6 +25,8 @@ internal static class CssUserAgentStyles
             appearance: auto;
             cursor: default;
             box-sizing: border-box;
+            font-family: Arial;
+            font-size: 13.3333px;
             text-align: center;
             padding: 1px 6px;
             border: 2px outset ButtonBorder;
@@ -32,6 +35,8 @@ internal static class CssUserAgentStyles
         }
         Button:active {
             border-style: inset;
+            /* Themes may barely show the inset bevel; make the pressed face visible. */
+            background-color: #dedede;
         }
         Button:active:disabled {
             border-style: outset;
@@ -90,23 +95,33 @@ internal static class CssUserAgentStyles
         Input:focus-visible, TextArea:focus-visible, Select:focus-visible, Button:focus-visible {
             outline-offset: 0;
         }
-        CheckBox:focus-visible, Radio:focus-visible {
+        CheckBox:focus-visible, Radio:focus-visible,
+        Input[type="checkbox" i]:focus-visible, Input[type="radio" i]:focus-visible {
             outline-offset: 2px;
         }
-        CheckBox, Radio {
+        CheckBox, Radio, Input[type="checkbox" i], Input[type="radio" i] {
             appearance: auto;
             box-sizing: border-box;
             cursor: default;
         }
-        CheckBox {
+        CheckBox, Input[type="checkbox" i] {
             margin: 3px 3px 3px 4px;
         }
-        Radio {
+        Radio, Input[type="radio" i] {
             margin: 3px 3px 0 5px;
         }
-        CheckBox:disabled, Radio:disabled {
+        CheckBox:disabled, Radio:disabled,
+        Input[type="checkbox" i]:disabled, Input[type="radio" i]:disabled {
             color: GrayText;
             cursor: default;
+        }
+        /* HTML checkbox/radio hosts drop text-field padding, border, background and min-height.
+           Their font remains the browser's Input default; author CSS still overrides UA rules. */
+        Input[type="checkbox" i], Input[type="radio" i] {
+            padding: initial;
+            background-color: initial;
+            border: initial;
+            min-height: initial;
         }
         """;
 

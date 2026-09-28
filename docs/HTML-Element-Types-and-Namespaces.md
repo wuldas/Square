@@ -107,7 +107,7 @@ WHATWG 区分[自主自定义元素](https://html.spec.whatwg.org/multipage/cust
 - 113 行逐项核对：每个标签 `UIDocument.CreateElement` 与 `.sqx`/`.sqv` 两方言编译结果均为表中唯一具体类型，`LocalName` 固定、XHTML URI、不是 `UIElement`；六种共享接口继承链与表一致。
 - 各默认 URI（HTML、UI、包）下的 `.sqx`/`.sqv` 解析 fixture：同名元素由默认空间确定，唯一候选省前缀，歧义报 `SQXE004`，显式前缀恒定命中声明 URI；未知/重绑/重复导出有准确诊断。
 - DOM Text 场景：`<p>Hello <strong>世界</strong> !<br>next</p>` 的 `ChildNodes` 顺序为 Text/strong/Text/br/Text，桌面选区 Range 指向源 Text 节点，Web 编码输出一致。
-- `samples/Square.Sample.WebServer` 的 `/html-elements` 用真实 Chromium 检查 DOM 顺序、namespace、void 元素与自定义元素静态表示；桌面用 `--html-regression --screenshot` 截图复核。
+- `samples/Square.Sample.WebServer` 的 `/html-elements` 用真实 Chromium 检查 DOM 顺序、namespace、void 元素与自定义元素静态表示；同一项目 `--desktop --html-elements` 加载相同组件并可用 `--screenshot` 截图对照。`Square.Sample --html-regression` 是独立的较完整布局回归页，不作文本同一性比较。
 
 ## 113 标签 → Square.Html 具体类型 → WHATWG DOM 接口
 

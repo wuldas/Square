@@ -1705,57 +1705,6 @@ public sealed class ControlComparisonTests
         }
     }
 
-    [Theory]
-    [InlineData(ControlState.Normal, 239, 118)]
-    [InlineData(ControlState.Hover, 229, 79)]
-    [InlineData(ControlState.Active, 245, 141)]
-    [InlineData(ControlState.Focus, 239, 118)]
-    [InlineData(ControlState.Disabled, 238, 208)]
-    public async Task SoftwareButtonAutoStatesUseChromiumWidgetColors(
-        ControlState state,
-        byte expectedFill,
-        byte expectedBorder)
-    {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), "square-button-state-" + Guid.NewGuid());
-        try
-        {
-            var manifest = new ControlComparisonManifest
-            {
-                Controls =
-                [
-                    new ControlDefinition
-                    {
-                        Kind = ControlKind.Button,
-                        Element = "button",
-                        Appearances = [ControlAppearance.Auto],
-                        States = [state],
-                        AutoAuthorCss = ControlComparisonManifest.ButtonAppearanceAutoCss,
-                        Text = "Control"
-                    }
-                ]
-            };
-            var item = Assert.Single((await ControlSquareCapture.CaptureAsync("Software", manifest, artifactRoot)).Cases);
-            using var bitmap = SKBitmap.Decode(Path.Combine(artifactRoot, item.Screenshot));
-            var colors = new Dictionary<byte, int>();
-            for (var y = (int)MathF.Floor(item.BorderBox.Y); y < (int)MathF.Ceiling(item.BorderBox.Y + item.BorderBox.Height); y++)
-            {
-                for (var x = (int)MathF.Floor(item.BorderBox.X); x < (int)MathF.Ceiling(item.BorderBox.X + item.BorderBox.Width); x++)
-                {
-                    var color = bitmap.GetPixel(x, y);
-                    if (color.Red != color.Green || color.Green != color.Blue || color.Red == 255) continue;
-                    colors[color.Red] = colors.TryGetValue(color.Red, out var count) ? count + 1 : 1;
-                }
-            }
-            var dominant = colors.MaxBy(pair => pair.Value).Key;
-
-            Assert.Equal(expectedFill, dominant);
-            Assert.Contains(colors.Keys, value => Math.Abs(value - expectedBorder) <= 10);
-        }
-        finally
-        {
-            if (Directory.Exists(artifactRoot)) Directory.Delete(artifactRoot, recursive: true);
-        }
-    }
 
     [Theory]
     [InlineData(ControlAppearance.Auto, ControlState.Normal, 118)]

@@ -17,7 +17,9 @@ Both `.sqx` and `.sqv` resolve through the same catalog. Unprefixed names resolv
 
 ## Support matrix
 
-A row is one conforming tag. **Native** column describes desktop behavior; for unchanged group defaults, sections/grouping are block boxes, phrasing is an inherited inline box, table nodes use CSS table roles, and media elements have a replaced box. Explicit class, inline style and component CSS override low-priority HTML UA styles; existing Square-control UA styles are unchanged. **Web** emits the corresponding literal semantic tag and escaped ordered text except where an active behavior is expressly disabled. In every “disabled” row the **element exists but that behavior is unavailable**; this is not a claim of playback, execution, document loading, or plugin support.
+A row is one conforming tag. **Native** column describes desktop behavior; for unchanged group defaults, sections/grouping are block boxes, phrasing is an inherited inline box, table nodes use CSS table roles, and media elements have a replaced box. Explicit class, inline style and component CSS override low-priority HTML UA styles. **Web** emits the corresponding literal semantic tag and escaped ordered text except where an active behavior is expressly disabled. In every “disabled” row the **element exists but that behavior is unavailable**; this is not a claim of playback, execution, document loading, or plugin support.
+
+Native HTML flow preserves block-to-inline margins, places Square `Button` inline beside HTML/SVG content, and sizes checkable inputs as 13px widgets. The Square Button UA font matches Chromium's Arial 13.3333px default; installed fonts can still change text metrics between platforms.
 
 | Tag | Semantic group | Native display / behavior | Web output / limit |
 | --- | --- | --- | --- |
@@ -77,7 +79,7 @@ A row is one conforming tag. **Native** column describes desktop behavior; for u
 | `i` | Phrasing | Italic | Native semantic tag, escaped text in order |
 | `ins` | Phrasing | Underlined | Native semantic tag, escaped text in order |
 | `kbd` | Phrasing | Monospace | Native semantic tag, escaped text in order |
-| `mark` | Phrasing | Highlighted background | Native semantic tag, escaped text in order |
+| `mark` | Phrasing | Highlighted background follows shaped inline text bounds | Native semantic tag, escaped text in order |
 | `q` | Phrasing | Quoted inline text | Native semantic tag, escaped text in order |
 | `rp` | Phrasing | Ruby fallback inline | Native semantic tag, escaped text in order |
 | `rt` | Phrasing | Ruby annotation inline | Native semantic tag, escaped text in order |
@@ -93,7 +95,7 @@ A row is one conforming tag. **Native** column describes desktop behavior; for u
 | `u` | Phrasing | Underlined | Native semantic tag, escaped text in order |
 | `var` | Phrasing | Italic | Native semantic tag, escaped text in order |
 | `wbr` | Phrasing | Optional wrap opportunity; void | Native semantic tag, escaped text in order |
-| `table` | Table | Table layout from CSS table roles | Native table tag; cells preserve spans |
+| `table` | Table | CSS table roles; auto-width border box follows its measured grid | Native table tag; cells preserve spans |
 | `caption` | Table | Table caption box | Native table tag; cells preserve spans |
 | `colgroup` | Table | Column group configuration, no duplicate painted box | Native table tag; cells preserve spans |
 | `col` | Table | Void column configuration, no independent box | Native table tag; cells preserve spans |
@@ -104,7 +106,7 @@ A row is one conforming tag. **Native** column describes desktop behavior; for u
 | `th` | Table | Bold heading cell; colspan/rowspan geometry | Native table tag; cells preserve spans |
 | `td` | Table | Table cell; colspan/rowspan geometry | Native table tag; cells preserve spans |
 | `button` | Forms | Focusable styled host paints real child content, not nested Square Button | Native semantic tag and safe attributes |
-| `input` | Forms | Native text/password/number, checkbox/radio/button proxy; other types fall back to text; no desktop network submit; void | Native semantic tag and safe attributes |
+| `input` | Forms | Native text/password/number, checkbox/radio/button proxy; text input host paints one inset UA frame, proxy text uses the host content box and font, author border takes precedence; other types fall back to text; no desktop network submit; void | Native semantic tag and safe attributes |
 | `textarea` | Forms | Native multiline proxy, preserves source whitespace and value | Native semantic tag and safe attributes |
 | `select` | Forms | Single-selection proxy populated by option/optgroup (group labels not painted) | Native semantic tag and safe attributes |
 | `option` | Forms | Selection data, not a duplicate independent box | Native semantic tag and safe attributes |

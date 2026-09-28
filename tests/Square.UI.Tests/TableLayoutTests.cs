@@ -119,6 +119,65 @@ public class TableLayoutTests
     }
 
     [Fact]
+    public void HtmlTableAutoWidthBoxSpansGridNotContainingBlock()
+    {
+        // Mirrors the HtmlRegressionPage sample: auto-width table with two columns and a
+        // colspan=2 row inside a 760px block container, every cell carrying DOM Text.
+        var container = new HTMLDivElement();
+        container.Style.Set("width", "760px");
+        var table = new HTMLTableElement();
+        var headerRow = new HTMLTableRowElement();
+        var headerFirst = new HTMLThElement();
+        var headerSecond = new HTMLThElement();
+        headerFirst.ChildNodes.Add(new Square.UI.Text("Element"));
+        headerSecond.ChildNodes.Add(new Square.UI.Text("Native result"));
+        headerRow.ChildNodes.Add(headerFirst);
+        headerRow.ChildNodes.Add(headerSecond);
+        var body = new HTMLTbodyElement();
+        var firstRow = new HTMLTableRowElement();
+        var first = new HTMLTdElement();
+        var second = new HTMLTdElement();
+        first.ChildNodes.Add(new Square.UI.Text("Text"));
+        second.ChildNodes.Add(new Square.UI.Text("Measured and painted"));
+        firstRow.ChildNodes.Add(first);
+        firstRow.ChildNodes.Add(second);
+        var spanningRow = new HTMLTableRowElement();
+        var spanning = new HTMLTdElement
+        {
+            ColSpan = 2
+        };
+        spanning.ChildNodes.Add(new Square.UI.Text("Spanning cell"));
+        spanningRow.ChildNodes.Add(spanning);
+        body.ChildNodes.Add(firstRow);
+        body.ChildNodes.Add(spanningRow);
+        table.ChildNodes.Add(headerRow);
+        table.ChildNodes.Add(body);
+        container.Children.Add(table);
+
+        Layout(container, new Size(760, 400), new Rect(0, 0, 760, 400));
+
+        // Chrome shrink-to-fit: the auto-width table box hugs its grid instead of stretching to
+        // the containing block. The regression sample painted the border box across the full
+        // viewport width while the cells kept their intrinsic span, leaving a phantom third
+        // column of empty space inside the table border.
+        Assert.True(table.Geometry.Width < 760);
+        Assert.Equal(spanning.Geometry.Width, table.Geometry.Width);
+
+        // Exactly two logical columns: header and body cells share each column's geometry.
+        Assert.Equal(first.Geometry.Left, headerFirst.Geometry.Left);
+        Assert.Equal(first.Geometry.Width, headerFirst.Geometry.Width);
+        Assert.Equal(second.Geometry.Left, headerSecond.Geometry.Left);
+        Assert.Equal(second.Geometry.Width, headerSecond.Geometry.Width);
+        Assert.Equal(first.Geometry.Right, second.Geometry.Left);
+
+        // The colspan=2 row spans both columns edge to edge.
+        Assert.Equal(first.Geometry.Left, spanning.Geometry.Left);
+        Assert.Equal(second.Geometry.Right, spanning.Geometry.Right);
+        Assert.All(new HTMLTableCellElement[] { headerFirst, headerSecond, first, second, spanning },
+            cell => Assert.True(cell.Geometry.Width > 0 && cell.Geometry.Height > 0));
+    }
+
+    [Fact]
     public void DirectCellsFormOneAnonymousRow()
     {
         var table = new Table();

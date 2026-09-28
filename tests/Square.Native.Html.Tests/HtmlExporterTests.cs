@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.CSS.Engine;
 using Square.Graphics;
 using Square.Html;
 using Square.Native.Html;
@@ -32,11 +33,12 @@ public sealed class HtmlExporterTests
         Assert.Contains("<!doctype html>", result.Html);
         Assert.Contains("<title>Export &lt;test&gt;</title>", result.Html);
         Assert.Contains("id=\"root\"", result.Html);
-        Assert.Contains("class=\"page square-root\"", result.Html);
-        Assert.Contains(".page{display:flex;gap:12px;}", result.Css);
+        Assert.Contains("class=\"page square-root sq-style-", result.Html);
+        Assert.Contains("display:flex;gap:12px;", result.Css);
+        // author 类只保留给页面选择器；生成的声明进签名类，不再合并进 .page 规则。
+        Assert.DoesNotContain(".page{", result.Css);
         Assert.Contains("<style data-square-css=\"true\">", result.Html);
         Assert.DoesNotContain("style=\"", result.Html);
-        Assert.DoesNotContain("sq-style-", result.Html);
         Assert.Contains("Hello &lt;Square&gt;", result.Html);
         Assert.Contains("<button disabled>Save</button>", result.Html);
         Assert.Contains("appearance:auto", result.Css);
@@ -51,12 +53,16 @@ public sealed class HtmlExporterTests
     }
 
     [Fact]
-    public void ExportKeepsOriginalClassSelectorsInsteadOfHashingEveryComputedStyle()
+    public void ExportIsolatesComputedStylesOfElementsSharingAnAuthorClass()
     {
         var root = new View();
-        root.ClassList.Add("card");
-        root.Style.Set("border", "1px solid #e2e8f0");
-        root.Style.Set("background", "#ffffff");
+        root.ClassList.Add("page");
+        root.Children.Add(CreateComparisonPanel("comparison-blue", "#2563eb", "2px solid #1e3a8a"));
+        root.Children.Add(CreateComparisonPanel("comparison-violet", "#7c3aed", "2px solid #4c1d95"));
+        root.Children.Add(CreateComparisonPanel("comparison-amber", "#d97706", "2px solid #92400e"));
+        root.Children.Add(CreateComparisonPanel("comparison-green", "#16a34a", "2px solid #166534"));
+        // 与蓝色面板声明集合完全一致：去重后必须复用同一个签名类。
+        root.Children.Add(CreateComparisonPanel("comparison-blue", "#2563eb", "2px solid #1e3a8a"));
 
         var result = HtmlExporter.Export(root, new HtmlExportOptions
         {
@@ -64,15 +70,88 @@ public sealed class HtmlExporterTests
             IncludeBaselineCss = false
         });
 
-        Assert.Contains("class=\"card", result.Html);
-        Assert.DoesNotContain("sq-style-", result.Html);
-        Assert.Contains(".card{background:#ffffff;border:1px solid #e2e8f0;}", result.Css);
-        Assert.DoesNotContain("border-bottom-color", result.Css);
-        Assert.DoesNotContain("background-color", result.Css);
+        var panels = result.Html.Split("class=\"", StringSplitOptions.None)
+            .Skip(1)
+            .Select(value => value.Split('"')[0])
+            .Where(value => value.Contains("comparison-card", StringComparison.Ordinal))
+            .Select(value =>
+            {
+                var parts = value.Split(' ');
+                return new
+                {
+                    // 快照 class 有序化输出；author 类与变体类都必须原样保留。
+                    Variant = parts.Single(part =>
+                        part != "comparison-card" && !part.StartsWith("sq-style-", StringComparison.Ordinal)),
+                    Generated = parts.Single(part => part.StartsWith("sq-style-", StringComparison.Ordinal))
+                };
+            })
+            .ToArray();
+
+        Assert.Equal(
+        ["comparison-blue", "comparison-violet", "comparison-amber", "comparison-green", "comparison-blue"],
+            panels.Select(static panel => panel.Variant).ToArray());
+
+        // 不同求值样式的元素必须拿到不同的签名类；一致的去重到同一个。
+        Assert.Equal(4, panels.Take(4).Select(static panel => panel.Generated).Distinct().Count());
+        Assert.Equal(panels[0].Generated, panels[4].Generated);
+
+        // 每个签名类的规则只携带该元素自身的背景/边框，而不是最后一个节点的紫色。
+        Assert.Contains($".{panels[0].Generated}{{background:#2563eb;border:2px solid #1e3a8a;}}", result.Css);
+        Assert.Contains($".{panels[1].Generated}{{background:#7c3aed;border:2px solid #4c1d95;}}", result.Css);
+        Assert.Contains($".{panels[2].Generated}{{background:#d97706;border:2px solid #92400e;}}", result.Css);
+        Assert.Contains($".{panels[3].Generated}{{background:#16a34a;border:2px solid #166534;}}", result.Css);
+        Assert.Equal(1, CountOccurrences(result.Css, "background:#2563eb;"));
+        Assert.Equal(1, CountOccurrences(result.Css, "background:#7c3aed;"));
+        Assert.DoesNotContain("#7c3aed", RuleFor(result.Css, panels[0].Generated), StringComparison.Ordinal);
+        Assert.DoesNotContain("#2563eb", RuleFor(result.Css, panels[1].Generated), StringComparison.Ordinal);
+
+        // 共享 author 类绝不再获得合并后的生成声明。
+        Assert.DoesNotContain(".comparison-card{", result.Css);
+        Assert.DoesNotContain(".comparison-blue{", result.Css);
+        Assert.DoesNotContain(".comparison-violet{", result.Css);
     }
 
     [Fact]
-    public void ExportUsesGeneratedClassOnlyForInlineStylesWithoutASharedClass()
+    public void ExportInlineStylesKeepPerElementColorsForSharedAuthorClass()
+    {
+        var root = new View();
+        root.ClassList.Add("page");
+        root.Children.Add(CreateComparisonPanel("comparison-blue", "#2563eb", "2px solid #1e3a8a"));
+        root.Children.Add(CreateComparisonPanel("comparison-violet", "#7c3aed", "2px solid #4c1d95"));
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false,
+            UseInlineStyles = true
+        });
+
+        Assert.DoesNotContain("sq-style-", result.Html);
+        Assert.DoesNotContain("style data-square-css", result.Html);
+        Assert.Contains("style=\"background:#2563eb;border:2px solid #1e3a8a;\"", result.Html);
+        Assert.Contains("style=\"background:#7c3aed;border:2px solid #4c1d95;\"", result.Html);
+    }
+
+    private static View CreateComparisonPanel(string variant, string background, string border)
+    {
+        var panel = new View();
+        panel.ClassList.Add("comparison-card");
+        panel.ClassList.Add(variant);
+        panel.Style.Set("background", background);
+        panel.Style.Set("border", border);
+        return panel;
+    }
+
+    /// <summary>按生成类名取出完整规则体，验证元素到声明的实际映射而非字符串存在。</summary>
+    private static string RuleFor(string css, string generatedClass)
+    {
+        var start = css.IndexOf("." + generatedClass + "{", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Missing CSS rule for {generatedClass}.");
+        return css[start..(css.IndexOf('}', start) + 1)];
+    }
+
+    [Fact]
+    public void ExportAttachesGeneratedClassToElementsWithoutAuthorClass()
     {
         var root = new View();
         var unique = new View();
@@ -249,6 +328,97 @@ public sealed class HtmlExporterTests
         Assert.Contains("type=\"checkbox\" class=\"sq-style-", result.Html);
         Assert.DoesNotContain("label{appearance:none;}", result.Css);
         Assert.DoesNotContain("input{appearance:none;}", result.Css);
+    }
+
+    [Fact]
+    public void ExportLeavesDefaultFormWidgetChromeToBrowserUserAgent()
+    {
+        // Square UA 级默认（2px outset/inset 边框、ButtonFace/Field 背景、13.3333px 字体）
+        // 不得固化为 author 级 CSS：否则覆盖浏览器原生外观和 :active 边框变化。
+        // 默认按钮只保留可见按下反馈标记，不携带 author 级控件 chrome。
+        var root = new View();
+        root.Children.Add(new Button("Save"));
+        root.Children.Add(new Input { Placeholder = "Name" });
+        var htmlButton = new HTMLButtonElement();
+        htmlButton.ChildNodes.Add(new Square.UI.Text("Native"));
+        root.Children.Add(htmlButton);
+        root.Children.Add(new HTMLInputElement { Type = "text", Value = "Editable text" });
+        root.Children.Add(new HTMLTextAreaElement());
+        root.Children.Add(new HTMLSelectElement());
+        new CssEngine().ApplyStylesToTree(root);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false
+        });
+
+        Assert.Contains("sq-default-button", result.Html);
+        Assert.Contains(">Save</button>", result.Html);
+        Assert.Contains(">Native</button>", result.Html);
+        Assert.DoesNotContain("sq-style-", result.Html, StringComparison.Ordinal);
+        foreach (var token in new[] { "outset", "inset", "buttonborder", "buttonface", "fieldtext", "#767676", "13.3333" })
+            Assert.DoesNotContain(token, result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("border", result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("appearance", result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ExportKeepsAuthorOverridesOnFormWidgets()
+    {
+        // 作者真实声明（border/background/font/padding）必须原样保留，且不受 UA 剥离影响。
+        var root = new View();
+        var button = new Button("Save");
+        button.Style.Set("border", "3px dashed rebeccapurple");
+        button.Style.Set("background-color", "#175cd3");
+        var htmlInput = new HTMLInputElement { Type = "text", Value = "Ada" };
+        htmlInput.Style.CssText = "border: 1px solid #0ea5e9; padding: 4px;";
+        root.Children.Add(button);
+        root.Children.Add(htmlInput);
+        new CssEngine().ApplyStylesToTree(root);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false
+        });
+
+        Assert.Contains("border:3px dashed rebeccapurple", result.Css);
+        Assert.Contains("background-color:#175cd3", result.Css);
+        // HTML 宿主上的作者声明同样保留；Square UA 默认（2px outset 等）仍被剥离。
+        Assert.Contains("border:1px solid #0ea5e9", result.Css);
+        Assert.Contains("padding:4px", result.Css);
+        Assert.DoesNotContain("outset", result.Css, StringComparison.Ordinal);
+        Assert.DoesNotContain("buttonface", result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sq-default-button", result.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("2px", result.Css, StringComparison.Ordinal);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ExportDoesNotFreezeBrowserActiveStateWithGeneratedBorderStyles()
+    {
+        // Square UA 的 :active inset 是 UA 级状态样式；导出不得把按下态的 border-style
+        // 固化为 author 声明，浏览器的 :active 反馈必须保持由浏览器 UA 接管。
+        var root = new View();
+        var idle = new Button("Idle");
+        var pressed = new Button("Pressed");
+        pressed.SetState(ElementState.Active, true);
+        root.Children.Add(idle);
+        root.Children.Add(pressed);
+        new CssEngine().ApplyStylesToTree(root);
+
+        var result = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false
+        });
+
+        Assert.DoesNotContain("border-style", result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("inset", result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("outset", result.Css, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.Diagnostics);
     }
 
     [Fact]

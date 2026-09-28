@@ -1,11 +1,64 @@
 <template xmlns="http://www.w3.org/1999/xhtml" xmlns:ui="urn:square:ui" xmlns:my="urn:acme:widgets">
-  <article>
-    <p>Hello <strong>世界</strong> !<br>next</p>
-    <input type="checkbox" checked>
-    <svg width="20" height="20"><circle cx="10" cy="10" r="8" /></svg>
-    <ui:Button text="Square" />
-    <my:element status="ready" />
-    <acme-badge status="ready" />
-    <button is="acme-button">Custom button</button>
+  <article class="comparison-page">
+    <header class="comparison-header">
+      <h1>HTML rendering comparison</h1>
+      <p>One component rendered by Chrome and Square desktop.</p>
+    </header>
+    <section class="comparison-section">
+      <h2>Normal flow and controls</h2>
+      <p>Hello <strong>世界</strong> !<br>next</p>
+      <p><em>Italic text</em> beside <mark>highlighted text</mark> and <a href="#comparison-table">a link</a>.</p>
+      <div class="comparison-control-row">
+        <label><input type="checkbox" checked> Checked</label>
+        <label>Text <input type="text" value="Editable text" placeholder="Type here"></label>
+      </div>
+      <div class="comparison-control-row">
+        <svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#2b78ee" /></svg>
+        <ui:Button text="Square" />
+        <my:element status="ready" />
+        <acme-badge status="ready" />
+        <button is="acme-button">Custom button</button>
+      </div>
+    </section>
+    <section class="comparison-section">
+      <h2>Flex and grid layout</h2>
+      <div class="comparison-flex">
+        <div class="comparison-card comparison-blue"><strong>Flex A</strong><br>Blue panel</div>
+        <div class="comparison-card comparison-amber"><strong>Flex B</strong><br>Amber panel</div>
+      </div>
+      <div class="comparison-grid">
+        <div class="comparison-card comparison-green"><strong>Grid A</strong><br>Green panel</div>
+        <div class="comparison-card comparison-violet"><strong>Grid B</strong><br>Violet panel</div>
+      </div>
+    </section>
+    <section class="comparison-section">
+      <h2>List and table</h2>
+      <ul><li>First item</li><li>Second item</li></ul>
+      <table id="comparison-table" class="comparison-table">
+        <thead><tr><th>Element</th><th>Renderer check</th></tr></thead>
+        <tbody><tr><td>Cells</td><td>Two columns with borders</td></tr><tr><td colspan="2">Spanning cell</td></tr></tbody>
+      </table>
+    </section>
   </article>
 </template>
+<style>
+  .comparison-page { display: block; width: 100%; box-sizing: border-box; padding: 20px; background-color: #f3f6fb; color: #1e293b; font-family: Arial, sans-serif; }
+  .comparison-header { display: block; padding: 12px 16px; background-color: #e8f1ff; border: 2px solid #2563eb; border-radius: 8px; }
+  .comparison-header h1 { font-size: 24px; margin: 0 0 8px; }
+  .comparison-header p, .comparison-section p { margin: 0 0 12px; }
+  .comparison-section { display: block; margin-top: 14px; padding: 14px; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 6px; }
+  .comparison-section h2 { font-size: 18px; margin: 0 0 12px; }
+  .comparison-control-row { display: block; margin-top: 8px; }
+  .comparison-control-row label { display: block; margin-bottom: 8px; }
+  .comparison-flex { display: flex; flex-direction: row; height: 72px; gap: 12px; }
+  .comparison-flex .comparison-card { flex-grow: 1; flex-basis: 0; min-width: 0; }
+  .comparison-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 72px; height: 72px; gap: 12px; margin-top: 12px; }
+  .comparison-card { display: block; box-sizing: border-box; height: 72px; padding: 10px; border: 2px solid; line-height: 20px; }
+  .comparison-blue { background-color: #dbeafe; border-color: #2563eb; }
+  .comparison-amber { background-color: #fef3c7; border-color: #d97706; border-radius: 10px; }
+  .comparison-green { background-color: #dcfce7; border-color: #15803d; }
+  .comparison-violet { background-color: #ede9fe; border-color: #7c3aed; }
+  .comparison-table { border-spacing: 0; border: 1px solid #475569; background-color: #f8fafc; }
+  .comparison-table th, .comparison-table td { border: 1px solid #94a3b8; padding: 6px 10px; text-align: left; }
+  .comparison-table th { background-color: #e2e8f0; }
+</style>

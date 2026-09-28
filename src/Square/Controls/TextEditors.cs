@@ -155,6 +155,22 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
     protected virtual float TextPaddingX => ContentPaddingX;
     protected virtual float TextPaddingY => ContentPaddingY;
 
+    /// <summary>Only the legacy no-appearance editor draws its frame in Paint.</summary>
+    private protected bool PaintsOwnChrome =>
+        PaintEditorChrome && string.IsNullOrWhiteSpace(Style.Get("appearance"));
+
+    /// <summary>The editor box owns its widget inset unless an HTML host owns the chrome.</summary>
+    private protected bool HasOwnWidgetChrome => PaintEditorChrome &&
+        (PaintsOwnChrome || ControlDrawing.UsesWidgetAppearance(this) &&
+            VisualParent is not Square.Html.HTMLElement { TagName: "input" or "textarea" });
+
+    /// <summary>
+    /// Set when the HTML form host supplies author-level text metrics (proxy font styles stay
+    /// UA-priority, so authorship is mirrored here): lets the editor grow past the default
+    /// widget box exactly like an author-styled standalone control.
+    /// </summary>
+    internal bool HostSpecifiesTextMetrics { get; set; }
+
     protected TextEditorBase()
     {
         AddEventListener("focus", ResetCaretBlink);
@@ -228,7 +244,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
     /// <inheritdoc/>
     public override void Paint(IRenderContext context)
     {
-        if (PaintEditorChrome && string.IsNullOrWhiteSpace(Style.Get("appearance")))
+        if (PaintsOwnChrome)
             ControlDrawing.DrawInputFrame(context, this);
         SyncIntrinsicScrollContent();
         EnsureCaretVisible();
@@ -833,13 +849,16 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
             GetScrollViewportRect().X + TextPaddingX - _horizontalScroll,
             GetFirstLineTop(lineHeight));
 
+    // Single-line text is vertically centered on the content box; half-leading inside the line
+    // box keeps the glyph ink centered regardless of line-height, so a forced +1px nudge would
+    // push the ink into the bottom clip on tight UA-sized boxes (21px host, 16px line box).
     private float GetFirstLineTop(float lineHeight) => IsMultiline
         ? GetScrollViewportRect().Y + TextPaddingY - _verticalScroll
-        : Geometry.Y + Math.Max(1, (Geometry.Height - lineHeight) / 2f);
+        : Geometry.Y + (Geometry.Height - lineHeight) / 2f;
 
     private Rect GetTextViewport()
     {
-        var borderViewport = PaintEditorChrome
+        var borderViewport = HasOwnWidgetChrome
             ? new Rect(Geometry.X + 1, Geometry.Y + 1,
                 Math.Max(0, Geometry.Width - 2), Math.Max(0, Geometry.Height - 2))
             : Geometry;
@@ -1199,7 +1218,8 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
 /// <summary>单行输入框，支持 <c>text</c>、<c>password</c>、<c>number</c> 类型。</summary>
 public class Input : TextEditorBase
 {
-    private static readonly string[] AuthorVerticalTextProperties =
+    /// <summary>Text metrics whose author specification expands the widget past its default box.</summary>
+    internal static readonly string[] AuthorVerticalTextProperties =
     [
         "font", "font-family", "font-size", "font-weight", "font-style", "line-height"
     ];
@@ -1210,7 +1230,7 @@ public class Input : TextEditorBase
     /// <inheritdoc/>
     protected override float TextPaddingX =>
         ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
-        ControlDrawing.GetStyledFloat(this, "padding-left", 8);
+        ControlDrawing.GetStyledFloat(this, "padding-left", HasOwnWidgetChrome ? 8f : 0f);
 
     /// <summary>输入类型。</summary>
     public string Type
@@ -1248,7 +1268,8 @@ public class Input : TextEditorBase
     public override Size Measure(Size availableSize)
     {
         var defaultSize = ControlDrawing.UsesWidgetAppearance(this) ? new Size(169, 15) : new Size(200, 36);
-        if (!AuthorVerticalTextProperties.Any(Style.IsAuthorSpecified)) return defaultSize;
+        if (!AuthorVerticalTextProperties.Any(Style.IsAuthorSpecified) && !HostSpecifiesTextMetrics)
+            return defaultSize;
 
         var fontSize = GetFontSize();
         var fontHeight = TextMetrics.GetFontMetrics(ControlDrawing.ResolveFont(this, fontSize)).Height;
@@ -1304,11 +1325,11 @@ public class TextArea : TextEditorBase
     /// <inheritdoc/>
     protected override float TextPaddingX =>
         ControlDrawing.GetStyledFloat(this, "border-left-width", 0) +
-        ControlDrawing.GetStyledFloat(this, "padding-left", 8);
+        ControlDrawing.GetStyledFloat(this, "padding-left", HasOwnWidgetChrome ? 8f : 0f);
     /// <inheritdoc/>
     protected override float TextPaddingY =>
         ControlDrawing.GetStyledFloat(this, "border-top-width", 0) +
-        ControlDrawing.GetStyledFloat(this, "padding-top", 8);
+        ControlDrawing.GetStyledFloat(this, "padding-top", HasOwnWidgetChrome ? 8f : 0f);
     /// <inheritdoc/>
     public override Size Measure(Size availableSize) =>
         ControlDrawing.UsesWidgetAppearance(this) ? new Size(155, 30) : new Size(300, 88);

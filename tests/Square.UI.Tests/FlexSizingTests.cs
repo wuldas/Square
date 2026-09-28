@@ -265,6 +265,110 @@ public class FlexSizingTests
         Assert.Equal(3, splitter.Geometry.Right - right.Geometry.X);
     }
 
+    [Fact]
+    public void HtmlTextHostFlexItemsExpandEquallyAndWrapAtAssignedWidth()
+    {
+        var root = new Square.Html.HTMLDivElement();
+        var row = new Square.Html.HTMLDivElement();
+        // Author min-width:0 keeps the row at its assigned width; the intrinsic max-content
+        // floor would otherwise exceed the container because of the long wrapped copy.
+        row.Style.CssText = "display: flex; flex-direction: row; gap: 12px; min-width: 0;";
+        var first = new Square.Html.HTMLDivElement();
+        first.Style.CssText = "flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; " +
+            "padding: 10px; border: 2px solid black; min-height: 72px;";
+        var second = new Square.Html.HTMLDivElement();
+        second.Style.CssText = first.Style.CssText;
+        // The short copy stays one line at the expanded width; the long copy must wrap into
+        // several lines at 409px.
+        first.ChildNodes.Add(new Square.UI.Text("Equal expansion text"));
+        second.ChildNodes.Add(new Square.UI.Text(
+            "Flex panel copy that is long enough to wrap into several lines at the expanded " +
+            "width so the host grows past its minimum height like Chrome does. More sentences " +
+            "make the wrapped height clearly exceed the 72px floor for every font metric."));
+        row.Children.Add(first);
+        row.Children.Add(second);
+        root.Children.Add(row);
+        new CssEngine().ApplyStylesToTree(root);
+
+        new LayoutEngine().MeasureAndArrange(root, new Size(830, 400));
+
+        // flex-basis 0 + equal grow: both DOM-text hosts split 830 - 12 gap evenly, like Chrome.
+        Assert.Equal(409, first.Geometry.Width, 3);
+        Assert.Equal(409, second.Geometry.Width, 3);
+        Assert.Equal(0, first.Geometry.X, 3);
+        Assert.Equal(421, second.Geometry.X, 3);
+
+        // Text wraps at the assigned width: the long copy needs more lines than the short one
+        // and each line stays inside its own panel's content box.
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        var firstFragments = tree.CollectTextFragments(first);
+        var secondFragments = tree.CollectTextFragments(second);
+        Assert.True(secondFragments.Count > firstFragments.Count,
+            $"expected wrapped copy to use more lines: first={firstFragments.Count} second={secondFragments.Count}");
+        AssertTextInsidePanelColumns(firstFragments, first.Geometry);
+        AssertTextInsidePanelColumns(secondFragments, second.Geometry);
+    }
+
+    [Fact]
+    public void HtmlTextHostRowSizesCrossAxisFromItemContentWhenYogaResolvesIt()
+    {
+        var row = new Square.Html.HTMLDivElement();
+        row.Style.CssText = "display: flex; flex-direction: row; gap: 12px; min-width: 0; align-items: flex-start;";
+        var first = new Square.Html.HTMLDivElement();
+        first.Style.CssText = "flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; " +
+            "padding: 10px; border: 2px solid black; min-height: 72px;";
+        var second = new Square.Html.HTMLDivElement();
+        second.Style.CssText = first.Style.CssText;
+        first.ChildNodes.Add(new Square.UI.Text("Equal expansion text"));
+        second.ChildNodes.Add(new Square.UI.Text(
+            "Flex panel copy that is long enough to wrap into several lines at the expanded " +
+            "width so the host grows past its minimum height like Chrome does. More sentences " +
+            "make the wrapped height clearly exceed the 72px floor for every font metric."));
+        row.Children.Add(first);
+        row.Children.Add(second);
+        new CssEngine().ApplyStylesToTree(row);
+
+        new LayoutEngine().MeasureAndArrange(row, new Size(830, 400));
+
+        Assert.Equal(409, first.Geometry.Width, 3);
+        Assert.Equal(409, second.Geometry.Width, 3);
+        // Yoga resolves this cross size from the item measures themselves: the single short
+        // line sits on the 72px min-height floor while the wrapped copy's border box
+        // (measured lines + padding + border) grows past it.
+        Assert.Equal(72, first.Geometry.Height, 3);
+        Assert.True(second.Geometry.Height > first.Geometry.Height,
+            $"expected wrapped copy to exceed the minimum height, got {second.Geometry.Height}");
+    }
+
+    private static void AssertTextInsidePanelColumns(List<TextFragment> fragments, Rect panel)
+    {
+        Assert.NotEmpty(fragments);
+        Assert.All(fragments, fragment =>
+        {
+            Assert.True(fragment.Bounds.X >= panel.X + 10,
+                $"fragment {fragment.Bounds} left of panel {panel} content box");
+            Assert.True(fragment.Bounds.Right <= panel.Right - 10,
+                $"fragment {fragment.Bounds} right of panel {panel} content box");
+        });
+    }
+
+    private static void AssertTextInsidePanel(List<TextFragment> fragments, Rect panel)
+    {
+        Assert.NotEmpty(fragments);
+        Assert.All(fragments, fragment =>
+        {
+            Assert.True(fragment.Bounds.X >= panel.X + 10,
+                $"fragment {fragment.Bounds} left of panel {panel} content box");
+            Assert.True(fragment.Bounds.Right <= panel.Right - 10,
+                $"fragment {fragment.Bounds} right of panel {panel} content box");
+            Assert.True(fragment.Bounds.Y >= panel.Y,
+                $"fragment {fragment.Bounds} above panel {panel}");
+            Assert.True(fragment.Bounds.Bottom <= panel.Bottom,
+                $"fragment {fragment.Bounds} below panel {panel}");
+        });
+    }
+
     private static void Layout(View root, Size size)
     {
         var layout = new LayoutEngine();

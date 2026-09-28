@@ -30,6 +30,7 @@
     <InternalsVisibleTo Include="Square.Backends.Vulkan" />
     <InternalsVisibleTo Include="Square.Backends.Vulkan.Tests" />
     <InternalsVisibleTo Include="Square.Backends.Godot" />
+    <InternalsVisibleTo Include="Square.Native.Html" />
   </ItemGroup>
 
   <ItemGroup>

@@ -11,12 +11,26 @@ namespace Square.Sample.WebServer.Components;
 
 public class AcmeBadgeElement : HTMLElement, IHtmlStaticRepresentation
 {
-    public AcmeBadgeElement() : base("acme-badge") { }
+    private readonly Square.UI.Text _label;
+
+    public AcmeBadgeElement() : base("acme-badge")
+    {
+        _label = new Square.UI.Text(BadgeText);
+        ChildNodes.Add(_label);
+    }
+
+    private string BadgeText => "Badge: " + (GetAttribute("status") ?? "");
+
+    protected override void OnPropertyChanged(string name)
+    {
+        base.OnPropertyChanged(name);
+        if (name == "status") _label.Data = BadgeText;
+    }
 
     public HTMLElement CreateHtmlRepresentation()
     {
         var span = new HTMLSpanElement();
-        span.ChildNodes.Add(new Square.UI.Text("Badge: " + (GetAttribute("status") ?? "")));
+        span.ChildNodes.Add(new Square.UI.Text(BadgeText));
         return span;
     }
 }

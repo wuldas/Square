@@ -14,12 +14,10 @@ public sealed class WebViewRegistrationTests
         WebViewRegistration.RegisterDefaults();
         WebViewRegistration.RegisterDefaults();
 
-        var window = new AppWindow("webview-registration-test");
-        var createElement = window.Document.GetType().GetMethod("CreateElement", [typeof(string)]);
-        Assert.NotNull(createElement);
-
-        var element = createElement!.Invoke(window.Document, ["WebView"]);
+        var document = Assert.IsType<UIDocument>(new AppWindow("webview-registration-test").Document);
+        var element = document.CreateComponentElement("urn:square:webview", "WebView");
 
         Assert.IsType<NativeWebView>(element);
+        Assert.Same(document, element.OwnerDocument);
     }
 }

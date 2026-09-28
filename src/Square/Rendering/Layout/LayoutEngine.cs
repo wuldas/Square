@@ -463,9 +463,17 @@ public sealed partial class LayoutEngine
             // DOM Text only exists in the CSS line engine: the host becomes a measure leaf and
             // ArrangeCore runs the normal-flow pass at arrange time (see ApplyYogaLayout).
             // No intrinsic min sizes: block hosts must keep wrapping at the stretched width.
+            // The host is still a regular box of its parent: flex item sizing, border, position
+            // and overflow must match sibling nodes, or row items fall back to their intrinsic
+            // text width instead of honoring flex-grow/flex-basis.
             YGNodeStyleSetDisplay(node, YGDisplay.Flex);
             YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
+            ApplyFlexItem(element, node, parentW, parentH, em, rem);
+            ApplyDirectionAndAspectRatio(element, node);
             ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            ApplyBorder(element, node, parentW, parentH, em, rem);
+            ApplyPosition(element, node, parentW, parentH, em, rem);
+            ApplyOverflow(element, node);
             YGNodeSetMeasureFunc(node, LeafMeasureCallback);
             return node;
         }

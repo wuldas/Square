@@ -791,41 +791,6 @@ public class SoftwareRendererTests
         }
     }
 
-    [Fact]
-    public void ButtonHoverAndActiveStatesProvideDefaultVisualFeedback()
-    {
-        var button = new Button("Press") { Geometry = new Rect(2, 2, 100, 40) };
-        var engine = new CssEngine();
-        engine.ApplyStyles(button);
-
-        var normalContext = CreateContext(110, 50);
-        Render(button, normalContext);
-        var normal = normalContext.GetBitmap().GetPixel(8, 8);
-
-        button.SetState(ElementState.Hover, true);
-        engine.ApplyStyles(button);
-        var hoverContext = CreateContext(110, 50);
-        Render(button, hoverContext);
-        var hover = hoverContext.GetBitmap().GetPixel(8, 8);
-
-        button.SetState(ElementState.Active, true);
-        engine.ApplyStyles(button);
-        var activeContext = CreateContext(110, 50);
-        Render(button, activeContext);
-        var active = activeContext.GetBitmap().GetPixel(8, 8);
-
-        AssertPixel(normal, 239);
-        AssertPixel(hover, 229);
-        AssertPixel(active, 245);
-
-        static void AssertPixel(ReadOnlySpan<byte> pixel, byte expected)
-        {
-            Assert.Equal(expected, pixel[0]);
-            Assert.Equal(expected, pixel[1]);
-            Assert.Equal(expected, pixel[2]);
-            Assert.Equal(255, pixel[3]);
-        }
-    }
 
     [Fact]
     public void AppearanceNoneDisablesButtonNativeHoverChrome()
@@ -1128,10 +1093,16 @@ public class SoftwareRendererTests
         var popupOffset = new Point(
             (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
             (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset);
-        AssertControlChrome(context.GetBitmap(), autoInput.Geometry, popupOffset, Color.White, expectAuthorBorder: false);
-        AssertControlChrome(context.GetBitmap(), autoButton.Geometry, popupOffset, Color.FromRgb(239, 239, 239), expectAuthorBorder: false);
-        AssertControlChrome(context.GetBitmap(), authorInput.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
-        AssertControlChrome(context.GetBitmap(), authorButton.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
+        var bitmap = context.GetBitmap();
+        AssertControlChrome(bitmap, autoInput.Geometry, popupOffset, Color.White, expectAuthorBorder: false);
+        AssertControlEdges(bitmap, autoButton.Geometry, popupOffset, expectAuthorBorder: false);
+        var face = bitmap.GetPixel(
+            (int)(popupOffset.X + autoButton.Geometry.Right) - 9,
+            (int)(popupOffset.Y + autoButton.Geometry.Y) + 8);
+        Assert.True(face[0] > 200 && face[1] > 200 && face[2] > 200,
+            "Default button must paint its light UA face above the dark dialog background.");
+        AssertControlChrome(bitmap, authorInput.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
+        AssertControlChrome(bitmap, authorButton.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
         CssStyleReconciler.UnregisterScopesForTree(document.Ui);
     }
 

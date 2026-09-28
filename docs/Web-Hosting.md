@@ -112,9 +112,9 @@ finally
 
 包导出与已定义的自定义元素仅输出 `IHtmlStaticRepresentation` 返回的安全静态表示；本轮不输出浏览器 `customElements.define` 注册脚本或可升级的 `is` 标记。
 
-最终已应用样式默认去重为 head 中的 CSS class，也可通过 `UseInlineStyles` 输出 inline `style`。组件样式表无需在浏览器中重新执行 Square selector/cascade。交互页面在每次事件后同时返回当前页面 CSS，不使用共享 stylesheet endpoint 表达会话动态状态。
+最终已应用样式默认按完整声明集去重为 head 中的 `sq-style-*` CSS class，原始 class 仍保留；不同元素即使共享原始 class，也不会串用背景或边框。也可通过 `UseInlineStyles` 输出 inline `style`。组件样式表无需在浏览器中重新执行 Square selector/cascade。交互页面在每次事件后同时返回当前页面 CSS，不使用共享 stylesheet endpoint 表达会话动态状态。
 
-表单控件默认 `appearance: auto`：基线 CSS 把它写在 `button,input,select,textarea` 上，让浏览器使用原生控件外观。`CheckBox` / `Radio` 的 `appearance` 写在内部 `input` 上，而不是外层 `label`。`appearance: none` 覆盖该基线，关闭原生 chrome。
+表单控件默认 `appearance: auto`：基线 CSS 把它写在 `button,input,select,textarea` 上，Square 的 UA 级默认边框、背景和字体不导出为更高优先级的 author 样式，由浏览器呈现原生控件；作者自定义边框等仍保留。为使按下状态在仅微调边框的浏览器主题中也可见，Web 基线与桌面 UA 同步将默认按钮的 `:active` 背景压暗；Web 仅给未指定作者背景且使用默认外观的按钮附加内部反馈类，不覆盖作者背景。`CheckBox` / `Radio` 的 `appearance` 写在内部 `input` 上，而不是外层 `label`。`appearance: none` 覆盖该基线，关闭原生 chrome。
 
 ## 4. 不支持控件
 
@@ -151,7 +151,9 @@ app.MapSquarePage<Main>("/", options =>
 dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj
 ```
 
-访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面；`/html-elements` 混合页覆盖 HTML 元素、SVG、Square UI 与安全自定义元素静态表示。
+访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面；`/html-elements` 混合页覆盖 HTML 元素、SVG、Square UI、安全自定义元素静态表示，以及普通流/Flex/Grid、背景颜色、边框和表格的双端对照。
+
+对照桌面渲染时，运行 `dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj -- --desktop --html-elements`。此模式与浏览器 `/html-elements` 使用同一 `HtmlElementsPage.sqv`，默认窗口为 900×960；比较几何时也把 Chrome 视口设为 900×960。`Square.Sample --html-regression` 是另一份布局回归页，正文内容本来不同。
 
 ## 7. 当前边界
 
