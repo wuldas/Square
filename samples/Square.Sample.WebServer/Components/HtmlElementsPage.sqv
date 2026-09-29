@@ -1,6 +1,7 @@
 <template xmlns="http://www.w3.org/1999/xhtml" xmlns:ui="urn:square:ui" xmlns:my="urn:acme:widgets">
   <article class="comparison-page">
     <header class="comparison-header">
+      <img class="comparison-gif" src="Assets/animated-demo.gif" alt="Animated orbiting dots">
       <h1>HTML rendering comparison</h1>
       <p>One component rendered by Chrome and Square desktop.</p>
     </header>
@@ -44,6 +45,7 @@
 <style>
   .comparison-page { display: block; width: 100%; box-sizing: border-box; padding: 20px; background-color: #f3f6fb; color: #1e293b; font-family: Arial, sans-serif; }
   .comparison-header { display: block; padding: 12px 16px; background-color: #e8f1ff; border: 2px solid #2563eb; border-radius: 8px; }
+  .comparison-gif { float: right; width: 80px; height: 80px; margin-left: 16px; }
   .comparison-header h1 { font-size: 24px; margin: 0 0 8px; }
   .comparison-header p, .comparison-section p { margin: 0 0 12px; }
   .comparison-section { display: block; margin-top: 14px; padding: 14px; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 6px; }

@@ -22,6 +22,8 @@ app.MapSquareInteractivePage<Main>("/", options =>
 });
 
 app.MapSquarePage<HtmlElementsPage>("/html-elements");
+app.MapGet("/Assets/animated-demo.gif", () => Results.File(
+    Path.Combine(AppContext.BaseDirectory, "Assets", "animated-demo.gif"), "image/gif"));
 
 app.MapSquarePage("/hello/{name}", context =>
 {
@@ -35,6 +37,7 @@ app.Run();
 static void RunDesktop(string[] args)
 {
     var htmlElements = HasOption(args, "--html-elements");
+    if (htmlElements) Square.Images.ImageSourceRegistration.RegisterDefaults();
     var width = GetIntOption(args, "--width", htmlElements ? 900 : 1600);
     var height = GetIntOption(args, "--height", htmlElements ? 960 : 900);
     var window = new AppWindow(htmlElements ? "HTML elements" : "PiSquared", width, height)

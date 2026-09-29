@@ -153,6 +153,8 @@ dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csp
 
 访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面；`/html-elements` 混合页覆盖 HTML 元素、SVG、Square UI、安全自定义元素静态表示，以及普通流/Flex/Grid、背景颜色、边框和表格的双端对照。
 
+`/html-elements` 还展示同一份 8 帧、4fps 的不透明循环 GIF（`Assets/animated-demo.gif`）：Web 通过固定 `image/gif` 路由返回原文件，桌面由 `Square.Images` 从输出资源目录解码并按帧延迟重绘；无需客户端脚本。
+
 对照桌面渲染时，运行 `dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj -- --desktop --html-elements`。此模式与浏览器 `/html-elements` 使用同一 `HtmlElementsPage.sqv`，默认窗口为 900×960；比较几何时也把 Chrome 视口设为 900×960。`Square.Sample --html-regression` 是另一份布局回归页，正文内容本来不同。
 
 ## 7. 当前边界

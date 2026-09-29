@@ -127,7 +127,7 @@ Native HTML flow preserves block-to-inline margins, places Square `Button` inlin
 | `iframe` | Media | “Embedded content disabled”; document loading unavailable | Disabled active behavior; omit active Web payload + diagnostic |
 | `object` | Media | “Embedded content disabled” plus text fallback; plugin loading unavailable | Disabled active behavior; omit active Web payload + diagnostic |
 | `embed` | Media | Void “Embedded content disabled”; plugin loading unavailable | Disabled active behavior; omit active Web payload + diagnostic |
-| `img` | Media | Static Square Image proxy; alt fallback; void | Native tag only when safe; never load active embeds |
+| `img` | Media | Square Image proxy; when `Square.Images` is registered, GIF frames advance by their source delays; alt fallback; void | Safe semantic img; browser decodes GIF without Square scripts |
 | `picture` | Media | Select its single img; no network source negotiation | Native tag only when safe; never load active embeds |
 | `map` | Media | Image-map area grouping, no independent box | Native tag only when safe; never load active embeds |
 | `area` | Media | Void safe-link hit area in associated map | Native tag only when safe; never load active embeds |
