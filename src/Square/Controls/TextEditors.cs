@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using Square.Controls.Animation;
 using Square.Events;
 using Square.Graphics;
 using Square.Platform;
@@ -126,9 +125,7 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
     private float _verticalScroll;
     private float? _preferredX;
     private float _caretOpacity = 1f;
-    private float _caretBlinkTarget;
     private double _nextCaretTransitionSeconds;
-    private Animation<float>? _caretBlinkAnimation;
     private readonly System.Diagnostics.Stopwatch _caretClock = System.Diagnostics.Stopwatch.StartNew();
     private readonly List<EditorSnapshot> _undoHistory = [];
     private readonly List<EditorSnapshot> _redoHistory = [];
@@ -563,18 +560,13 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
     {
         if (!IsFocused || SelectionLength > 0) return false;
         var now = _caretClock.Elapsed.TotalSeconds;
-        if ((_caretBlinkAnimation == null || _caretBlinkAnimation.IsComplete) && now < _nextCaretTransitionSeconds)
-            return false;
-        if (_caretBlinkAnimation == null || _caretBlinkAnimation.IsComplete)
-        {
-            _caretBlinkTarget = _caretOpacity > 0.5f ? 0f : 1f;
-            _caretBlinkAnimation = CreateCaretBlinkAnimation(_caretOpacity, _caretBlinkTarget);
-            _caretBlinkAnimation.Start();
-        }
-        _caretBlinkAnimation.Update(1f / 30f);
-        if (_caretBlinkAnimation.IsComplete)
-            _nextCaretTransitionSeconds = now + (_caretBlinkTarget <= 0.01f ? 0.45d : 0.7d);
-        InvalidatePaint();
+        if (now < _nextCaretTransitionSeconds) return false;
+
+        var caret = CaretRect;
+        _caretOpacity = _caretOpacity > 0.5f ? 0f : 1f;
+        _nextCaretTransitionSeconds = now + (_caretOpacity <= 0.01f ? 0.45d : 0.7d);
+        // The host ticks every 16ms; repaint only at a visibility edge, and only the caret.
+        InvalidatePaint(new Rect(caret.X - Geometry.X, caret.Y - Geometry.Y, caret.Width, caret.Height));
         return true;
     }
 
@@ -582,21 +574,11 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
     public void ResetCaretBlink()
     {
         _caretOpacity = 1f;
-        _caretBlinkTarget = 0f;
         _nextCaretTransitionSeconds = _caretClock.Elapsed.TotalSeconds + 0.7d;
-        _caretBlinkAnimation = null;
         InvalidatePaint();
     }
 
-    private Animation<float> CreateCaretBlinkAnimation(float from, float to) => new(
-        Interpolate,
-        from,
-        to,
-        0.28f,
-        t => t,
-        value => _caretOpacity = value);
 
-    private static float Interpolate(float from, float to, float t) => from + (to - from) * t;
 
     protected override void OnPropertyChanged(string name)
     {
@@ -1163,7 +1145,6 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
         _selectionAnchor = _caretIndex;
         _isDragging = false;
         _caretOpacity = 0f;
-        _caretBlinkAnimation = null;
         InvalidatePaint();
     }
 

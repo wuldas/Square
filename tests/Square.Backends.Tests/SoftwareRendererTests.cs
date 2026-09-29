@@ -1707,8 +1707,9 @@ public class SoftwareRendererTests
             $"selection covered {highlightedRows} rows, natural font height {naturalHeight:F1}");
     }
 
+
     [Fact]
-    public void FocusedCaretBlinkFadesWithAnimationAndResetVisible()
+    public void FocusedCaretBlinkOnlyRepaintsAtVisibilityEdges()
     {
         var input = new Input { Value = "Blink", Geometry = new Rect(4, 4, 220, 36) };
         input.Focus();
@@ -1720,23 +1721,30 @@ public class SoftwareRendererTests
         tree.Render(context);
         var caretPixel = ((int)input.CaretRect.Y + 2) * context.GetBitmap().Stride + (int)input.CaretRect.X * 4;
         Assert.Equal(0, context.GetBitmap().Pixels[caretPixel]);
-        Assert.Equal(0, context.GetBitmap().Pixels[caretPixel + 1]);
+        input.ClearPaintDirty();
 
         Assert.False(input.ToggleCaretBlink());
         Thread.Sleep(720);
         Assert.True(input.ToggleCaretBlink());
+        Assert.False(input.IsPaintFullDirty);
+        Assert.Single(input.PaintDirtyRects);
+        for (var i = 0; i < 20; i++) Assert.False(input.ToggleCaretBlink());
         context.Clear(Color.White);
         tree.BuildFrom(input);
         tree.Render(context);
-        Assert.True(context.GetBitmap().Pixels[caretPixel] is > 0 and < 255);
-        Assert.True(context.GetBitmap().Pixels[caretPixel + 1] is > 0 and < 255);
+        Assert.Equal(255, context.GetBitmap().Pixels[caretPixel]);
 
-        input.ResetCaretBlink();
+        input.ClearPaintDirty();
+        Thread.Sleep(470);
+        Assert.True(input.ToggleCaretBlink());
+        Assert.Single(input.PaintDirtyRects);
         context.Clear(Color.White);
         tree.BuildFrom(input);
         tree.Render(context);
         Assert.Equal(0, context.GetBitmap().Pixels[caretPixel]);
-        Assert.Equal(0, context.GetBitmap().Pixels[caretPixel + 1]);
+
+        input.ResetCaretBlink();
+        Assert.False(input.ToggleCaretBlink());
     }
 
     [Fact]
