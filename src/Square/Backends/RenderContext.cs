@@ -188,12 +188,42 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     public void FillRect(Rect rect, Brush brush)
     {
-        var inverse = Matrix3x2.Invert(_currentTransform, out var value) ? value : Matrix3x2.Identity;
-        rect = TransformRect(rect);
-        var clipped = ClipRect(rect);
+        if (MathF.Abs(_currentTransform.M12) > 0.0001f || MathF.Abs(_currentTransform.M21) > 0.0001f)
+        {
+            if (!Matrix3x2.Invert(_currentTransform, out var inverse)) return;
+            RasterizeTransformedRect(rect, ClipRect(TransformRect(rect)), brush, inverse);
+            return;
+        }
+        var inverseAxisAligned = Matrix3x2.Invert(_currentTransform, out var value) ? value : Matrix3x2.Identity;
+        var clipped = ClipRect(TransformRect(rect));
         if (clipped.IsEmpty) return;
         if (brush is SolidColorBrush solid) BlendRect(clipped, solid.Color);
-        else BlendBrush(clipped, brush, inverse);
+        else BlendBrush(clipped, brush, inverseAxisAligned);
+    }
+
+    private void RasterizeTransformedRect(Rect source, Rect bounds, Brush brush, Matrix3x2 inverse)
+    {
+        if (bounds.IsEmpty) return;
+        var x0 = Math.Max(0, (int)MathF.Floor(bounds.Left));
+        var y0 = Math.Max(0, (int)MathF.Floor(bounds.Top));
+        var x1 = Math.Min(_bitmapWidth, (int)MathF.Ceiling(bounds.Right));
+        var y1 = Math.Min(_bitmapHeight, (int)MathF.Ceiling(bounds.Bottom));
+        for (var y = y0; y < y1; y++)
+        for (var x = x0; x < x1; x++)
+        {
+            var covered = 0;
+            for (var sy = 0; sy < 2; sy++)
+            for (var sx = 0; sx < 2; sx++)
+            {
+                var logical = TransformPoint(inverse, x + (sx + 0.5f) / 2, y + (sy + 0.5f) / 2);
+                if (logical.X >= source.Left && logical.X < source.Right &&
+                    logical.Y >= source.Top && logical.Y < source.Bottom) covered++;
+            }
+            if (covered == 0) continue;
+            var color = brush is SolidColorBrush solid ? solid.Color :
+                SampleBrush(brush, TransformPoint(inverse, x + 0.5f, y + 0.5f));
+            BlendPixelCoverage(x, y, color, covered, 4);
+        }
     }
 
     public void DrawRect(Rect rect, Pen pen)

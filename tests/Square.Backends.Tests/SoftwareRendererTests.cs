@@ -42,6 +42,21 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void RotatedSolidRectanglePaintsItsSilhouetteNotItsAxisAlignedBounds()
+    {
+        using var context = CreateContext(40, 40);
+        context.Clear(Color.White);
+        context.PushTransform(Matrix3x2.CreateRotation(MathF.PI / 4, new Vector2(20, 20)));
+        context.FillRect(new Rect(12, 16, 16, 8), new SolidColorBrush(Color.Red));
+        context.PopTransform();
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(Color.White.G, bitmap.GetPixel(12, 12)[1]);
+        Assert.Equal(Color.Red.G, bitmap.GetPixel(17, 13)[1]);
+        Assert.Equal(Color.Red.G, bitmap.GetPixel(20, 20)[1]);
+    }
+
+    [Fact]
     public void RendersSvgImageThroughImageControl()
     {
         using var context = CreateContext(40, 40);
