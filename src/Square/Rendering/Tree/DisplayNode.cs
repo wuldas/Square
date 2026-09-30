@@ -1,3 +1,4 @@
+using Square.CSS.Properties;
 using Square.Graphics;
 using Square.UI;
 using System.Numerics;
@@ -61,9 +62,12 @@ public sealed class DisplayNode
     {
         if (dirtyClip is { } subtreeClip && !_subtreeVisualBounds.IntersectsWith(subtreeClip)) return;
         var wrapsOpacity = TryGetOpacity(out var opacity);
+        var wrapsTransform = TryGetTransform(out var transform);
         if (wrapsOpacity) ctx.PushLayer(_subtreeVisualBounds, opacity);
+        if (wrapsTransform) ctx.PushTransform(transform);
 
         var visualBounds = VisualBounds.IsEmpty ? Bounds : VisualBounds;
+        if (wrapsTransform) visualBounds = DrawCommandBounds.TransformBounds(visualBounds, transform);
         var paintsNode = Element?.IsCssVisibilityHidden() != true &&
             (dirtyClip == null || visualBounds.IntersectsWith(dirtyClip.Value));
         if (paintsNode)
@@ -77,6 +81,7 @@ public sealed class DisplayNode
         if (Element is IPopupElement)
         {
             if (paintsNode) ExecuteCommands(ctx, _afterChildrenCommands);
+            if (wrapsTransform) ctx.PopTransform();
             if (wrapsOpacity) ctx.PopLayer();
             return;
         }
@@ -98,6 +103,7 @@ public sealed class DisplayNode
         if (scrollsChildren) ctx.PopTransform();
         if (clipsChildren) ctx.PopClip();
         if (paintsNode) ExecuteCommands(ctx, _afterChildrenCommands);
+        if (wrapsTransform) ctx.PopTransform();
         if (wrapsOpacity) ctx.PopLayer();
     }
 
@@ -159,7 +165,7 @@ public sealed class DisplayNode
         if (IsDirty) RebuildCommands();
 
         var bounds = VisualBounds.IsEmpty ? Bounds : VisualBounds;
-        if (Element is IPopupElement) return _subtreeVisualBounds = bounds;
+        if (Element is IPopupElement) return _subtreeVisualBounds = TransformSubtreeBounds(bounds);
 
         var overflowClip = Element?.GetOverflowClipRect() ?? Rect.Empty;
         var scrollOffset = Element?.ScrollOffset ?? default;
@@ -174,8 +180,11 @@ public sealed class DisplayNode
                 childBounds = Rect.Intersect(childBounds, overflowClip);
             bounds = Union(bounds, childBounds);
         }
-        return _subtreeVisualBounds = bounds;
+        return _subtreeVisualBounds = TransformSubtreeBounds(bounds);
     }
+
+    private Rect TransformSubtreeBounds(Rect bounds) =>
+        TryGetTransform(out var transform) ? DrawCommandBounds.TransformBounds(bounds, transform) : bounds;
 
     private bool TryGetOpacity(out float opacity)
     {
@@ -185,6 +194,27 @@ public sealed class DisplayNode
             float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out opacity) &&
             float.IsFinite(opacity) &&
             (opacity = Math.Clamp(opacity, 0f, 1f)) != 1f;
+    }
+
+    /// <summary>解析元素的 CSS transform，绕布局盒中心旋转（等价默认 transform-origin: 50% 50%）。</summary>
+    private bool TryGetTransform(out Matrix3x2 transform)
+    {
+        transform = Matrix3x2.Identity;
+        var value = Element?.Style.Get("transform");
+        if (string.IsNullOrWhiteSpace(value) ||
+            !CssTransformParser.TryParse(value, out var local) ||
+            local.IsIdentity)
+            return false;
+        if (Bounds.IsEmpty)
+        {
+            transform = local;
+            return true;
+        }
+        var originX = Bounds.X + Bounds.Width / 2f;
+        var originY = Bounds.Y + Bounds.Height / 2f;
+        transform = Matrix3x2.CreateTranslation(-originX, -originY) * local *
+            Matrix3x2.CreateTranslation(originX, originY);
+        return true;
     }
 
     private static Rect Translate(Rect rect, float x, float y) => rect.IsEmpty
