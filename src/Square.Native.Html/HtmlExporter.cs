@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
+using Square.CSS.Ast;
+using Square.CSS.Engine;
 using Square.Controls;
 using Square.Graphics;
 using Square.Graphics.Codecs;
@@ -867,7 +869,12 @@ public static class HtmlExporter
             !element.Style.IsAuthorSpecified("background-color"))
             classes.Add("sq-default-button");
 
-        var styles = CompactStyles(MergeStyles(node, hostChoiceInput));
+        var mergedStyles = MergeStyles(node, hostChoiceInput);
+        if (mergedStyles.TryGetValue("animation-name", out var animationName) &&
+            CssStyleReconciler.GetKeyFrames(element, animationName) is { } keyFrames &&
+            context.Styles.RegisterKeyFrames(keyFrames) is { } exportedName)
+            mergedStyles["animation-name"] = exportedName;
+        var styles = CompactStyles(mergedStyles);
         if (styles.Count > 0 && context.Options.UseInlineStyles)
         {
             output.Append(" style=\"");
@@ -1029,7 +1036,7 @@ public static class HtmlExporter
         var css = new StringBuilder();
         if (options.IncludeBaselineCss) css.Append(BaselineCss);
         if (!string.IsNullOrWhiteSpace(options.AdditionalCss)) css.Append(options.AdditionalCss);
-        if (!options.UseInlineStyles) css.Append(styles.ToCss());
+        css.Append(styles.ToCss(includeClassRules: !options.UseInlineStyles));
         return css.ToString();
     }
 
@@ -1096,6 +1103,8 @@ public static class HtmlExporter
     {
         private readonly Dictionary<string, string> _classesBySignature = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IReadOnlyList<KeyValuePair<string, string>>> _rules = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _keyframeNamesByBody = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _keyframeBodies = new(StringComparer.Ordinal);
 
         public string GetClass(IReadOnlyList<KeyValuePair<string, string>> styles)
         {
@@ -1112,10 +1121,67 @@ public static class HtmlExporter
             return className;
         }
 
-        public string ToCss()
+        public string? RegisterKeyFrames(KeyFramesRule rule)
         {
-            if (_rules.Count == 0) return "";
+            var body = new StringBuilder();
+            var stops = 0;
+            foreach (var stop in rule.Stops)
+            {
+                var selector = FormatKeyframeSelector(stop.Selector);
+                if (selector == null) continue;
+                var declaration = stop.Declarations.LastOrDefault(static declaration =>
+                    declaration.Property.Equals("width", StringComparison.OrdinalIgnoreCase) ||
+                    declaration.Property.Equals("opacity", StringComparison.OrdinalIgnoreCase));
+                if (declaration == null || declaration.Important) continue;
+                var property = declaration.Property.ToLowerInvariant();
+                var raw = declaration.Value.Trim();
+                var isPixels = raw.EndsWith("px", StringComparison.OrdinalIgnoreCase);
+                if (isPixels) raw = raw[..^2];
+                if (!float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ||
+                    !float.IsFinite(value)) continue;
+                if (property == "width")
+                {
+                    body.Append(selector).Append("{width:")
+                        .Append(Math.Max(0, value).ToString("0.###", CultureInfo.InvariantCulture)).Append("px;}");
+                }
+                else
+                {
+                    body.Append(selector).Append("{opacity:")
+                        .Append(Math.Clamp(value, 0f, 1f).ToString("0.###", CultureInfo.InvariantCulture))
+                        .Append(";}");
+                }
+                stops++;
+            }
+            if (stops < 2) return null;
+            var signature = body.ToString();
+            if (_keyframeNamesByBody.TryGetValue(signature, out var existing)) return existing;
+            var baseName = "sq-kf-" + StableHash(signature);
+            var name = baseName;
+            var suffix = 1;
+            while (_keyframeBodies.ContainsKey(name)) name = baseName + "-" + suffix++;
+            _keyframeNamesByBody[signature] = name;
+            _keyframeBodies[name] = signature;
+            return name;
+        }
+
+        private static string? FormatKeyframeSelector(string value)
+        {
+            var selector = value.Trim();
+            if (selector.Equals("from", StringComparison.OrdinalIgnoreCase)) return "0%";
+            if (selector.Equals("to", StringComparison.OrdinalIgnoreCase)) return "100%";
+            if (!selector.EndsWith('%') ||
+                !float.TryParse(selector[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var percent) ||
+                !float.IsFinite(percent) || percent is < 0 or > 100) return null;
+            return percent.ToString("0.###", CultureInfo.InvariantCulture) + "%";
+        }
+
+        public string ToCss(bool includeClassRules)
+        {
+            if (_rules.Count == 0 && _keyframeBodies.Count == 0) return "";
             var css = new StringBuilder();
+            foreach (var keyframe in _keyframeBodies.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+                css.Append("@keyframes ").Append(keyframe.Key).Append('{').Append(keyframe.Value).Append('}');
+            if (!includeClassRules) return css.ToString();
             foreach (var rule in _rules.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
                 css.Append(rule.Key).Append('{');

@@ -480,6 +480,7 @@ public enum TargetSupportLevel
 ### P5：HTML adapter 原型 🔄
 
 - `Square.Native.Html` 已生成 static semantic HTML。元素保留原始 class 供选择器与语义查询使用；每个元素的已求值样式以完整声明集去重，挂到独立 `sq-style-*` 类，不把不同节点样式合并进共享 author class。`appearance:auto` 表单控件不把 Square UA 默认边框、背景和字体升格为 author 样式；浏览器保留原生外观，默认按钮的按下背景由 Web 基线与桌面 UA 同步加深。作者声明仍输出。可通过 `HtmlExportOptions.UseInlineStyles` 输出内联 `style`。
+- 被元素引用的组件 `@keyframes` 数值 `opacity` 停顿会以安全的 `sq-kf-*` 名称导出，避免不同组件同名动画冲突；其他关键帧声明不原样透传到浏览器。
 - 生成 CSS 会压缩简写展开后的冗余长属性，例如保留 `border` / `padding`，不再重复输出 `border-bottom-color`、`padding-left`。
 - `HtmlExportOptions.StylesheetHref` 可让页面引用外部 CSS；`HtmlExportResult.Css` 提供写入静态资源的完整 stylesheet 内容。
 - `Square.Hosting.Web` 提供 `MapSquareStylesheet`，可与 `MapSquarePage` 配套暴露同一页面工厂生成的 CSS。

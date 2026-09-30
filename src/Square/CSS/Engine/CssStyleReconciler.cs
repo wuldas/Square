@@ -1,3 +1,4 @@
+using Square.CSS.Ast;
 using Square.CSS.Properties;
 using Square.UI;
 using Square.UI.ElementApi;
@@ -251,6 +252,19 @@ public static class CssStyleReconciler
         return scopes
             .SelectMany(scope => scope.Engine.GetMatchedRules(element))
             .ToArray();
+    }
+
+    /// <summary>Resolve an animation from the closest registered component scope.</summary>
+    internal static KeyFramesRule? GetKeyFrames(Element element, string name)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        lock (Gate)
+            for (var i = Scopes.Count - 1; i >= 0; i--)
+                if (IsAncestorOrSelf(Scopes[i].Root, element) &&
+                    Scopes[i].Engine.GetKeyFrames(name) is { } keyFrames)
+                    return keyFrames;
+        return null;
     }
 
     /// <summary>释放与指定元素树关联的 CSS scope 和待处理样式失效。</summary>

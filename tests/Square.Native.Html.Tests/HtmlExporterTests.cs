@@ -1,5 +1,6 @@
 using Square.Controls;
 using Square.CSS.Engine;
+using Square.CSS.Tokenizer;
 using Square.Graphics;
 using Square.Html;
 using Square.Native.Html;
@@ -130,6 +131,88 @@ public sealed class HtmlExporterTests
         Assert.DoesNotContain("style data-square-css", result.Html);
         Assert.Contains("style=\"background:#2563eb;border:2px solid #1e3a8a;\"", result.Html);
         Assert.Contains("style=\"background:#7c3aed;border:2px solid #4c1d95;\"", result.Html);
+    }
+
+    [Fact]
+    public void ExportedOpacityAnimationRunsWithScopedKeyframesAndInlineStyles()
+    {
+        var root = new HTMLDivElement();
+        var badge = new HTMLSpanElement();
+        badge.ClassList.Add("fade");
+        badge.ChildNodes.Add(new Square.UI.Text("CSS fade-in"));
+        root.Children.Add(badge);
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes fade {
+                from { opacity: 0.25; background-image: url(javascript:alert(1)); }
+                to { opacity: 1; }
+            }
+            .fade { animation-name: fade; animation-duration: 2s; animation-iteration-count: 1; }
+            """).Tokenize()).Parse());
+        using var scope = engine.ApplyGeneratedStylesToTree(root);
+
+        var exported = HtmlExporter.Export(root, new HtmlExportOptions { IncludeBaselineCss = false });
+        var match = System.Text.RegularExpressions.Regex.Match(exported.Css,
+            @"@keyframes (?<name>[A-Za-z_][\w-]*)\{0%\{opacity:0\.25;\}100%\{opacity:1;\}\}");
+        Assert.True(match.Success, "the browser needs the active opacity keyframes, not only animation-name");
+        var name = match.Groups["name"].Value;
+        Assert.Contains($"animation-name:{name};", exported.Css);
+        Assert.Contains($"@keyframes {name}", exported.Html);
+        Assert.Contains("CSS fade-in", exported.BodyHtml);
+        Assert.DoesNotContain("javascript:", exported.Css, StringComparison.OrdinalIgnoreCase);
+
+        var inline = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeBaselineCss = false,
+            UseInlineStyles = true
+        });
+        Assert.Contains($"animation-name:{name};", inline.BodyHtml);
+        Assert.Contains($"@keyframes {name}", inline.Css);
+        Assert.DoesNotContain("sq-style-", inline.BodyHtml);
+    }
+
+    [Fact]
+    public void SameNamedComponentAnimationsRetainIndependentOpacityTracks()
+    {
+        static CssEngine CreateEngine(string from)
+        {
+            var engine = new CssEngine();
+            var css = $"@keyframes pulse {{ from {{ opacity: {from}; }} to {{ opacity: 1; }} }} " +
+                ".fade { animation-name: pulse; animation-duration: 1s; }";
+            engine.LoadStyleSheet(new CssParser(new CssTokenizer(css).Tokenize()).Parse());
+            return engine;
+        }
+
+        var root = new View();
+        var first = new HTMLSpanElement { Id = "first" };
+        var second = new HTMLSpanElement { Id = "second" };
+        first.ClassList.Add("fade");
+        second.ClassList.Add("fade");
+        first.ChildNodes.Add(new Square.UI.Text("First"));
+        second.ChildNodes.Add(new Square.UI.Text("Second"));
+        root.Children.Add(first);
+        root.Children.Add(second);
+        using var firstScope = CreateEngine("0.25").ApplyGeneratedStylesToTree(first);
+        using var secondScope = CreateEngine("0.6").ApplyGeneratedStylesToTree(second);
+
+        var exported = HtmlExporter.Export(root, new HtmlExportOptions
+        {
+            IncludeDocument = false,
+            IncludeBaselineCss = false,
+            UseInlineStyles = true
+        });
+        var rules = System.Text.RegularExpressions.Regex.Matches(exported.Css,
+            @"@keyframes (?<name>[A-Za-z_][\w-]*)\{0%\{opacity:(?<from>0\.\d+);\}100%\{opacity:1;\}\}");
+        Assert.Equal(2, rules.Count);
+        var firstName = rules.Single(rule => rule.Groups["from"].Value == "0.25").Groups["name"].Value;
+        var secondName = rules.Single(rule => rule.Groups["from"].Value == "0.6").Groups["name"].Value;
+        Assert.NotEqual(firstName, secondName);
+        var firstStyle = System.Text.RegularExpressions.Regex.Match(exported.BodyHtml,
+            @"id=""first"" style=""(?<style>[^""]+)""").Groups["style"].Value;
+        var secondStyle = System.Text.RegularExpressions.Regex.Match(exported.BodyHtml,
+            @"id=""second"" style=""(?<style>[^""]+)""").Groups["style"].Value;
+        Assert.Contains($"animation-name:{firstName};", firstStyle);
+        Assert.Contains($"animation-name:{secondName};", secondStyle);
     }
 
     private static View CreateComparisonPanel(string variant, string background, string border)
