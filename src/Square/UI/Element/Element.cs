@@ -1078,7 +1078,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         var normalized = new Size(Math.Max(0, size.Width), Math.Max(0, size.Height));
         var oldMetrics = GetScrollbarMetrics();
         _scrollContentSize = normalized;
-        SetScrollOffset(_scrollOffset.X, _scrollOffset.Y);
+        SetScrollOffsetCore(_scrollOffset.X, _scrollOffset.Y);
         var newMetrics = GetScrollbarMetrics();
         if (oldMetrics.ViewportRect != newMetrics.ViewportRect)
             InvalidateLayout();
@@ -1312,9 +1312,29 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     {
         var overflow = Style.Get("overflow");
         var scrollBoth = IsScrollingOverflow(overflow);
-        return (scrollBoth || IsScrollingOverflow(Style.Get("overflow-x")),
-            scrollBoth || IsScrollingOverflow(Style.Get("overflow-y")));
+        var scrollX = scrollBoth || IsScrollingOverflow(Style.Get("overflow-x"));
+        var scrollY = scrollBoth || IsScrollingOverflow(Style.Get("overflow-y"));
+        if (this is UIBodyElement && !scrollX && !scrollY)
+        {
+            // 视口语义：文档视口默认可滚（对齐浏览器 document scroller）；
+            // 根元素或 body 显式 hidden/clip 的轴关闭（对齐 CSS overflow 传播）。
+            var root = OwnerDocument?.DocumentElement;
+            return (CanViewportScroll("overflow-x", overflow, root),
+                CanViewportScroll("overflow-y", overflow, root));
+        }
+        return (scrollX, scrollY);
     }
+
+    private bool CanViewportScroll(string axis, string? overflow, Element? root)
+    {
+        if (IsHiddenOverflow(overflow) || IsHiddenOverflow(Style.Get(axis))) return false;
+        return root == null || (!IsHiddenOverflow(root.Style.Get("overflow")) &&
+            !IsHiddenOverflow(root.Style.Get(axis)));
+    }
+
+    private static bool IsHiddenOverflow(string? value) =>
+        string.Equals(value, "hidden", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "clip", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 按类型与可选 class 查询第一个匹配后代（Square 强类型查询；接近 <c>querySelector</c>）。
