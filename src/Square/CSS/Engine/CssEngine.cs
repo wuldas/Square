@@ -54,7 +54,12 @@ public sealed class CssEngine
             if (descriptor != null) _fontFaceDescriptors.Add(descriptor);
         }
         RebuildRules();
-        foreach (var kf in sheet.KeyFrames) _keyFrames[kf.Name] = kf;
+        foreach (var kf in sheet.KeyFrames)
+        {
+            // Generated component sheets can carry whitespace around the @keyframes prelude.
+            var name = kf.Name.Trim();
+            if (name.Length != 0) _keyFrames[name] = kf;
+        }
         CssStyleReconciler.InvalidateScopes(this);
     }
 

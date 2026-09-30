@@ -40,11 +40,18 @@ public sealed class CssAnimationTimeline
     /// <summary>获取动画是否已完成。</summary>
     public bool IsComplete => _iterationCount != int.MaxValue && _elapsed >= Math.Max(0, _delay) + _duration * _iterationCount;
 
+    /// <summary>动画目标元素；样式作用域重新应用时用它恢复进度。</summary>
+    internal Element? Target => _visual;
+
     /// <summary>启动动画时间线，应用起始帧。</summary>
-    public void Start()
+    public void Start() => Start(0f);
+
+    /// <summary>以给定已流逝时间启动或恢复；点击等状态变化不应把动画倒回起始帧。</summary>
+    public void Start(float elapsedSeconds)
     {
-        _elapsed = 0;
+        _elapsed = Math.Max(0, elapsedSeconds);
         _running = true;
+        _cleared = false;
         if (_iterationCount == 0)
         {
             _running = false;
@@ -52,10 +59,17 @@ public sealed class CssAnimationTimeline
         }
         if (_delay < 0)
         {
-            _elapsed = Math.Min(_duration * _iterationCount, -_delay);
+            _elapsed = Math.Min(_duration * _iterationCount, Math.Max(_elapsed, -_delay));
             Apply(_easing(GetDirectedProgress(_elapsed)));
+            return;
         }
+        // Resuming after a style replay must repaint the current frame, not wait for the next tick.
+        if (_elapsed > 0 && _elapsed >= _delay)
+            Apply(_easing(GetDirectedProgress(_elapsed - _delay)));
     }
+
+    /// <summary>已流逝时间，供样式作用域重新应用时恢复进度。</summary>
+    internal float Elapsed => _elapsed;
 
     /// <summary>推进动画时间线，应用当前帧。</summary>
     /// <param name="deltaSeconds">增量秒数。</param>
@@ -109,7 +123,7 @@ public sealed class CssAnimationTimeline
         foreach (var track in _tracks)
         {
             var value = track.ValueAt(progress);
-            _visual.Style.SetAnimated(track.Property, FormatNumber(value));
+            _visual.Style.SetAnimated(track.Property, track.FormatValue(value));
         }
     }
 
@@ -124,12 +138,18 @@ public sealed class CssAnimationTimeline
     private static List<AnimationTrack> BuildTracks(KeyFramesRule keyFrames)
     {
         var values = new Dictionary<string, List<AnimationStop>>(StringComparer.OrdinalIgnoreCase);
+        var formats = new Dictionary<string, AnimationValueFormat>(StringComparer.OrdinalIgnoreCase);
         foreach (var stop in keyFrames.Stops)
         {
             if (!TryParseProgress(stop.Selector, out var progress)) continue;
             foreach (var declaration in stop.Declarations)
             {
-                if (!TryParseFloat(declaration.Value, out var value)) continue;
+                if (!TryParseAnimationValue(declaration.Value, out var value, out var format)) continue;
+                if (formats.TryGetValue(declaration.Property, out var known))
+                {
+                    if (known != format) continue;
+                }
+                else formats.Add(declaration.Property, format);
                 if (!values.TryGetValue(declaration.Property, out var stops))
                     values.Add(declaration.Property, stops = []);
                 stops.Add(new AnimationStop(progress, value));
@@ -137,7 +157,7 @@ public sealed class CssAnimationTimeline
         }
         return values
             .Where(pair => pair.Value.Count >= 2)
-            .Select(pair => new AnimationTrack(pair.Key, pair.Value.OrderBy(stop => stop.Progress).ToArray()))
+            .Select(pair => new AnimationTrack(pair.Key, formats[pair.Key], pair.Value.OrderBy(stop => stop.Progress).ToArray()))
             .ToList();
     }
 
@@ -170,11 +190,34 @@ public sealed class CssAnimationTimeline
         return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
     }
 
+    private static bool TryParseAnimationValue(string value, out float number, out AnimationValueFormat format)
+    {
+        number = 0;
+        format = AnimationValueFormat.Number;
+        value = value.Trim();
+        if (TryParseFloat(value, out number)) return true;
+        var open = value.IndexOf('(');
+        if (open <= 0 || value[^1] != ')') return false;
+        var name = value[..open].Trim();
+        if (name.Length == 0 || !name.All(char.IsLetter)) return false;
+        var argument = value[(open + 1)..^1].Trim();
+        var unitStart = 0;
+        while (unitStart < argument.Length &&
+            (char.IsDigit(argument[unitStart]) || argument[unitStart] is '+' or '-' or '.' or 'e' or 'E')) unitStart++;
+        var unit = argument[unitStart..].Trim().ToLowerInvariant();
+        if (!unit.All(char.IsLetter)) return false;
+        if (!float.TryParse(argument[..unitStart], NumberStyles.Float, CultureInfo.InvariantCulture, out number)) return false;
+        format = new AnimationValueFormat(name.ToLowerInvariant() + "(", unit + ")");
+        return true;
+    }
+
     private static string FormatNumber(float value) =>
         value.ToString("0.###", CultureInfo.InvariantCulture);
 
-    private sealed record AnimationTrack(string Property, AnimationStop[] Stops)
+    private sealed record AnimationTrack(string Property, AnimationValueFormat Format, AnimationStop[] Stops)
     {
+        public string FormatValue(float value) => Format.Format(value);
+
         public float ValueAt(float progress)
         {
             if (progress <= Stops[0].Progress) return Stops[0].Value;
@@ -191,6 +234,12 @@ public sealed class CssAnimationTimeline
     }
 
     private readonly record struct AnimationStop(float Progress, float Value);
+
+    private readonly record struct AnimationValueFormat(string Prefix, string Suffix)
+    {
+        public static readonly AnimationValueFormat Number = new("", "");
+        public string Format(float value) => Prefix + FormatNumber(value) + Suffix;
+    }
     private enum AnimationDirection { Normal, Reverse, Alternate, AlternateReverse }
 
     private static AnimationDirection ParseDirection(string value) => value.Trim().ToLowerInvariant() switch

@@ -22,13 +22,22 @@ public sealed class CssAnimationManager
     /// <param name="root">根元素。</param>
     public void Attach(Element root)
     {
+        // Preserve progress: a click only changes state pseudo-classes, and re-applying the
+        // scope must not rewind an infinite animation to its first frame (extra full frames
+        // and a visible jump on every interaction).
+        var elapsed = new Dictionary<Element, float>();
+        foreach (var timeline in _timelines)
+        {
+            if (!timeline.IsComplete && timeline.Target is { } target)
+                elapsed[target] = Math.Max(elapsed.TryGetValue(target, out var previous) ? previous : 0f, timeline.Elapsed);
+        }
         Clear();
         Collect(root);
         foreach (var timeline in _timelines)
-            timeline.Start();
+            timeline.Start(timeline.Target != null && elapsed.TryGetValue(timeline.Target, out var resume) ? resume : 0f);
     }
 
-    /// <summary>推进所有未完成动画的时间线。</summary>
+    /// <summary>推进所有未完成动画的时间线；重复应用样式不会重置进度。</summary>
     /// <param name="deltaSeconds">增量秒数。</param>
     public void Tick(float deltaSeconds)
     {

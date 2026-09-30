@@ -909,6 +909,31 @@ public class DocumentTests
     }
 
     [Fact]
+    public void ReapplyingStyleScopeKeepsInfiniteAnimationProgress()
+    {
+        var root = new View();
+        var bar = new View();
+        root.Children.Add(bar);
+
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            View { animation: grow 4s linear infinite; }
+            @keyframes grow { from { width: 0px; } to { width: 100px; } }
+            """).Tokenize()).Parse());
+        using var scope = engine.ApplyGeneratedStylesToTree(root);
+        CssStyleReconciler.ReapplyScopesToTree(root);
+        CssStyleReconciler.TickAnimations(root, 1f);
+        var advanced = bar.Style.Get("width");
+
+        // A click only replays state pseudo-classes; the animation must continue, not restart.
+        CssStyleReconciler.ReapplyScopesToTree(root);
+
+        Assert.Equal(advanced, bar.Style.Get("width"));
+        Assert.NotEqual("0", advanced);
+        CssStyleReconciler.UnregisterScopesForTree(root);
+    }
+
+    [Fact]
     public void HoverFlushDoesNotReapplySiblingComponentScope()
     {
         var root = new View();
