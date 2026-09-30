@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI animation benchmark — Chrome (720 boxes)</title>
+<!--
+  Standalone CSS-animation benchmark page (no external assets, opens via file:///).
+  Mirrors samples/Square.Sample.PerfComparison/Square/CssAnimationPerfPage.sqv:
+  three DISTINCT groups of 240 boxes, each group animating one property class in a
+  6s linear infinite loop with identical stops:
+    group 1  transform-only  .perf-shift > .perf-spin > .perf-scale (three nested
+             layers, one single-function transform each: translate / rotate / scale),
+             red #ef4444
+    group 2  opacity-only    .perf-fade, blue #3b82f6
+    group 3  width-only      .perf-wobble, amber #f59e0b
+  Layout (parent override): .perf-grid { display:flex; flex-wrap:wrap } with
+  children 30px x 30px, margin 0 5px 5px 0. The width group re-packs its wrapped
+  lines every frame (the intended layout stress, matching Square's flex-wrap rows);
+  all 720 boxes are visible in a 900x1240 client without scrolling.
+  Class names intentionally match the Square page so runs are comparable.
+-->
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; color: #1e293b; background: #f3f6fb; }
+  .perf-page { width: 100%; box-sizing: border-box; padding: 8px; }
+  .perf-header { padding: 4px 8px; background: #e8f1ff; border: 2px solid #2563eb; border-radius: 8px; }
+  .perf-header h1 { font-size: 20px; margin: 0 0 4px; }
+  .perf-header p { margin: 0; }
+  .perf-section { margin-top: 5px; padding: 5px; background: white; border: 1px solid #94a3b8; border-radius: 6px; }
+  .perf-section h2 { font-size: 16px; margin: 0 0 3px; }
+
+  .perf-grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+  }
+
+  .box {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    margin: 0 5px 4px 0;
+  }
+
+  /* Group 1: transform-only, three nested layers, one single-function
+     transform animation per layer (translate -> rotate -> scale, origin center). */
+  .perf-shift { animation: perf-shift 6s linear infinite; }
+  .perf-spin  { width: 30px; height: 30px; animation: perf-spin 6s linear infinite; }
+  .perf-scale {
+    width: 18px; height: 18px;
+    margin: 6px; /* centers the 18x18 marker in the 30x30 spin layer */
+    background-color: #ef4444;
+    animation: perf-scale 6s linear infinite;
+  }
+
+  /* Group 2: opacity-only. */
+  .perf-fade {
+    background-color: #3b82f6;
+    animation: perf-fade 6s linear infinite;
+  }
+
+  /* Group 3: width-only; re-wraps the flex lines every frame. */
+  .perf-wobble {
+    background-color: #f59e0b;
+    animation: perf-wobble 6s linear infinite;
+  }
+
+  @keyframes perf-shift {
+    from { transform: translateX(0px); }
+    50%  { transform: translateX(36px); }
+    to   { transform: translateX(0px); }
+  }
+  @keyframes perf-spin {
+    from { transform: rotate(0deg); }
+    50%  { transform: rotate(180deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @keyframes perf-scale {
+    from { transform: scale(0.6); }
+    50%  { transform: scale(1.4); }
+    to   { transform: scale(0.6); }
+  }
+  @keyframes perf-fade {
+    from { opacity: 0; }
+    50%  { opacity: 1; }
+    to   { opacity: 0; }
+  }
+  @keyframes perf-wobble {
+    from { width: 8px; }
+    50%  { width: 30px; }
+    to   { width: 8px; }
+  }
+</style>
+</head>
+<body>
+<article class="perf-page">
+  <header class="perf-header">
+    <h1>CSS 动画性能测试</h1>
+    <p>MDN CSS 动画性能对照：Square / Avalonia / 原生 Chrome，各组 240 方块，6 秒循环；测量 30 秒 CPU 与 FPS。</p>
+  </header>
+  <section class="perf-section" id="group-1" aria-labelledby="group-1-heading">
+    <h2 id="group-1-heading">transform：不触发布局（推荐）</h2>
+    <div class="perf-grid" data-kind="transform" aria-hidden="true"></div>
+  </section>
+  <section class="perf-section" id="group-2" aria-labelledby="group-2-heading">
+    <h2 id="group-2-heading">opacity：只触发合成与重绘</h2>
+    <div class="perf-grid" data-kind="opacity" aria-hidden="true"></div>
+  </section>
+  <section class="perf-section" id="group-3" aria-labelledby="group-3-heading">
+    <h2 id="group-3-heading">width：每帧触发布局（最贵）</h2>
+    <div class="perf-grid" data-kind="width" aria-hidden="true"></div>
+  </section>
+</article>
+
+<script>
+(function buildBoxes() {
+  'use strict';
+  var BOXES_PER_GROUP = 240;
+  var grids = document.querySelectorAll('.perf-grid');
+  if (grids.length !== 3) { throw new Error('expected 3 .perf-grid containers, found ' + grids.length); }
+  grids.forEach(function (grid) {
+    var kind = grid.getAttribute('data-kind');
+    if (kind !== 'transform' && kind !== 'opacity' && kind !== 'width') {
+      throw new Error('unknown perf-grid data-kind: ' + kind);
+    }
+    var fragment = document.createDocumentFragment();
+    for (var i = 0; i < BOXES_PER_GROUP; i++) {
+      var box = document.createElement('div');
+      box.className = 'box';
+      if (kind === 'transform') {
+        var shift = document.createElement('div');
+        shift.className = 'perf-shift';
+        var spin = document.createElement('div');
+        spin.className = 'perf-spin';
+        var scale = document.createElement('div');
+        scale.className = 'perf-scale';
+        spin.appendChild(scale);
+        shift.appendChild(spin);
+        box.appendChild(shift);
+      } else if (kind === 'opacity') {
+        box.classList.add('perf-fade');
+      } else {
+        box.classList.add('perf-wobble');
+      }
+      fragment.appendChild(box);
+    }
+    grid.appendChild(fragment);
+  });
+})();
+
+/**
+ * Measures presented-frame throughput by counting requestAnimationFrame callbacks.
+ *
+ * Checks the page is visible and the workload is live (720 boxes, running CSS
+ * animations), skips a short warmup window, then counts callbacks over `seconds`
+ * of wall-clock time. fps = frames / elapsed seconds. This is measured callback
+ * FPS: if the display refreshes at 60 Hz and every frame is presented, it reads
+ * ~60; dropped or coalesced frames show up as a lower number. Nothing is
+ * simulated or extrapolated.
+ *
+ * Not invoked on page load; the caller (benchmark runner) invokes it explicitly.
+ *
+ * @param {number} [seconds=30] measured window duration in seconds.
+ * @returns {Promise<{seconds:number, frames:number, fps:number}>} resolved with
+ *   the actual elapsed window, the callback count inside it, and frames/second.
+ */
+window.measureFrames = function measureFrames(seconds) {
+  'use strict';
+  if (seconds === undefined) { seconds = 30; }
+  return new Promise(function (resolve, reject) {
+    if (typeof seconds !== 'number' || !(seconds > 0) || !isFinite(seconds)) {
+      reject(new TypeError('measureFrames: seconds must be a positive finite number'));
+      return;
+    }
+    if (document.visibilityState !== 'visible') {
+      reject(new Error('measureFrames: page is not visible (visibilityState=' +
+        document.visibilityState + '); frames are not presented while hidden'));
+      return;
+    }
+    var boxes = document.querySelectorAll('.box');
+    if (boxes.length !== 720) {
+      reject(new Error('measureFrames: expected 720 boxes, found ' + boxes.length));
+      return;
+    }
+    if (typeof document.getAnimations === 'function') {
+      var running = 0;
+      document.getAnimations().forEach(function (anim) {
+        if (anim.playState === 'running') { running++; }
+      });
+      if (running === 0) {
+        reject(new Error('measureFrames: no running CSS animations found'));
+        return;
+      }
+    }
+
+    var WARMUP_MS = 250;          // let the caller's own activity settle
+    var durationMs = seconds * 1000;
+    var warmupStart = null;       // first callback timestamp
+    var measureStart = null;      // first timestamp inside the measured window
+    var frames = 0;
+
+    function tick(now) {
+      if (warmupStart === null) {
+        warmupStart = now;
+      } else if (measureStart === null) {
+        if (now - warmupStart >= WARMUP_MS) { measureStart = now; }
+      } else {
+        var elapsedMs = now - measureStart;
+        if (elapsedMs >= durationMs) {
+          var elapsedSeconds = elapsedMs / 1000;
+          resolve({ seconds: elapsedSeconds, frames: frames, fps: frames / elapsedSeconds });
+          return;
+        }
+        frames += 1;
+      }
+      window.requestAnimationFrame(tick);
+    }
+    window.requestAnimationFrame(tick);
+  });
+};
+</script>
+</body>
+</html>

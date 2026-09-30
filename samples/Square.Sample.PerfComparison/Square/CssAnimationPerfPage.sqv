@@ -1,0 +1,54 @@
+<template xmlns="http://www.w3.org/1999/xhtml">
+  <article class="perf-page">
+    <header class="perf-header">
+      <h1>CSS 动画性能测试</h1>
+      <p>MDN CSS 动画性能对照：Square / Avalonia / 原生 Chrome，各组 240 方块，6 秒循环；测量 30 秒 CPU 与 FPS。</p>
+    </header>
+
+    <section class="perf-section">
+      <h2>transform：不触发布局（推荐）</h2>
+      <div class="perf-grid">
+        <div class="perf-shift" v-for="box in Boxes"><div class="perf-spin"><div class="perf-scale"></div></div></div>
+      </div>
+    </section>
+
+    <section class="perf-section">
+      <h2>opacity：只触发合成与重绘</h2>
+      <div class="perf-grid">
+        <div class="perf-fade" v-for="box in Boxes"></div>
+      </div>
+    </section>
+
+    <section class="perf-section">
+      <h2>width：每帧触发布局（最贵）</h2>
+      <div class="perf-grid">
+        <div class="perf-wobble" v-for="box in Boxes"></div>
+      </div>
+    </section>
+
+  </article>
+</template>
+<script lang="csharp">
+  // Keep the workload identical to the native Avalonia and standalone Chrome cases.
+  public static readonly int[] Boxes = new int[240];
+</script>
+<style>
+  .perf-page { display: block; width: 100%; box-sizing: border-box; padding: 8px; background-color: #f3f6fb; color: #1e293b; font-family: Arial, sans-serif; }
+  .perf-header { display: block; padding: 4px 8px; background-color: #e8f1ff; border: 2px solid #2563eb; border-radius: 8px; }
+  .perf-header h1 { font-size: 20px; margin: 0 0 4px; }
+  .perf-header p { margin: 0; }
+  .perf-section { display: block; margin-top: 5px; padding: 5px; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 6px; }
+  .perf-section h2 { font-size: 16px; margin: 0 0 3px; }
+  .perf-grid { display: flex; flex-wrap: wrap; }
+  .perf-shift, .perf-fade, .perf-wobble { flex: none; width: 30px; height: 30px; margin: 0 5px 4px 0; }
+  .perf-shift { animation-name: perf-shift; animation-duration: 6s; animation-timing-function: linear; animation-iteration-count: infinite; }
+  .perf-spin { display: block; width: 30px; height: 30px; animation-name: perf-spin; animation-duration: 6s; animation-timing-function: linear; animation-iteration-count: infinite; }
+  .perf-scale { display: block; position: relative; left: 6px; top: 6px; width: 18px; height: 18px; background-color: #ef4444; animation-name: perf-scale; animation-duration: 6s; animation-timing-function: linear; animation-iteration-count: infinite; }
+  .perf-fade { background-color: #3b82f6; animation-name: perf-fade; animation-duration: 6s; animation-timing-function: linear; animation-iteration-count: infinite; }
+  .perf-wobble { background-color: #f59e0b; animation-name: perf-wobble; animation-duration: 6s; animation-timing-function: linear; animation-iteration-count: infinite; }
+  @keyframes perf-shift { 0% { transform: translate(0px); } 50% { transform: translate(36px); } 100% { transform: translate(0px); } }
+  @keyframes perf-spin { 0% { transform: rotate(0deg); } 50% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+  @keyframes perf-scale { 0% { transform: scale(0.6); } 50% { transform: scale(1.4); } 100% { transform: scale(0.6); } }
+  @keyframes perf-fade { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes perf-wobble { 0% { width: 8px; } 50% { width: 30px; } 100% { width: 8px; } }
+</style>
