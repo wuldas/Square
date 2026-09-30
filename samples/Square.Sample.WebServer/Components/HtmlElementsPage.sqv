@@ -3,7 +3,7 @@
     <header class="comparison-header">
       <img class="comparison-gif" src="Assets/animated-demo.gif" alt="Animated orbiting dots">
       <h1>HTML rendering comparison</h1>
-      <p>One component rendered by Chrome and Square desktop.</p>
+      <p>One component rendered by Chrome and Square desktop. <span class="comparison-loader" role="status" aria-label="Loading" aria-hidden="true"><span class="comparison-loader-bar"></span><span class="comparison-loader-bar"></span><span class="comparison-loader-bar"></span></span> <span class="comparison-spinner" role="status" aria-label="Loading" aria-hidden="true"></span></p>
     </header>
     <section class="comparison-section">
       <h2>Normal flow and controls</h2>
@@ -48,6 +48,11 @@
   .comparison-gif { float: right; width: 80px; height: 80px; margin-left: 16px; }
   .comparison-header h1 { font-size: 24px; margin: 0 0 8px; }
   .comparison-header p, .comparison-section p { margin: 0 0 12px; }
+  .comparison-loader { display: inline-block; width: 48px; height: 12px; vertical-align: middle; }
+  .comparison-loader-bar { display: block; float: left; width: 12px; height: 12px; margin-right: 4px; border-radius: 6px; background-color: #93c5fd; animation-name: comparison-loader-bar; animation-duration: 1.2s; animation-timing-function: linear; animation-iteration-count: infinite; }
+  .comparison-loader-bar:nth-child(2) { animation-delay: 0.15s; }
+  .comparison-loader-bar:nth-child(3) { animation-delay: 0.3s; margin-right: 0; }
+  .comparison-spinner { display: inline-block; box-sizing: border-box; width: 16px; height: 16px; margin-left: 8px; vertical-align: middle; border: 3px solid #93c5fd; border-top-color: transparent; border-radius: 50%; animation-name: comparison-spinner-spin; animation-duration: 0.9s; animation-timing-function: linear; animation-iteration-count: infinite; }
   .comparison-section { display: block; margin-top: 14px; padding: 14px; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 6px; }
   .comparison-section h2 { font-size: 18px; margin: 0 0 12px; }
   .comparison-control-row { display: block; margin-top: 8px; }
@@ -63,4 +68,6 @@
   .comparison-table { border-spacing: 0; border: 1px solid #475569; background-color: #f8fafc; }
   .comparison-table th, .comparison-table td { border: 1px solid #94a3b8; padding: 6px 10px; text-align: left; }
   .comparison-table th { background-color: #e2e8f0; }
+  @keyframes comparison-loader-bar { 0% { width: 4px; } 50% { width: 12px; } 100% { width: 4px; } }
+  @keyframes comparison-spinner-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 </style>

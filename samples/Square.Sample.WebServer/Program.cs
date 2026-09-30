@@ -40,14 +40,24 @@ static void RunDesktop(string[] args)
     if (htmlElements) Square.Images.ImageSourceRegistration.RegisterDefaults();
     var width = GetIntOption(args, "--width", htmlElements ? 900 : 1600);
     var height = GetIntOption(args, "--height", htmlElements ? 960 : 900);
-    var window = new AppWindow(htmlElements ? "HTML elements" : "PiSquared", width, height)
-    {
-        TitleStyle = TitleStyle.Hidden,
-        BorderStyle = BorderStyle.None
-    };
+    var window = new AppWindow(htmlElements ? "HTML elements" : "PiSquared", width, height);
     if (htmlElements) window.Load(new HtmlElementsPage());
     else window.Load(new Main());
     if (htmlElements) Console.WriteLine($"HTML elements desktop loaded ({width}x{height}).");
+    if (HasOption(args, "--trace-input"))
+    {
+        var body = ((Square.UI.UIDocument)window.Document).Body;
+        body.AddEventListener(Square.Events.StandardEvents.Wheel,
+            _ => Console.WriteLine($"TRACE wheel scrollTop={body.ScrollTop}"));
+        body.AddEventListener(Square.Events.StandardEvents.Scroll,
+            _ => Console.WriteLine($"TRACE scroll scrollTop={body.ScrollTop}"));
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(700);
+            Console.WriteLine($"TRACE body attached={body.IsAttached} scrollable={body.IsScrollContainer()} " +
+                $"geometry={body.Geometry} content={body.ScrollContentSize} scrollTop={body.ScrollTop}");
+        });
+    }
 
     var screenshotPath = GetOption(args, "--screenshot");
     var inspectionPath = GetOption(args, "--inspection");
