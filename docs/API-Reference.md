@@ -31,6 +31,7 @@ public sealed class DesktopApplication : Application
 | `Background` | 窗口背景色，默认白色 |
 | `RenderingMode` | 每帧重绘策略，默认 `FullFrame`；可通过 `--render-mode` 参数或 `SQUARE_RENDER_MODE` 环境变量配置 |
 | `Dispatcher`（继承自 `Application`） | UI 线程调度器，用于 Signal 跨线程投递 |
+| `FramePresented` | `event Action?`；每次渲染帧提交后触发，供原生性能计数；不代表显示器已实际扫描输出该帧 |
 | `Run()`（继承自 `Application`） | 启动应用：注册默认后端/控件 → 构建文档 → 使用已注册的平台工厂创建窗口 → 消息循环 |
 | `Shutdown()`（继承自 `Application`） | 请求关闭消息循环 |
 

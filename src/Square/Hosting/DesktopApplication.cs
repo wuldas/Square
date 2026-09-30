@@ -71,7 +71,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private bool _touchMoved;
     private Element? _touchDownTarget;
 
-    internal event Action? FramePresented;
+    /// <summary>渲染帧提交到后端后触发，可用于原生宿主与性能测量。</summary>
+    public event Action? FramePresented;
 
     /// <summary>主窗口。</summary>
     public AppWindow MainWindow { get; }

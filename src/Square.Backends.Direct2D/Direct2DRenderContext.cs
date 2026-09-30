@@ -464,7 +464,9 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     {
         var targetProperties = new D2D1_RENDER_TARGET_PROPERTIES
         {
-            type = D2D1_RENDER_TARGET_TYPE.D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            type = Environment.GetEnvironmentVariable("SQUARE_DIRECT2D_REQUIRE_HARDWARE") == "1"
+                ? D2D1_RENDER_TARGET_TYPE.D2D1_RENDER_TARGET_TYPE_HARDWARE
+                : D2D1_RENDER_TARGET_TYPE.D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat = new D2D1_PIXEL_FORMAT
             {
                 format = DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
