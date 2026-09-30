@@ -1,5 +1,6 @@
 using System.Reflection;
 using Square.Events;
+using Square.Html;
 using Square.Graphics;
 using Square.Hosting;
 using Square.Platform;
@@ -168,6 +169,32 @@ public sealed class DocumentScrollbarTests
         Assert.True(ReferenceEquals(body, GetPrivateField<Element>(application, "_draggingScrollbar")),
             $"Move 后拖拽捕获不应丢失：attached={body.IsAttached} scrollTop={body.ScrollTop}");
         Assert.True(body.ScrollTop > 0);
+    }
+
+    [Fact]
+    public void HtmlBodyKeepsWheelPositionWhenContentRelayouts()
+    {
+        var window = new AppWindow("HTML document scrollbar")
+        {
+            ScrollbarProfile = ScrollbarDeviceProfile.Desktop
+        };
+        var article = new HTMLArticleElement();
+        var content = new HTMLDivElement();
+        content.Style.Set("height", "400px");
+        article.Children.Add(content);
+        window.Load(article);
+        var body = ((UIDocument)window.Document).Body;
+        var application = CreateRealApplication(window);
+
+        InvokeRenderFrame(application);
+        Assert.True(body.GetScrollbarMetrics().HasVertical);
+        InvokeHandleWheel(application, new WheelInput(new Point(50, 50), 0, 50, isPrecise: true));
+        Assert.Equal(50, body.ScrollTop);
+
+        content.InvalidateLayout();
+        InvokeRenderFrame(application);
+        Assert.Equal(50, body.ScrollTop);
+        Assert.Equal(100, body.Geometry.Height);
     }
 
     [Fact]

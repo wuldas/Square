@@ -319,7 +319,11 @@ public sealed partial class LayoutEngine
             naturalHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
         }
 
-        var height = ResolveOuterHeight(box, naturalHeight);
+        // The document body scrolls the viewport; its auto height must not grow to content
+        // height during a relayout, or that transient size clamps scrollTop back to zero.
+        var height = element is UIBodyElement && float.IsNaN(box.Height)
+            ? Math.Max(0, containingBlock.Rect.Bottom - proposed.Y)
+            : ResolveOuterHeight(box, naturalHeight);
         borderBounds = new Rect(proposed.X, proposed.Y, proposed.Width, height);
         plan.Set(element, borderBounds);
         return height;
