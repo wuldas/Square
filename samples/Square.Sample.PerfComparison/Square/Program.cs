@@ -27,6 +27,7 @@ var (outerWidth, outerHeight) = Win32WindowMetrics.ForClient(900, 1240);
 var (outerWidth, outerHeight) = (900, 1240);
 #endif
 var window = new AppWindow("Square CSS animation benchmark", outerWidth, outerHeight);
+window.RenderingMode = RenderMode.Auto;
 if (backend.Equals("Direct2D", StringComparison.OrdinalIgnoreCase))
 {
 #if PLATFORM_WIN32
@@ -103,12 +104,7 @@ void OnFramePresented()
 app.FramePresented += OnFramePresented;
 app.Run();
 if (elapsed == 0) throw new InvalidOperationException("Measurement ended before the 30-second window.");
-Console.WriteLine($"Square-{window.RenderBackend} seconds={elapsed:F3} cpuSeconds={cpuSeconds:F3} " +
-    $"cpuOneCorePercent={cpuSeconds / elapsed * 100:F1} fps={frames / elapsed:F2} frames={frames} client={clientWidth:0}x{clientHeight:0} " +
-    $"privateAvgMiB={privateSum / (double)memorySamples / 1048576:F1} " +
-    $"privatePeakMiB={privatePeak / 1048576.0:F1} " +
-    $"workingAvgMiB={workingSum / (double)memorySamples / 1048576:F1} " +
-    $"workingPeakMiB={workingPeak / 1048576.0:F1} samples={memorySamples}");
+Console.WriteLine(FormattableString.Invariant($"Square-{window.RenderBackend} seconds={elapsed:R} cpuSeconds={cpuSeconds:R} cpuOneCorePercent={cpuSeconds / elapsed * 100:R} fps={frames / elapsed:R} frames={frames} client={clientWidth:0}x{clientHeight:0} privateAvgMiB={privateSum / (double)memorySamples / 1048576:F1} privatePeakMiB={privatePeak / 1048576.0:F1} workingAvgMiB={workingSum / (double)memorySamples / 1048576:F1} workingPeakMiB={workingPeak / 1048576.0:F1} samples={memorySamples}"));
 
 #if PLATFORM_WIN32
 internal static class Win32WindowMetrics

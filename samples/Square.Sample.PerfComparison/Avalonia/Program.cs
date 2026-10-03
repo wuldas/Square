@@ -367,7 +367,7 @@ internal sealed class BenchmarkWindow : Window
         double cpuOneCorePercent = measured > 0 ? cpuSeconds / measured * 100.0 : 0.0;
         double fps = measured > 0 ? _frames / measured : 0.0;
 
-        Console.WriteLine(FormattableString.Invariant($"Avalonia seconds={measured:F2} cpuSeconds={cpuSeconds:F2} cpuOneCorePercent={cpuOneCorePercent:F2} fps={fps:F2} frames={_frames} client={ClientSize.Width:0}x{ClientSize.Height:0} privateAvgMiB={_privateSum / (double)_memorySamples / 1048576:F1} privatePeakMiB={_privatePeak / 1048576.0:F1} workingAvgMiB={_workingSum / (double)_memorySamples / 1048576:F1} workingPeakMiB={_workingPeak / 1048576.0:F1} samples={_memorySamples}"));
+        Console.WriteLine(FormattableString.Invariant($"Avalonia seconds={measured:R} cpuSeconds={cpuSeconds:R} cpuOneCorePercent={cpuOneCorePercent:R} fps={fps:R} frames={_frames} client={ClientSize.Width:0}x{ClientSize.Height:0} privateAvgMiB={_privateSum / (double)_memorySamples / 1048576:F1} privatePeakMiB={_privatePeak / 1048576.0:F1} workingAvgMiB={_workingSum / (double)_memorySamples / 1048576:F1} workingPeakMiB={_workingPeak / 1048576.0:F1} samples={_memorySamples}"));
         Console.Out.Flush();
         Close();
     }
