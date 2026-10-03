@@ -418,6 +418,448 @@ public class SoftwareRendererTests
         Assert.Equal(1, context.RetainedLayerBufferCount);
     }
 
+    // ── 纯色叶子不透明度快速路径（ISolidLeafOpacityRenderer）──
+
+    private static RenderContext CreateContext(int w, int h, float dpiScale)
+        => new(new Bitmap(w, h), new Size(w / dpiScale, h / dpiScale), dpiScale);
+
+    /// <summary>模拟 DisplayNode 消费方式：先尝试叶子快速路径，未处理则回退到 PushLayer 组。</summary>
+    private static void DrawSolidLeafWithFastPath(
+        RenderContext context,
+        Rect rect,
+        Color color,
+        float opacity,
+        Rect layerBounds,
+        Matrix3x2? transform = null)
+    {
+        if (opacity < 1f)
+        {
+            if (transform.HasValue) context.PushTransform(transform.Value);
+            var filled = ((ISolidLeafOpacityRenderer)context).TryFillSolidLeafOpacity(rect, color, opacity);
+            if (transform.HasValue) context.PopTransform();
+            if (filled) return;
+        }
+        DrawSolidLeafGroupReference(context, rect, color, opacity, layerBounds, transform);
+    }
+
+    /// <summary>强制 PushLayer 组参考路径：叶子快速路径必须与之逐像素一致。</summary>
+    private static void DrawSolidLeafGroupReference(
+        RenderContext context,
+        Rect rect,
+        Color color,
+        float opacity,
+        Rect layerBounds,
+        Matrix3x2? transform = null)
+    {
+        if (opacity < 1f) context.PushLayer(layerBounds, opacity);
+        if (transform.HasValue) context.PushTransform(transform.Value);
+        context.FillRect(rect, new SolidColorBrush(color));
+        if (transform.HasValue) context.PopTransform();
+        if (opacity < 1f) context.PopLayer();
+    }
+
+    private static void AssertSolidLeafMatchesGroup(
+        int width,
+        int height,
+        Color background,
+        Rect rect,
+        Color color,
+        float opacity,
+        Rect layerBounds,
+        Matrix3x2? transform = null,
+        float dpiScale = 1f,
+        Action<RenderContext>? before = null,
+        Action<RenderContext>? after = null,
+        Action<Bitmap, Bitmap>? verify = null)
+    {
+        using var fast = CreateContext(width, height, dpiScale);
+        fast.Clear(background);
+        before?.Invoke(fast);
+        DrawSolidLeafWithFastPath(fast, rect, color, opacity, layerBounds, transform);
+        after?.Invoke(fast);
+
+        using var reference = CreateContext(width, height, dpiScale);
+        reference.Clear(background);
+        before?.Invoke(reference);
+        DrawSolidLeafGroupReference(reference, rect, color, opacity, layerBounds, transform);
+        after?.Invoke(reference);
+
+        AssertBitmapEqual(reference.GetBitmap(), fast.GetBitmap());
+        verify?.Invoke(fast.GetBitmap(), reference.GetBitmap());
+    }
+
+    [Fact]
+    public void SolidLeafOpacityFastPathMatchesGroupOnOpaqueBackground()
+    {
+        AssertSolidLeafMatchesGroup(
+            64, 48, Color.FromRgb(40, 80, 120),
+            new Rect(15, 11, 34, 22), Color.FromRgba(200, 60, 30, 255), 0.6f,
+            new Rect(10, 6, 54, 32),
+            verify: (fast, reference) =>
+            {
+                // a' = Round(255×0.6) = 153，组合成恒为整数 → BGRA [66, 68, 136, 255]。
+                Assert.Equal([66, 68, 136, 255], fast.GetPixel(30, 20).ToArray());
+                Assert.Equal([66, 68, 136, 255], reference.GetPixel(30, 20).ToArray());
+            });
+    }
+
+    [Fact]
+    public void SolidLeafOpacityMatchesGroupForEdgeInteriorAndExteriorPixels()
+    {
+        AssertSolidLeafMatchesGroup(
+            48, 40, Color.FromRgb(90, 140, 200),
+            new Rect(13, 9, 21, 17), Color.FromRgba(20, 220, 120, 255), 0.75f,
+            new Rect(8, 4, 31, 27),
+            verify: (fast, reference) =>
+            {
+                // a' = Round(255×0.75) = 191 → 内部与四角内侧像素 BGRA [140, 199, 37, 255]。
+                Assert.Equal([140, 199, 37, 255], fast.GetPixel(13, 9).ToArray());
+                Assert.Equal([140, 199, 37, 255], fast.GetPixel(33, 25).ToArray());
+                Assert.Equal([140, 199, 37, 255], reference.GetPixel(22, 17).ToArray());
+                // 矩形外侧保持背景 BGRA [200, 140, 90, 255]。
+                Assert.Equal([200, 140, 90, 255], fast.GetPixel(12, 9).ToArray());
+                Assert.Equal([200, 140, 90, 255], fast.GetPixel(34, 9).ToArray());
+                Assert.Equal([200, 140, 90, 255], fast.GetPixel(13, 26).ToArray());
+            });
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(64)]
+    [InlineData(128)]
+    [InlineData(200)]
+    [InlineData(254)]
+    public void SolidLeafOpacityMatchesGroupAcrossColorAlphaBoundaries(int alpha)
+    {
+        AssertSolidLeafMatchesGroup(
+            40, 32, Color.FromRgb(150, 150, 150),
+            new Rect(6, 5, 24, 18), Color.FromRgba(180, 90, 40, (byte)alpha), 0.5f,
+            new Rect(2, 2, 34, 26));
+    }
+
+    [Fact]
+    public void SolidLeafOpacityUsesGroupTruncationArithmeticNotRoundedBlend()
+    {
+        // a' = Round(200×0.5) = 100，不透明底 (150,150,150)：
+        // 组合成的截断除法 → BGRA [106, 126, 161, 255]；若误用 BlendRect 的 +127 舍入会得到 [107, 126, 162, 255]。
+        AssertSolidLeafMatchesGroup(
+            40, 32, Color.FromRgb(150, 150, 150),
+            new Rect(6, 5, 24, 18), Color.FromRgba(180, 90, 40, 200), 0.5f,
+            new Rect(2, 2, 34, 26),
+            verify: (fast, reference) =>
+            {
+                Assert.Equal([106, 126, 161, 255], fast.GetPixel(18, 14).ToArray());
+                Assert.Equal([106, 126, 161, 255], reference.GetPixel(18, 14).ToArray());
+            });
+    }
+
+    [Fact]
+    public void ZeroOpacitySolidLeafMatchesGroupWithoutChangingPixels()
+    {
+        AssertSolidLeafMatchesGroup(
+            24, 16, Color.FromRgb(200, 30, 90),
+            new Rect(4, 3, 14, 10), Color.FromRgba(255, 255, 0, 255), 0f,
+            new Rect(0, 0, 24, 16),
+            verify: (fast, _) =>
+            {
+                Assert.Equal([90, 30, 200, 255], fast.GetPixel(10, 8).ToArray());
+            });
+    }
+
+    [Fact]
+    public void RotatedSolidLeafFallsBackToGroupSilhouettePixels()
+    {
+        // 旋转 30°：累计变换非轴对齐 → 回退组路径；半覆盖边缘像素与图层路径逐像素一致。
+        AssertSolidLeafMatchesGroup(
+            44, 28, Color.White,
+            new Rect(10, 8, 24, 12), Color.FromRgba(220, 40, 40, 255), 0.6f,
+            new Rect(6, 1, 32, 26),
+            transform: Matrix3x2.CreateRotation(MathF.PI / 6, new Vector2(22, 14)),
+            verify: (fast, _) =>
+            {
+                // 旋转外接角仍是背景：结果来自旋转轮廓而非轴对齐包围盒。
+                Assert.Equal([255, 255, 255, 255], fast.GetPixel(7, 2).ToArray());
+                // 旋转中心混合结果 a' = 153 → BGRA [126, 126, 234, 255]。
+                Assert.Equal([126, 126, 234, 255], fast.GetPixel(22, 14).ToArray());
+            });
+    }
+
+    [Fact]
+    public void FractionalTranslatedSolidLeafFallsBackToGroupPixels()
+    {
+        AssertSolidLeafMatchesGroup(
+            48, 36, Color.FromRgb(20, 20, 20),
+            new Rect(4, 4, 20, 10), Color.FromRgba(250, 180, 30, 255), 0.55f,
+            new Rect(0, 0, 48, 36),
+            transform: Matrix3x2.CreateTranslation(10.5f, 6.25f));
+    }
+
+    [Fact]
+    public void TranslatedSolidLeafFastPathMatchesGroupPixels()
+    {
+        // 平移 (7,3) 后设备矩形 (12,8,30,17) 像素对齐：快速路径与组逐像素一致。
+        AssertSolidLeafMatchesGroup(
+            48, 36, Color.FromRgb(200, 200, 200),
+            new Rect(5, 5, 18, 9), Color.FromRgba(120, 200, 30, 255), 0.4f,
+            new Rect(0, 0, 48, 36),
+            transform: Matrix3x2.CreateTranslation(7f, 3f),
+            verify: (fast, reference) =>
+            {
+                // a' = Round(255×0.4) = 102 → BGRA [132, 200, 168, 255]。
+                Assert.Equal([132, 200, 168, 255], fast.GetPixel(20, 12).ToArray());
+                Assert.Equal([132, 200, 168, 255], reference.GetPixel(20, 12).ToArray());
+            });
+    }
+
+    [Fact]
+    public void FractionalScaledSolidLeafFallsBackToGroupPixels()
+    {
+        // 缩放 1.5 后设备矩形 (4.5,4.5,27,15) 非像素对齐 → 回退组路径。
+        AssertSolidLeafMatchesGroup(
+            48, 32, Color.FromRgb(60, 60, 60),
+            new Rect(3, 3, 15, 7), Color.FromRgba(90, 160, 250, 255), 0.45f,
+            new Rect(0, 0, 48, 32),
+            transform: Matrix3x2.CreateScale(1.5f));
+    }
+
+    [Fact]
+    public void NestedOpacityLeafFallsBackToNestedGroupPixels()
+    {
+        // 环境外层图层中快速路径必须拒绝，嵌套组各自量化一次：
+        // 内层 Round(255×0.5)=128，外层 Round(128×0.7)=90，覆盖蓝色背景。
+        AssertSolidLeafMatchesGroup(
+            24, 24, Color.FromRgb(0, 0, 255),
+            new Rect(4, 4, 16, 16), Color.FromRgba(255, 0, 0, 255), 0.5f,
+            new Rect(0, 0, 24, 24),
+            before: context => context.PushLayer(new Rect(0, 0, 24, 24), 0.7f),
+            after: context => context.PopLayer(),
+            verify: (fast, reference) =>
+            {
+                Assert.Equal([165, 0, 90, 255], fast.GetPixel(12, 12).ToArray());
+                Assert.Equal([165, 0, 90, 255], reference.GetPixel(12, 12).ToArray());
+            });
+    }
+
+    [Fact]
+    public void OverlappingSemiTransparentLeavesMatchLayerPixels()
+    {
+        const int width = 32, height = 24;
+        var bounds = new Rect(0, 0, width, height);
+        var firstRect = new Rect(4, 4, 16, 12);
+        var firstColor = Color.FromRgba(255, 40, 40, 128);
+        var secondRect = new Rect(12, 8, 16, 12);
+        var secondColor = Color.FromRgba(40, 40, 255, 128);
+
+        using var fast = CreateContext(width, height);
+        DrawSolidLeafWithFastPath(fast, firstRect, firstColor, 0.5f, bounds);
+        DrawSolidLeafWithFastPath(fast, secondRect, secondColor, 0.5f, bounds);
+
+        using var reference = CreateContext(width, height);
+        DrawSolidLeafGroupReference(reference, firstRect, firstColor, 0.5f, bounds);
+        DrawSolidLeafGroupReference(reference, secondRect, secondColor, 0.5f, bounds);
+
+        AssertBitmapEqual(reference.GetBitmap(), fast.GetBitmap());
+    }
+
+    [Fact]
+    public void SolidLeafOpacityMatchesGroupOnTranslucentAndTransparentDestinations()
+    {
+        // 左半预置 dstA=128 的半透明目标，右半保持 dstA=0：
+        // dstA=0 直接写 (B,G,R,alpha)，dstA=128 走一般截断混合——两者都必须与 PushLayer 组逐字节一致。
+        AssertSolidLeafMatchesGroup(
+            32, 20, Color.Transparent,
+            new Rect(4, 4, 24, 12), Color.FromRgba(255, 40, 40, 255), 0.5f,
+            new Rect(0, 0, 32, 20),
+            before: context => context.FillRect(
+                new Rect(0, 0, 16, 20), new SolidColorBrush(Color.FromRgba(30, 90, 200, 128))),
+            verify: (fast, _) =>
+            {
+                // dstA=0 区域：直接写原色，a' = Round(255×0.5) = 128。
+                Assert.Equal([40, 40, 255, 128], fast.GetPixel(24, 10).ToArray());
+                // dstA=128 区域：outA = 128 + 128×127/255 = 191。
+                Assert.Equal(191, fast.GetPixel(8, 10)[3]);
+            });
+    }
+
+    [Fact]
+    public void SolidLeafFastPathAtQuantizedFullAlphaOverwritesMixedDestinationAlphas()
+    {
+        // Round(255×0.999) = 255 → 输出与目标无关：dstA=0/1/127/254/255 的全部像素
+        // 都必须得到同一 (B,G,R,255) 字节（packed 覆写分支）。
+        const int width = 10, height = 5;
+        var bmp = new Bitmap(width, height);
+        using var context = new RenderContext(bmp, 1f);
+        context.Clear(Color.Transparent);
+        var destinationAlphas = new byte[] { 0, 1, 127, 254, 255 };
+        for (var stripe = 0; stripe < destinationAlphas.Length; stripe++)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                var offset = y * bmp.Stride + stripe * 2 * 4;
+                bmp.Pixels[offset] = (byte)(11 + stripe * 29);     // B
+                bmp.Pixels[offset + 1] = (byte)(13 + stripe * 23); // G
+                bmp.Pixels[offset + 2] = (byte)(17 + stripe * 19); // R
+                bmp.Pixels[offset + 3] = destinationAlphas[stripe];
+            }
+        }
+
+        Assert.True(((ISolidLeafOpacityRenderer)context).TryFillSolidLeafOpacity(
+            new Rect(0, 0, width, height), Color.FromRgba(200, 60, 30, 255), 0.999f));
+
+        var bitmap = context.GetBitmap();
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            Assert.True(
+                pixel[0] == 30 && pixel[1] == 60 && pixel[2] == 200 && pixel[3] == 255,
+                $"({x},{y}) expected overwrite [30,60,200,255] but was [{pixel[0]},{pixel[1]},{pixel[2]},{pixel[3]}]");
+        }
+    }
+
+    /// <summary>
+    /// 旋转矩形覆盖率的规格参照：每像素 2×2 亚采样（+0.25/+0.75），半开边界
+    /// [left,right)×[top,bottom)，A=255 时 covered>0 的像素 alpha = (255×covered+2)/4。
+    /// 逐像素断言可捕获内部区间快速路径对边界像素的任何误判。
+    /// </summary>
+    private static void AssertBitmapMatchesTwoByTwoSampleSpec(
+        Bitmap bitmap, Matrix3x2 transform, Rect logicalRect)
+    {
+        Matrix3x2.Invert(transform, out var inverse);
+        var left = logicalRect.Left;
+        var top = logicalRect.Top;
+        var right = logicalRect.Right;
+        var bottom = logicalRect.Bottom;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var covered = 0;
+                for (var sy = 0; sy < 2; sy++)
+                {
+                    var sampleY = y + (sy == 0 ? 0.25f : 0.75f);
+                    var rowX21 = sampleY * inverse.M21;
+                    var rowY22 = sampleY * inverse.M22;
+                    for (var sx = 0; sx < 2; sx++)
+                    {
+                        var sampleX = x + (sx == 0 ? 0.25f : 0.75f);
+                        var logicalX = sampleX * inverse.M11 + rowX21 + inverse.M31;
+                        var logicalY = sampleX * inverse.M12 + rowY22 + inverse.M32;
+                        if (logicalX >= left && logicalX < right && logicalY >= top && logicalY < bottom) covered++;
+                    }
+                }
+                var expectedAlpha = covered == 0 ? (byte)0 : (byte)((255 * covered + 2) / 4);
+                var actualAlpha = bitmap.GetPixel(x, y)[3];
+                Assert.True(actualAlpha == expectedAlpha,
+                    $"({x},{y}) expected coverage {covered} (A={expectedAlpha}) but was A={actualAlpha}");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(17f)]
+    [InlineData(33f)]
+    [InlineData(60f)]
+    [InlineData(200f)]
+    [InlineData(331f)]
+    public void RotatedSolidRectCoverageMatchesTwoByTwoSampleSpec(float angleDegrees)
+    {
+        const int width = 60, height = 60;
+        using var context = CreateContext(width, height);
+        context.Clear(Color.Transparent);
+        var rotation = Matrix3x2.CreateRotation(angleDegrees * MathF.PI / 180f, new Vector2(30, 30));
+        var rect = new Rect(18.5f, 23.25f, 23.5f, 14.75f);
+        context.PushTransform(rotation);
+        context.FillRect(rect, new SolidColorBrush(Color.FromRgba(10, 200, 90, 255)));
+        context.PopTransform();
+
+        AssertBitmapMatchesTwoByTwoSampleSpec(context.GetBitmap(), rotation, rect);
+    }
+
+    [Fact]
+    public void RotatedRightAngleCoveragePreservesHalfOpenEdgesOnExactSampleGrid()
+    {
+        // 逆矩阵 m11 恰为 0（X 约束退化为常量检查），且矩形边缘恰好落在采样坐标上：
+        // 左/上闭（>=）与右/下开（<）的半开语义必须精确保留。
+        // 中心 (36,20) 时右缘 31.75（开）的落点 dx=4.25 在画布内。
+        const int width = 40, height = 40;
+        using var context = CreateContext(width, height);
+        context.Clear(Color.Transparent);
+        var rotation = new Matrix3x2(0, 1, -1, 0, 36, 20);
+        var rect = new Rect(8.25f, 8.25f, 23.5f, 23.5f);
+        context.PushTransform(rotation);
+        context.FillRect(rect, new SolidColorBrush(Color.FromRgba(10, 200, 90, 255)));
+        context.PopTransform();
+
+        AssertBitmapMatchesTwoByTwoSampleSpec(context.GetBitmap(), rotation, rect);
+        // 像素 (4,28)：采样 (4.25,28.25) 的 X 落在左缘 8.25（>= 成立）但 Y 落在右缘 31.75
+        // （< 不成立）→ 不计入；(4.75,*) 两个采样全在内部 → covered=2；若误用闭边界会得到 3。
+        Assert.Equal(128, context.GetBitmap().GetPixel(4, 28)[3]);
+        Assert.Equal(255, context.GetBitmap().GetPixel(20, 32)[3]);
+    }
+
+    [Fact]
+    public void GeometryClippedSolidLeafFallsBackToGroupPixels()
+    {
+        AssertSolidLeafMatchesGroup(
+            40, 40, Color.Black,
+            new Rect(0, 0, 20, 20), Color.FromRgba(255, 60, 60, 255), 0.6f,
+            new Rect(0, 0, 20, 20),
+            before: context => context.PushClip(new RoundedRectGeometry(new Rect(0, 0, 20, 20), 8, 8)),
+            after: context => context.PopClip(),
+            verify: (fast, _) =>
+            {
+                // 圆角外侧保持背景，内部混合 a' = 153 → BGRA [36, 36, 153, 255]。
+                Assert.Equal([0, 0, 0, 255], fast.GetPixel(0, 0).ToArray());
+                Assert.Equal([36, 36, 153, 255], fast.GetPixel(10, 10).ToArray());
+            });
+    }
+
+    [Fact]
+    public void RectClippedSolidLeafFastPathMatchesGroupPixels()
+    {
+        // 像素对齐矩形裁剪不产生部分覆盖：快速路径保留并与组逐像素一致。
+        AssertSolidLeafMatchesGroup(
+            40, 32, Color.FromRgb(10, 10, 10),
+            new Rect(4, 4, 28, 20), Color.FromRgba(240, 130, 20, 255), 0.5f,
+            new Rect(0, 0, 40, 32),
+            before: context => context.PushClip(new Rect(10, 6, 12, 22)),
+            after: context => context.PopClip(),
+            verify: (fast, reference) =>
+            {
+                Assert.Equal([15, 70, 125, 255], fast.GetPixel(15, 10).ToArray());
+                Assert.Equal([15, 70, 125, 255], reference.GetPixel(15, 10).ToArray());
+                // 裁剪区外保持背景。
+                Assert.Equal([10, 10, 10, 255], fast.GetPixel(5, 5).ToArray());
+            });
+    }
+
+    [Fact]
+    public void HighDpiPixelAlignedSolidLeafMatchesGroupPixels()
+    {
+        // 逻辑 (5,5,10,6) × DPI 2 → 物理 (10,10,20,12) 像素对齐：走快速路径。
+        AssertSolidLeafMatchesGroup(
+            40, 32, Color.FromRgb(80, 30, 160),
+            new Rect(5, 5, 10, 6), Color.FromRgba(255, 200, 0, 255), 0.7f,
+            new Rect(0, 0, 20, 16), dpiScale: 2f,
+            verify: (fast, reference) =>
+            {
+                // a' = Round(255×0.7) = 178 → BGRA [48, 148, 202, 255]。
+                Assert.Equal([48, 148, 202, 255], fast.GetPixel(14, 12).ToArray());
+                Assert.Equal([48, 148, 202, 255], reference.GetPixel(14, 12).ToArray());
+            });
+    }
+
+    [Fact]
+    public void HighDpiFractionalSolidLeafFallsBackToGroupPixels()
+    {
+        // 逻辑 (10,10,80,50) × DPI 1.25 → 物理 (12.5,12.5,…) 非对齐：回退组路径。
+        AssertSolidLeafMatchesGroup(
+            200, 160, Color.FromRgb(24, 24, 24),
+            new Rect(10, 10, 80, 50), Color.FromRgba(200, 100, 150, 255), 0.5f,
+            new Rect(0, 0, 160, 128), dpiScale: 1.25f);
+    }
+
     [Theory]
     [InlineData(7)]
     [InlineData(8)]
@@ -1104,6 +1546,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(document.Ui);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         var popupOffset = new Point(
             (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
@@ -1151,6 +1595,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(document.Ui);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         switch (state)
         {
@@ -1168,6 +1614,8 @@ public class SoftwareRendererTests
         var union = UnionAll(dirty);
         context.Clear(Color.White, union);
         tree.Render(context, union);
+        context.Present([union]);
+        tree.CommitPresentedFrame();
 
         using var expected = CreateContext(260, 170);
         expected.Clear(Color.White);
@@ -1366,6 +1814,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(root);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         input.Focus();
         tree.UpdateDirty();
@@ -1377,6 +1827,8 @@ public class SoftwareRendererTests
         context.PushClip(union);
         tree.Render(context, union);
         context.PopClip();
+        context.Present([union]);
+        tree.CommitPresentedFrame();
 
         var expectedRoot = new View { Geometry = root.Geometry };
         var expectedWrapper = new View { Geometry = wrapper.Geometry };
@@ -1410,6 +1862,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(document.Ui);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         input.Unfocus();
         tree.UpdateDirty();
@@ -1419,6 +1873,8 @@ public class SoftwareRendererTests
         context.PushClip(union);
         tree.Render(context, union);
         context.PopClip();
+        context.Present([union]);
+        tree.CommitPresentedFrame();
 
         var popupX = (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f;
         var popupY = (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset;
@@ -1446,9 +1902,13 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(element);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         context.Clear(Color.White, new Rect(45, 6, 10, 8));
         tree.Render(context, new Rect(45, 6, 10, 8));
+        context.Present(new[] { new Rect(45, 6, 10, 8) });
+        tree.CommitPresentedFrame();
 
         var bitmap = context.GetBitmap();
         var insideDirtyIndex = 8 * bitmap.Stride + 50 * 4;
@@ -1839,6 +2299,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(root);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         select.HandlePointerDown(new Point(20, 20));
         tree.UpdateDirty();
@@ -1846,6 +2308,8 @@ public class SoftwareRendererTests
         var union = dirty.Aggregate(DisplayTree.Union);
         context.Clear(Color.White, union);
         tree.Render(context, union);
+        context.Present([union]);
+        tree.CommitPresentedFrame();
 
         var expectedRoot = new View { Geometry = root.Geometry };
         var expectedSelect = new Select
@@ -1888,6 +2352,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(root);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         select.CloseDropDown();
         tree.UpdateDirty();
@@ -1897,6 +2363,8 @@ public class SoftwareRendererTests
             union = DisplayTree.Union(union, dirty[i]);
         context.Clear(Color.White, union);
         tree.Render(context, union);
+        context.Present([union]);
+        tree.CommitPresentedFrame();
 
         var expectedRoot = new View { Geometry = root.Geometry };
         var expectedSelect = new Select
@@ -1930,6 +2398,8 @@ public class SoftwareRendererTests
         var tree = new DisplayTree();
         tree.BuildFrom(element);
         tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
 
         element.FillColor = Color.Green;
         element.InvalidatePaint();
@@ -1938,6 +2408,8 @@ public class SoftwareRendererTests
         var union = UnionAll(dirty);
         context.Clear(Color.White, union);
         tree.Render(context, union);
+        context.Present([union]);
+        tree.CommitPresentedFrame();
 
         var expected = new TransformedColorElement
         {
@@ -1951,6 +2423,40 @@ public class SoftwareRendererTests
         expectedTree.Render(expectedContext);
 
         AssertBitmapEqual(expectedContext.GetBitmap(), context.GetBitmap());
+    }
+
+    [Fact]
+    public void HighDpiPartialFrameWithAnimatedTransformMatchesFullFrame()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 120, 80) };
+        var box = new PaintFillElement(Color.Red) { Geometry = new Rect(10, 10, 40, 30) };
+        root.Children.Add(box);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var bitmap = new Bitmap(240, 160);
+        using var context = new RenderContext(bitmap, new Size(120, 80), 2f);
+        context.Clear(Color.White);
+        tree.Render(context);
+        context.Present();
+        tree.CommitPresentedFrame();
+
+        box.Style.SetAnimated("transform", "translate(30px, 20px)");
+        tree.UpdateDirty();
+        Assert.False(tree.RequiresFullFrame);
+        var dirty = tree.CollectDirtyRects(context.CanvasSize);
+        Assert.NotEmpty(dirty);
+        foreach (var rect in dirty) context.Clear(Color.White, rect);
+        tree.Render(context, dirty);
+        context.Present(dirty);
+        tree.CommitPresentedFrame();
+
+        using var expectedBitmap = new Bitmap(240, 160);
+        using var expectedContext = new RenderContext(expectedBitmap, new Size(120, 80), 2f);
+        expectedContext.Clear(Color.White);
+        tree.Render(expectedContext);
+        AssertBitmapEqual(expectedContext.GetBitmap(), context.GetBitmap());
+        AssertPixel(bitmap, 24, 24, Color.White);   // old physical location erased
+        AssertPixel(bitmap, 90, 70, Color.Red);     // new location painted at 2x scale
     }
 
     private static void AssertRegionEqual(Bitmap expected, Bitmap actual, Rect region)

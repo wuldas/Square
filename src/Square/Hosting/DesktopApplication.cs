@@ -231,6 +231,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (_sessionPrepared) return;
         _sessionPrepared = true;
+        _layout.EnableRetainedFlexLayout();
         _firstFrameShown = false;
         lock (_pendingRendererCaptures) _rendererCapturesClosed = false;
         _lastAnimationTickSeconds = _clock.Elapsed.TotalSeconds;
@@ -352,6 +353,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (_root.IsLoaded) Cleanup(() => ((IComponentLifecycle)_root).OnUnloaded());
         if (_root.IsAttached) Cleanup(() => ((IComponentLifecycle)_root).OnDetached());
         Cleanup(() => CssStyleReconciler.UnregisterScopesForTree(_root));
+        Cleanup(_layout.ClearCachedYoga);
         if (_renderContext != null)
         {
             var renderContext = _renderContext;
@@ -510,7 +512,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private void HandleFrameRequest(Event e)
     {
         // Target 为派发源；不要用 CurrentTarget（冒泡到 root 时已是 root）。
-        // 只登记到期时间，不立刻 _renderRequested——否则会在每个 WM_TIMER(16ms)
+        // 只登记到期时间，不立刻 _renderRequested——否则会在每次帧时钟 tick
         // 都做全窗口软件 Clear+Present，动画 CPU 极高。
         if (e is FrameRequestEvent args && e.Target is Element { IsAttached: true, IsEffectivelyVisible: true } target)
         {
@@ -870,7 +872,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var textSelectionOverlayDirtyBounds = _textSelectionOverlayDirtyBounds;
         _textSelectionOverlayDirtyBounds = Rect.Empty;
         Volatile.Write(ref _renderRequested, false);
-        if (_host == null || _renderContext == null) return;
+        if (_host == null || _renderContext == null)
+        {
+            return;
+        }
 
         RunUpdatePass();
 
@@ -885,21 +890,34 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var layoutDirty = _root.IsLayoutDirty || !AreLayoutSizesEquivalent(_root.Geometry.Size, size);
         if (layoutDirty)
         {
-            _layout.MeasureAndArrange(_root, size);
+            var fixedShell = CanArrangeFixedWindowShell();
+            if (fixedShell)
+                _root.Geometry = new Rect(0, 0, size.Width, size.Height);
+            else
+                _layout.MeasureAndArrange(_root, size);
+
             ArrangeWindowShell(size);
+            if (fixedShell) _root.ClearLayoutDirty();
+
         }
-        if (layoutDirty)
+        if (_displayTree.NeedsSynchronization(_root))
+        {
             _displayTree.Synchronize(_root);
+        }
         _displayTree.UpdateDirty();
         NativeViewSynchronizer.Synchronize(_root, _host.DpiScale);
 
-        if (MainWindow.RenderingMode == RenderMode.FullFrame || layoutDirty || _inspectorOverlayDirty ||
-            !_renderContext.SupportsPartialRendering)
+        var overlayFullFrame = _inspectorOverlayDirty || _inspectorHighlightDebugId.HasValue ||
+            MainWindow.ShowRenderDiagnosticsOverlay;
+        if (MainWindow.RenderingMode == RenderMode.FullFrame || _displayTree.RequiresFullFrame ||
+            _renderContext.NeedsFullRedraw || overlayFullFrame || !_renderContext.SupportsPartialRendering)
         {
             MainWindow.LastRenderDiagnostics = new RenderDiagnostics(
                 MainWindow.RenderingMode,
                 true,
-                layoutDirty ? "LayoutDirty" : !_renderContext.SupportsPartialRendering ? "BackendFullFrame" : "ModeFullFrame",
+                _renderContext.NeedsFullRedraw ? "TargetFullFrame" :
+                    !_renderContext.SupportsPartialRendering ? "BackendFullFrame" :
+                    _displayTree.RequiresFullFrame ? "DisplayTreeFullFrame" : overlayFullFrame ? "Overlay" : "ModeFullFrame",
                 0,
                 1f,
                 new Rect(0, 0, size.Width, size.Height));
@@ -907,7 +925,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
         else
         {
-            var dirty = _displayTree.CollectDirtyRects();
+            var dirty = _displayTree.CollectDirtyRects(size);
             if (!textSelectionOverlayDirtyBounds.IsEmpty)
                 dirty.Add(textSelectionOverlayDirtyBounds);
             if (dirty.Count == 0)
@@ -962,6 +980,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 }
             }
         }
+        if (_renderContext.NeedsFullRedraw)
+        {
+            RequestRender();
+            return;
+        }
+        _displayTree.CommitPresentedFrame();
 
         if (_focusedEditor != null)
             _host.SetTextInputRect(MapContentRectToScreen(_focusedElement, _focusedEditor.CaretRect));
@@ -1119,6 +1143,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         MathF.Abs(actual.Width - requested.Width) < 0.5f &&
         MathF.Abs(actual.Height - requested.Height) < 0.5f;
 
+    private bool CanArrangeFixedWindowShell() =>
+        ReferenceEquals(_root, _document.Ui) && _root.IsVisible &&
+        _root.Children.Count == 2 &&
+        ReferenceEquals(_root.Children[0], _document.Head) &&
+        ReferenceEquals(_root.Children[1], _document.Body) &&
+        !_root.Style.HasAuthorDeclarations && !_root.IsScrollContainer() &&
+        _root.VisualSidecars.Count == 0;
+
     private void ArrangeWindowShell(Size size)
     {
         var titleHeight = 0f;
@@ -1130,12 +1162,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 0,
                 size.Height);
             var titleBounds = new Rect(0, 0, size.Width, titleHeight);
-            _layout.Measure(_document.Head, titleBounds.Size);
-            _layout.Arrange(_document.Head, titleBounds);
+            _layout.MeasureAndArrange(_document.Head, titleBounds);
         }
         else
         {
-            _document.Head.Geometry = new Rect(0, 0, size.Width, 0);
+            var titleBounds = new Rect(0, 0, size.Width, 0);
+            _layout.MeasureAndArrange(_document.Head, titleBounds);
+            _document.Head.Geometry = titleBounds;
         }
 
         var bodyBounds = new Rect(
@@ -1143,8 +1176,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             titleHeight,
             size.Width,
             Math.Max(0, size.Height - titleHeight));
-        _layout.Measure(_document.Body, bodyBounds.Size);
-        _layout.Arrange(_document.Body, bodyBounds);
+        _layout.MeasureAndArrange(_document.Body, bodyBounds);
     }
 
     private void RenderFullFrame()
@@ -2730,9 +2762,11 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private static bool HasVisualInvalidation(Element element)
     {
         if (!element.IsVisible || !element.IsCssDisplayed()) return false;
-        if (element.IsLayoutDirty || element.NeedsPaint) return true;
+        if (element.IsLayoutDirty || element.NeedsPaint || element.NeedsCompositeUpdate) return true;
         foreach (var child in element.Children)
             if (HasVisualInvalidation(child)) return true;
+        foreach (var sidecar in element.VisualSidecars)
+            if (HasVisualInvalidation(sidecar)) return true;
         return false;
     }
 }

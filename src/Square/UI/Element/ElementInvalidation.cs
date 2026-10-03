@@ -15,5 +15,7 @@ public enum ElementInvalidation
     /// <summary>显示树结构需要重建。</summary>
     DisplayTree = 1 << 3,
     /// <summary>命中测试缓存需要失效。</summary>
-    HitTest = 1 << 4
+    HitTest = 1 << 4,
+    /// <summary>仅复合视觉状态变更，复用已有绘制命令。</summary>
+    Composite = 1 << 5
 }

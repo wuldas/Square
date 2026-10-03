@@ -341,6 +341,231 @@ public class FlexSizingTests
             $"expected wrapped copy to exceed the minimum height, got {second.Geometry.Height}");
     }
 
+    [Fact]
+    public void RetainedFlexWidthChangesAcrossWrapBoundaryMatchTransient()
+    {
+        var (root, row, leaves, following) = CreateWrapFixture("120px", "120px", "120px");
+        var retained = new LayoutEngine();
+        retained.EnableRetainedFlexLayout();
+
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 400));
+        var frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(new Rect(0, 0, 120, 40), frame.LeafA);
+        Assert.Equal(new Rect(120, 0, 120, 40), frame.LeafB);
+        Assert.Equal(new Rect(0, 40, 120, 40), frame.LeafC);
+        Assert.Equal(80, frame.Row.Height);
+        Assert.Equal(80, frame.Following.Y);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 跨折返点一：A 变宽后 B 仍在第一行，C 继续换行。
+        leaves[0].Style.Set("width", "160px");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 400));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(new Rect(0, 0, 160, 40), frame.LeafA);
+        Assert.Equal(new Rect(160, 0, 120, 40), frame.LeafB);
+        Assert.Equal(new Rect(0, 40, 120, 40), frame.LeafC);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 跨折返点二：三项同排，行高与后续 section Y 必须同步塌缩。
+        leaves[0].Style.Set("width", "60px");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 400));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(new Rect(0, 0, 60, 40), frame.LeafA);
+        Assert.Equal(new Rect(60, 0, 120, 40), frame.LeafB);
+        Assert.Equal(new Rect(180, 0, 120, 40), frame.LeafC);
+        Assert.Equal(40, frame.Row.Height);
+        Assert.Equal(40, frame.Following.Y);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 回到最初宽度：多次原位更新后仍必须恢复两行布局。
+        leaves[0].Style.Set("width", "120px");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 400));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(new Rect(0, 40, 120, 40), frame.LeafC);
+        Assert.Equal(80, frame.Row.Height);
+        Assert.Equal(80, frame.Following.Y);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+    }
+
+    [Fact]
+    public void RetainedFlexRebuildsOnDeclarationRemovalMinMaxFontAndStructureChanges()
+    {
+        var (root, row, leaves, following) = CreateWrapFixture("120px", "8rem", "120px");
+        var leafA = leaves[0];
+        var leafB = leaves[1];
+        var leafC = leaves[2];
+        var retained = new LayoutEngine();
+        retained.EnableRetainedFlexLayout();
+
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        var frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(128, frame.LeafB.Width, 3);
+        Assert.Equal(new Rect(0, 40, 120, 40), frame.LeafC);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 声明移除必须整棵重建：空叶宽度回到内容尺寸 0，不得遗留旧 Yoga 宽度样式。
+        leafA.Style.Remove("width");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(0, frame.LeafA.Width, 3);
+        Assert.Equal(128, frame.LeafB.Width, 3);
+        Assert.Equal(0, frame.LeafC.Y, 3);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // min-width 属 Other 类别：同样重建并约束 B。
+        leafB.Style.Set("min-width", "200px");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(200, frame.LeafB.Width, 3);
+        Assert.Equal(40, frame.LeafC.Y, 3);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 根字号变化改变 rem 解析：B 的 8rem 随之变化并保持 min-width 下限。
+        root.Style.Set("font-size", "24px");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(200, frame.LeafB.Width, 3);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // max-width 属 Other 类别：限制 C 并把它拉回第一行。
+        leafC.Style.Set("max-width", "90px");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(new Rect(200, 0, 90, 40), frame.LeafC);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 声明移除 min-width：B 回到 8rem 解析值 192。
+        leafB.Style.Remove("min-width");
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(192, frame.LeafB.Width, 3);
+        Assert.Equal(new Rect(192, 0, 90, 40), frame.LeafC);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 结构插入：新叶子放不进第一行，换到第二行。
+        var leafD = new Square.Html.HTMLDivElement();
+        leafD.Style.Set("width", "100px");
+        leafD.Style.Set("height", "40px");
+        row.Children.Add(leafD);
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(new Rect(0, 40, 100, 40), leafD.Geometry);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+
+        // 结构删除：移除 C 后其余项回到单行。
+        row.Children.Remove(leafC);
+        retained.MeasureAndArrange(root, new Rect(0, 0, 300, 500));
+        frame = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(40, frame.Row.Height);
+        Assert.Equal(40, frame.Following.Y);
+        AssertWrapFixtureMatchesTransient(root, row, following, leaves, frame);
+    }
+
+    [Fact]
+    public void RetainedFlexWrappedButtonIntrinsicSizingTracksWidthSequence()
+    {
+        var (retainedRoot, retainedButton) = CreateButtonFixture();
+        var (plainRoot, plainButton) = CreateButtonFixture();
+        var retained = new LayoutEngine();
+        retained.EnableRetainedFlexLayout();
+        var plain = new LayoutEngine();
+
+        RunButtonSequence(retained, retainedRoot, retainedButton);
+        RunButtonSequence(plain, plainRoot, plainButton);
+
+        Assert.Equal(plainButton.Geometry, retainedButton.Geometry);
+        Assert.Equal(plainRoot.ScrollContentSize, retainedRoot.ScrollContentSize);
+    }
+
+    private static void RunButtonSequence(LayoutEngine engine, View root, Button button)
+    {
+        new CssEngine().ApplyStylesToTree(root);
+        engine.MeasureAndArrange(root, new Rect(0, 0, 900, 600));
+        Assert.Equal(46, button.Geometry.Height);
+
+        button.Style.Set("width", "180px");
+        engine.MeasureAndArrange(root, new Rect(0, 0, 900, 600));
+        Assert.True(button.Geometry.Height > 46,
+            $"expected wrapped button copy to grow the height, got {button.Geometry.Height}");
+
+        button.Style.Set("height", "48px");
+        engine.MeasureAndArrange(root, new Rect(0, 0, 900, 600));
+        Assert.Equal(48, button.Geometry.Height);
+
+        button.Style.Set("height", "auto");
+        button.Style.Set("width", "800px");
+        engine.MeasureAndArrange(root, new Rect(0, 0, 900, 600));
+        Assert.Equal(46, button.Geometry.Height);
+    }
+
+    private static (View Root, Button Button) CreateButtonFixture()
+    {
+        var root = new View();
+        root.Style.CssText = "display: flex; flex-direction: column;";
+        var button = new Button("Tap this button to check that wrapped text increases its height");
+        button.Style.CssText = "width: 800px; box-sizing: border-box; padding: 10px 12px; " +
+            "border: 2px solid black; font-size: 16px; line-height: 22px; white-space: normal;";
+        root.Children.Add(button);
+        return (root, button);
+    }
+
+    private static (View Root, Square.Html.HTMLDivElement Row, List<Square.Html.HTMLDivElement> Leaves,
+        Square.Html.HTMLDivElement Following) CreateWrapFixture(string widthA, string widthB, string widthC)
+        => CreateWrapFixture<View, Square.Html.HTMLDivElement>(widthA, widthB, widthC);
+
+    private static (TRoot, TRow, List<TRow>, TRow) CreateWrapFixture<TRoot, TRow>(
+        string widthA, string widthB, string widthC)
+        where TRoot : Element, new()
+        where TRow : Element, new()
+    {
+        var root = new TRoot();
+        root.Style.Set("display", "flex");
+        root.Style.Set("flex-direction", "column");
+        var row = new TRow();
+        row.Style.Set("display", "flex");
+        row.Style.Set("flex-wrap", "wrap");
+        var leaves = new List<TRow> { new(), new(), new() };
+        var widths = new[] { widthA, widthB, widthC };
+        for (var i = 0; i < leaves.Count; i++)
+        {
+            leaves[i].Style.Set("width", widths[i]);
+            leaves[i].Style.Set("height", "40px");
+            row.Children.Add(leaves[i]);
+        }
+        var following = new TRow();
+        following.Style.Set("height", "10px");
+        root.Children.Add(row);
+        root.Children.Add(following);
+        return (root, row, leaves, following);
+    }
+
+    private sealed record WrapFixtureCapture(
+        Rect Row, Rect Following, Size RootExtents, Rect LeafA, Rect LeafB, Rect LeafC);
+
+    private static WrapFixtureCapture CaptureWrapFixture(
+        Element root, Element row, Element following, IReadOnlyList<Element> leaves) => new(
+        row.Geometry,
+        following.Geometry,
+        root.ScrollContentSize,
+        leaves[0].Geometry,
+        leaves[1].Geometry,
+        leaves[2].Geometry);
+
+    private static void AssertWrapFixtureMatchesTransient(
+        Element root, Element row, Element following, IReadOnlyList<Element> leaves,
+        WrapFixtureCapture retained)
+    {
+        new LayoutEngine().MeasureAndArrange(root, root.Geometry);
+        var transient = CaptureWrapFixture(root, row, following, leaves);
+        Assert.Equal(retained.Row, transient.Row);
+        Assert.Equal(retained.Following, transient.Following);
+        Assert.Equal(retained.RootExtents, transient.RootExtents);
+        Assert.Equal(retained.LeafA, transient.LeafA);
+        Assert.Equal(retained.LeafB, transient.LeafB);
+        Assert.Equal(retained.LeafC, transient.LeafC);
+    }
+
+
     private static void AssertTextInsidePanelColumns(List<TextFragment> fragments, Rect panel)
     {
         Assert.NotEmpty(fragments);

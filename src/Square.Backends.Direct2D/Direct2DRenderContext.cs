@@ -15,13 +15,18 @@ using Path = Square.Graphics.PathGeometry;
 namespace Square.Backends.Direct2D;
 
 [SupportedOSPlatform("windows6.1")]
-internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizableRenderContext
+internal sealed unsafe class Direct2DRenderContext :
+    IRenderContext,
+    IDpiResizableRenderContext,
+    ISolidLeafOpacityRenderer
 {
     internal const long MaxGlyphCacheBytes = 8 * 1024 * 1024;
     internal const int MaxGlyphCacheEntries = 4096;
     internal const long MaxImageCacheBytes = 64 * 1024 * 1024;
     internal const int MaxImageCacheEntries = 256;
     private const int BitmapUploadBufferBytes = 256 * 1024;
+    /// <summary>物理像素对齐判定容差：仅接受不会产生可见部分覆盖边缘的矩形。</summary>
+    private const float LeafAlignmentEpsilon = 0.01f;
 
     private readonly IComObject<ID2D1Factory> _factory;
     private readonly IntPtr _windowHandle;
@@ -36,6 +41,9 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     private readonly Stack<NativeState> _nativeStateStack = [];
     private IComObject<ID2D1HwndRenderTarget>? _target;
     private IComObject<ID2D1SolidColorBrush>? _solidBrush;
+    private BrushColor? _solidBrushColor;
+    private bool _needsFullRedraw;
+    private bool _frameFullyCleared;
     private byte[]? _bitmapUploadBuffer;
     private long _imageCacheBytes;
     private long _glyphCacheBytes;
@@ -67,7 +75,8 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
 
     public Size CanvasSize => _canvasSize;
     public float DpiScale => _dpiScale;
-    public bool SupportsPartialRendering => false;
+    public bool SupportsPartialRendering => true;
+    public bool NeedsFullRedraw => _needsFullRedraw;
     internal int ImageCacheCount => _imageCache.Count;
     internal long ImageCacheBytes => _imageCacheBytes;
     internal int GlyphCacheCount => _glyphCache.Count;
@@ -150,8 +159,55 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     public void FillRect(Rect rect, Brush brush)
     {
         EnsureDrawing();
+        if (brush is SolidColorBrush solid)
+        {
+            _target!.Object.FillRectangle(ToRect(rect), GetSharedSolidBrush(solid.Color));
+            return;
+        }
         using var nativeBrush = CreateBrush(brush);
         _target!.Object.FillRectangle(ToRect(rect), nativeBrush.Object);
+    }
+
+    /// <summary>
+    /// 以纯色加透明度直接填充一个屏幕空间轴对齐、物理像素对齐的叶子矩形。
+    /// 仅在无环境裁剪/图层、当前实际变换不产生部分覆盖边缘时接管，
+    /// 否则返回 false 由调用方回退到 PushLayer 路径。
+    /// </summary>
+    public bool TryFillSolidLeafOpacity(Rect rect, Color color, float opacity)
+    {
+        if (_disposed || !_drawing || _target == null) return false;
+        if (_nativeStateStack.Count != 0) return false;
+        if (!IsLeafFillPixelAligned(rect)) return false;
+        var normalized = NormalizeOpacity(opacity);
+        var brush = GetSharedSolidBrush(new BrushColor(
+            color.R / 255f,
+            color.G / 255f,
+            color.B / 255f,
+            color.A / 255f * normalized));
+        _target.Object.FillRectangle(ToRect(rect), brush);
+        return true;
+    }
+
+    private bool IsLeafFillPixelAligned(Rect rect)
+    {
+        var transform = _currentTransform;
+        if (!float.IsFinite(transform.M11) || !float.IsFinite(transform.M22) ||
+            !float.IsFinite(transform.M31) || !float.IsFinite(transform.M32))
+            return false;
+        if (transform.M12 != 0f || transform.M21 != 0f ||
+            transform.M11 == 0f || transform.M22 == 0f)
+            return false;
+        return IsPhysicalPixelAligned(rect.Left * transform.M11 + transform.M31) &&
+               IsPhysicalPixelAligned(rect.Right * transform.M11 + transform.M31) &&
+               IsPhysicalPixelAligned(rect.Top * transform.M22 + transform.M32) &&
+               IsPhysicalPixelAligned(rect.Bottom * transform.M22 + transform.M32);
+    }
+
+    private bool IsPhysicalPixelAligned(float dip)
+    {
+        if (!float.IsFinite(dip)) return false;
+        var physical = dip * _dpiScale;
+        return MathF.Abs(physical - MathF.Round(physical)) <= LeafAlignmentEpsilon;
     }
 
     public void DrawRect(Rect rect, Pen pen)
@@ -374,6 +430,7 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
             throw new InvalidOperationException(
                 "Full-frame Clear must be called before pushing Direct2D clips or layers.");
         _target!.Object.Clear(ToColor(color));
+        _frameFullyCleared = true;
     }
 
     public void Clear(Color color, Rect rect)
@@ -404,7 +461,12 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         var result = _target!.Object.EndDraw(IntPtr.Zero, IntPtr.Zero);
         _drawing = false;
         HandleDrawResult(result, "Failed to present the Direct2D frame.");
-        if (_target != null) PruneDisposedImages();
+        if (_target != null)
+        {
+            PruneDisposedImages();
+            if (dirtyRects == null && _frameFullyCleared)
+                _needsFullRedraw = false;
+        }
     }
 
     public void Resize(Size canvasSize)
@@ -418,6 +480,9 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         _canvasSize = canvasSize;
         _dpiScale = NormalizeDpiScale(dpiScale);
         ResetStacks();
+        _needsFullRedraw = true;
+        _frameFullyCleared = false;
+        _solidBrushColor = null;
         if (dpiChanged)
         {
             _glyphRasterizer.Clear();
@@ -458,6 +523,7 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         _target!.Object.BeginDraw();
         _target.Object.SetTransform(ToMatrix(_currentTransform));
         _drawing = true;
+        _frameFullyCleared = false;
     }
 
     private void CreateTarget()
@@ -481,13 +547,16 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         {
             hwnd = new HWND(_windowHandle),
             pixelSize = GetPhysicalSize(),
-            presentOptions = _vsync
-                ? D2D1_PRESENT_OPTIONS.D2D1_PRESENT_OPTIONS_NONE
-                : D2D1_PRESENT_OPTIONS.D2D1_PRESENT_OPTIONS_IMMEDIATELY
+            presentOptions = D2D1_PRESENT_OPTIONS.D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS |
+                             (_vsync
+                                 ? D2D1_PRESENT_OPTIONS.D2D1_PRESENT_OPTIONS_NONE
+                                 : D2D1_PRESENT_OPTIONS.D2D1_PRESENT_OPTIONS_IMMEDIATELY)
         };
         _target = _factory.CreateHwndRenderTarget(windowProperties, targetProperties);
         _target.Object.SetAntialiasMode(D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         _target.Object.SetTransform(ToMatrix(_currentTransform));
+        _needsFullRedraw = true;
+        _frameFullyCleared = false;
     }
 
     private NativeBrush CreateBrush(Brush brush)
@@ -531,15 +600,26 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     }
 
     private NativeBrush CreateSolidBrush(Color color)
+        => new(null, GetSharedSolidBrush(color));
+
+    private ID2D1SolidColorBrush GetSharedSolidBrush(Color color)
+        => GetSharedSolidBrush(ToBrushColor(color));
+
+    private ID2D1SolidColorBrush GetSharedSolidBrush(in BrushColor color)
     {
         if (_solidBrush == null)
-            _solidBrush = _target!.CreateSolidColorBrush(ToColor(color), null);
-        else
         {
-            var nativeColor = ToColor(color);
-            _solidBrush.Object.SetColor(in nativeColor);
+            _solidBrush = _target!.CreateSolidColorBrush(ToNativeColor(color), null);
+            _solidBrushColor = color;
+            return _solidBrush.Object;
         }
-        return new NativeBrush(null, _solidBrush.Object);
+        if (_solidBrushColor != color)
+        {
+            var nativeColor = ToNativeColor(color);
+            _solidBrush.Object.SetColor(in nativeColor);
+            _solidBrushColor = color;
+        }
+        return _solidBrush.Object;
     }
 
     private IComObject<ID2D1GradientStopCollection> CreateGradientStops(
@@ -887,6 +967,8 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
     {
         if (result == Constants.D2DERR_RECREATE_TARGET)
         {
+            _needsFullRedraw = true;
+            _frameFullyCleared = false;
             ReleaseDeviceResources();
             if (_requestRender == null)
                 throw new Direct2DException(
@@ -915,6 +997,9 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         ClearGlyphCache();
         _solidBrush?.Dispose();
         _solidBrush = null;
+        _solidBrushColor = null;
+        _needsFullRedraw = true;
+        _frameFullyCleared = false;
         _target?.Dispose();
         _target = null;
         _drawing = false;
@@ -1054,6 +1139,12 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
             a = color.A / 255f
         };
 
+    private static BrushColor ToBrushColor(Color color)
+        => new(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
+
+    private static D3DCOLORVALUE ToNativeColor(in BrushColor color)
+        => new() { r = color.R, g = color.G, b = color.B, a = color.A };
+
     private static D2D_MATRIX_3X2_F ToMatrix(Matrix3x2 matrix)
         => new(matrix.M11, matrix.M12, matrix.M21, matrix.M22, matrix.M31, matrix.M32);
 
@@ -1131,6 +1222,9 @@ internal sealed unsafe class Direct2DRenderContext : IRenderContext, IDpiResizab
         FontStyle Style,
         char Character,
         int FontGeneration);
+
+    /// <summary>共享纯色画笔当前的浮点颜色；透明度叶子填充会写入组透明度浮点值。</summary>
+    private readonly record struct BrushColor(float R, float G, float B, float A);
 
     private sealed class CachedBitmap(
         long version,

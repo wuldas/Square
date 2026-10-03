@@ -122,6 +122,33 @@ public sealed partial class LayoutEngine
 
     private readonly Config _yogaConfig;
 
+    // ——— 保留式外部 Flex 缓存（plan step 3）———
+    // 仅在 DesktopApplication.PrepareSession 显式 EnableRetainedFlexLayout() 后开启；
+    // 默认 new LayoutEngine() 保持每次 BuildYogaTree 的临时 YogaSession/using 生命周期。
+    private bool _retainFlexLayout;
+    private readonly Dictionary<Element, FlexYogaCache> _flexCaches = new();
+    // 仅在保留缓存重建的 CreateYogaSubtree 递归期间非空，用于捕获每节点构建上下文。
+    private Dictionary<Element, (float ParentW, float ParentH, float Em, float Rem)>? _capturingBuildContext;
+    // 滚动条 gutter 收敛快照：按引擎复用的候选字典，LIFO 深度对应 ArrangeCore 的嵌套递归，
+    // 避免每次收敛 pass 分配新字典；仅在排列入口的最外层复位深度以自愈异常路径。
+    private readonly List<Dictionary<Element, Size>> _gutterSnapshotPool = new();
+    private int _gutterSnapshotDepth;
+
+    /// <summary>为当前引擎开启保留式外部 Flex 缓存（内部 opt-in；由应用会话准备阶段调用）。</summary>
+    internal void EnableRetainedFlexLayout() => _retainFlexLayout = true;
+
+    /// <summary>释放全部保留缓存中的 Yoga 节点与元素映射（内部；由会话分离阶段调用）。</summary>
+    internal void ClearCachedYoga()
+    {
+        foreach (var cache in _flexCaches.Values)
+            cache.Dispose();
+        _flexCaches.Clear();
+        // 收敛快照字典即使比较后已清空，也一并复位，确保会话分离后不留任何元素引用。
+        foreach (var snapshot in _gutterSnapshotPool)
+            snapshot.Clear();
+        _gutterSnapshotDepth = 0;
+    }
+
     /// <summary>创建布局引擎实例。</summary>
     public LayoutEngine()
     {
@@ -185,6 +212,11 @@ public sealed partial class LayoutEngine
         finally
         {
             _layoutDepth--;
+            if (outermost)
+            {
+                _gutterSnapshotDepth = 0;
+                if (_retainFlexLayout) SweepRetainedFlexCaches(element);
+            }
         }
     }
 
@@ -241,6 +273,11 @@ public sealed partial class LayoutEngine
         finally
         {
             _layoutDepth--;
+            if (outermost)
+            {
+                _gutterSnapshotDepth = 0;
+                if (_retainFlexLayout) SweepRetainedFlexCaches(element);
+            }
         }
     }
 
@@ -292,41 +329,42 @@ public sealed partial class LayoutEngine
             {
                 var gutterSnapshot = CaptureReservedScrollbarGutters(element);
                 ArrangeCssNormalFlow(element, finalRect);
-                if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
+                if (ReservedScrollbarGuttersEqual(gutterSnapshot)) break;
             }
             ArrangePopupSubtrees(element);
             ClearDirtyRecursive(element);
             return;
         }
 
-        for (var pass = 0; pass < 4; pass++)
-        {
-            var gutterSnapshot = CaptureReservedScrollbarGutters(element);
-            using var session = BuildYogaTree(element, finalRect.Width, finalRect.Height);
-            ApplyYogaLayout(element, session.Root, finalRect.X, finalRect.Y);
-            if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
-        }
+        ArrangeYogaRoot(element, finalRect);
         ArrangePopupSubtrees(element);
         ClearDirtyRecursive(element);
     }
 
     /// <summary>在可用尺寸等于最终尺寸时复用同一棵 Yoga 树完成测量和排列。</summary>
     public void MeasureAndArrange(Element element, Size availableSize)
+        => MeasureAndArrange(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
+
+    /// <summary>
+    /// 组合布局入口：一次完成测量与排列，根及全部后代以 <paramref name="finalRect"/> 的
+    /// X/Y 为绝对原点（与 <see cref="Arrange(Element, Rect)"/> 的最终矩形语义一致）。
+    /// </summary>
+    internal void MeasureAndArrange(Element element, Rect finalRect)
     {
         var outermost = _layoutDepth++ == 0;
         if (outermost)
         {
-            _viewportWidth = availableSize.Width;
-            _viewportHeight = availableSize.Height;
+            _viewportWidth = finalRect.Width;
+            _viewportHeight = finalRect.Height;
         }
 
         try
         {
-            var style = GetComputedStyle(element, availableSize.Width, availableSize.Height);
+            var style = GetComputedStyle(element, finalRect.Width, finalRect.Height);
             if (!element.IsVisible || style.Display == DisplayMode.None)
             {
                 element.ClearLayoutDirty();
-                element.Arrange(new Rect(0, 0, 0, 0));
+                element.Arrange(new Rect(finalRect.X, finalRect.Y, 0, 0));
                 return;
             }
 
@@ -335,12 +373,11 @@ public sealed partial class LayoutEngine
                 var gridGutter = element.GetReservedScrollbarGutter();
                 for (var pass = 0; pass < 4; pass++)
                 {
-                    MeasureGrid(element, style, DeflateScrollbarGutter(availableSize, gridGutter));
-                    var fullRect = new Rect(0, 0, availableSize.Width, availableSize.Height);
-                    var inner = Inset(fullRect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
+                    MeasureGrid(element, style, DeflateScrollbarGutter(finalRect.Size, gridGutter));
+                    var inner = Inset(finalRect, style.PaddingLeft, style.PaddingTop, style.PaddingRight, style.PaddingBottom);
                     ArrangeGrid(element, style, DeflateScrollbarGutter(inner, element));
-                    element.Arrange(fullRect);
-                    UpdateScrollContentSize(element, fullRect);
+                    element.Arrange(finalRect);
+                    UpdateScrollContentSize(element, finalRect);
                     var nextGutter = element.GetReservedScrollbarGutter();
                     if (nextGutter.Equals(gridGutter)) break;
                     gridGutter = nextGutter;
@@ -355,10 +392,9 @@ public sealed partial class LayoutEngine
                 var tableGutter = element.GetReservedScrollbarGutter();
                 for (var pass = 0; pass < 4; pass++)
                 {
-                    tableLayout.Measure(element, availableSize, tableGutter);
-                    var fullRect = new Rect(0, 0, availableSize.Width, availableSize.Height);
-                    tableLayout.Arrange(element, fullRect, tableGutter);
-                    UpdateScrollContentSize(element, fullRect);
+                    tableLayout.Measure(element, finalRect.Size, tableGutter);
+                    tableLayout.Arrange(element, finalRect, tableGutter);
+                    UpdateScrollContentSize(element, finalRect);
                     var nextGutter = element.GetReservedScrollbarGutter();
                     if (nextGutter.Equals(tableGutter)) break;
                     tableGutter = nextGutter;
@@ -369,31 +405,32 @@ public sealed partial class LayoutEngine
 
             if (UsesCssNormalFlow(element))
             {
+                // ArrangeCssNormalFlow 在最终 Rect 上构建唯一 plan，测量与期望尺寸在同一次
+                // 构建中完成并写入 CssDesiredSize；独立的 MeasureCssNormalFlow 预测量只会被
+                // 随后的 arrange 结果覆盖，这里不再重复建 plan。
                 for (var pass = 0; pass < 4; pass++)
                 {
                     var gutterSnapshot = CaptureReservedScrollbarGutters(element);
-                    MeasureCssNormalFlow(element, availableSize);
-                    ArrangeCssNormalFlow(element, new Rect(0, 0, availableSize.Width, availableSize.Height));
-                    if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
+                    ArrangeCssNormalFlow(element, finalRect);
+                    if (ReservedScrollbarGuttersEqual(gutterSnapshot)) break;
                 }
                 ArrangePopupSubtrees(element);
                 ClearDirtyRecursive(element);
                 return;
             }
 
-            for (var pass = 0; pass < 4; pass++)
-            {
-                var gutterSnapshot = CaptureReservedScrollbarGutters(element);
-                using var session = BuildYogaTree(element, availableSize.Width, availableSize.Height);
-                ApplyYogaLayout(element, session.Root, 0, 0);
-                if (ReservedScrollbarGuttersEqual(element, gutterSnapshot)) break;
-            }
+            ArrangeYogaRoot(element, finalRect);
             ArrangePopupSubtrees(element);
             ClearDirtyRecursive(element);
         }
         finally
         {
             _layoutDepth--;
+            if (outermost)
+            {
+                _gutterSnapshotDepth = 0;
+                if (_retainFlexLayout) SweepRetainedFlexCaches(element);
+            }
         }
     }
 
@@ -402,9 +439,20 @@ public sealed partial class LayoutEngine
     private YogaSession BuildYogaTree(Element root, float width, float height)
     {
         var session = new YogaSession();
+        BuildYogaSession(session, root, width, height);
+        return session;
+    }
+
+    /// <summary>
+    /// 在 <paramref name="session"/> 内为 <paramref name="root"/> 建立 Yoga 子树并执行一次
+    /// calculate。临时路径与保留缓存的重建共用此入口。
+    /// </summary>
+    private void BuildYogaSession(YogaSession session, Element root, float width, float height, FlexYogaCache? retained = null)
+    {
         var rootFontSize = GetRootFontSize(root);
         var yogaRoot = CreateYogaSubtree(root, session, width, height, rootFontSize, isRoot: true);
         session.Root = yogaRoot;
+        if (retained != null) retained.NaturalRootHeightStyle = YGNodeStyleGetHeight(yogaRoot);
 
         if (!float.IsNaN(width) && !float.IsInfinity(width) && width >= 0)
             YGNodeStyleSetWidth(yogaRoot, width);
@@ -416,7 +464,6 @@ public sealed partial class LayoutEngine
             float.IsNaN(width) || float.IsInfinity(width) ? float.NaN : width,
             float.IsNaN(height) || float.IsInfinity(height) ? float.NaN : height,
             YGDirection.LTR);
-        return session;
     }
 
     private YogaNode CreateYogaSubtree(
@@ -430,6 +477,8 @@ public sealed partial class LayoutEngine
         session.Map[element] = node;
 
         var em = GetFontSize(element);
+        // 保留缓存重建时记录每节点构建上下文，宽度原位更新需要以相同父尺寸重解析 px 声明。
+        _capturingBuildContext?.Add(element, (parentW, parentH, em, rem));
         var display = element.Style.Get("display")?.Trim();
 
         if (string.Equals(display, "none", StringComparison.OrdinalIgnoreCase))
@@ -713,29 +762,52 @@ public sealed partial class LayoutEngine
         UpdateScrollContentSize(element, rect);
     }
 
-    private static Dictionary<Element, Size> CaptureReservedScrollbarGutters(Element element)
+    // ——— 滚动条 gutter 收敛快照 ———
+    //
+    // 快照覆盖全部节点（与旧实现同等的检测力），但只为“当前”滚动条候选
+    // （display 允许滚动条布局且至少一条 overflow 轴为 auto/scroll，由
+    // Element.HasScrollbarGutterPotential 给出）计算 scrollbar metrics，其余节点按
+    // 零 gutter 记录与比较——候选资格在捕获与比较时各自重新求值，不假定单次排列内
+    // 样式不变：自定义 Measure/ILayoutPreparingElement 回调在排列中途改变
+    // display/overflow 时，该节点会从 default 变为真实 gutter（或反向），比较必然
+    // 失配并触发下一 pass 重新捕获。字典按引擎复用、按嵌套深度 LIFO 出栈，比较结束后
+    // 立即清空，避免快照在两帧之间根引用元素树。
+    private static bool IsScrollbarGutterCandidate(Element element) =>
+        element.HasScrollbarGutterPotential;
+
+    private static Size ResolveStampGutter(Element element) =>
+        IsScrollbarGutterCandidate(element) ? element.GetReservedScrollbarGutter() : default;
+
+    private Dictionary<Element, Size> CaptureReservedScrollbarGutters(Element element)
     {
-        var snapshot = new Dictionary<Element, Size>();
-        Capture(element);
+        if (_gutterSnapshotDepth == _gutterSnapshotPool.Count)
+            _gutterSnapshotPool.Add(new Dictionary<Element, Size>());
+        var snapshot = _gutterSnapshotPool[_gutterSnapshotDepth++];
+        snapshot.Clear();
+        Capture(element, snapshot);
         return snapshot;
 
-        void Capture(Element current)
+        static void Capture(Element current, Dictionary<Element, Size> target)
         {
-            snapshot[current] = current.GetReservedScrollbarGutter();
+            target[current] = ResolveStampGutter(current);
             foreach (var child in current.Children)
-                Capture(child);
+                Capture(child, target);
         }
     }
 
-    private static bool ReservedScrollbarGuttersEqual(
-        Element element,
-        IReadOnlyDictionary<Element, Size> snapshot)
+    private bool ReservedScrollbarGuttersEqual(Dictionary<Element, Size> snapshot)
     {
-        if (!snapshot.TryGetValue(element, out var previous) ||
-            !element.GetReservedScrollbarGutter().Equals(previous)) return false;
-        foreach (var child in element.Children)
-            if (!ReservedScrollbarGuttersEqual(child, snapshot)) return false;
-        return true;
+        var equal = true;
+        foreach (var pair in snapshot)
+        {
+            if (ResolveStampGutter(pair.Key).Equals(pair.Value)) continue;
+            equal = false;
+            break;
+        }
+
+        snapshot.Clear();
+        _gutterSnapshotDepth--;
+        return equal;
     }
 
     private void ArrangePopupSubtrees(Element element)
@@ -752,7 +824,7 @@ public sealed partial class LayoutEngine
                     var gutterSnapshot = CaptureReservedScrollbarGutters(child);
                     using var session = BuildYogaTree(child, width, height);
                     ApplyYogaLayout(child, session.Root, 0, 0);
-                    if (ReservedScrollbarGuttersEqual(child, gutterSnapshot)) break;
+                    if (ReservedScrollbarGuttersEqual(gutterSnapshot)) break;
                 }
             }
             ArrangePopupSubtrees(child);
@@ -763,6 +835,506 @@ public sealed partial class LayoutEngine
     {
         if (TryParsePoints(value, float.MaxValue, float.MaxValue, 16, 16, out var points)) return points;
         return IsFiniteLayoutSize(measured) ? measured : 0;
+    }
+
+    // ——— 保留式外部 Flex 缓存 ———
+    //
+    // 缓存以外部 CSS flex 根（display:flex 且进入 Yoga 排列分支的元素）为键，持有整棵
+    // Yoga 树、每节点修订戳与上下文快照。自然测高（LayoutBlock）与绝对排列（Yoga 分支）
+    // 共用同一会话：约束与修订戳未变化时零 Yoga 工作复用；仅 Rect 原点变化时只重放
+    // 绝对坐标；宽度点数变化（LayoutDirtyKind.WidthPoints 且叶子形态合格）在旧节点上
+    // 原位写宽度后统一一次 calculate；其余一切（结构、可见性、字体/rem/viewport、
+    // gutters、min/max、声明移除、未知上下文）保守整棵重建，绝不遗留旧样式字段。
+    // 固定/绝对/popup/网格/表格/文本路径保持既有临时路径。
+
+    private void ArrangeYogaRoot(Element element, Rect finalRect)
+    {
+        if (IsRetainedFlexRoot(element))
+        {
+            var cache = ObtainRetainedFlexCache(element);
+            for (var pass = 0; pass < 4; pass++)
+            {
+                var action = ClassifyRetainedFlex(cache, element, finalRect.Width, out var widthChanges);
+                if (action == RetainedFlexAction.UpToDate && IsRetainedFlexApplyCurrent(cache, finalRect))
+                {
+                    // 稳态：分类证明全部承载输入（修订戳/结构/候选 gutter/字体 rem 视口上下文）
+                    // 未变化，且几何已按同一 Rect 应用。本轮不会有任何 Yoga/几何工作，
+                    // gutter 状态与上次收敛结果必然一致，整体跳过收敛快照遍历。
+                    return;
+                }
+                var gutterSnapshot = CaptureReservedScrollbarGutters(element);
+                switch (action)
+                {
+                    case RetainedFlexAction.Rebuild:
+                        RebuildRetainedFlex(cache, element, finalRect.Width, finalRect.Height, heightExact: true);
+                        break;
+                    case RetainedFlexAction.UpdateWidths:
+                        ApplyRetainedFlexWidthUpdates(cache, widthChanges!);
+                        CalculateRetainedFlex(cache, element, finalRect.Width, finalRect.Height, heightExact: true);
+                        RefreshRetainedFlexStamps(cache, element, captureContext: false);
+                        break;
+                    default:
+                        // 仅约束/原点变化：约束未变时 Yoga 结果仍有效，只重放或重算一次。
+                        if (!IsRetainedFlexConstraintsMatch(cache, finalRect))
+                            CalculateRetainedFlex(cache, element, finalRect.Width, finalRect.Height, heightExact: true);
+                        break;
+                }
+                ApplyRetainedFlexGeometry(cache, element, finalRect);
+                if (ReservedScrollbarGuttersEqual(gutterSnapshot)) break;
+            }
+            return;
+        }
+
+        for (var pass = 0; pass < 4; pass++)
+        {
+            var gutterSnapshot = CaptureReservedScrollbarGutters(element);
+            using var session = BuildYogaTree(element, finalRect.Width, finalRect.Height);
+            ApplyYogaLayout(element, session.Root, finalRect.X, finalRect.Y);
+            if (ReservedScrollbarGuttersEqual(gutterSnapshot)) break;
+        }
+    }
+
+    /// <summary>约束宽高与上次 calculate 一致（含自然高度可复用为精确高的情形）。</summary>
+    private static bool IsRetainedFlexConstraintsMatch(FlexYogaCache cache, Rect rect) =>
+        cache.CalcWidth.Equals(rect.Width) &&
+        (cache.CalcHeightExact && cache.CalcHeight.Equals(rect.Height) ||
+         !cache.CalcHeightExact && cache.CanReuseNaturalAtExactHeight &&
+         cache.NaturalHeightValid && cache.NaturalHeight.Equals(rect.Height));
+
+    /// <summary>约束一致且缓存的 Yoga 布局结果已按同一 Rect 应用，无需任何工作。</summary>
+    private static bool IsRetainedFlexApplyCurrent(FlexYogaCache cache, Rect rect) =>
+        IsRetainedFlexConstraintsMatch(cache, rect) &&
+        cache.ApplyValid && cache.AppliedRect.Equals(rect);
+
+    private bool IsRetainedFlexRoot(Element element) =>
+        _retainFlexLayout && ParseDisplayMode(element.Style.Get("display")) == DisplayMode.Flex;
+
+    private FlexYogaCache ObtainRetainedFlexCache(Element element)
+    {
+        if (!_flexCaches.TryGetValue(element, out var cache))
+        {
+            cache = new FlexYogaCache();
+            _flexCaches[element] = cache;
+        }
+        return cache;
+    }
+
+    /// <summary>自然测高入口：与 ArrangeCssNormalFlow 的外部排列共享缓存会话。</summary>
+    private float MeasureRetainedFlexNaturalHeight(Element element, float width)
+    {
+        var cache = ObtainRetainedFlexCache(element);
+        var action = ClassifyRetainedFlex(cache, element, width, out var widthChanges);
+        switch (action)
+        {
+            case RetainedFlexAction.Rebuild:
+                RebuildRetainedFlex(cache, element, width, float.NaN, heightExact: false);
+                return cache.NaturalHeight;
+            case RetainedFlexAction.UpdateWidths:
+                ApplyRetainedFlexWidthUpdates(cache, widthChanges!);
+                CalculateRetainedFlex(cache, element, width, float.NaN, heightExact: false);
+                RefreshRetainedFlexStamps(cache, element, captureContext: false);
+                return cache.NaturalHeight;
+            default:
+                if (cache.NaturalHeightValid && cache.NaturalWidth.Equals(width))
+                    return cache.NaturalHeight;
+                CalculateRetainedFlex(cache, element, width, float.NaN, heightExact: false);
+                return cache.NaturalHeight;
+        }
+    }
+
+    /// <summary>
+    /// 校验缓存与当前修订戳/上下文，决定复用、宽度原位更新或整棵重建。
+    /// 约束宽度变化同样触发重建：构建期的 content-box 百分比换算依赖当时的父尺寸，
+    /// 与临时路径的每帧重建语义保持一致。
+    /// </summary>
+    private RetainedFlexAction ClassifyRetainedFlex(
+        FlexYogaCache cache, Element root, float constraintWidth, out List<Element>? widthChanges)
+    {
+        widthChanges = null;
+        if (cache.Session.Root == null || !cache.HasKnownMeasureContext)
+            return RetainedFlexAction.Rebuild;
+        if (!float.IsNaN(cache.CalcWidth) && !cache.CalcWidth.Equals(constraintWidth))
+            return RetainedFlexAction.Rebuild;
+
+        var rem = GetRootFontSize(root);
+        var rootEm = GetFontSize(root);
+        if (!cache.ViewportWidth.Equals(_viewportWidth) || !cache.ViewportHeight.Equals(_viewportHeight) ||
+            !cache.RemFontSize.Equals(rem) || !cache.RootFontSize.Equals(rootEm) ||
+            !cache.InheritedStyle.Equals(GetFlexInheritedStyle(root)))
+            return RetainedFlexAction.Rebuild;
+
+        var selfChanged = cache.WidthChanges;
+        selfChanged.Clear();
+        foreach (var pair in cache.Stamps)
+        {
+            var element = pair.Key;
+            var stamp = pair.Value;
+            if (element.StructureRevision != stamp.Structure)
+                return RetainedFlexAction.Rebuild;
+            // gutter 逐节点重新求值但不为非候选计算 metrics：非候选按零比较（其 gutter
+            // 恒为零），候选资格在任何方向发生变化时（例如排列中途的回调改写样式），
+            // 记录值与重新求值必然失配并保守重建。
+            if (!ResolveStampGutter(element).Equals(stamp.ReservedGutter))
+                return RetainedFlexAction.Rebuild;
+            var self = element.SelfLayoutRevision;
+            if (self == stamp.Self)
+                continue;
+            // 会话根节点的 Yoga 宽度由约束宽度接管（BuildYogaSession/CalculateRetainedFlex
+            // 强制覆盖其声明宽度），原位写入声明值会与 CalcWidth 追踪脱钩，必须整棵重建。
+            if (ReferenceEquals(element, root))
+                return RetainedFlexAction.Rebuild;
+            if (element.PendingLayoutDirtyKind != LayoutDirtyKind.WidthPoints ||
+                !CanUpdateYogaWidthInPlace(element) ||
+                !IsPurePointSizeDeclaration(element.Style.Get("width")) ||
+                !cache.WidthPaddingAdjust.ContainsKey(element))
+                return RetainedFlexAction.Rebuild;
+            selfChanged.Add(element);
+        }
+
+        if (selfChanged.Count == 0)
+        {
+            // 无自身变化戳：任何子树戳差异都意味着一个不在映射内的后代（不可见子树）
+            // 发生了变化——它对当前可见布局无影响，但为保守起见整棵重建。
+            foreach (var pair in cache.Stamps)
+                if (pair.Value.Subtree != pair.Key.SubtreeLayoutRevision)
+                    return RetainedFlexAction.Rebuild;
+            return RetainedFlexAction.UpToDate;
+        }
+
+        // 子树戳差异必须能被某个已变化的宽度叶子解释（祖先脏传播短路也会更新父子戳）；
+        // 无法解释的差异说明映射外后代变化，保守重建。
+        var affected = cache.WidthAffectedNodes;
+        affected.Clear();
+        foreach (var changed in selfChanged)
+            for (Element? current = changed; current != null; current = current.Parent ?? current.VisualParent)
+                if (!affected.Add(current)) break;
+        foreach (var pair in cache.Stamps)
+        {
+            if (pair.Value.Subtree == pair.Key.SubtreeLayoutRevision)
+                continue;
+            if (!affected.Contains(pair.Key))
+                return RetainedFlexAction.Rebuild;
+        }
+        widthChanges = selfChanged;
+        return RetainedFlexAction.UpdateWidths;
+    }
+
+    /// <summary>
+    /// 宽度原位更新：同一网格全部变化叶子先写完，再由调用方统一执行一次 calculate。
+    /// 内容盒 padding 修正使用构建期捕获的值（padding 变化本身会触发重建）。
+    /// </summary>
+    private void ApplyRetainedFlexWidthUpdates(FlexYogaCache cache, List<Element> changes)
+    {
+        foreach (var element in changes)
+        {
+            var node = cache.Session.Map[element];
+            cache.WidthPaddingAdjust.TryGetValue(element, out var adjust);
+            var declared = ParseLength(element.Style.Get("width"), float.NaN, float.NaN, 16f, 16f);
+            YGNodeStyleSetWidth(node, (float.IsNaN(declared) ? 0 : declared) + adjust);
+        }
+    }
+
+    private void RebuildRetainedFlex(FlexYogaCache cache, Element root, float width, float height, bool heightExact)
+    {
+        cache.ReplaceSession();
+        cache.BuildContext.Clear();
+        _capturingBuildContext = cache.BuildContext;
+        try
+        {
+            BuildYogaSession(cache.Session, root, width, height, cache);
+        }
+        finally
+        {
+            _capturingBuildContext = null;
+        }
+        cache.CalcWidth = width;
+        cache.CalcHeight = height;
+        cache.CalcHeightExact = heightExact;
+        cache.NaturalHeightValid = !heightExact;
+        if (!heightExact)
+        {
+            cache.NaturalHeight = YGNodeLayoutGetHeight(cache.Session.Root);
+            cache.NaturalWidth = width;
+        }
+        cache.CanReuseNaturalAtExactHeight = CanReuseNaturalFlexHeight(cache.Session);
+        cache.HasKnownMeasureContext = true;
+        foreach (var node in cache.Session.Map.Keys)
+            if (node is ILayoutPreparingElement)
+            {
+                cache.HasKnownMeasureContext = false;
+                break;
+            }
+        RefreshRetainedFlexStamps(cache, root, captureContext: true);
+    }
+
+    /// <summary>在既有节点上应用新约束并执行一次 calculate；auto 高度刷新自然高度缓存。</summary>
+    private void CalculateRetainedFlex(FlexYogaCache cache, Element root, float width, float height, bool heightExact)
+    {
+        var yogaRoot = cache.Session.Root;
+        if (!float.IsNaN(width) && !float.IsInfinity(width) && width >= 0 && !cache.CalcWidth.Equals(width))
+            YGNodeStyleSetWidth(yogaRoot, width);
+        if (heightExact)
+        {
+            if ((!cache.CalcHeightExact || !cache.CalcHeight.Equals(height)) &&
+                !float.IsNaN(height) && !float.IsInfinity(height) && height >= 0)
+                YGNodeStyleSetHeight(yogaRoot, height);
+        }
+        else if (cache.CalcHeightExact)
+        {
+            switch (cache.NaturalRootHeightStyle.Unit)
+            {
+                case Facebook.Yoga.Unit.Point:
+                    YGNodeStyleSetHeight(yogaRoot, cache.NaturalRootHeightStyle.Value);
+                    break;
+                case Facebook.Yoga.Unit.Percent:
+                    YGNodeStyleSetHeightPercent(yogaRoot, cache.NaturalRootHeightStyle.Value);
+                    break;
+                case Facebook.Yoga.Unit.Undefined:
+                    YGNodeStyleSetHeight(yogaRoot, float.NaN);
+                    break;
+                default:
+                    YGNodeStyleSetHeightAuto(yogaRoot);
+                    break;
+            }
+        }
+        YGNodeCalculateLayout(
+            yogaRoot,
+            float.IsNaN(width) || float.IsInfinity(width) ? float.NaN : width,
+            !heightExact || float.IsNaN(height) || float.IsInfinity(height) ? float.NaN : height,
+            YGDirection.LTR);
+        cache.ApplyValid = false;
+        cache.CalcWidth = width;
+        cache.CalcHeight = height;
+        cache.CalcHeightExact = heightExact;
+        if (!heightExact)
+        {
+            cache.NaturalHeight = YGNodeLayoutGetHeight(yogaRoot);
+            cache.NaturalWidth = width;
+            cache.NaturalHeightValid = true;
+        }
+        cache.ViewportWidth = _viewportWidth;
+        cache.ViewportHeight = _viewportHeight;
+        cache.RemFontSize = GetRootFontSize(root);
+        cache.RootFontSize = GetFontSize(root);
+    }
+
+    private void ApplyRetainedFlexGeometry(FlexYogaCache cache, Element root, Rect rect)
+    {
+        ApplyYogaLayout(root, cache.Session.Root, rect.X, rect.Y);
+        cache.ApplyValid = true;
+        cache.AppliedRect = rect;
+    }
+
+    private void RefreshRetainedFlexStamps(FlexYogaCache cache, Element root, bool captureContext)
+    {
+        cache.ViewportWidth = _viewportWidth;
+        cache.ViewportHeight = _viewportHeight;
+        cache.RemFontSize = GetRootFontSize(root);
+        cache.RootFontSize = GetFontSize(root);
+        cache.InheritedStyle = GetFlexInheritedStyle(root);
+        if (captureContext)
+        {
+            cache.Stamps.Clear();
+            cache.WidthPaddingAdjust.Clear();
+            foreach (var pair in cache.BuildContext)
+            {
+                var element = pair.Key;
+                var context = pair.Value;
+                var adjust = 0f;
+                if (ParseBoxSizing(element.Style.Get("box-sizing")) == BoxSizing.ContentBox)
+                {
+                    var padding = ResolvePadding(element, context.ParentW, context.ParentH, context.Em, context.Rem);
+                    adjust = padding.Left + padding.Right;
+                }
+                cache.WidthPaddingAdjust[element] = adjust;
+                cache.Stamps[element] = new FlexNodeStamp(
+                    element.SelfLayoutRevision,
+                    element.SubtreeLayoutRevision,
+                    element.StructureRevision,
+                    ResolveStampGutter(element));
+            }
+            return;
+        }
+
+        // 宽度原位更新路径：拓扑未变，逐节点刷新戳即可（不重建映射，不改 padding 修正）。
+        // 非候选元素的 gutter 恒为零，直接落 default，避免逐节点 scrollbar metrics 计算。
+        foreach (var pair in cache.Stamps)
+        {
+            var element = pair.Key;
+            cache.Stamps[element] = new FlexNodeStamp(
+                element.SelfLayoutRevision,
+                element.SubtreeLayoutRevision,
+                element.StructureRevision,
+                ResolveStampGutter(element));
+        }
+    }
+
+    /// <summary>
+    /// 驱逐已脱离当前文档根的外部 flex 缓存（结构移除/换根）。以文档根连通性判定，
+    /// Head/Body 各自排列不会误删同一文档根下仍连接的其他网格缓存。
+    /// </summary>
+    private void SweepRetainedFlexCaches(Element flowRoot)
+    {
+        if (_flexCaches.Count == 0) return;
+        var documentRoot = flowRoot;
+        while ((documentRoot.Parent ?? documentRoot.VisualParent) is { } parent)
+            documentRoot = parent;
+        List<Element>? detached = null;
+        foreach (var key in _flexCaches.Keys)
+        {
+            var top = key;
+            while ((top.Parent ?? top.VisualParent) is { } owner)
+                top = owner;
+            if (!ReferenceEquals(top, documentRoot))
+                (detached ??= new List<Element>()).Add(key);
+        }
+        if (detached == null) return;
+        foreach (var key in detached)
+        {
+            _flexCaches[key].Dispose();
+            _flexCaches.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// 宽度原位更新仅接受纯点数叶子：非替换型、无直接 DOM Text、无语义/视觉子节点、
+    /// 无 <see cref="ILayoutPreparingElement"/> 依赖的空 HTML 叶子
+    /// （<see cref="HTMLElement.HasCustomMeasure"/> 恒为 true，故按形态判定而非该标志），
+    /// 或无自定义测量的等价纯叶。
+    /// </summary>
+    internal static bool CanUpdateYogaWidthInPlace(Element element)
+    {
+        if (element is ILayoutPreparingElement) return false;
+        if (element is HTMLElement host)
+        {
+            // 替换/表单宿主与按钮具有与内容相关的自绘代理或文本语义，保守重建。
+            if (!host.AcceptsDirectTextContent || host.TagName is "button" or "details") return false;
+            foreach (var child in host.ChildNodes)
+                if (child is Square.UI.Text) return false;
+            if (host.Children.Count > 0 || host.VisualSidecars.Count > 0) return false;
+            return true;
+        }
+        return !element.HasCustomMeasure &&
+               element.Children.Count == 0 &&
+               element.VisualSidecars.Count == 0;
+    }
+
+    private static readonly string[] HeightDependentProperties =
+    ["height", "min-height", "max-height", "flex-basis", "top", "bottom", "padding", "padding-top", "padding-bottom", "margin", "margin-top", "margin-bottom", "gap", "row-gap"];
+
+    private static bool CanReuseNaturalFlexHeight(YogaSession session)
+    {
+        foreach (var element in session.Map.Keys)
+        {
+            if (element is ILayoutPreparingElement || element.VisualSidecars.Count != 0) return false;
+            if (element is HTMLElement host)
+            {
+                if (!host.AcceptsDirectTextContent || host.TagName is "button" or "details") return false;
+                foreach (var child in host.ChildNodes)
+                    if (child is Square.UI.Text) return false;
+            }
+            else if (element.HasCustomMeasure) return false;
+            var display = element.Style.Get("display")?.Trim();
+            if (display is "grid" or "table" or "inline-table") return false;
+            foreach (var property in HeightDependentProperties)
+            {
+                var value = element.Style.Get(property);
+                if (value != null && (value.Contains('%') || value.Contains("calc(", StringComparison.OrdinalIgnoreCase)))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static FlexInheritedStyle GetFlexInheritedStyle(Element root) => new(
+        root.Style.Get("font-family"), root.Style.Get("font-weight"), root.Style.Get("font-style"),
+        root.Style.Get("line-height"), root.Style.Get("letter-spacing"), root.Style.Get("word-spacing"),
+        root.Style.Get("white-space"), root.Style.Get("direction"));
+
+    private readonly record struct FlexInheritedStyle(
+        string? Family, string? Weight, string? Style, string? LineHeight,
+        string? LetterSpacing, string? WordSpacing, string? WhiteSpace, string? Direction);
+
+    /// <summary>宽度声明必须是无单位/px 纯点数才允许原位更新（与 WidthPoints 分类一致）。</summary>
+    private static bool IsPurePointSizeDeclaration(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var text = value.Trim();
+        if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out _)) return true;
+        return text.EndsWith("px", StringComparison.OrdinalIgnoreCase) &&
+               float.TryParse(text[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out _);
+    }
+
+    private enum RetainedFlexAction
+    {
+        UpToDate,
+        UpdateWidths,
+        Rebuild
+    }
+
+    private readonly record struct FlexNodeStamp(
+        long Self,
+        long Subtree,
+        long Structure,
+        Size ReservedGutter);
+
+    private sealed class FlexYogaCache : IDisposable
+    {
+        public YogaSession Session { get; private set; } = new();
+        public readonly Dictionary<Element, FlexNodeStamp> Stamps = new();
+        public readonly Dictionary<Element, (float ParentW, float ParentH, float Em, float Rem)> BuildContext = new();
+        public readonly Dictionary<Element, float> WidthPaddingAdjust = new();
+        public readonly List<Element> WidthChanges = new();
+        public readonly HashSet<Element> WidthAffectedNodes = new();
+        public float ViewportWidth = float.NaN;
+        public float ViewportHeight = float.NaN;
+        public float RemFontSize = float.NaN;
+        public float RootFontSize = float.NaN;
+        public YGValue NaturalRootHeightStyle;
+        public FlexInheritedStyle InheritedStyle;
+        public bool CanReuseNaturalAtExactHeight;
+        public bool HasKnownMeasureContext;
+        public bool NaturalHeightValid;
+        public float NaturalHeight;
+        public float NaturalWidth = float.NaN;
+        public float CalcWidth = float.NaN;
+        public float CalcHeight = float.NaN;
+        public bool CalcHeightExact;
+        public bool ApplyValid;
+        public Rect AppliedRect;
+
+        /// <summary>释放旧 Yoga 树并重置派生状态，准备整体重建（不遗留任何旧样式字段）。</summary>
+        public void ReplaceSession()
+        {
+            FreeSession();
+            Session = new YogaSession();
+            Stamps.Clear();
+            BuildContext.Clear();
+            WidthPaddingAdjust.Clear();
+            NaturalHeightValid = false;
+            ApplyValid = false;
+            CalcWidth = float.NaN;
+            CalcHeight = float.NaN;
+            CalcHeightExact = false;
+        }
+
+        private void FreeSession()
+        {
+            foreach (var node in Session.Map.Values) YGNodeSetContext(node, null!);
+            Session.Dispose();
+            Session.Map.Clear();
+            Session.Root = null!;
+        }
+
+        public void Dispose()
+        {
+            FreeSession();
+            Stamps.Clear();
+            BuildContext.Clear();
+            WidthPaddingAdjust.Clear();
+            WidthChanges.Clear();
+            WidthAffectedNodes.Clear();
+        }
     }
 
     private static void UpdateScrollContentSize(Element element, Rect rect)
@@ -783,7 +1355,9 @@ public sealed partial class LayoutEngine
         var bottom = viewport.Height;
         foreach (var child in element.Children)
         {
-            if (!child.IsVisible || child.IsFixedPositioned()) continue;
+            // display:none 子元素不参与排列，Geometry 是陈旧值，与 !IsVisible 同理跳过。
+            if (!child.IsVisible || child.IsFixedPositioned() ||
+                CssKeyword(child, "display") == "none") continue;
             right = Math.Max(right, child.Geometry.Right - viewport.X);
             bottom = Math.Max(bottom, child.Geometry.Bottom - viewport.Y);
         }
@@ -975,17 +1549,17 @@ public sealed partial class LayoutEngine
         var horizontalPadding = contentBox ? padding.Left + padding.Right : 0;
         var verticalPadding = contentBox ? padding.Top + padding.Bottom : 0;
 
-        ApplyDim(element.Style.Get("width"), parentW, parentH, em, rem, horizontalPadding,
+        ApplyBoxDim(element, "width", parentW, parentH, em, rem, horizontalPadding,
             v => YGNodeStyleSetWidth(node, v), v => YGNodeStyleSetWidthPercent(node, v), () => YGNodeStyleSetWidthAuto(node));
-        ApplyDim(element.Style.Get("height"), parentW, parentH, em, rem, verticalPadding,
+        ApplyBoxDim(element, "height", parentW, parentH, em, rem, verticalPadding,
             v => YGNodeStyleSetHeight(node, v), v => YGNodeStyleSetHeightPercent(node, v), () => YGNodeStyleSetHeightAuto(node));
-        ApplyMinMax(element.Style.Get("min-width"), parentW, parentH, em, rem, horizontalPadding,
+        ApplyBoxMinMax(element, "min-width", parentW, parentH, em, rem, horizontalPadding,
             v => YGNodeStyleSetMinWidth(node, v), v => YGNodeStyleSetMinWidthPercent(node, v));
-        ApplyMinMax(element.Style.Get("min-height"), parentW, parentH, em, rem, verticalPadding,
+        ApplyBoxMinMax(element, "min-height", parentW, parentH, em, rem, verticalPadding,
             v => YGNodeStyleSetMinHeight(node, v), v => YGNodeStyleSetMinHeightPercent(node, v));
-        ApplyMinMax(element.Style.Get("max-width"), parentW, parentH, em, rem, horizontalPadding,
+        ApplyBoxMinMax(element, "max-width", parentW, parentH, em, rem, horizontalPadding,
             v => YGNodeStyleSetMaxWidth(node, v), v => YGNodeStyleSetMaxWidthPercent(node, v));
-        ApplyMinMax(element.Style.Get("max-height"), parentW, parentH, em, rem, verticalPadding,
+        ApplyBoxMinMax(element, "max-height", parentW, parentH, em, rem, verticalPadding,
             v => YGNodeStyleSetMaxHeight(node, v), v => YGNodeStyleSetMaxHeightPercent(node, v));
 
         ApplyBoxShorthand(element.Style.Get("padding"), node, isPadding: true, parentW, parentH, em, rem);
@@ -1578,6 +2152,30 @@ public sealed partial class LayoutEngine
             setSpan(Math.Max(1, endOrSpan));
         else if (parts.Length > 0 && int.TryParse(parts[0], out var startLine))
             setSpan(Math.Max(1, endOrSpan - startLine));
+    }
+
+    // 动画数值 overlay 的像素点值直接供 Yoga（与 ApplyDim/ApplyMinMax 解析量化字符串逐位一致）；
+    // 其余单位/值仍走字符串解析路径。
+    private static void ApplyBoxDim(Element element, string property, float parentW, float parentH, float em, float rem,
+        float paddingAdjustment, Action<float> setPts, Action<float> setPercent, Action setAuto)
+    {
+        if (element.Style.TryGetEffectiveAnimatedNumeric(property, out var animated) && animated.IsPlainPixelPoints)
+        {
+            setPts(animated.Value + paddingAdjustment);
+            return;
+        }
+        ApplyDim(element.Style.Get(property), parentW, parentH, em, rem, paddingAdjustment, setPts, setPercent, setAuto);
+    }
+
+    private static void ApplyBoxMinMax(Element element, string property, float parentW, float parentH, float em, float rem,
+        float paddingAdjustment, Action<float> setPts, Action<float> setPercent)
+    {
+        if (element.Style.TryGetEffectiveAnimatedNumeric(property, out var animated) && animated.IsPlainPixelPoints)
+        {
+            setPts(animated.Value + paddingAdjustment);
+            return;
+        }
+        ApplyMinMax(element.Style.Get(property), parentW, parentH, em, rem, paddingAdjustment, setPts, setPercent);
     }
 
     private static void ApplyDim(string? value, float parentW, float parentH, float em, float rem, float paddingAdjustment,

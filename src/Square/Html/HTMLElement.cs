@@ -312,6 +312,7 @@ public abstract partial class HTMLElement : Square.UI.Element, IFocusableElement
         if (OwnerDocument != null && !ReferenceEquals(sidecar.OwnerDocument, OwnerDocument))
             OwnerDocument.AssignOwnerDocument(sidecar);
         _visualSidecars.Add(sidecar);
+        InvalidateStructureRevision();
         InvalidateHitTestOrder();
         Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
         if (IsAttached) ((IComponentLifecycle)sidecar).OnAttached();
@@ -331,6 +332,7 @@ public abstract partial class HTMLElement : Square.UI.Element, IFocusableElement
         _visualSidecars.Remove(sidecar);
         if (ReferenceEquals(_listMarker, sidecar)) _listMarker = null;
         sidecar.VisualParent = null;
+        InvalidateStructureRevision();
         InvalidateHitTestOrder();
         Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
     }

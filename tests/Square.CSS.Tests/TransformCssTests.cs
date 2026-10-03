@@ -2,8 +2,6 @@ using System.Numerics;
 using Square.CSS.Engine;
 using Square.CSS.Properties;
 using Square.CSS.Tokenizer;
-using Square.Rendering.Commands;
-using Square.Rendering.Tree;
 using Xunit;
 
 namespace Square.CSS.Tests;
@@ -83,21 +81,6 @@ public class TransformCssTests
 
         timeline.Tick(0.25f);
         Assert.Equal("rotate(180deg)", text.Style.Get("transform"));
-    }
-
-    [Fact]
-    public void DisplayNodeWrapsSubtreePaintInCssTransform()
-    {
-        var view = new Square.Controls.View();
-        view.Style.Set("transform", "rotate(90deg)");
-        var node = new DisplayNode { Element = view };
-        var commands = new List<DrawCommand>();
-
-        node.Render(new CommandCollector(commands));
-
-        var push = Assert.IsType<PushTransformCommand>(commands.FirstOrDefault(c => c is PushTransformCommand));
-        AssertMatrix(push.Matrix, Matrix3x2.CreateRotation(MathF.PI / 2));
-        Assert.Contains(commands, c => c is PopTransformCommand);
     }
 
     private static CssEngine Engine(string css)

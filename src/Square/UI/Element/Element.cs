@@ -13,6 +13,20 @@ using Square.UI.Scrolling;
 namespace Square.UI;
 
 /// <summary>
+/// 布局失效类别（Square 扩展）：供保留式布局缓存区分可原位重用的宽度点数变化与其他变化。
+/// <see cref="Other"/> 优先级最高；<see cref="ClearLayoutDirty"/> 将待处理类别重置为 <see cref="None"/>。
+/// </summary>
+internal enum LayoutDirtyKind
+{
+    /// <summary>无待处理的布局失效类别。</summary>
+    None,
+    /// <summary>仅有限像素/无单位 <c>width</c> 有效值变化（可原位应用）。</summary>
+    WidthPoints,
+    /// <summary>任意其他布局变化（含初始布局与未归类变化）。</summary>
+    Other
+}
+
+/// <summary>
 /// 文档树中的元素节点（对齐 DOM <c>Element</c> 身份，并承载 Square 保留模式布局/绘制扩展）。
 /// <para>继承：<see cref="EventTarget"/> → <see cref="Node"/> → <see cref="Element"/>。</para>
 /// <para>Web API 对应：<c>tagName</c> / <c>id</c> / <c>classList</c> / <c>style</c> / 树关系 / 事件。</para>
@@ -28,7 +42,12 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private Rect _geometry;
     private bool _isVisible = true;
     private bool _isLayoutDirty = true;
+    private long _selfLayoutRevision;
+    private long _subtreeLayoutRevision;
+    private long _structureRevision;
+    private LayoutDirtyKind _pendingLayoutDirtyKind = LayoutDirtyKind.Other;
     private bool _needsPaint = true;
+    private bool _needsCompositeUpdate;
     private bool _paintFullDirty = true;
     private List<Rect>? _paintDirtyRects;
     private Size _scrollContentSize;
@@ -50,6 +69,24 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private Point _scrollbarDragStartOffset;
     private Dictionary<string, ScrollbarPseudoStyleEntry>? _scrollbarPseudoStyles;
     private static long _scrollbarPseudoStyleSequence;
+    private long _scrollbarPseudoRevision;
+    private ScrollStyleSnapshot _scrollStyleSnapshot;
+    private bool _scrollStyleValid;
+    private long _cachedScrollStyleRevision;
+    private Element? _cachedScrollStyleRoot;
+    private long _cachedRootScrollStyleRevision;
+    private bool _scrollbarMetricsValid;
+    private ScrollbarMetrics _cachedScrollbarMetrics;
+    private ScrollbarMetricsKey _cachedScrollbarMetricsKey;
+
+    private readonly record struct ScrollStyleSnapshot(
+        bool IsOverflowContainer, bool IsTable, bool ScrollX, bool ScrollY,
+        bool ClipX, bool ClipY, bool NonScrollClipX, bool NonScrollClipY,
+        bool AlwaysX, bool AlwaysY, ScrollbarWidthMode Width, ScrollbarGutterMode Gutter);
+
+    private readonly record struct ScrollbarMetricsKey(
+        Rect Geometry, Size ContentSize, Point Offset, ScrollbarDeviceProfile Profile,
+        ScrollbarVisibilityMode Visibility, long PseudoRevision);
     private int _zIndex;
     private HitTestEntry[]? _hitTestChildren;
     private readonly List<IDisposable> _bindings = [];
@@ -99,8 +136,22 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>布局是否失效（Square 扩展；引擎在脏时重新 Measure/Arrange）。</summary>
     public bool IsLayoutDirty => _isLayoutDirty;
 
+    /// <summary>本元素直接布局失效的次数戳（仅直接失效时递增；祖先传播不递增；永不清零）。</summary>
+    internal long SelfLayoutRevision => _selfLayoutRevision;
+
+    /// <summary>子树布局变化戳：布局脏沿祖先链每次到达该元素时递增（含已脏短路；永不清零）。</summary>
+    internal long SubtreeLayoutRevision => _subtreeLayoutRevision;
+
+    /// <summary>子树拓扑结构戳：子节点增删、sidecar 挂载/卸载、可见性与 z-index 变化时向根传播递增；永不清零。</summary>
+    internal long StructureRevision => _structureRevision;
+
+    /// <summary>待处理的布局失效类别（<see cref="LayoutDirtyKind.Other"/> 优先于 <see cref="LayoutDirtyKind.WidthPoints"/>）。</summary>
+    internal LayoutDirtyKind PendingLayoutDirtyKind => _pendingLayoutDirtyKind;
+
     /// <summary>绘制是否失效（Square 扩展；DisplayTree 据此重建 DrawCommand）。</summary>
     public bool NeedsPaint => _needsPaint;
+    internal bool NeedsCompositeUpdate => _needsCompositeUpdate;
+    internal void ClearCompositeDirty() => _needsCompositeUpdate = false;
 
     /// <summary>层叠顺序（Square 扩展；类似 CSS <c>z-index</c>）。</summary>
     public virtual int ZIndex
@@ -110,6 +161,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         {
             if (_zIndex == value) return;
             _zIndex = value;
+            InvalidateStructureRevision();
             Parent?.InvalidateHitTestOrder();
             Parent?.InvalidatePaint();
         }
@@ -248,6 +300,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             _isVisible = value;
             OnIsVisibleChanged(value);
             NotifyEffectiveVisibilityChanged(wasEffectivelyVisible, IsEffectivelyVisible);
+            InvalidateStructureRevision();
             InvalidateLayout();
         }
     }
@@ -699,24 +752,15 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
 
     private (bool clipX, bool clipY) GetOverflowClipAxes()
     {
-        var isTable = IsTableFormattingBox();
-        if (!IsOverflowContainer() && !isTable) return (false, false);
-        var tableHasScrollOverflow = isTable && HasActualTableScrollOverflow();
-        var overflow = Style.Get("overflow");
-        var tableOverflow = isTable && !tableHasScrollOverflow;
-        var clipBoth = ClipsOverflowValue(overflow, tableOverflow);
-        return (clipBoth || ClipsOverflowValue(Style.Get("overflow-x"), tableOverflow),
-            clipBoth || ClipsOverflowValue(Style.Get("overflow-y"), tableOverflow));
+        ref readonly var style = ref GetScrollStyleSnapshot();
+        if (!style.IsOverflowContainer && !style.IsTable) return (false, false);
+        return style.IsTable && !HasActualTableScrollOverflow()
+            ? (style.NonScrollClipX, style.NonScrollClipY)
+            : (style.ClipX, style.ClipY);
     }
 
-    private bool IsTableFormattingBox()
-    {
-        var display = Style.Get("display")?.Trim().ToLowerInvariant();
-        return display is "table" or "inline-table";
-    }
+    private bool IsTableFormattingBox() => GetScrollStyleSnapshot().IsTable;
 
-    private static bool ClipsOverflowValue(string? value, bool isTable) =>
-        IsClippingOverflow(value) && (!isTable || !IsScrollingOverflow(value));
 
     private static bool IsClippingOverflow(string? value) =>
         string.Equals(value, "hidden", StringComparison.OrdinalIgnoreCase) ||
@@ -733,13 +777,18 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             (!IsTableFormattingBox() || HasActualTableScrollOverflow());
     }
 
-    private bool IsOverflowContainer()
-    {
-        var display = Style.Get("display")?.Trim().ToLowerInvariant();
-        return display is null or "" or "block" or "inline-block" or "flow-root" or "flex" or "grid";
-    }
+    private bool IsOverflowContainer() => GetScrollStyleSnapshot().IsOverflowContainer;
 
     internal bool IsScrollLayoutContainer() => IsOverflowContainer() || IsTableFormattingBox();
+
+    internal bool HasScrollbarGutterPotential
+    {
+        get
+        {
+            ref readonly var style = ref GetScrollStyleSnapshot();
+            return (style.IsOverflowContainer || style.IsTable) && (style.ScrollX || style.ScrollY);
+        }
+    }
 
     private bool HasActualTableScrollOverflow()
     {
@@ -766,27 +815,31 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>获取当前滚动容器的统一 scrollbar 几何。</summary>
     internal ScrollbarMetrics GetScrollbarMetrics()
     {
-        var axes = GetScrollAxes();
-        var canExposeScrollbar = IsScrollLayoutContainer();
+        ref readonly var style = ref GetScrollStyleSnapshot();
         var profile = AppWindow?.ScrollbarProfile ?? ScrollbarDeviceProfile.Auto;
-        var width = GetScrollbarWidthMode();
-        if (ScrollbarVisibility == ScrollbarVisibilityMode.Hidden || IsScrollbarPseudoDisplayNone())
+        var visibility = ScrollbarVisibility;
+        var key = new ScrollbarMetricsKey(Geometry, _scrollContentSize, _scrollOffset, profile, visibility, _scrollbarPseudoRevision);
+        if (_scrollbarMetricsValid && _cachedScrollbarMetricsKey == key) return _cachedScrollbarMetrics;
+        var axes = (scrollX: style.ScrollX, scrollY: style.ScrollY);
+        var canExposeScrollbar = style.IsOverflowContainer || style.IsTable;
+        var width = style.Width;
+        if (visibility == ScrollbarVisibilityMode.Hidden || IsScrollbarPseudoDisplayNone())
             width = ScrollbarWidthMode.None;
         var verticalThickness = ParseScrollbarLength(
             GetScrollbarPseudoStyle(ScrollbarPseudoElements.Scrollbar, "", "width"));
         var horizontalThickness = ParseScrollbarLength(
             GetScrollbarPseudoStyle(ScrollbarPseudoElements.Scrollbar, "", "height"));
-        return ScrollbarGeometry.Calculate(
+        var metrics = ScrollbarGeometry.Calculate(
             Geometry,
             _scrollContentSize,
             _scrollOffset,
             verticalEnabled: canExposeScrollbar && axes.scrollY,
             horizontalEnabled: canExposeScrollbar && axes.scrollX,
-            alwaysShowVertical: IsAlwaysScrolling("overflow-y"),
-            alwaysShowHorizontal: IsAlwaysScrolling("overflow-x"),
+            alwaysShowVertical: style.AlwaysY,
+            alwaysShowHorizontal: style.AlwaysX,
             profile,
             width,
-            GetScrollbarGutterMode(),
+            style.Gutter,
             hideButtons: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Button),
             verticalThicknessOverride: verticalThickness,
             horizontalThicknessOverride: horizontalThickness,
@@ -794,6 +847,10 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             hideTrack: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Track) ||
                 IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.TrackPiece),
             hideCorner: IsScrollbarPseudoDisplayNone(ScrollbarPseudoElements.Corner));
+        _cachedScrollbarMetricsKey = key;
+        _cachedScrollbarMetrics = metrics;
+        _scrollbarMetricsValid = true;
+        return metrics;
     }
     /// <summary>当前滚动内容可用的视口矩形；desktop gutter 已从中扣除。</summary>
     protected internal Rect GetScrollViewportRect() => GetScrollbarMetrics().ViewportRect;
@@ -869,6 +926,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     {
         if (_scrollbarPseudoStyles is not { Count: > 0 }) return false;
         _scrollbarPseudoStyles.Clear();
+        _scrollbarPseudoRevision++;
         return true;
     }
 
@@ -898,6 +956,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (_scrollbarPseudoStyles.TryGetValue(key, out current) && current.SameValueAndPriority(candidate))
             return false;
         _scrollbarPseudoStyles[key] = candidate;
+        _scrollbarPseudoRevision++;
         return true;
     }
 
@@ -966,24 +1025,10 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             Specificity == other.Specificity;
     }
 
-    private ScrollbarWidthMode GetScrollbarWidthMode() =>
-        Style.Get("scrollbar-width")?.Trim().ToLowerInvariant() switch
-        {
-            "thin" => ScrollbarWidthMode.Thin,
-            "none" => ScrollbarWidthMode.None,
-            _ => ScrollbarWidthMode.Auto
-        };
+    private ScrollbarWidthMode GetScrollbarWidthMode() => GetScrollStyleSnapshot().Width;
 
-    private ScrollbarGutterMode GetScrollbarGutterMode() =>
-        Style.Get("scrollbar-gutter")?.Trim().ToLowerInvariant() switch
-        {
-            "stable" => ScrollbarGutterMode.Stable,
-            "stable both-edges" => ScrollbarGutterMode.StableBothEdges,
-            _ => ScrollbarGutterMode.Auto
-        };
+    private ScrollbarGutterMode GetScrollbarGutterMode() => GetScrollStyleSnapshot().Gutter;
 
-    private bool IsAlwaysScrolling(string property) =>
-        IsForcedScrolling(Style.Get("overflow")) || IsForcedScrolling(Style.Get(property));
 
     private static bool IsForcedScrolling(string? value) =>
         string.Equals(value, "scroll", StringComparison.OrdinalIgnoreCase);
@@ -1310,19 +1355,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
 
     private (bool scrollX, bool scrollY) GetScrollAxes()
     {
-        var overflow = Style.Get("overflow");
-        var scrollBoth = IsScrollingOverflow(overflow);
-        var scrollX = scrollBoth || IsScrollingOverflow(Style.Get("overflow-x"));
-        var scrollY = scrollBoth || IsScrollingOverflow(Style.Get("overflow-y"));
-        if (this is UIBodyElement && !scrollX && !scrollY)
-        {
-            // 视口语义：文档视口默认可滚（对齐浏览器 document scroller）；
-            // 根元素或 body 显式 hidden/clip 的轴关闭（对齐 CSS overflow 传播）。
-            var root = OwnerDocument?.DocumentElement;
-            return (CanViewportScroll("overflow-x", overflow, root),
-                CanViewportScroll("overflow-y", overflow, root));
-        }
-        return (scrollX, scrollY);
+        ref readonly var style = ref GetScrollStyleSnapshot();
+        return (style.ScrollX, style.ScrollY);
     }
 
     private bool CanViewportScroll(string axis, string? overflow, Element? root)
@@ -1335,6 +1369,56 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private static bool IsHiddenOverflow(string? value) =>
         string.Equals(value, "hidden", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(value, "clip", StringComparison.OrdinalIgnoreCase);
+
+    private ref readonly ScrollStyleSnapshot GetScrollStyleSnapshot()
+    {
+        var revision = Style.ScrollStyleRevision;
+        var root = this is UIBodyElement ? OwnerDocument?.DocumentElement : null;
+        var rootRevision = root?.Style.ScrollStyleRevision ?? 0;
+        if (_scrollStyleValid && _cachedScrollStyleRevision == revision &&
+            ReferenceEquals(_cachedScrollStyleRoot, root) && _cachedRootScrollStyleRevision == rootRevision)
+            return ref _scrollStyleSnapshot;
+
+        var display = Style.Get("display")?.Trim();
+        var isTable = string.Equals(display, "table", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(display, "inline-table", StringComparison.OrdinalIgnoreCase);
+        var isOverflowContainer = string.IsNullOrEmpty(display) ||
+            string.Equals(display, "block", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(display, "inline-block", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(display, "flow-root", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(display, "flex", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(display, "grid", StringComparison.OrdinalIgnoreCase);
+        var overflow = Style.Get("overflow");
+        var overflowX = Style.Get("overflow-x");
+        var overflowY = Style.Get("overflow-y");
+        var scrollBoth = IsScrollingOverflow(overflow);
+        var scrollX = scrollBoth || IsScrollingOverflow(overflowX);
+        var scrollY = scrollBoth || IsScrollingOverflow(overflowY);
+        if (this is UIBodyElement && !scrollX && !scrollY)
+        {
+            scrollX = CanViewportScroll("overflow-x", overflow, root);
+            scrollY = CanViewportScroll("overflow-y", overflow, root);
+        }
+        var widthValue = Style.Get("scrollbar-width")?.Trim();
+        var width = string.Equals(widthValue, "thin", StringComparison.OrdinalIgnoreCase) ? ScrollbarWidthMode.Thin :
+            string.Equals(widthValue, "none", StringComparison.OrdinalIgnoreCase) ? ScrollbarWidthMode.None : ScrollbarWidthMode.Auto;
+        var gutterValue = Style.Get("scrollbar-gutter")?.Trim();
+        var gutter = string.Equals(gutterValue, "stable", StringComparison.OrdinalIgnoreCase) ? ScrollbarGutterMode.Stable :
+            string.Equals(gutterValue, "stable both-edges", StringComparison.OrdinalIgnoreCase) ? ScrollbarGutterMode.StableBothEdges : ScrollbarGutterMode.Auto;
+        _scrollStyleSnapshot = new ScrollStyleSnapshot(isOverflowContainer, isTable, scrollX, scrollY,
+            IsClippingOverflow(overflow) || IsClippingOverflow(overflowX),
+            IsClippingOverflow(overflow) || IsClippingOverflow(overflowY),
+            IsHiddenOverflow(overflow) || IsHiddenOverflow(overflowX),
+            IsHiddenOverflow(overflow) || IsHiddenOverflow(overflowY),
+            IsForcedScrolling(overflow) || IsForcedScrolling(overflowX),
+            IsForcedScrolling(overflow) || IsForcedScrolling(overflowY), width, gutter);
+        _cachedScrollStyleRevision = revision;
+        _cachedScrollStyleRoot = root;
+        _cachedRootScrollStyleRevision = rootRevision;
+        _scrollStyleValid = true;
+        _scrollbarMetricsValid = false;
+        return ref _scrollStyleSnapshot;
+    }
 
     /// <summary>
     /// 按类型与可选 class 查询第一个匹配后代（Square 强类型查询；接近 <c>querySelector</c>）。
@@ -1388,17 +1472,66 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     }
 
     /// <summary>标记布局与绘制失效，并向父级传播布局脏（Square 扩展；sidecar 经 VisualParent 传播到宿主）。</summary>
-    public void InvalidateLayout()
+    public void InvalidateLayout() => InvalidateLayout(LayoutDirtyKind.Other);
+
+    /// <summary>
+    /// 按类别标记布局与绘制失效：递增本元素 <see cref="SelfLayoutRevision"/> 并向祖先传播
+    /// <see cref="SubtreeLayoutRevision"/> 与待处理类别；已脏祖先短路冗余链上溯，
+    /// 但仍更新其戳/类别并通过现有机制请求根渲染。
+    /// </summary>
+    internal void InvalidateLayout(LayoutDirtyKind kind)
+    {
+        _selfLayoutRevision++;
+        MarkLayoutDirty(kind);
+        var parent = Parent ?? VisualParent;
+        if (parent != null)
+            parent.PropagateLayoutInvalidation(kind);
+        else
+            RequestRenderIfAttached();
+    }
+
+    private void PropagateLayoutInvalidation(LayoutDirtyKind kind)
+    {
+        _subtreeLayoutRevision++;
+        EscalatePendingLayoutDirtyKind(kind);
+        if (_isLayoutDirty)
+        {
+            // 祖先已脏：本轮戳/类别已更新，停止冗余链上溯，仍需请求渲染。
+            RequestRenderIfAttached();
+            return;
+        }
+        _isLayoutDirty = true;
+        var parent = Parent ?? VisualParent;
+        if (parent != null)
+            parent.PropagateLayoutInvalidation(kind);
+        else
+            RequestRenderIfAttached();
+    }
+
+    /// <summary>
+    /// 递增子树拓扑结构戳并沿 <c>Parent ?? VisualParent</c> 祖先链无条件传播到根；
+    /// 与布局脏状态无关。由子节点增删、sidecar 挂载/卸载、可见性与 z-index 变化调用。
+    /// </summary>
+    internal void InvalidateStructureRevision()
+    {
+        _structureRevision++;
+        for (var current = Parent ?? VisualParent; current != null; current = current.Parent ?? current.VisualParent)
+            current._structureRevision++;
+    }
+
+    private void MarkLayoutDirty(LayoutDirtyKind kind)
     {
         _isLayoutDirty = true;
+        EscalatePendingLayoutDirtyKind(kind);
         _needsPaint = true;
         _paintFullDirty = true;
         _paintDirtyRects?.Clear();
-        var parent = Parent ?? VisualParent;
-        if (parent != null)
-            parent.InvalidateLayout();
-        else
-            RequestRenderIfAttached();
+    }
+
+    private void EscalatePendingLayoutDirtyKind(LayoutDirtyKind kind)
+    {
+        if (kind == LayoutDirtyKind.None || _pendingLayoutDirtyKind == LayoutDirtyKind.Other) return;
+        _pendingLayoutDirtyKind = kind;
     }
 
     /// <summary>仅标记绘制失效（Square 扩展；整控件脏）。</summary>
@@ -1447,16 +1580,28 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         _paintFullDirty || _paintDirtyRects == null ? Array.Empty<Rect>() : _paintDirtyRects;
 
     /// <summary>按失效标志触发对应的重绘/重布局/样式失效流程（Square 扩展）。</summary>
-    public void Invalidate(ElementInvalidation invalidation)
+    public void Invalidate(ElementInvalidation invalidation) => Invalidate(invalidation, LayoutDirtyKind.Other);
+
+    /// <summary>内部入口：布局失效可携带 <see cref="LayoutDirtyKind"/>，其余标志行为与公开重载一致。</summary>
+    internal void Invalidate(ElementInvalidation invalidation, LayoutDirtyKind layoutDirtyKind)
     {
         if (_invalidationSuppressionDepth > 0) return;
+        if ((invalidation & ElementInvalidation.DisplayTree) != 0)
+            InvalidateStructureRevision();
+        if ((invalidation & ElementInvalidation.HitTest) != 0)
+            (Parent ?? VisualParent)?.InvalidateHitTestOrder();
+        if ((invalidation & ElementInvalidation.Composite) != 0)
+        {
+            _needsCompositeUpdate = true;
+            RequestRenderIfAttached();
+        }
 
         if ((invalidation & ElementInvalidation.Style) != 0)
             InvalidateStyle();
 
         if ((invalidation & ElementInvalidation.Layout) != 0)
         {
-            InvalidateLayout();
+            InvalidateLayout(layoutDirtyKind);
             return;
         }
         if ((invalidation & (ElementInvalidation.Paint | ElementInvalidation.Style | ElementInvalidation.DisplayTree)) != 0)
@@ -1504,8 +1649,12 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         Reconciler.MarkDirty(this);
     }
 
-    /// <summary>清除布局脏标记（由布局引擎调用）。</summary>
-    public void ClearLayoutDirty() => _isLayoutDirty = false;
+    /// <summary>清除布局脏标记（由布局引擎调用）；重置待处理类别，但从不重置 revision 戳。</summary>
+    public void ClearLayoutDirty()
+    {
+        _isLayoutDirty = false;
+        _pendingLayoutDirtyKind = LayoutDirtyKind.None;
+    }
 
     /// <summary>清除绘制脏标记（由 DisplayTree 在收集命令后调用）。</summary>
     public void ClearPaintDirty()

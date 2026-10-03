@@ -7,6 +7,7 @@ public sealed class CssAnimationManager
 {
     private readonly CssEngine _engine;
     private readonly List<CssAnimationTimeline> _timelines = [];
+    private int _timelineRevision;
 
     /// <summary>初始化 CssAnimationManager 的新实例。</summary>
     /// <param name="engine">关联的 CSS 引擎。</param>
@@ -41,12 +42,23 @@ public sealed class CssAnimationManager
     /// <param name="deltaSeconds">增量秒数。</param>
     public void Tick(float deltaSeconds)
     {
-        foreach (var timeline in _timelines.Where(timeline => !timeline.IsComplete).ToArray())
-            timeline.Tick(deltaSeconds);
+        var revision = _timelineRevision;
+        for (var i = 0; i < _timelines.Count; i++)
+        {
+            var timeline = _timelines[i];
+            if (timeline.IsComplete)
+                timeline.Cancel();
+            else
+                timeline.Tick(deltaSeconds);
+            // 样式回调可同步 Attach/Clear；新列表应从下一 tick 一起推进。
+            if (revision != _timelineRevision) return;
+        }
+        _timelines.RemoveAll(static timeline => timeline.IsComplete);
     }
 
     internal void Clear()
     {
+        _timelineRevision++;
         foreach (var timeline in _timelines)
             timeline.Cancel();
         _timelines.Clear();

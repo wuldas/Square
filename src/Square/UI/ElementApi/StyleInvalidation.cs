@@ -20,9 +20,11 @@ internal static class StyleInvalidation
                 "border-bottom-right-radius" or "border-bottom-left-radius" or "caret-color" or "outline" or
                 "outline-color" or "outline-style" or "outline-width" or "outline-offset" or
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
-                "opacity" or "selection-background" or "selection-color" or "scrollbar-color" => ElementInvalidation.Paint,
+                "selection-background" or "selection-color" or "scrollbar-color" => ElementInvalidation.Paint,
 
-            "transform" => ElementInvalidation.Paint | ElementInvalidation.HitTest,
+            "transform" => ElementInvalidation.Composite | ElementInvalidation.HitTest,
+            "opacity" => ElementInvalidation.Composite,
+            "display" => ElementInvalidation.Layout | ElementInvalidation.DisplayTree,
 
             "z-index" or "visibility" or "user-select" or "cursor" =>
                 ElementInvalidation.Paint | ElementInvalidation.DisplayTree | ElementInvalidation.HitTest,

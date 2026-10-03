@@ -144,6 +144,7 @@ public sealed class ChildNodeCollection : IList<Node>
 
     private void InvalidateStructure()
     {
+        _owner.InvalidateStructureRevision();
         _owner.InvalidateHitTestOrder();
         _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
     }

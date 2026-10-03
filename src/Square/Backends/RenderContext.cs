@@ -7,7 +7,7 @@ using Square.Text.Glyph;
 
 namespace Square.Backends;
 
-internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext, IRenderBitmapSource
+internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext, IRenderBitmapSource, ISolidLeafOpacityRenderer
 {
     public bool SupportsPartialRendering => true;
     private const int CoverageSampleGrid = 4;
@@ -208,22 +208,347 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         var y0 = Math.Max(0, (int)MathF.Floor(bounds.Top));
         var x1 = Math.Min(_bitmapWidth, (int)MathF.Ceiling(bounds.Right));
         var y1 = Math.Min(_bitmapHeight, (int)MathF.Ceiling(bounds.Bottom));
-        for (var y = y0; y < y1; y++)
-        for (var x = x0; x < x1; x++)
+        if (x0 >= x1 || y0 >= y1) return;
+        var left = source.Left;
+        var top = source.Top;
+        var right = source.Right;
+        var bottom = source.Bottom;
+        var m11 = inverse.M11;
+        var m12 = inverse.M12;
+        var m21 = inverse.M21;
+        var m22 = inverse.M22;
+        var m31 = inverse.M31;
+        var m32 = inverse.M32;
+
+        // 每行尝试解出四个 2×2 采样点全部落在源矩形内部的 x 区间，区间内像素直接按
+        // covered=4 混合以省去逐采样求值；端点随后沿生产表达式复核（见行循环内注释），
+        // 区间外保持原逐采样路径，半开边界与覆盖率语义完全不变。
+        var useInteriorSpan = x1 - x0 >= 16 &&
+            float.IsFinite(left) && float.IsFinite(top) && float.IsFinite(right) && float.IsFinite(bottom) &&
+            float.IsFinite(m11) && float.IsFinite(m12) && float.IsFinite(m21) && float.IsFinite(m22) &&
+            float.IsFinite(m31) && float.IsFinite(m32);
+
+        if (brush is SolidColorBrush solid)
         {
-            var covered = 0;
-            for (var sy = 0; sy < 2; sy++)
-            for (var sx = 0; sx < 2; sx++)
+            // 纯色：颜色与逆矩阵分量在循环外解析；每行只算 y 采样项，列方向逐步推进 x 采样点。
+            var color = solid.Color;
+            for (var y = y0; y < y1; y++)
             {
-                var logical = TransformPoint(inverse, x + (sx + 0.5f) / 2, y + (sy + 0.5f) / 2);
-                if (logical.X >= source.Left && logical.X < source.Right &&
-                    logical.Y >= source.Top && logical.Y < source.Bottom) covered++;
+                var topRowX = (y + 0.25f) * m21;
+                var topRowY = (y + 0.25f) * m22;
+                var bottomRowX = (y + 0.75f) * m21;
+                var bottomRowY = (y + 0.75f) * m22;
+                var interiorEnd = x0;
+                var interiorStart = x0;
+                if (useInteriorSpan)
+                {
+                    (interiorStart, interiorEnd) = ComputeFullInteriorSpan(
+                        left, top, right, bottom, m11, m12, m31, m32,
+                        topRowX, topRowY, bottomRowX, bottomRowY);
+                    if (interiorStart < x0) interiorStart = x0;
+                    if (interiorEnd > x1) interiorEnd = x1;
+                    // 端点沿生产表达式复核（每约束关于 x 单调 ⇒ 满足集连续，
+                    // 两端 covered==4 即整段成立）；最多收缩 8 像素，超出放弃该行提示。
+                    var spanOk = interiorStart < interiorEnd;
+                    for (var steps = 0; spanOk && CountTransformedCovered(interiorStart, y, m11, m12, m21, m22, m31, m32, left, top, right, bottom) != 4; steps++)
+                    {
+                        if (++interiorStart >= interiorEnd || steps >= 8) spanOk = false;
+                    }
+                    for (var steps = 0; spanOk && CountTransformedCovered(interiorEnd - 1, y, m11, m12, m21, m22, m31, m32, left, top, right, bottom) != 4; steps++)
+                    {
+                        if (--interiorEnd <= interiorStart || steps >= 8) spanOk = false;
+                    }
+                    if (!spanOk)
+                    {
+                        interiorStart = x0;
+                        interiorEnd = x0;
+                    }
+                }
+                for (var x = x0; x < x1; x++)
+                {
+                    if (x >= interiorStart && x < interiorEnd)
+                    {
+                        BlendPixelCoverage(x, y, color, 4, 4);
+                        continue;
+                    }
+                    var covered = CountTransformedCovered(x, y, m11, m12, m21, m22, m31, m32, left, top, right, bottom);
+                    if (covered != 0) BlendPixelCoverage(x, y, color, covered, 4);
+                }
             }
-            if (covered == 0) continue;
-            var color = brush is SolidColorBrush solid ? solid.Color :
-                SampleBrush(brush, TransformPoint(inverse, x + 0.5f, y + 0.5f));
-            BlendPixelCoverage(x, y, color, covered, 4);
+            return;
         }
+
+        // 渐变：保持按像素中心采样的现有语义，仅把 2×2 覆盖率改为行预计算。
+        for (var y = y0; y < y1; y++)
+        {
+            var topRowX = (y + 0.25f) * m21;
+            var topRowY = (y + 0.25f) * m22;
+            var bottomRowX = (y + 0.75f) * m21;
+            var bottomRowY = (y + 0.75f) * m22;
+            var interiorEnd = x0;
+            var interiorStart = x0;
+            if (useInteriorSpan)
+            {
+                (interiorStart, interiorEnd) = ComputeFullInteriorSpan(
+                    left, top, right, bottom, m11, m12, m31, m32,
+                    topRowX, topRowY, bottomRowX, bottomRowY);
+                if (interiorStart < x0) interiorStart = x0;
+                if (interiorEnd > x1) interiorEnd = x1;
+                // 端点沿生产表达式复核（每约束关于 x 单调 ⇒ 满足集连续，
+                // 两端 covered==4 即整段成立）；最多收缩 8 像素，超出放弃该行提示。
+                var spanOk = interiorStart < interiorEnd;
+                for (var steps = 0; spanOk && CountTransformedCovered(interiorStart, y, m11, m12, m21, m22, m31, m32, left, top, right, bottom) != 4; steps++)
+                {
+                    if (++interiorStart >= interiorEnd || steps >= 8) spanOk = false;
+                }
+                for (var steps = 0; spanOk && CountTransformedCovered(interiorEnd - 1, y, m11, m12, m21, m22, m31, m32, left, top, right, bottom) != 4; steps++)
+                {
+                    if (--interiorEnd <= interiorStart || steps >= 8) spanOk = false;
+                }
+                if (!spanOk)
+                {
+                    interiorStart = x0;
+                    interiorEnd = x0;
+                }
+            }
+            for (var x = x0; x < x1; x++)
+            {
+                if (x >= interiorStart && x < interiorEnd)
+                {
+                    var color = SampleBrush(brush, TransformPoint(inverse, x + 0.5f, y + 0.5f));
+                    BlendPixelCoverage(x, y, color, 4, 4);
+                    continue;
+                }
+                var covered = CountTransformedCovered(x, y, m11, m12, m21, m22, m31, m32, left, top, right, bottom);
+                if (covered != 0)
+                {
+                    var color = SampleBrush(brush, TransformPoint(inverse, x + 0.5f, y + 0.5f));
+                    BlendPixelCoverage(x, y, color, covered, 4);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 生产语义的 2×2 覆盖计数：与原逐采样路径完全相同的表达式（(x+u) 乘 m11，
+    /// 半开边界）。行循环与内部区间端点复核共用，保证两者永不分叉。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CountTransformedCovered(
+        float x, float y,
+        float m11, float m12, float m21, float m22, float m31, float m32,
+        float left, float top, float right, float bottom)
+    {
+        var topRowX = (y + 0.25f) * m21;
+        var topRowY = (y + 0.25f) * m22;
+        var bottomRowX = (y + 0.75f) * m21;
+        var bottomRowY = (y + 0.75f) * m22;
+        var covered = 0;
+        var sampleLeft = x + 0.25f;
+        var sampleRight = x + 0.75f;
+        var logicalX = sampleLeft * m11 + topRowX + m31;
+        var logicalY = sampleLeft * m12 + topRowY + m32;
+        if (logicalX >= left && logicalX < right && logicalY >= top && logicalY < bottom) covered++;
+        logicalX = sampleRight * m11 + topRowX + m31;
+        logicalY = sampleRight * m12 + topRowY + m32;
+        if (logicalX >= left && logicalX < right && logicalY >= top && logicalY < bottom) covered++;
+        logicalX = sampleLeft * m11 + bottomRowX + m31;
+        logicalY = sampleLeft * m12 + bottomRowY + m32;
+        if (logicalX >= left && logicalX < right && logicalY >= top && logicalY < bottom) covered++;
+        logicalX = sampleRight * m11 + bottomRowX + m31;
+        logicalY = sampleRight * m12 + bottomRowY + m32;
+        if (logicalX >= left && logicalX < right && logicalY >= top && logicalY < bottom) covered++;
+        return covered;
+    }
+
+    /// <summary>
+    /// 解出当前行内四个 2×2 采样点预计落在源矩形内部的 x 区间 [start, end)（开区间端点，
+    /// 可能为空）。约束均为 x 的线性函数：对每个采样点求各半平面在 x 轴上的区间再求交。
+    /// 结果仅是性能提示——(x+u)×m11 与 x×m11+(u×m11) 不满足 FP 分配律，极大平移或
+    /// 近奇异缩放下解出的端点可能偏移，调用方必须沿生产表达式复核端点；区间外回退
+    /// 逐采样路径。非有限输入或空区间返回 (0, 0)。
+    /// </summary>
+    private static (int Start, int End) ComputeFullInteriorSpan(
+        float left, float top, float right, float bottom,
+        float m11, float m12, float m31, float m32,
+        float topRowX, float topRowY, float bottomRowX, float bottomRowY)
+    {
+        var lo = float.NegativeInfinity;
+        var hi = float.PositiveInfinity;
+        for (var v = 0; v < 2; v++)
+        {
+            var rowX = v == 0 ? topRowX : bottomRowX;
+            var rowY = v == 0 ? topRowY : bottomRowY;
+            for (var u = 0; u < 2; u++)
+            {
+                var sampleX = u == 0 ? 0.25f : 0.75f;
+                var logicalX = sampleX * m11 + rowX + m31;
+                var logicalY = sampleX * m12 + rowY + m32;
+                if (m11 != 0f)
+                {
+                    var t1 = (left - logicalX) / m11;
+                    var t2 = (right - logicalX) / m11;
+                    if (m11 > 0f)
+                    {
+                        if (t1 > lo) lo = t1;
+                        if (t2 < hi) hi = t2;
+                    }
+                    else
+                    {
+                        if (t2 > lo) lo = t2;
+                        if (t1 < hi) hi = t1;
+                    }
+                }
+                else if (!(logicalX >= left && logicalX < right))
+                {
+                    return (0, 0);
+                }
+                if (m12 != 0f)
+                {
+                    var t1 = (top - logicalY) / m12;
+                    var t2 = (bottom - logicalY) / m12;
+                    if (m12 > 0f)
+                    {
+                        if (t1 > lo) lo = t1;
+                        if (t2 < hi) hi = t2;
+                    }
+                    else
+                    {
+                        if (t2 > lo) lo = t2;
+                        if (t1 < hi) hi = t1;
+                    }
+                }
+                else if (!(logicalY >= top && logicalY < bottom))
+                {
+                    return (0, 0);
+                }
+            }
+        }
+        // 收缩到 2^24 内再做整数转换，避免极大区间在 int 转换处回绕；
+        // 超出画布范围的部分由调用方裁剪。
+        const float spanLimit = 16777216f;
+        if (lo < -spanLimit) lo = -spanLimit;
+        if (lo > spanLimit) lo = spanLimit;
+        if (hi < -spanLimit) hi = -spanLimit;
+        if (hi > spanLimit) hi = spanLimit;
+        if (!(lo < hi)) return (0, 0);
+        var start = (int)MathF.Floor(lo) + 2;
+        var end = (int)MathF.Ceiling(hi) - 1;
+        return (start, end);
+    }
+
+    /// <summary>
+    /// 纯色叶子不透明度快速路径：在当前累计变换轴对齐、屏幕矩形物理像素对齐、
+    /// 且无环境图层/几何裁剪等覆盖效果时，按 PushLayer+PopLayer 的合成算术
+    /// （sourceAlpha = Round(A * opacity)，RGB 直存）直接混合，返回 true；
+    /// 其余情况返回 false，由调用方回退到常规透明度图层。
+    /// </summary>
+    public bool TryFillSolidLeafOpacity(Rect rect, Color color, float opacity)
+    {
+        // 环境图层与几何裁剪属于覆盖效果，必须保留 PushLayer 合成路径。
+        if (_layerStack.Count > 0 || _hasGeometryClip) return false;
+        if (rect.IsEmpty) return false;
+        // 旋转/斜切累计变换需要 2×2 亚像素覆盖，走原路径。
+        if (MathF.Abs(_currentTransform.M12) > 0.0001f || MathF.Abs(_currentTransform.M21) > 0.0001f) return false;
+        if (!TryGetPixelAlignedScreenRect(rect, out var screen)) return false;
+
+        opacity = NormalizeOpacity(opacity);
+        // 与 CompositeLayerRow 完全一致的组不透明度量化：sourceAlpha = Round(A * opacity)。
+        var alpha = (byte)Math.Clamp((int)MathF.Round(color.A * opacity), 0, 255);
+        if (alpha == 0) return true; // 与合成透明图层等价：不改变任何像素
+
+        var clipped = ClipRect(screen);
+        if (clipped.IsEmpty) return true;
+        var x0 = Math.Max(0, (int)Math.Round(clipped.X));
+        var y0 = Math.Max(0, (int)Math.Round(clipped.Y));
+        var x1 = Math.Min(_bitmapWidth, (int)Math.Round(clipped.Right));
+        var y1 = Math.Min(_bitmapHeight, (int)Math.Round(clipped.Bottom));
+        if (_hasClip)
+        {
+            x0 = Math.Max(x0, (int)Math.Ceiling(_clipLeft));
+            y0 = Math.Max(y0, (int)Math.Ceiling(_clipTop));
+            x1 = Math.Min(x1, (int)Math.Floor(_clipRight));
+            y1 = Math.Min(y1, (int)Math.Floor(_clipBottom));
+        }
+        if (x0 >= x1 || y0 >= y1) return true;
+
+        // 与 CompositeLayerRow 相同的直存 RGB over 合成（截断除法），保证与图层路径逐像素一致。
+        var blue = color.B;
+        var green = color.G;
+        var red = color.R;
+        var inverseAlpha = 255 - alpha;
+
+        if (inverseAlpha == 0)
+        {
+            // alpha=255：输出与目标像素无关（outA=255，通道=(c*255+0)/255=c），
+            // 退化为常量 packed 行填充，零除法零分支。
+            var packed = (uint)(blue | (green << 8) | (red << 16) | (255 << 24));
+            var width = x1 - x0;
+            for (var y = y0; y < y1; y++)
+                FillPackedBgra(MemoryMarshal.Cast<byte, uint>(_surface.GetRowSpan(y)).Slice(x0, width), packed);
+            return true;
+        }
+
+        var srcBlue = blue * alpha;
+        var srcGreen = green * alpha;
+        var srcRed = red * alpha;
+        var rowStart = x0 * 4;
+        var rowEnd = x1 * 4;
+        for (var y = y0; y < y1; y++)
+        {
+            var row = _surface.GetRowSpan(y);
+            for (var offset = rowStart; offset < rowEnd; offset += 4)
+            {
+                var destinationAlpha = row[offset + 3];
+                if (destinationAlpha == 0)
+                {
+                    // outA=alpha，通道=(c*alpha+0)/alpha=c：直接写原色与量化 alpha（整除精确）。
+                    row[offset] = blue;
+                    row[offset + 1] = green;
+                    row[offset + 2] = red;
+                    row[offset + 3] = alpha;
+                    continue;
+                }
+                if (destinationAlpha == 255)
+                {
+                    // outA=255；((row*255)*invA)/255 == row*invA（精确），每次混合只余一次乘一除。
+                    row[offset] = (byte)((srcBlue + row[offset] * inverseAlpha) / 255);
+                    row[offset + 1] = (byte)((srcGreen + row[offset + 1] * inverseAlpha) / 255);
+                    row[offset + 2] = (byte)((srcRed + row[offset + 2] * inverseAlpha) / 255);
+                    row[offset + 3] = 255;
+                    continue;
+                }
+                var outputAlpha = (byte)(alpha + destinationAlpha * inverseAlpha / 255);
+                row[offset] = (byte)((srcBlue + row[offset] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+                row[offset + 1] = (byte)((srcGreen + row[offset + 1] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+                row[offset + 2] = (byte)((srcRed + row[offset + 2] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
+                row[offset + 3] = outputAlpha;
+            }
+        }
+        return true;
+    }
+
+    private bool TryGetPixelAlignedScreenRect(Rect rect, out Rect screen)
+    {
+        var p1 = Vector2.Transform(new Vector2(rect.Left, rect.Top), _currentTransform);
+        var p2 = Vector2.Transform(new Vector2(rect.Right, rect.Top), _currentTransform);
+        var p3 = Vector2.Transform(new Vector2(rect.Right, rect.Bottom), _currentTransform);
+        var p4 = Vector2.Transform(new Vector2(rect.Left, rect.Bottom), _currentTransform);
+        var left = MathF.Min(MathF.Min(p1.X, p2.X), MathF.Min(p3.X, p4.X));
+        var top = MathF.Min(MathF.Min(p1.Y, p2.Y), MathF.Min(p3.Y, p4.Y));
+        var right = MathF.Max(MathF.Max(p1.X, p2.X), MathF.Max(p3.X, p4.X));
+        var bottom = MathF.Max(MathF.Max(p1.Y, p2.Y), MathF.Max(p3.Y, p4.Y));
+        const float tolerance = 0.0001f;
+        if (MathF.Abs(left - MathF.Round(left)) > tolerance ||
+            MathF.Abs(top - MathF.Round(top)) > tolerance ||
+            MathF.Abs(right - MathF.Round(right)) > tolerance ||
+            MathF.Abs(bottom - MathF.Round(bottom)) > tolerance)
+        {
+            screen = default;
+            return false;
+        }
+        screen = new Rect(left, top, right - left, bottom - top);
+        return true;
     }
 
     public void DrawRect(Rect rect, Pen pen)

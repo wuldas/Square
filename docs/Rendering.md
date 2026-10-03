@@ -47,7 +47,7 @@ line/cluster metrics、BiDi、命中测试、selection/caret 和 `DrawTextLayout
 `FontFace` 都进入同一权威 layout snapshot；Windows 8+ 的 letter/word spacing 使用
 `IDWriteTextLayout1`，Windows 7 或暂不支持的 text-indent/布局边界整体回退 Square 原路径，不会只替换
 绘制导致几何不一致。它支持 transform、矩形/几何 clip、渐变/描边、group opacity、bitmap 版本更新、
-resize/DPI 和 `D2DERR_RECREATE_TARGET` 重建；当前只声明全帧渲染，也不提供真实 framebuffer readback。
+resize/DPI 和 `D2DERR_RECREATE_TARGET` 重建；保留 HWND 目标支持局部渲染，目标创建、resize 或设备重建后要求完整重绘。它不提供真实 framebuffer readback。
 
 DirectWrite 的 `TextFormat` cache 上限为 128 项，`TextLayout` cache 上限为 256 项/估算 16 MiB；
 Direct2D fallback glyph cache 为 4096 项/8 MiB，image cache 为 256 项/64 MiB。动画 Bitmap 复用同一
@@ -146,7 +146,7 @@ substring 重排导致的 shaping 差异。
 
 `Auto` 会在以下情况回退全帧：
 
-- layout dirty，需要重新布局
+- 显示树拓扑变化、未知可视边界或后端目标要求完整重绘；普通布局失效本身不强制全帧
 - 没有 dirty rect，但仍请求了渲染
 - dirty rect 数量超过 `MaxDirtyRectCount`
 - dirty area 比例超过 `MaxDirtyAreaRatio`
@@ -378,3 +378,18 @@ if (-not (Test-Path -LiteralPath "artifacts/screenshots/direct2d-aot.png") -or (
 ### 9.3 Win32 首帧显示
 
 Win32 窗口先以隐藏状态创建并完成 DPI 调整。`DesktopApplication` 创建 RenderContext、执行首次布局和 `Present()` 后，再调用平台宿主显示窗口。Software 和 Vulkan 因此都在窗口可见前准备好首帧，避免 DWM 短暂显示未初始化的黑色客户区。
+
+### 9.4 Win32 帧调度
+
+Win32 自有消息泵通过高精度 one-shot waitable timer 与 `MsgWaitForMultipleObjectsEx` 同时等待帧截止时间和窗口消息，以连续 60Hz 截止时间推进。不忙等，不追赶补交错过的帧；最小化停钟，恢复重置截止时间，消息泵退出后释放 timer 句柄。旧 Windows 不支持高精度标志时使用普通 waitable timer，不能保证同样的时间精度。
+
+现代 Windows 的 HWND 由 DWM 合成，Win32 宿主负责提交节奏，因此向后端传入 `VSync=false`，避免在 60Hz 帧时钟之外再次同步等待显示刷新。`RenderContextCreateInfo.VSync` 的公开默认值仍为 `true`，独立创建后端上下文时仍由调用者决定。窗口渲染默认模式仍是 `FullFrame`；外部宿主仍通过 `ApplicationSession.Tick()` 驱动会话。
+
+帧提交率不是屏幕扫描率。开启 Direct2D 的立即提交只取消应用侧等待，不能把提交次数当作屏幕实际显示帧数。API 契约见 [waitable timer](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw)、[消息队列等待](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex) 和 [Direct2D Present options](https://learn.microsoft.com/en-us/windows/win32/api/d2d1/ne-d2d1-d2d1_present_options)。
+
+### 9.5 CPU 热路径缓存与像素契约
+
+- 系统字体度量按 family、size、weight、style、自定义字体集合代次和平台度量提供器代次缓存，最多 256 项；注册或替换字体、替换平台提供器后，旧缓存不能遮蔽新度量。缓存命中不再重复创建 GDI DC 和字体对象。
+- 元素的 overflow / scrollbar 样式快照使用独立样式版本；Body 同时检查文档根的版本与身份。Scrollbar 几何缓存还检查元素矩形、内容尺寸、滚动偏移、设备配置、可见性和伪元素样式版本，不能用缓存跳过这些失效。
+- 保留式 flex 布局复用 gutter 收敛快照，并在候选比较时重新解析当前 gutter；快照在比较和会话分离时清空元素引用。`display:none` 子元素不贡献滚动内容范围，重新显示后重新参与布局。
+- Software 变换矩形保留原 2×2 采样、半开边界和 alpha 量化。内部全覆盖区间仅是性能提示：两端必须用原浮点采样表达式确认全覆盖，否则退回逐像素路径；gradient 仍在同一像素中心取色。

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Square.CSS.Ast;
 using Square.UI;
+using Square.UI.ElementApi;
 
 namespace Square.CSS.Engine;
 
@@ -123,7 +124,9 @@ public sealed class CssAnimationTimeline
         foreach (var track in _tracks)
         {
             var value = track.ValueAt(progress);
-            _visual.Style.SetAnimated(track.Property, track.FormatValue(value));
+            // 纯数字/px/单函数轨道写入数值 overlay；比较/输出沿用 FormatNumber("0.###") 量化语义。
+            _visual.Style.SetAnimatedNumeric(track.Property,
+                new AnimatedNumericValue(value, track.Format.Prefix, track.Format.Suffix));
         }
     }
 
@@ -211,13 +214,8 @@ public sealed class CssAnimationTimeline
         return true;
     }
 
-    private static string FormatNumber(float value) =>
-        value.ToString("0.###", CultureInfo.InvariantCulture);
-
     private sealed record AnimationTrack(string Property, AnimationValueFormat Format, AnimationStop[] Stops)
     {
-        public string FormatValue(float value) => Format.Format(value);
-
         public float ValueAt(float progress)
         {
             if (progress <= Stops[0].Progress) return Stops[0].Value;
@@ -238,7 +236,6 @@ public sealed class CssAnimationTimeline
     private readonly record struct AnimationValueFormat(string Prefix, string Suffix)
     {
         public static readonly AnimationValueFormat Number = new("", "");
-        public string Format(float value) => Prefix + FormatNumber(value) + Suffix;
     }
     private enum AnimationDirection { Normal, Reverse, Alternate, AlternateReverse }
 

@@ -36,6 +36,8 @@ public interface IRenderContext : IDisposable
     float DpiScale { get; }
     /// <summary>是否支持局部脏区渲染。</summary>
     bool SupportsPartialRendering => false;
+    /// <summary>目标创建、尺寸变化或丢失后，下一次提交必须清屏并完整绘制。</summary>
+    bool NeedsFullRedraw => false;
 
     /// <summary>压入变换矩阵。</summary>
     void PushTransform(Matrix3x2 matrix);
@@ -87,6 +89,11 @@ public interface IRenderContext : IDisposable
     /// 局部 Present。空列表视为 no-op；null 视为整窗。
     /// </summary>
     void Present(IReadOnlyList<Rect>? dirtyRects);
+}
+
+internal interface ISolidLeafOpacityRenderer
+{
+    bool TryFillSolidLeafOpacity(Rect rect, Color color, float opacity);
 }
 
 /// <summary>可调整画布尺寸的渲染上下文。</summary>

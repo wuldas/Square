@@ -1,6 +1,7 @@
 using Square.Graphics;
 using Square.Events;
 using Square.Hosting;
+using Square.UI;
 using Square.Controls;
 using Square.Rendering;
 using Square.Rendering.Tree;
@@ -40,6 +41,63 @@ public sealed class ScrollbarGeometryTests
         Assert.True(scroller.IsLayoutDirty);
         Assert.True(scroller.NeedsPaint);
         Assert.Equal(new Rect(0, 0, 100, 100), scroller.GetScrollbarMetrics().ViewportRect);
+    }
+
+    [Fact]
+    public void ScrollViewportFollowsVariableChangesDuringSuppressedInvalidation()
+    {
+        var scroller = new View { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.Style.Set("--axis", "auto");
+        scroller.Style.Set("overflow-y", "var(--axis)");
+        scroller.SetScrollContentSize(new Size(85, 300));
+        Assert.Equal(85, scroller.GetScrollbarMetrics().ViewportRect.Width);
+
+        using (Element.SuppressInvalidation())
+            scroller.Style.Set("--axis", "hidden");
+
+        Assert.Equal(100, scroller.GetScrollbarMetrics().ViewportRect.Width);
+        Assert.False(scroller.GetScrollbarMetrics().HasVertical);
+
+        using (Element.SuppressInvalidation())
+            scroller.Style.Set("--axis", "auto");
+        Assert.Equal(85, scroller.GetScrollbarMetrics().ViewportRect.Width);
+    }
+
+    [Fact]
+    public void WarmDocumentScrollbarTracksRootOverflowPropagation()
+    {
+        var window = new AppWindow("viewport scroll cache");
+        var document = (UIDocument)window.Document;
+        var body = document.Body;
+        body.Geometry = new Rect(0, 0, 100, 100);
+        body.SetScrollContentSize(new Size(85, 300));
+        Assert.True(body.GetScrollbarMetrics().HasVertical);
+
+        document.DocumentElement.Style.Set("overflow", "hidden");
+        Assert.False(body.GetScrollbarMetrics().HasVertical);
+        Assert.Equal(100, body.GetScrollbarMetrics().ViewportRect.Width);
+
+        document.DocumentElement.Style.RemoveProperty("overflow");
+        Assert.True(body.GetScrollbarMetrics().HasVertical);
+        Assert.Equal(85, body.GetScrollbarMetrics().ViewportRect.Width);
+    }
+
+    [Fact]
+    public void ScrollbarThumbTracksContentOffsetAndGeometryAfterWarmRead()
+    {
+        var scroller = new ScrollViewer { Geometry = new Rect(0, 0, 100, 100) };
+        scroller.SetScrollContentSize(new Size(85, 400));
+        var initial = scroller.GetScrollbarMetrics();
+
+        scroller.ScrollTop = 100;
+        Assert.True(scroller.GetScrollbarMetrics().VerticalThumb.Y > initial.VerticalThumb.Y);
+        scroller.SetScrollContentSize(new Size(85, 200));
+        var shorter = scroller.GetScrollbarMetrics();
+        Assert.True(shorter.VerticalThumb.Height > initial.VerticalThumb.Height);
+
+        scroller.Geometry = new Rect(7, 9, 120, 100);
+        var moved = scroller.GetScrollbarMetrics();
+        Assert.Equal(new Rect(7, 9, 105, 100), moved.ViewportRect);
     }
 
     [Fact]

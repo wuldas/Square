@@ -17,9 +17,13 @@ public sealed class StyleAccessor
     private Dictionary<string, InlineStyleEntry>? _inlineStyles;
     private Dictionary<string, CascadedStyleEntry>? _cascadedStyles;
     private Dictionary<string, string>? _animatedStyles;
+    private Dictionary<string, AnimatedNumericValue>? _animatedNumericStyles;
     private Dictionary<string, string?>? _computedStyles;
     private HashSet<string>? _parentDependentStyles;
     private int _cssTextDepth;
+    private long _scrollStyleRevision;
+
+    internal long ScrollStyleRevision => _scrollStyleRevision;
 
     internal StyleAccessor(Element owner) { _owner = owner; }
 
@@ -140,7 +144,7 @@ public sealed class StyleAccessor
             _inlineStyles.Remove(name);
             RemoveComputedStyle(name);
         }
-        foreach (var name in properties) InvalidateIfEffectiveStyleChanged(name, previous[name]);
+        foreach (var name in properties) InvalidateIfEffectiveStyleChanged(name, previous[name], allowWidthUpdate: false);
         NotifyInlineStyleChanged();
         return entry.Value ?? "";
     }
@@ -153,22 +157,103 @@ public sealed class StyleAccessor
     {
         property = NormalizePropertyName(property);
         var previous = CaptureStyleState(property);
+        var hadNumeric = _animatedNumericStyles?.ContainsKey(property) == true;
         _animatedStyles ??= [];
-        if (_animatedStyles.TryGetValue(property, out var current) && current == value) return false;
+        if (!hadNumeric && _animatedStyles.TryGetValue(property, out var current) && current == value) return false;
+        _animatedNumericStyles?.Remove(property);
         _animatedStyles[property] = value;
         RemoveComputedStyle(property);
         InvalidateIfEffectiveStyleChanged(property, previous);
         return true;
     }
 
+    /// <summary>
+    /// 设置动画数值覆盖值（纯数字/px/单函数包装）。写入值按 FormatNumber("0.###", InvariantCulture)
+    /// 量化（经同语义字符串往返），变化检测与输出保持量化字符串语义；动画值未赢得现有 !important
+    /// 级联时只记录不生效。calc/多函数/非数字与自定义属性仍走 <see cref="SetAnimated"/> 字符串路径。
+    /// </summary>
+    internal bool SetAnimatedNumeric(string property, AnimatedNumericValue value)
+    {
+        property = NormalizePropertyName(property);
+        if (property.StartsWith("--", StringComparison.Ordinal))
+            return SetAnimated(property, value.Format());
+
+        var canonical = value.Quantized();
+        _animatedNumericStyles ??= [];
+        var hadNumeric = _animatedNumericStyles.TryGetValue(property, out var previousNumeric);
+        var replacedString = _animatedStyles?.ContainsKey(property) == true;
+        if (hadNumeric && !replacedString && previousNumeric.SameQuantized(canonical)) return false;
+
+        var importantBeats = ImportantBeats(property);
+        if (hadNumeric && !replacedString)
+        {
+            // 同为动画数值覆盖：量化不同即输出字符串不同，有效值必变，无需格式化旧值。
+            _animatedNumericStyles[property] = canonical;
+            RemoveComputedStyle(property);
+            if (importantBeats) return true;
+            InvalidateAnimatedNumericChange(property, previousNumeric.IsPlainPixelPoints, canonical.IsPlainPixelPoints);
+            return true;
+        }
+
+        // 过渡写入（字符串动画/普通声明 → 数值动画）：按既有字符串语义比较旧有效值。
+        var previous = CaptureStyleState(property);
+        _animatedStyles?.Remove(property);
+        _animatedNumericStyles[property] = canonical;
+        RemoveComputedStyle(property);
+        if (importantBeats) return true;
+        var currentText = canonical.Format();
+        if (previous.AuthorSpecified && string.Equals(previous.Value, currentText, StringComparison.Ordinal)) return true;
+        InvalidateAnimatedNumericChange(property,
+            TryGetFinitePixelPoints(previous.Value, out _), canonical.IsPlainPixelPoints);
+        return true;
+    }
+
+    /// <summary>
+    /// 读取赢得现有 !important 级联的动画数值覆盖值；未命中或被重要声明压制时返回 false。
+    /// </summary>
+    internal bool TryGetEffectiveAnimatedNumeric(string property, out AnimatedNumericValue value)
+    {
+        property = NormalizePropertyName(property);
+        if (_animatedNumericStyles != null && _animatedNumericStyles.TryGetValue(property, out value) &&
+            !ImportantBeats(property))
+            return true;
+        value = default;
+        return false;
+    }
+
+    private bool ImportantBeats(string property) =>
+        (_inlineStyles != null && _inlineStyles.TryGetValue(property, out var inline) && inline.Important) ||
+        (_cascadedStyles != null && _cascadedStyles.TryGetValue(property, out var cascaded) && cascaded.Important);
+
+    private void InvalidateAnimatedNumericChange(string property, bool previousPointsLike, bool currentPointsLike)
+    {
+        var invalidation = StyleInvalidation.ForProperty(property);
+        RemoveDependentDescendantComputedStyle(property, invalidation);
+        if (property == "z-index") SyncOwnerZIndex();
+        var kind = property == "width" && previousPointsLike && currentPointsLike
+            ? LayoutDirtyKind.WidthPoints
+            : LayoutDirtyKind.Other;
+        _owner.Invalidate(invalidation, kind);
+    }
+
     internal void RemoveAnimated(string property)
     {
         property = NormalizePropertyName(property);
+        if (_animatedNumericStyles?.TryGetValue(property, out var numeric) == true)
+        {
+            var previous = ImportantBeats(property)
+                ? CaptureStyleState(property)
+                : new StyleState(numeric.Format(), true);
+            _animatedNumericStyles.Remove(property);
+            RemoveComputedStyle(property);
+            InvalidateIfEffectiveStyleChanged(property, previous, allowWidthUpdate: false);
+            return;
+        }
         if (_animatedStyles == null || !_animatedStyles.ContainsKey(property)) return;
-        var previous = CaptureStyleState(property);
+        var captured = CaptureStyleState(property);
         _animatedStyles.Remove(property);
         RemoveComputedStyle(property);
-        InvalidateIfEffectiveStyleChanged(property, previous);
+        InvalidateIfEffectiveStyleChanged(property, captured, allowWidthUpdate: false);
     }
 
     /// <summary>兼容旧调用的级联写入。</summary>
@@ -268,7 +353,7 @@ public sealed class StyleAccessor
         _inlineStyles.Clear();
         foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
-            InvalidateIfEffectiveStyleChanged(property, previous[property]);
+            InvalidateIfEffectiveStyleChanged(property, previous[property], allowWidthUpdate: false);
         NotifyInlineStyleChanged();
     }
     private void NotifyInlineStyleChanged()
@@ -291,7 +376,7 @@ public sealed class StyleAccessor
         foreach (var property in properties) _cascadedStyles.Remove(property);
         foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
-            InvalidateIfEffectiveStyleChanged(property, previous[property]);
+            InvalidateIfEffectiveStyleChanged(property, previous[property], allowWidthUpdate: false);
     }
 
     /// <summary>返回最终应用样式快照。</summary>
@@ -301,6 +386,7 @@ public sealed class StyleAccessor
         if (_inlineStyles != null) keys.UnionWith(_inlineStyles.Keys);
         if (_cascadedStyles != null) keys.UnionWith(_cascadedStyles.Keys);
         if (_animatedStyles != null) keys.UnionWith(_animatedStyles.Keys);
+        if (_animatedNumericStyles != null) keys.UnionWith(_animatedNumericStyles.Keys);
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var key in keys)
         {
@@ -308,6 +394,18 @@ public sealed class StyleAccessor
             if (value != null) result[key] = value;
         }
         return result;
+    }
+
+    internal bool HasAuthorDeclarations
+    {
+        get
+        {
+            if (_inlineStyles?.Count > 0 || _animatedStyles?.Count > 0 || _animatedNumericStyles?.Count > 0) return true;
+            if (_cascadedStyles != null)
+                foreach (var entry in _cascadedStyles.Values)
+                    if (entry.AuthorSpecified) return true;
+            return false;
+        }
     }
 
     internal bool IsAuthorSpecified(string property)
@@ -324,7 +422,8 @@ public sealed class StyleAccessor
         var cascaded = default(CascadedStyleEntry);
         _inlineStyles?.TryGetValue(property, out inline);
         _cascadedStyles?.TryGetValue(property, out cascaded);
-        var animated = _animatedStyles?.ContainsKey(property) == true;
+        var animated = _animatedStyles?.ContainsKey(property) == true ||
+            _animatedNumericStyles?.ContainsKey(property) == true;
 
         if (inline.Important)
         {
@@ -366,6 +465,7 @@ public sealed class StyleAccessor
 
         if (inline.Important) return inline.Value;
         if (cascaded.Important) return cascaded.Value;
+        if (_animatedNumericStyles?.TryGetValue(property, out var numeric) == true) return numeric.Format();
         if (animated != null) return animated;
         if (inline.Value != null) return inline.Value;
         return cascaded.Value;
@@ -398,7 +498,7 @@ public sealed class StyleAccessor
     private StyleState CaptureStyleState(string property) =>
         new(Get(property), IsAuthorSpecified(property));
 
-    private void InvalidateIfEffectiveStyleChanged(string property, StyleState previous)
+    private void InvalidateIfEffectiveStyleChanged(string property, StyleState previous, bool allowWidthUpdate = true)
     {
         var current = Get(property);
         var currentAuthorSpecified = IsAuthorSpecified(property);
@@ -411,11 +511,65 @@ public sealed class StyleAccessor
             RemoveDependentDescendantComputedStyle(property, invalidation);
         if (property == "z-index") SyncOwnerZIndex();
         if (property.StartsWith("--", StringComparison.Ordinal)) invalidation |= ElementInvalidation.Style;
-        _owner.Invalidate(invalidation);
+        var kind = allowWidthUpdate && property == "width" &&
+                   TryGetFinitePixelPoints(previous.Value, out _) &&
+                   TryGetFinitePixelPoints(current, out _)
+            ? LayoutDirtyKind.WidthPoints
+            : LayoutDirtyKind.Other;
+        _owner.Invalidate(invalidation, kind);
+    }
+
+    /// <summary>
+    /// 判定值是否为有限像素/无单位数值长度（如 <c>240</c>、<c>12.5px</c>）。
+    /// auto、百分比、calc/min/max、em/rem 等单位、移除（null）一律否定。零分配。
+    /// </summary>
+    private static bool TryGetFinitePixelPoints(string? value, out float points)
+    {
+        points = 0f;
+        if (string.IsNullOrEmpty(value)) return false;
+        var span = value.AsSpan().Trim();
+        if (span.IsEmpty) return false;
+        var index = 0;
+        if (span[index] is '+' or '-') index++;
+        var digits = 0;
+        while (index < span.Length && char.IsAsciiDigit(span[index]))
+        {
+            index++;
+            digits++;
+        }
+        if (index < span.Length && span[index] == '.')
+        {
+            index++;
+            while (index < span.Length && char.IsAsciiDigit(span[index]))
+            {
+                index++;
+                digits++;
+            }
+        }
+        if (digits == 0) return false;
+        var numericEnd = index;
+        if (index < span.Length && span[index] is 'e' or 'E')
+        {
+            var exponentStart = index;
+            index++;
+            if (index < span.Length && span[index] is '+' or '-') index++;
+            var exponentDigits = 0;
+            while (index < span.Length && char.IsAsciiDigit(span[index]))
+            {
+                index++;
+                exponentDigits++;
+            }
+            if (exponentDigits > 0) numericEnd = index;
+            else index = exponentStart;
+        }
+        if (index != span.Length && !span[index..].Equals("px", StringComparison.OrdinalIgnoreCase)) return false;
+        return float.TryParse(span[..numericEnd], NumberStyles.Float, CultureInfo.InvariantCulture, out points) &&
+               float.IsFinite(points);
     }
 
     internal void ClearComputedStylesRecursive()
     {
+        _scrollStyleRevision++;
         _computedStyles?.Clear();
         _parentDependentStyles?.Clear();
         foreach (var child in _owner.Children)
@@ -424,6 +578,8 @@ public sealed class StyleAccessor
 
     private void RemoveComputedStyle(string property)
     {
+        if (property is "display" or "overflow" or "overflow-x" or "overflow-y" or "scrollbar-width" or "scrollbar-gutter")
+            _scrollStyleRevision++;
         _computedStyles?.Remove(property);
         _parentDependentStyles?.Remove(property);
     }
@@ -644,6 +800,38 @@ public sealed class StyleAccessor
     }
 
     private readonly record struct StyleState(string? Value, bool AuthorSpecified);
+}
+
+/// <summary>
+/// 动画数值覆盖值（纯数字/px/单函数包装）。<see cref="Value"/> 由
+/// <c>StyleAccessor.SetAnimatedNumeric</c> 按 FormatNumber("0.###", InvariantCulture) 量化
+/// （经同语义字符串往返）后存储，使消费端数值与“格式化再解析”逐位一致；
+/// <see cref="Prefix"/>/<see cref="Suffix"/> 为单函数包装（如 <c>"rotate("</c>/<c>"deg)"</c>），
+/// 纯数字为 <c>""</c>/<c>""</c>。
+/// </summary>
+internal readonly record struct AnimatedNumericValue(float Value, string Prefix, string Suffix)
+{
+    /// <summary>按量化字符串语义格式化为样式值（与 FormatNumber("0.###") 输出逐字节一致）。</summary>
+    internal string Format() => Prefix + Value.ToString("0.###", CultureInfo.InvariantCulture) + Suffix;
+
+    /// <summary>量化为 FormatNumber("0.###") 字符串的往返值（负零保留符号）。</summary>
+    internal AnimatedNumericValue Quantized()
+    {
+        var number = Value.ToString("0.###", CultureInfo.InvariantCulture);
+        return this with { Value = float.Parse(number, NumberStyles.Float, CultureInfo.InvariantCulture) };
+    }
+
+    /// <summary>输出字符串等价判定（含负零符号差异）。</summary>
+    internal bool SameQuantized(AnimatedNumericValue other)
+    {
+        var sameValue = Value == other.Value || (float.IsNaN(Value) && float.IsNaN(other.Value));
+        return sameValue && MathF.CopySign(1f, Value) == MathF.CopySign(1f, other.Value) &&
+            Prefix == other.Prefix && Suffix == other.Suffix;
+    }
+
+    /// <summary>是否可直接作为像素点值（无单位或 px 的有限数值）。</summary>
+    internal bool IsPlainPixelPoints =>
+        Prefix.Length == 0 && (Suffix.Length == 0 || Suffix == "px") && float.IsFinite(Value);
 }
 
 internal enum CssCascadeOrigin
