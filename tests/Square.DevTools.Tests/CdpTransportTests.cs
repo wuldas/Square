@@ -62,13 +62,20 @@ public sealed class CdpTransportTests
     public async Task ShutdownWithOpenConnectionFinishesWithoutPeerClose()
     {
         var window = new AppWindow("transport");
-        var server = DevToolsServer.Start(window, new() { AllowChromeInspect = true });
+        await using var server = DevToolsServer.Start(window, new() { AllowChromeInspect = true });
         using var connection = new CdpConnection();
         await connection.ConnectAsync(server);
         using var valid = await connection.RequestAsync("Page.enable");
         await server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync(server.BaseAddress + "/json/list"));
+        await using var restarted = DevToolsServer.Start(new AppWindow("restarted"),
+            new() { Port = server.Port, AllowChromeInspect = true });
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(restarted.BaseAddress),
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        using var discovery = JsonDocument.Parse(await client.GetStringAsync("/json/list"));
+        Assert.Equal(restarted.TargetId, discovery.RootElement[0].GetProperty("id").GetString());
     }
 
     [Fact]

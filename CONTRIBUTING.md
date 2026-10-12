@@ -23,6 +23,17 @@ dotnet build Square.slnx
 dotnet test Square.slnx
 ```
 
+### Timing-sensitive tests
+
+CI excludes `Category=Performance` from the solution-wide functional run, then runs the CodeEditor performance tests in a separate gating step on each platform. Both the 100,000-line no-wrap and 2,000-line wrapped input scenarios retain their P95 limit of 50 ms; they are not skipped or given a higher threshold.
+
+Run the two groups sequentially, without concurrent builds or other test suites:
+
+```bash
+dotnet test tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj -c Release --filter "Category!=Performance"
+dotnet test tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj -c Release --no-build --filter "Category=Performance" --logger "console;verbosity=detailed"
+```
+
 ## Engineering Rules
 
 - Add tests for behavior changes and regressions.

@@ -111,7 +111,6 @@ internal sealed partial class CdpSession
         }, cancellationToken);
         // The response is the full current state, so it becomes the new diff baseline.
         SetBaseline(snapshot);
-        await EstablishBatchBaselinesAsync(cancellationToken);
     }
 
     private async Task RequestChildNodesAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
@@ -133,7 +132,6 @@ internal sealed partial class CdpSession
             throw new CdpRequestException(-32000, "Node not found.");
 
         await SendSetChildNodesAsync(parentFrontendId, node, depth < 0 ? -1 : depth - 1, cancellationToken, key.Kind);
-        await EstablishBatchBaselinesAsync(cancellationToken);
         await SendEmptyResultAsync(id, cancellationToken);
     }
 
@@ -287,7 +285,6 @@ internal sealed partial class CdpSession
             nodeIds[index] = await PublishNodePathAsync(key, node, snapshot, cancellationToken);
         }
 
-        await EstablishBatchBaselinesAsync(cancellationToken);
         await SendResultAsync(id, writer =>
         {
             writer.WritePropertyName("nodeIds");
@@ -536,6 +533,7 @@ internal sealed partial class CdpSession
         _trackedForNodeKey = null;
         _forNodeBaseline = null;
         _batchBaselines.Clear();
+        _publishedBatchBaselinesPending = false;
         _pendingTakeNodeIds.Clear();
     }
 
@@ -570,7 +568,9 @@ internal sealed partial class CdpSession
         var frontendId = GetOrCreateFrontendId(key);
         if (publish)
         {
-            _publishedNodes.Add(frontendId);
+            if (_publishedNodes.Add(frontendId) && kind == CdpNodeKind.Element &&
+                _cssEnabled && _trackedProperties.Count > 0 && !_batchBaselines.ContainsKey(key))
+                _publishedBatchBaselinesPending = true;
             _frontendParents[frontendId] = parentFrontendId;
             _publishedSnapshots[key] = node;
         }

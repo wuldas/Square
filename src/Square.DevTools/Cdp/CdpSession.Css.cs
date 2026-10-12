@@ -16,6 +16,7 @@ internal sealed partial class CdpSession
     private IReadOnlyDictionary<string, string>? _forNodeBaseline;
     private readonly Dictionary<string, HashSet<string>> _trackedProperties = new(StringComparer.Ordinal);
     private readonly Dictionary<NodeKey, IReadOnlyDictionary<string, string>> _batchBaselines = new();
+    private bool _publishedBatchBaselinesPending;
     private readonly HashSet<int> _pendingTakeNodeIds = new();
     private int? _pendingTakeId;
     private Task? _forNodeDelayTask;

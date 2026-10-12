@@ -824,6 +824,13 @@ internal sealed partial class CdpSession
                 writer.WriteEndObject();
                 writer.Flush();
             }
+            // Publication updates the node maps during serialization. Establish tracked
+            // baselines before the peer can react to the new node's response or event.
+            if (_publishedBatchBaselinesPending)
+            {
+                await EstablishBatchBaselinesAsync(cancellationToken);
+                _publishedBatchBaselinesPending = false;
+            }
 
             await _socket.SendAsync(_sendBuffer.WrittenMemory, WebSocketMessageType.Text, true, cancellationToken);
         }

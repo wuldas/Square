@@ -263,6 +263,8 @@ Square Element Tree 映射为 Document、Element 和合成 Text，保留真实�
 
 运行时样式断开后保留、不写回磁盘；应用显式 `CssText` 写回（即使有效值相同）接管 inline 草稿，engine/component 重建接管 rule。共享声明组只影响该 engine，同 AST 的另一个 engine 不变。ForNode 比较真实 computed 值并合并单次 50ms 通知；batch 只监视已公布 live Element，old/new 不同且任一属于配置 value 集合时返回 nodeId。空 `takeComputedStyleUpdates` 登记 pending request，不阻塞后续 DOM/编辑命令；CSS disable/空配置完成等待并停止追踪。
 
+batch computed tracking 在公布新 live Element 的响应或 DOM 事件发送前建立基线；客户端收到新节点后立即触发的样式变化会正常进入待取结果，不会被误当成初始化基线。
+
 编辑沿用 Square 的 CSS registry、布局和绘制语义。已知既有边界：绘制器的命名色支持少于 registry（例如 purple/orange 会回退）；不要据 computed 字符串推断该颜色已绘制，使用已支持的颜色语法并检查实际 renderer。
 
 `AllowChromeConsole=true` 在 server Start 时接入进程 managed `Console.Out/Error` 与该窗口的 framework diagnostics；它可能包含应用敏感输出，默认不捕获。stdout 映射 info，stderr 和实际 custom-element/Hot Reload failure 映射 error，Warning/Verbose 保留相应等级。Chrome 只收到 `Log.entryAdded` 的 source=`other`、level、真实 text 和 Unix 毫秒 timestamp，不伪造 JS args/context/stack，也不重复发送 Runtime/Console 事件。
