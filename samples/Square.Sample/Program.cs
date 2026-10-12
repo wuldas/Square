@@ -26,6 +26,11 @@ public static class Program
     public static void Main(string[] args)
     {
         System.Console.WriteLine("Square Framework Sample");
+        var chromeEditing = HasOption(args, "--devtools-chrome-edit");
+        var chromeConsole = HasOption(args, "--devtools-chrome-console");
+        if ((chromeEditing || chromeConsole) &&
+            (!HasOption(args, "--devtools") || !HasOption(args, "--devtools-chrome-inspect")))
+            throw new InvalidOperationException("Chrome edit/console flags require --devtools and --devtools-chrome-inspect.");
 
         var circleDiffDirectory = GetOption(args, "--circle-regression-diff");
         if (!string.IsNullOrWhiteSpace(circleDiffDirectory))
@@ -92,6 +97,7 @@ public static class Program
         if (HasOption(args, "--devtools"))
         {
 #if SQUARE_SAMPLE_DEVTOOLS
+            var bootstrapWriter = System.Console.Out;
             var devTools = window.UseDevToolsServer(new DevToolsOptions
             {
                 Port = int.TryParse(GetOption(args, "--devtools-port"), out var port) ? port : 0,
@@ -100,16 +106,23 @@ public static class Program
                 AllowInspector = true,
                 AllowMemoryDiagnostics = HasOption(args, "--devtools-memory"),
                 AllowChromeInspect = HasOption(args, "--devtools-chrome-inspect"),
+                AllowChromeStyleEditing = chromeEditing,
+                AllowChromeConsole = chromeConsole,
                 IncludeTextContent = HasOption(args, "--devtools-chrome-inspect")
             });
-            System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
-            System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+            bootstrapWriter.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
+            bootstrapWriter.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+            bootstrapWriter.WriteLine($"Chrome capabilities: inspect={HasOption(args, "--devtools-chrome-inspect")}, styleEditing={chromeEditing}, console={chromeConsole}");
             if (HasOption(args, "--devtools-memory"))
-                System.Console.WriteLine($"Memory diagnostics: {devTools.BaseAddress}/api/v1/memory");
+                bootstrapWriter.WriteLine($"Memory diagnostics: {devTools.BaseAddress}/api/v1/memory");
             if (HasOption(args, "--devtools-chrome-inspect"))
             {
-                System.Console.WriteLine($"Chrome Inspector: {devTools.BaseAddress}/json/list");
-                System.Console.WriteLine("Warning: Chrome Inspector allows local unauthenticated CDP connections while enabled.");
+                bootstrapWriter.WriteLine($"Chrome Inspector: {devTools.BaseAddress}/json/list");
+                bootstrapWriter.WriteLine("Warning: Chrome Inspector allows local unauthenticated CDP connections while enabled.");
+                if (chromeEditing)
+                    bootstrapWriter.WriteLine("Warning: 编辑修改运行时应用，不写回源文件。");
+                if (chromeConsole)
+                    bootstrapWriter.WriteLine("Warning: 日志捕获进程 managed 输出，可能包含应用敏感信息。");
             }
 #else
             throw new NotSupportedException("This build does not include DevTools. Build with -p:SquareSampleUseDevTools=true to enable it.");

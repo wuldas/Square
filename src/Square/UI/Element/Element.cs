@@ -334,6 +334,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         }
         else
             Invalidate(ElementInvalidation.Style);
+        AppWindow?.NotifyInspectionChanged(ElementInspectionChangeKind.Styles);
     }
 
     /// <summary>交互/伪类状态变化扩展点。</summary>
@@ -498,6 +499,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
+        NotifyInspectionPropertyChange();
     }
 
     /// <summary>移除属性值并触发与写入相同的变更通知链。</summary>
@@ -509,6 +511,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
+        NotifyInspectionPropertyChange();
         return true;
     }
 
@@ -522,6 +525,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
+        NotifyInspectionPropertyChange();
     }
 
     /// <summary>用委托取值写入属性，并订阅多个响应源同步更新（Square 扩展）。</summary>
@@ -570,7 +574,14 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         OnPropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
+        NotifyInspectionPropertyChange();
     }
+
+    /// <summary>普通属性写入后通知检查器：属性快照、可能的文本内容与有效样式都可能变化。</summary>
+    private void NotifyInspectionPropertyChange() =>
+        AppWindow?.NotifyInspectionChanged(
+            ElementInspectionChangeKind.Attributes | ElementInspectionChangeKind.Text |
+            ElementInspectionChangeKind.Styles);
 
     private bool TrySetSpecialBoundValue<T>(string name, T value)
     {

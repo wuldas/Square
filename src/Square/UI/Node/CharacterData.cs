@@ -34,6 +34,9 @@ public abstract class CharacterData : Node
             if (ParentElement is not { } parent) return;
             parent.InvalidateLayout();
             if (parent is ITextDataDependent dependent) dependent.OnTextDataChanged(this);
+            parent.AppWindow?.NotifyInspectionChanged(
+                Square.Hosting.ElementInspectionChangeKind.Text |
+                Square.Hosting.ElementInspectionChangeKind.Styles);
         }
     }
 

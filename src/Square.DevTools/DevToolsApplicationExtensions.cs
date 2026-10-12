@@ -7,8 +7,8 @@ public static class DevToolsApplicationExtensions
     public static DevToolsServer UseDevToolsServer(this AppWindow window, DevToolsOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(window);
-        var server = DevToolsServer.Start(window, options);
-        window.Closed += server.Dispose;
-        return server;
+        // DevToolsServer.Start owns the window.Closed -> Dispose subscription; there
+        // must not be a second one here or Dispose would run twice per close.
+        return DevToolsServer.Start(window, options);
     }
 }

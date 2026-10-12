@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -17,13 +18,23 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _shutdown = new();
-    private Task _acceptLoop;
+    private readonly AppWindow _window;
+    private readonly OptionsSnapshot _snapshot;
+    private readonly object _pendingGate = new();
+    private readonly HashSet<Task> _pendingTasks = new();
+    private Task? _acceptLoop;
+    private bool _acceptingClosed;
     private int _disposed;
+    private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly DevToolsLogCollector? _logCollector;
+    private IDisposable? _consoleCaptureSubscription;
 
-    private DevToolsServer(HttpListener listener, Task acceptLoop, string accessToken, int port, string targetId)
+    private DevToolsServer(HttpListener listener, string accessToken, int port, string targetId, AppWindow window, OptionsSnapshot snapshot)
     {
         _listener = listener;
-        _acceptLoop = acceptLoop;
+        _window = window;
+        _snapshot = snapshot;
+        _logCollector = snapshot.AllowChromeConsole ? new DevToolsLogCollector() : null;
         AccessToken = accessToken;
         Port = port;
         TargetId = targetId;
@@ -34,24 +45,91 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
     public string TargetId { get; }
     public string BaseAddress => $"http://127.0.0.1:{Port}";
     internal string CdpWebSocketAddress => $"ws://127.0.0.1:{Port}/devtools/page/{TargetId}";
+    internal bool AllowChromeStyleEditing => _snapshot.AllowChromeStyleEditing;
+    internal bool AllowChromeConsole => _snapshot.AllowChromeConsole;
+    internal DevToolsLogCollector? LogCollector => _logCollector;
 
     public static DevToolsServer Start(AppWindow window, DevToolsOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(window);
         options ??= new DevToolsOptions();
         if (options.Port is < 0 or > 65535) throw new ArgumentOutOfRangeException(nameof(options.Port));
+        if ((options.AllowChromeStyleEditing || options.AllowChromeConsole) && !options.AllowChromeInspect)
+            throw new ArgumentException("Chrome editing and console forwarding require AllowChromeInspect.", nameof(options));
+        if (window.IsClosed) throw new InvalidOperationException("The window is closed.");
+
+        // The server runs on a conservative snapshot: mutating the caller's options
+        // afterwards never changes the capabilities of a running server.
+        var snapshot = new OptionsSnapshot(
+            options.AllowInputInjection,
+            options.AllowInspector,
+            options.AllowMemoryDiagnostics,
+            options.AllowChromeInspect,
+            options.AllowChromeStyleEditing,
+            options.AllowChromeConsole,
+            options.IncludeSourcePaths,
+            options.IncludeTextContent);
 
         var token = string.IsNullOrWhiteSpace(options.AccessToken)
             ? Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant()
             : options.AccessToken;
         var listener = StartListener(options.Port, out var port);
 
-        var server = new DevToolsServer(listener, Task.CompletedTask, token, port, Guid.NewGuid().ToString("N"));
-        server._acceptLoop = Task.Run(() => server.AcceptLoopAsync(window, options));
-        return server;
+        DevToolsServer? server = null;
+        try
+        {
+            server = new DevToolsServer(listener, token, port, Guid.NewGuid().ToString("N"), window, snapshot);
+            server.StartLogCapture();
+            // The accept loop is registered before the lifecycle subscription exists,
+            // so a window close can never race an unregistered loop.
+            server._acceptLoop = Task.Run(server.AcceptLoopAsync);
+            // Start owns the window lifecycle; the extension entry point shares it
+            // through this single subscription.
+            window.Closed += server.Dispose;
+            if (window.IsClosed)
+            {
+                server.Dispose();
+                throw new InvalidOperationException("The window is closed.");
+            }
+            return server;
+        }
+        catch
+        {
+            if (server != null)
+            {
+                try { server.Dispose(); }
+                catch { /* Preserve the initialization exception. */ }
+            }
+            else listener.Close();
+            throw;
+        }
     }
 
-    private async Task AcceptLoopAsync(AppWindow window, DevToolsOptions options)
+    private void StartLogCapture()
+    {
+        if (_logCollector == null) return;
+        _window.DiagnosticMessage += HandleDiagnosticMessage;
+        _consoleCaptureSubscription = DevToolsConsoleCapture.Subscribe(HandleConsoleLine);
+    }
+
+    private void StopLogCapture()
+    {
+        if (_logCollector == null) return;
+        _window.DiagnosticMessage -= HandleDiagnosticMessage;
+        Interlocked.Exchange(ref _consoleCaptureSubscription, null)?.Dispose();
+    }
+
+    private void HandleConsoleLine(bool stderr, string text) => _logCollector!.Append(stderr ? "error" : "info", text);
+
+    private void HandleDiagnosticMessage(TraceEventType level, string text) => _logCollector!.Append(level switch
+    {
+        TraceEventType.Critical or TraceEventType.Error => "error",
+        TraceEventType.Warning => "warning",
+        TraceEventType.Verbose => "verbose",
+        _ => "info"
+    }, text);
+
+    private async Task AcceptLoopAsync()
     {
         while (!_shutdown.IsCancellationRequested)
         {
@@ -73,11 +151,45 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
                 break;
             }
 
-            _ = Task.Run(() => HandleRequestAsync(context, window, options));
+            // Registration is decided under the pending gate so shutdown can never
+            // race a created-but-untracked request task; Task.Run keeps the handler
+            // body itself off the gate.
+            TrackPending(() => Task.Run(() => HandleRequestAsync(context)));
         }
     }
 
-    private async Task HandleRequestAsync(HttpListenerContext context, AppWindow window, DevToolsOptions options)
+    private void TrackPending(Func<Task> factory)
+    {
+        Task task;
+        lock (_pendingGate)
+        {
+            if (_acceptingClosed) return;
+            task = factory();
+            if (task.IsCompleted) return; // never insert completed work
+            _pendingTasks.Add(task);
+        }
+
+        _ = AwaitPendingAsync(task);
+    }
+
+    private async Task AwaitPendingAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Request handlers produce their own error responses; no exception may
+            // escape into an unobserved task.
+        }
+        finally
+        {
+            lock (_pendingGate) _pendingTasks.Remove(task);
+        }
+    }
+
+    private async Task HandleRequestAsync(HttpListenerContext context)
     {
         try
         {
@@ -85,13 +197,13 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
             var path = context.Request.Url?.AbsolutePath ?? "/";
             if (IsCdpPath(path))
             {
-                if (!options.AllowChromeInspect)
+                if (!_snapshot.AllowChromeInspect)
                 {
                     await WriteJsonAsync(context.Response, StatusCodes.NotFound, "{\"error\":\"not_found\"}");
                     return;
                 }
 
-                await HandleCdpRequestAsync(context, window, method, path);
+                await HandleCdpRequestAsync(context, method, path);
                 return;
             }
 
@@ -104,16 +216,18 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
             if (method == "GET" && path == "/api/v1/health")
             {
                 var json = $"{{\"status\":\"ok\",\"processId\":{Environment.ProcessId},\"port\":{Port}," +
-                           $"\"baseAddress\":\"{BaseAddress}\",\"inputInjection\":{Bool(options.AllowInputInjection)}," +
-                           $"\"memoryDiagnostics\":{Bool(options.AllowMemoryDiagnostics)}," +
-                           $"\"chromeInspect\":{Bool(options.AllowChromeInspect)}}}";
+                           $"\"baseAddress\":\"{BaseAddress}\",\"inputInjection\":{Bool(_snapshot.AllowInputInjection)}," +
+                           $"\"memoryDiagnostics\":{Bool(_snapshot.AllowMemoryDiagnostics)}," +
+                           $"\"chromeInspect\":{Bool(_snapshot.AllowChromeInspect)}," +
+                           $"\"chromeStyleEditing\":{Bool(_snapshot.AllowChromeStyleEditing)}," +
+                           $"\"chromeConsole\":{Bool(_snapshot.AllowChromeConsole)}}}";
                 await WriteJsonAsync(context.Response, StatusCodes.Ok, json);
                 return;
             }
 
             if (method == "GET" && path == "/api/v1/memory")
             {
-                if (!options.AllowMemoryDiagnostics) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                if (!_snapshot.AllowMemoryDiagnostics) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
                 var snapshot = MemorySnapshotCollector.Capture();
                 await WriteJsonAsync(context.Response, StatusCodes.Ok, MemorySnapshotJson.Serialize(snapshot));
                 return;
@@ -121,7 +235,7 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
             if (method == "GET" && path == "/api/v1/screenshot")
             {
-                using var bitmap = await window.CaptureRendererBitmapAsync();
+                using var bitmap = await _window.CaptureRendererBitmapAsync().WaitAsync(_shutdown.Token);
                 using var stream = new MemoryStream();
                 BitmapPngEncoder.Save(bitmap, stream);
                 await WriteBytesAsync(context.Response, StatusCodes.Ok, stream.ToArray(), "image/png", "square-screenshot.png");
@@ -130,8 +244,8 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
             if (method == "POST" && path == "/api/v1/input/pointer")
             {
-                if (!options.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
-                var payload = await ReadJsonAsync(context.Request);
+                if (!_snapshot.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var payload = await ReadJsonAsync(context.Request, _shutdown.Token);
                 var input = new DevToolsPointerInput(
                     new Point(ReadFloat(payload, "x"), ReadFloat(payload, "y")),
                     ReadEnum<MouseAction>(payload, "action"),
@@ -139,37 +253,37 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
                     payload.TryGetProperty("button", out _)
                         ? ReadEnum<MouseButton>(payload, "button")
                         : MouseButton.Left);
-                await window.InjectPointerAsync(input);
+                await _window.InjectPointerAsync(input).WaitAsync(_shutdown.Token);
                 await WriteNoContentAsync(context.Response);
                 return;
             }
 
             if (method == "POST" && path == "/api/v1/input/key")
             {
-                if (!options.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
-                var payload = await ReadJsonAsync(context.Request);
+                if (!_snapshot.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var payload = await ReadJsonAsync(context.Request, _shutdown.Token);
                 var input = new DevToolsKeyInput(
                     ReadInt(payload, "keyCode"),
                     ReadEnum<KeyAction>(payload, "action"),
                     ReadModifiers(payload));
-                await window.InjectKeyAsync(input);
+                await _window.InjectKeyAsync(input).WaitAsync(_shutdown.Token);
                 await WriteNoContentAsync(context.Response);
                 return;
             }
 
             if (method == "POST" && path == "/api/v1/input/text")
             {
-                if (!options.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
-                var payload = await ReadJsonAsync(context.Request);
-                await window.InjectTextAsync(ReadString(payload, "text"));
+                if (!_snapshot.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var payload = await ReadJsonAsync(context.Request, _shutdown.Token);
+                await _window.InjectTextAsync(ReadString(payload, "text")).WaitAsync(_shutdown.Token);
                 await WriteNoContentAsync(context.Response);
                 return;
             }
 
             if (method == "POST" && path == "/api/v1/input/wheel")
             {
-                if (!options.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
-                var payload = await ReadJsonAsync(context.Request);
+                if (!_snapshot.AllowInputInjection) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var payload = await ReadJsonAsync(context.Request, _shutdown.Token);
                 var deltaX = ReadOptionalFloat(payload, "deltaX") ?? 0;
                 // The legacy delta field uses the native wheel direction, where positive
                 // means up; normalize it to the DOM/content direction at this boundary.
@@ -182,25 +296,25 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
                     ReadOptionalBool(payload, "isPrecise"),
                     ReadOptionalBool(payload, "isInertial"),
                     ReadModifiers(payload));
-                await window.InjectWheelAsync(input);
+                await _window.InjectWheelAsync(input).WaitAsync(_shutdown.Token);
                 await WriteNoContentAsync(context.Response);
                 return;
             }
 
             if (method == "GET" && path == "/api/v1/inspect/tree")
             {
-                if (!options.AllowInspector) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
-                var snapshot = await window.CaptureInspectionSnapshotAsync(options.IncludeSourcePaths, options.IncludeTextContent);
+                if (!_snapshot.AllowInspector) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var snapshot = await _window.CaptureInspectionSnapshotAsync(_snapshot.IncludeSourcePaths, _snapshot.IncludeTextContent).WaitAsync(_shutdown.Token);
                 await WriteJsonAsync(context.Response, StatusCodes.Ok, SerializeSnapshot(snapshot));
                 return;
             }
 
             if (method == "GET" && path == "/api/v1/inspect/hit-test")
             {
-                if (!options.AllowInspector) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                if (!_snapshot.AllowInspector) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
                 var x = ReadFloat(context.Request.QueryString, "x");
                 var y = ReadFloat(context.Request.QueryString, "y");
-                var result = await window.HitTestInspectionAsync(new Point(x, y), options.IncludeSourcePaths, options.IncludeTextContent);
+                var result = await _window.HitTestInspectionAsync(new Point(x, y), _snapshot.IncludeSourcePaths, _snapshot.IncludeTextContent).WaitAsync(_shutdown.Token);
                 if (result == null) await WriteJsonAsync(context.Response, StatusCodes.NotFound, "{\"error\":\"not_found\"}");
                 else await WriteJsonAsync(context.Response, StatusCodes.Ok, SerializeNode(result));
                 return;
@@ -208,14 +322,19 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
             if (method == "GET" && TryReadElementRoute(path, out var elementId))
             {
-                if (!options.AllowInspector) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
-                var result = await window.InspectElementAsync(elementId, options.IncludeSourcePaths, options.IncludeTextContent);
+                if (!_snapshot.AllowInspector) { await WriteJsonAsync(context.Response, StatusCodes.Forbidden, "{}"); return; }
+                var result = await _window.InspectElementAsync(elementId, _snapshot.IncludeSourcePaths, _snapshot.IncludeTextContent).WaitAsync(_shutdown.Token);
                 if (result == null) await WriteJsonAsync(context.Response, StatusCodes.NotFound, "{\"error\":\"not_found\"}");
                 else await WriteJsonAsync(context.Response, StatusCodes.Ok, SerializeNode(result));
                 return;
             }
 
             await WriteJsonAsync(context.Response, StatusCodes.NotFound, "{\"error\":\"not_found\"}");
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown canceled a pending UI or read operation: drop the response
+            // instead of writing into a closing server.
         }
         catch (BadHttpRequestException exception)
         {
@@ -227,7 +346,7 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         }
     }
 
-    private async Task HandleCdpRequestAsync(HttpListenerContext context, AppWindow window, string method, string path)
+    private async Task HandleCdpRequestAsync(HttpListenerContext context, string method, string path)
     {
 
         if (method == "GET" && path is "/json" or "/json/list")
@@ -272,7 +391,7 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
             }
 
             var websocket = await context.AcceptWebSocketAsync(null);
-            await CdpSession.RunAsync(websocket.WebSocket, window, this, _shutdown.Token);
+            await CdpSession.RunAsync(websocket.WebSocket, _window, this, _shutdown.Token);
             return;
         }
 
@@ -291,18 +410,81 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        _shutdown.Cancel();
-        if (_listener.IsListening) _listener.Stop();
-        _listener.Close();
-        try { _acceptLoop.GetAwaiter().GetResult(); } catch { }
-        _shutdown.Dispose();
+        lock (_pendingGate) _acceptingClosed = true;
+        _window.Closed -= Dispose;
+        try
+        {
+            StopLogCapture();
+        }
+        finally
+        {
+            _shutdown.Cancel();
+            try { if (_listener.IsListening) _listener.Stop(); }
+            finally
+            {
+                _listener.Close();
+                _ = FinishShutdownAsync();
+            }
+        }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         Dispose();
-        return ValueTask.CompletedTask;
+        await _stopped.Task.ConfigureAwait(false);
     }
+
+    private async Task FinishShutdownAsync()
+    {
+        Task acceptLoop;
+        lock (_pendingGate)
+        {
+            acceptLoop = _acceptLoop ?? Task.CompletedTask;
+        }
+
+        try
+        {
+            await acceptLoop.ConfigureAwait(false);
+        }
+        catch
+        {
+            // The accept loop suppresses its own shutdown errors.
+        }
+
+        // Registration is closed, so the pending set can only shrink from here.
+        while (true)
+        {
+            Task[] pending;
+            lock (_pendingGate)
+            {
+                if (_pendingTasks.Count == 0) break;
+                pending = _pendingTasks.ToArray();
+            }
+
+            try
+            {
+                await Task.WhenAll(pending).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Awaiting only observes completion; handlers own their errors.
+            }
+        }
+
+        _logCollector?.Dispose();
+        _shutdown.Dispose();
+        _stopped.TrySetResult();
+    }
+
+    private sealed record OptionsSnapshot(
+        bool AllowInputInjection,
+        bool AllowInspector,
+        bool AllowMemoryDiagnostics,
+        bool AllowChromeInspect,
+        bool AllowChromeStyleEditing,
+        bool AllowChromeConsole,
+        bool IncludeSourcePaths,
+        bool IncludeTextContent);
 
     private static int ReserveLoopbackPort()
     {
@@ -326,8 +508,12 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
                 listener.Start();
                 return listener;
             }
-            catch (HttpListenerException) when (requestedPort == 0 && attempt + 1 < attempts)
+            catch (HttpListenerException exception) when (requestedPort == 0 && attempt + 1 < attempts)
             {
+                Console.Error.WriteLine(
+                    $"Square DevTools: loopback bind attempt {attempt + 1} failed for port {port} "
+                    + $"with error {exception.NativeErrorCode} ({exception.Message}); "
+                    + $"HttpListener supported: {HttpListener.IsSupported}.");
                 listener.Close();
             }
         }
@@ -345,9 +531,9 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
                CryptographicOperations.FixedTimeEquals(suppliedBytes, expectedBytes);
     }
 
-    private static async Task<JsonElement> ReadJsonAsync(HttpListenerRequest request)
+    private static async Task<JsonElement> ReadJsonAsync(HttpListenerRequest request, CancellationToken cancellationToken)
     {
-        using var document = await JsonDocument.ParseAsync(request.InputStream);
+        using var document = await JsonDocument.ParseAsync(request.InputStream, cancellationToken: cancellationToken);
         return document.RootElement.Clone();
     }
 

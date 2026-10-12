@@ -21,6 +21,7 @@ public sealed class CssEngine
     private readonly Dictionary<string, KeyFramesRule> _keyFrames = new();
     private readonly Dictionary<string, Dictionary<string, string>> _themes = new();
     private string? _activeTheme;
+    private Dictionary<List<Declaration>, InspectionOverride>? _inspectionOverrides;
 
     internal bool HasSiblingCombinators { get; private set; }
     public string MediaType { get; private set; } = "screen";
@@ -104,6 +105,7 @@ public sealed class CssEngine
         _rules.Clear();
         _hoverSubjectCompounds.Clear();
         HasSiblingCombinators = false;
+        _inspectionOverrides = null;
         foreach (var (sheet, origin) in _styleSheets)
         {
             AddRules(sheet.Rules, origin);
@@ -396,10 +398,70 @@ public sealed class CssEngine
             return specificity != 0 ? specificity : left.Order.CompareTo(right.Order);
         });
 
-        return matched.Select(match => new CssInspectionRule(
-            FormatSelector(match.Rule.Selector),
-            match.Rule.Declarations.ToArray())).ToArray();
+        return matched.Select(match => CreateInspectionRule(match.Rule, match.Origin)).ToArray();
     }
+
+    /// <summary>返回引擎当前加载的全部样式规则，按加载顺序包装为检查器快照。</summary>
+    internal IReadOnlyList<CssInspectionRule> GetInspectionRules()
+    {
+        var result = new List<CssInspectionRule>(_rules.Count);
+        foreach (var (rule, origin) in _rules)
+            result.Add(CreateInspectionRule(rule, origin));
+        return result;
+    }
+
+    private CssInspectionRule CreateInspectionRule(CssRule rule, CssCascadeOrigin origin) => new(
+        FormatSelector(rule.Selector),
+        GetEffectiveDeclarations(rule).ToArray())
+    {
+        Source = new CssInspectionRuleSource(this, rule, origin)
+    };
+
+    /// <summary>
+    /// 安装运行时检查器的声明覆盖。仅接受引擎当前仍加载的 author 规则；
+    /// 以原始声明列表引用为键，共享同一声明列表的选择器组一起生效；
+    /// 重建规则后覆盖消失。共享 AST 的其它引擎不受影响。
+    /// </summary>
+    /// <returns>覆盖已存储返回 true；规则未加载或非 author 来源返回 false。</returns>
+    internal bool SetInspectionDeclarations(CssRule rule, string text, IReadOnlyList<Declaration> declarations)
+    {
+        ArgumentNullException.ThrowIfNull(rule);
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(declarations);
+
+        var accepted = false;
+        foreach (var (loaded, origin) in _rules)
+        {
+            if (!ReferenceEquals(loaded.Declarations, rule.Declarations)) continue;
+            accepted = origin == CssCascadeOrigin.Author;
+            break;
+        }
+        if (!accepted) return false;
+
+        _inspectionOverrides ??= new(ReferenceEqualityComparer.Instance);
+        _inspectionOverrides[rule.Declarations] = new InspectionOverride(text, declarations);
+        CssStyleReconciler.InvalidateScopes(this);
+        return true;
+    }
+
+    /// <summary>返回该规则被检查器替换的原始声明文本；未编辑返回 null。</summary>
+    internal string? GetInspectionDeclarationText(CssRule rule)
+    {
+        ArgumentNullException.ThrowIfNull(rule);
+        if (_inspectionOverrides == null) return null;
+        return _inspectionOverrides.TryGetValue(rule.Declarations, out var found) ? found.Text : null;
+    }
+
+    /// <summary>检查器读取视角的声明：有运行时覆盖时返回覆盖声明，否则返回原始 AST 声明。</summary>
+    private IReadOnlyList<Declaration> GetEffectiveDeclarations(CssRule rule)
+    {
+        if (_inspectionOverrides == null) return rule.Declarations;
+        return _inspectionOverrides.TryGetValue(rule.Declarations, out var found)
+            ? found.Declarations
+            : rule.Declarations;
+    }
+
+    private sealed record InspectionOverride(string Text, IReadOnlyList<Declaration> Declarations);
 
     private static string FormatSelector(ComplexSelector selector)
     {
@@ -497,7 +559,7 @@ public sealed class CssEngine
                 pseudoElement != null && ScrollbarPseudoElements.IsSupported(pseudoElement)) continue;
             var isSelectionRule = string.Equals(pseudoElement, "selection", StringComparison.OrdinalIgnoreCase) ||
                                   IsLegacySelectionRule(rule.Selector);
-            foreach (var decl in rule.Declarations)
+            foreach (var decl in GetEffectiveDeclarations(rule))
             {
                 var property = isSelectionRule ? MapSelectionProperty(decl.Property) : decl.Property;
                 if (property == null) continue;
@@ -517,7 +579,7 @@ public sealed class CssEngine
             {
                 generated ??= EnsurePseudoElement(Element, pseudoElement);
                 ApplyInheritedProperties(generated);
-                foreach (var declaration in rule.Declarations)
+                foreach (var declaration in GetEffectiveDeclarations(rule))
                     ApplyDeclaration(
                         generated, declaration.Property, declaration.Value, specificity, declaration.Important, origin);
                 ApplyThemeVariables(generated);
@@ -918,7 +980,7 @@ public sealed class CssEngine
         name.Equals("hover", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("active", StringComparison.OrdinalIgnoreCase);
 
-    private static void ApplyScrollbarPseudoStyles(
+    private void ApplyScrollbarPseudoStyles(
         Element Element,
         List<(CssRule rule, CssCascadeOrigin origin, CssSpecificity specificity, int order, string? pseudoElement)> matched,
         ISet<Element>? changes)
@@ -928,7 +990,7 @@ public sealed class CssEngine
             if (match.pseudoElement is not { } pseudoElement ||
                 !ScrollbarPseudoElements.IsSupported(pseudoElement)) continue;
             var state = GetScrollbarPseudoState(match.rule.Selector);
-            foreach (var declaration in match.rule.Declarations)
+            foreach (var declaration in GetEffectiveDeclarations(match.rule))
             {
                 var property = StyleAccessor.NormalizePropertyName(declaration.Property);
                 if (!CssPropertyRegistry.IsValid(property, declaration.Value)) continue;

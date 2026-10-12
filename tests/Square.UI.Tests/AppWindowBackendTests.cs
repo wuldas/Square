@@ -29,11 +29,27 @@ public sealed class AppWindowBackendTests
             bool includeTextContent) => throw new NotSupportedException();
         public Task<ElementInspectionNode?> InspectElementAsync(int debugId, bool includeSourcePaths,
             bool includeTextContent) => Task.FromResult<ElementInspectionNode?>(null);
-        public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId) =>
-            Task.FromResult<ElementInspectionStyleSnapshot?>(null);
-        public Task<bool> SetInspectorHighlightAsync(int debugId) => Task.FromResult(false);
-        public Task ClearInspectorHighlightAsync() => Task.CompletedTask;
-        public Task SetInspectorModeAsync(bool enabled) => Task.CompletedTask;
+        public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId, bool includeStyleText = false,
+            CancellationToken cancellationToken = default) => Task.FromResult<ElementInspectionStyleSnapshot?>(null);
+        public Task<IReadOnlyList<ElementInspectionStyleText>> CaptureInspectionStyleSheetsAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ElementInspectionStyleText>>([]);
+        public Task<ElementInspectionStyleText?> InspectStyleSheetAsync(string styleSheetId,
+            CancellationToken cancellationToken = default) => Task.FromResult<ElementInspectionStyleText?>(null);
+        public Task<IReadOnlyList<ElementInspectionStyleText>> ApplyInspectionStyleEditsAsync(
+            IReadOnlyList<ElementInspectionStyleTextEdit> edits, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ElementInspectionStyleText>>([]);
+        public Task<IReadOnlyList<ElementInspectionComputedStyleSnapshot>> InspectComputedStylesAsync(
+            IReadOnlyList<int> debugIds, IReadOnlyList<string>? propertyNames = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ElementInspectionComputedStyleSnapshot>>([]);
+        public Task<bool> SetInspectorHighlightAsync(int debugId, ElementInspectionHighlightOptions? options = null,
+            long ownerId = 0, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task ClearInspectorHighlightAsync(long ownerId = 0, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+        public Task SetInspectorModeAsync(bool enabled, ElementInspectionHighlightOptions? options = null,
+            long ownerId = 0, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public void ReleaseInspectorSession(long ownerId) { }
         public Task<ElementInspectionNode?> HitTestInspectionAsync(Point point, bool includeSourcePaths,
             bool includeTextContent) => Task.FromResult<ElementInspectionNode?>(null);
     }

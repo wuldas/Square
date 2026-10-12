@@ -88,5 +88,8 @@ public sealed class ClassListAccessor
         }
         if (_owner is Square.Html.HTMLElement html) html.NotifyDomAttributeMutation("class");
         _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+        _owner.AppWindow?.NotifyInspectionChanged(
+            Square.Hosting.ElementInspectionChangeKind.Attributes |
+            Square.Hosting.ElementInspectionChangeKind.Styles);
     }
 }

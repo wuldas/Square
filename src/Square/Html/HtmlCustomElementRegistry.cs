@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using Square.UI;
 
 namespace Square.Html;
@@ -108,6 +109,7 @@ public sealed class HtmlCustomElementRegistry
             $"Custom element '{element.CustomElementName}' callback failed: {exception.Message}",
             element.DebugInfo, exception);
         _diagnostics.Add(diagnostic);
+        element.AppWindow?.RaiseDiagnosticMessage(TraceEventType.Error, diagnostic.Message);
     }
 
     private sealed class Definition(string name, string? extendsTag, Type elementType,
