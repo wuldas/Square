@@ -15,6 +15,7 @@
     <PackageVersion Include="Wuldas.Square.Platform.MacOS" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Native.Html" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Hosting.Web" Version="$(Version)" />
+    <PackageVersion Include="AngleSharp" Version="1.8.4" />
     <PackageVersion Include="WebView2Aot" Version="1.5.0" />
     <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageVersion Include="DirectNAot" Version="1.6.1" />

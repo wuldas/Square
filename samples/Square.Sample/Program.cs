@@ -17,6 +17,9 @@ using Square.Platform;
 #if SQUARE_SAMPLE_DEVTOOLS
 using Square.DevTools;
 #endif
+#if SQUARE_SAMPLE_NATIVE_HTML
+using Square.Native.Html;
+#endif
 using Square.UI;
 
 namespace Square.Sample;
@@ -26,6 +29,11 @@ public static class Program
     public static void Main(string[] args)
     {
         System.Console.WriteLine("Square Framework Sample");
+        var htmlMountDemo = HasOption(args, "--html-mount-demo");
+#if !SQUARE_SAMPLE_NATIVE_HTML
+        if (htmlMountDemo)
+            throw new NotSupportedException("This build does not include static HTML loading. Build with -p:SquareSampleUseNativeHtml=true to enable it.");
+#endif
         var chromeEditing = HasOption(args, "--devtools-chrome-edit");
         var chromeConsole = HasOption(args, "--devtools-chrome-console");
         if ((chromeEditing || chromeConsole) &&
@@ -46,7 +54,7 @@ public static class Program
             return;
         }
 
-        if (HasOption(args, "--html-regression")) Square.Images.ImageSourceRegistration.RegisterDefaults();
+        if (HasOption(args, "--html-regression") || htmlMountDemo) Square.Images.ImageSourceRegistration.RegisterDefaults();
         var window = new AppWindow("Square Framework", 900, 980);
         var router = window.UseRouter(routes =>
         {
@@ -63,10 +71,21 @@ public static class Program
         router.BeforeEach((to, _) => to.Path == "/admin"
             ? RouteGuardResult.Redirect("/login?returnUrl=/admin")
             : RouteGuardResult.Allow);
+#if SQUARE_SAMPLE_NATIVE_HTML
+        Element? htmlRoot = htmlMountDemo
+            ? HtmlLoader.LoadFile(GetOption(args, "--html-file") ?? "html-mount/shell.html")
+            : null;
+        window.Load(htmlRoot ?? CreatePage(args));
+#else
         window.Load(CreatePage(args));
+#endif
         window.LoadCustomTitleBar(new MyTitleBar());
         window.BorderStyle = BorderStyle.Resizable;
         var app = new DesktopApplication(window);
+#if SQUARE_SAMPLE_NATIVE_HTML
+        using var sqxMount = htmlRoot?.Mount("#sqx-root", new HtmlMountedSqxCounter());
+        using var sqvMount = htmlRoot?.Mount("#sqv-root", new HtmlMountedSqvCounter());
+#endif
         var backend = GetOption(args, "--backend") ?? Environment.GetEnvironmentVariable("SQUARE_RENDER_BACKEND");
         if (string.Equals(backend, "Vulkan", StringComparison.OrdinalIgnoreCase))
 #if SQUARE_SAMPLE_VULKAN

@@ -9,21 +9,26 @@ internal sealed class DocumentStyleSheetLoader(CssEngine engine)
 
     public DocumentStyleSheet LoadFile(string path)
     {
-        var resolvedPath = Path.GetFullPath(Path.IsPathRooted(path)
-            ? path
-            : Path.Combine(AppContext.BaseDirectory, path.Replace('/', Path.DirectorySeparatorChar)));
+        var resolvedPath = ResolveLocalPath(path);
         var styleSheet = LoadFileCore(resolvedPath, [], 0);
         LoadIntoEngine(styleSheet);
         return styleSheet;
     }
 
-    public DocumentStyleSheet LoadText(string css)
+    public DocumentStyleSheet LoadText(string css) => LoadText(css, sourcePath: null);
+
+    public DocumentStyleSheet LoadText(string css, string? sourcePath)
     {
         ArgumentNullException.ThrowIfNull(css);
-        var styleSheet = LoadTextCore(css, href: null, [], 0);
+        var styleSheet = LoadTextCore(css, sourcePath == null ? null : ResolveLocalPath(sourcePath), [], 0);
         LoadIntoEngine(styleSheet);
         return styleSheet;
     }
+
+    private static string ResolveLocalPath(string path) =>
+        Path.GetFullPath(Path.IsPathRooted(path)
+            ? path
+            : Path.Combine(AppContext.BaseDirectory, path.Replace('/', Path.DirectorySeparatorChar)));
 
     private DocumentStyleSheet LoadFileCore(string path, HashSet<string> importStack, int depth)
     {

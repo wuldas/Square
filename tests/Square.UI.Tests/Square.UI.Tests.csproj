@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\src\Square\Square.csproj" />
     <ProjectReference Include="..\..\src\Square.Extensions\Square.Extensions.csproj" />
     <ProjectReference Include="..\..\src\Square.Extensions.Markdown\Square.Extensions.Markdown.csproj" />
+    <ProjectReference Include="..\..\src\Square.Native.Html\Square.Native.Html.csproj" />
     <ProjectReference Include="..\..\samples\Square.Sample\Square.Sample.csproj" />
     <ProjectReference Include="..\..\samples\Square.Sample.Vue\Square.Sample.Vue.csproj" />
     <ProjectReference Include="..\..\tools\Square.FontComparison\Square.FontComparison.csproj" />
@@ -29,6 +30,8 @@
     <None Update="global-base.css" CopyToOutputDirectory="PreserveNewest" />
     <None Update="global-overrides.css" CopyToOutputDirectory="PreserveNewest" />
     <None Update="css-imports\**\*.css" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="css-imports\page.html" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\html-mount\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

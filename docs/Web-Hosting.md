@@ -4,7 +4,7 @@
 
 Square 的 Web Server 模式由两个可选包组成：
 
-- `Square.Native.Html`：将已经求值的 `Element Tree` 生成语义 HTML/CSS。
+- `Square.Native.Html`：将已经求值的 `Element Tree` 生成语义 HTML/CSS，也可将本地无脚本 HTML/CSS 文件加载为原生树。
 - `Square.Hosting.Web`：把组件工厂映射为 ASP.NET Core 静态或交互 endpoint。
 
 它不是 WASM，也不会引入 JavaScript 引擎。`.sqx` / `.sqv` 仍由现有 Source Generator 编译为 C# 组件。
@@ -170,3 +170,44 @@ dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csp
 - SignalR 主动推送、离线恢复、WASM 和通用 pointer/keyboard 事件属于独立阶段。
 - Debug 模板 Hot Reload 首期仅接入 `DesktopApplication`；已经建立的 Web interactive session 不会随 `.sqv` / `.sqx` metadata update 自动重建。
 - 浏览器布局是权威来源，输出不保证与 Software Renderer 像素完全一致。
+
+## 8. 本地静态 HTML 外壳与编译组件挂载
+
+桌面程序引用可选 `Square.Native.Html` 后，可加载标准 HTML5 文件，再显式挂载编译好的 SQX/SQV 实例。HTML 只负责静态结构与 CSS，不注册或解释组件类型，也不执行脚本。
+
+```csharp
+using Square.Hosting;
+using Square.Native.Html;
+using Square.UI;
+
+var window = new AppWindow("Static HTML + components");
+var root = HtmlLoader.LoadFile("html-mount/shell.html");
+window.Load(root); // 先赋予真实 UIDocument 和所属 Dispatcher
+var app = new DesktopApplication(window); // 先绑定应用实际使用的 Dispatcher
+using var sqx = root.Mount("#sqx-root", new HtmlMountedSqxCounter());
+using var sqv = root.Mount("#sqv-root", new HtmlMountedSqvCounter());
+app.Run();
+```
+
+`LoadFile` 返回实际 HTML `documentElement`，保留 html/head/body、原生 SVG 和有序 DOM Text，不建立运行中的第二套 DOM。相对入口路径基于 `AppContext.BaseDirectory`；link 的本地 CSS、内联 style 的相对 `@import` 与 img 的相对 src 基于 HTML 文件目录。样式沿现有 CSS 引擎和作用域运作，不影响外层 UIDocument 壳；条件 stylesheet media 和远程 stylesheet URL 明确拒绝。
+
+挂载替换容器的全部子节点，保留容器、id/class/style；组件 Props/Slots 在挂载前设置。`Unmount`/`Dispose` 永久释放绑定、生成资源和组件样式，重复调用无效果，重新挂载须 `new` 实例。所有操作在所属 UI Dispatcher 线程执行；直接原生移除仍是 soft detach。独立于窗口管理加载树时，结束其生命周期调用 `root.DiscardGeneratedSubtree()` 释放作者样式作用域。
+
+script（包括 SVG/模板内容）和 on* 属性被拒绝，`{...}` 等模板样字符串保持字面量。未知标签/namespace 不降级；自定义 is 属性不触发自动组件注册。这里只提供 Square 已有原生 HTML/SVG 行为，不引入 JS、浏览器导航或运行时模板编译。
+
+运行仓库中的双组件桌面样例：
+
+```powershell
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseNativeHtml=true -- --backend Software --html-mount-demo
+```
+
+`--html-file <path>` 在 demo 分支指定另一份外壳，默认 `html-mount/shell.html`，必须保留两个挂载 id。`Public/html-mount/` 自动复制为输出/发布目录的 `html-mount/`，无需 Public 前缀。`SquareSampleUseNativeHtml` 默认 false；未编入该包时 demo flag 在创建窗口前抛 `NotSupportedException`。普通启动仍加载原 Main 页面，现有 backend/DevTools flags 不变。
+
+
+NativeAOT 发布同一真实样例（包含复制后的静态文件）：
+
+```powershell
+dotnet publish samples/Square.Sample/Square.Sample.csproj -c Release -f net10.0 -r win-x64 --self-contained true -p:SquareSamplePublishAot=true -p:SquareSampleUseNativeHtml=true -o artifacts/static-html-mount-aot
+& ./artifacts/static-html-mount-aot/Square.Sample.exe --backend Software --html-mount-demo
+```
+

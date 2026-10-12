@@ -91,6 +91,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     private HitTestEntry[]? _hitTestChildren;
     private readonly List<IDisposable> _bindings = [];
     private List<IDisposable>? _generatedResources;
+    internal ComponentMount? ComponentMountOwner { get; set; }
+    internal bool IsGeneratedSubtreeDiscarded { get; private set; }
     private int _debugId;
     private string? _templateExportNamespaceUri;
     private string? _templateExportLocalName;
@@ -612,6 +614,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// </summary>
     public void DiscardGeneratedSubtree()
     {
+        IsGeneratedSubtreeDiscarded = true;
+        ComponentMountOwner?.MarkDiscarded();
         DiscardGeneratedResources();
         foreach (var child in Children.ToArray())
             child.DiscardGeneratedSubtree();

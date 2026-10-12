@@ -654,6 +654,30 @@ public sealed class FrameRequestEvent : Event
 
 ## 4. Square.UI — 元素树 API
 
+### ComponentMount — 显式挂载与永久卸载
+
+```csharp
+namespace Square.UI;
+
+public static class ComponentMountExtensions
+{
+    public static ComponentMount Mount(this Element container, UIElement component);
+    public static ComponentMount Mount(this Element root, string selector, UIElement component);
+}
+
+public sealed class ComponentMount : IDisposable
+{
+    public UIElement Component { get; }
+    public bool IsMounted { get; }
+    public void Unmount();
+    public void Dispose();
+}
+```
+
+先用 `window.Load(root)` 或 `document.Body.Children.Add(root)` 赋予目标真实 `UIDocument`，再在所属 Dispatcher 线程调用 `Mount`。它先构建组件，成功后替换目标的全部子节点，保留容器本身、id/class/style 和外部树；失败的构建不会清空旧内容。
+
+句柄仅拥有该组件。`Unmount`/`Dispose` 移除并永久释放生成绑定、事件资源和组件样式，重复调用无效果；再次挂载必须创建新实例。替换会结束旧句柄，旧句柄不能移除新组件。普通原生 `ChildNodes.Remove` 仍只是 soft detach，不推断永久销毁；不要将句柄拥有的组件移到其它容器。用包围应用运行的 `using`/`finally` 释放句柄。
+
 ### Element
 
 ```csharp
@@ -978,6 +1002,19 @@ public sealed class PropertyStore
 ```
 
 ---
+
+## 4.1. Square.Native.Html — 本地静态 HTML 加载
+
+```csharp
+namespace Square.Native.Html;
+
+public static class HtmlLoader
+{
+    public static Square.Html.HTMLElement LoadFile(string path);
+}
+```
+
+可选包中的同步文件入口；相对路径基于 `AppContext.BaseDirectory`。返回标准 HTML parser 纠正后的真实 html/head/body 原生树，保留有序 `Square.UI.Text` 与已有 SVG 类型。CSS link 与内联 style 的相对 `@import` 基于 HTML 文件目录；作者样式由返回根的生成资源生命周期管理。无 script/on*、无运行时 SQX/SQV 编译；未知标签/namespace、远程 stylesheet URL 和条件 stylesheet media 明确失败。先 `window.Load(root)`，再按 `ComponentMount` API 挂载编译组件。详见 [本地静态 HTML 外壳](Web-Hosting.md#8-本地静态-html-外壳与编译组件挂载)。
 
 ## 5. Square.Controls — 控件
 

@@ -4,12 +4,13 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <IsAotCompatible>true</IsAotCompatible>
-    <Description>Static semantic HTML generation for Square element trees</Description>
+    <Description>Static semantic HTML generation and native HTML/CSS loading for Square element trees</Description>
     <PackageTags>$(PackageTags);html;static-rendering;web;server-rendering</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Square\Square.csproj" />
+    <PackageReference Include="AngleSharp" />
   </ItemGroup>
 
 </Project>

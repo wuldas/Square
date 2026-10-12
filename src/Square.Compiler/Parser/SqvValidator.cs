@@ -124,9 +124,9 @@ internal static class SqvValidator
         "stays-open-on-click" => "StaysOpenOnClick",
         "selected-index" => "SelectedIndex",
         "expanded" => "IsExpanded",
-        "stroke-width" => "StrokeWidth",
-        "fill-opacity" => "FillOpacity",
-        "stroke-opacity" => "StrokeOpacity",
+        "stroke-width" => Square.Html.SvgAttributeCatalog.PropertyAliases["stroke-width"],
+        "fill-opacity" => Square.Html.SvgAttributeCatalog.PropertyAliases["fill-opacity"],
+        "stroke-opacity" => Square.Html.SvgAttributeCatalog.PropertyAliases["stroke-opacity"],
         _ => name
     };
 }

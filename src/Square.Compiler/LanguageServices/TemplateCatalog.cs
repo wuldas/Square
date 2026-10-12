@@ -128,30 +128,7 @@ public sealed class TemplateCatalog
             ["color"] = "Color",
             ["background"] = "Background",
             ["underline"] = "Underline",
-            ["type"] = "Type",
-            ["viewbox"] = "ViewBox",
-            ["x"] = "X",
-            ["y"] = "Y",
-            ["width"] = "Width",
-            ["height"] = "Height",
-            ["rx"] = "RadiusX",
-            ["ry"] = "RadiusY",
-            ["cx"] = "CenterX",
-            ["cy"] = "CenterY",
-            ["r"] = "Radius",
-            ["x1"] = "X1",
-            ["y1"] = "Y1",
-            ["x2"] = "X2",
-            ["y2"] = "Y2",
-            ["points"] = "Points",
-            ["d"] = "Data",
-            ["transform"] = "Transform",
-            ["fill"] = "Fill",
-            ["stroke"] = "Stroke",
-            ["stroke-width"] = "StrokeWidth",
-            ["opacity"] = "Opacity",
-            ["fill-opacity"] = "FillOpacity",
-            ["stroke-opacity"] = "StrokeOpacity"
+            ["type"] = "Type"
         };
 
     private static readonly string[] CommonPropertyNames = { "id", "class", "style", "ref", "slot" };
@@ -265,8 +242,10 @@ public sealed class TemplateCatalog
     public IReadOnlyCollection<TemplateEventDescriptor> Events { get; } =
         new ReadOnlyCollection<TemplateEventDescriptor>(StandardEvents.Select(item => new TemplateEventDescriptor(item.Name, item.CanonicalName)).ToArray());
     public IReadOnlyCollection<TemplatePropertyDescriptor> Properties { get; } =
-        new ReadOnlyCollection<TemplatePropertyDescriptor>(PropertyAliases.Select(pair =>
-            new TemplatePropertyDescriptor(pair.Key, pair.Value, GetPropertyValueKind(pair.Key))).ToArray());
+        new ReadOnlyCollection<TemplatePropertyDescriptor>(PropertyAliases
+            .Concat(Square.Html.SvgAttributeCatalog.PropertyAliases)
+            .Select(pair => new TemplatePropertyDescriptor(pair.Key, pair.Value, GetPropertyValueKind(pair.Key)))
+            .ToArray());
     public IReadOnlyCollection<TemplateComponentDescriptor> Components =>
         new ReadOnlyCollection<TemplateComponentDescriptor>(_htmlBuiltIns.Values.Concat(_customHtml.Values)
             .Concat(_builtIns.Values).Concat(_exports).Concat(_localComponents)
@@ -540,7 +519,11 @@ public sealed class TemplateCatalog
     }
 
     public string MapPropertyName(string markupName) =>
-        !string.IsNullOrWhiteSpace(markupName) && PropertyAliases.TryGetValue(markupName, out var propertyName) ? propertyName : markupName;
+        !string.IsNullOrWhiteSpace(markupName) &&
+        (PropertyAliases.TryGetValue(markupName, out var propertyName) ||
+         Square.Html.SvgAttributeCatalog.TryGetPropertyName(markupName, out propertyName))
+            ? propertyName!
+            : markupName;
 
     public IReadOnlyCollection<TemplatePropertyDescriptor> GetPropertiesForTag(
         string tagName, TemplateResolutionContext context = null)

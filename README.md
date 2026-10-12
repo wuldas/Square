@@ -100,6 +100,15 @@ dotnet build Square.slnx
 dotnet run --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
 ```
 
+静态 HTML/CSS 外壳与 SQX/SQV 局部挂载示例（可选包默认不启用）：
+
+```powershell
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseNativeHtml=true -- --backend Software --html-mount-demo
+```
+
+用 `--html-file <path>` 指定自定义外壳；组件挂载到 `#sqx-root` / `#sqv-root`，卸载永久释放绑定与生成样式，再挂载须新实例。完整 API 和文件资源边界见 [本地静态 HTML 与组件挂载](docs/Web-Hosting.md#8-本地静态-html-外壳与编译组件挂载)。
+
+
 Debug 模式下可使用 `dotnet watch` 热更新普通 C#、`.sqx` / `.sqv` 模板和组件 `<style>`：
 
 ```bash

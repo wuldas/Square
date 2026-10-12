@@ -1018,6 +1018,81 @@ public class DocumentTests
         Assert.Contains("requires a stylesheet loaded from a file", exception.Message);
     }
 
+    [Fact]
+    public void LoadTextWithHtmlSourcePathResolvesImportsRelativeToSourceDirectory()
+    {
+        var htmlPath = Path.Combine(AppContext.BaseDirectory, "css-imports", "page.html");
+        var engine = new CssEngine();
+        var loader = new DocumentStyleSheetLoader(engine);
+        var root = new View();
+        var button = new Button("Styled");
+        root.Children.Add(button);
+
+        var previousDirectory = Directory.GetCurrentDirectory();
+        Directory.SetCurrentDirectory(Path.GetTempPath());
+        try
+        {
+            var sheet = loader.LoadText(
+                "@import url(\"./nested/base.css\");\nButton { color: blue; }",
+                htmlPath);
+            engine.ApplyStylesToTree(root);
+            CssStyleReconciler.Flush();
+
+            Assert.Equal("blue", button.Style.Get("color"));
+            Assert.Equal("19px", button.Style.Get("font-size"));
+            Assert.Equal("white", button.Style.Get("background"));
+            Assert.EndsWith(Path.Combine("css-imports", "page.html"), sheet.Href);
+            var baseSheet = Assert.Single(sheet.Imports);
+            Assert.EndsWith(Path.Combine("css-imports", "nested", "base.css"), baseSheet.Href);
+            var paletteSheet = Assert.Single(baseSheet.Imports);
+            Assert.EndsWith(Path.Combine("css-imports", "palette.css"), paletteSheet.Href);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            CssStyleReconciler.UnregisterScopesForTree(root);
+        }
+    }
+
+    [Fact]
+    public void LoadTextWithoutSourcePathRejectsRelativeImportWithoutPartialRules()
+    {
+        var engine = new CssEngine();
+        var loader = new DocumentStyleSheetLoader(engine);
+        var root = new View();
+        var button = new Button("Styled");
+        root.Children.Add(button);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            loader.LoadText("@import \"theme.css\";\nButton { color: blue; }"));
+
+        Assert.Contains("requires a stylesheet loaded from a file", exception.Message);
+        engine.ApplyStylesToTree(root);
+        CssStyleReconciler.Flush();
+        Assert.NotEqual("blue", button.Style.Get("color"));
+        CssStyleReconciler.UnregisterScopesForTree(root);
+    }
+
+    [Fact]
+    public void LoadTextWithSourcePathKeepsExistingImportErrorRules()
+    {
+        var htmlPath = Path.Combine(AppContext.BaseDirectory, "css-imports", "page.html");
+        var loader = new DocumentStyleSheetLoader(new CssEngine());
+
+        var circular = Assert.Throws<InvalidOperationException>(() =>
+            loader.LoadText("@import \"cycle-a.css\";", htmlPath));
+        Assert.Contains("Circular CSS @import", circular.Message);
+
+        var conditional = Assert.Throws<NotSupportedException>(() =>
+            loader.LoadText("@import \"theme.css\" screen;", htmlPath));
+        Assert.Contains("Conditional CSS @import", conditional.Message);
+
+        var missing = Assert.Throws<FileNotFoundException>(() =>
+            loader.LoadText("@import \"missing-import.css\";", htmlPath));
+        Assert.NotNull(missing.FileName);
+        Assert.Contains("missing-import.css", missing.FileName);
+    }
+
     private static void ApplyWindowStyles(AppWindow window)
     {
         var root = window.WindowDocument.DocumentElement;

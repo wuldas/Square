@@ -1,0 +1,79 @@
+/* Static shell styles for the html-mount demo. Plain standard CSS only; component
+   internals are styled by each component's own scoped stylesheet. */
+
+body {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 36px 48px;
+  background: #f2f4f7;
+  color: #1f2430;
+  font-family: sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.site-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: bold;
+  color: #17212b;
+}
+
+.lede {
+  margin: 0;
+  max-width: 860px;
+  color: #4b5563;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.mount-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.block-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: bold;
+  color: #17212b;
+}
+
+.static-slot {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 150px;
+  padding: 20px;
+  border: 2px dashed #9aa7b4;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #667085;
+  font-size: 16px;
+}
+
+.site-footer {
+  padding-top: 18px;
+  border-top: 1px solid #d4dae1;
+  color: #667085;
+  font-size: 15px;
+}
+
+.site-footer p {
+  margin: 0;
+}

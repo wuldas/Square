@@ -37,6 +37,9 @@ public sealed class TemplateCatalogTests
     [InlineData("font-family", "FontFamily")]
     [InlineData("selected-index", "SelectedIndex")]
     [InlineData("stroke-width", "StrokeWidth")]
+    [InlineData("viewbox", "ViewBox")]
+    [InlineData("cx", "CenterX")]
+    [InlineData("VIEWBOX", "ViewBox")]
     [InlineData("unknown-prop", "unknown-prop")]
     public void MapsMarkupPropertyAliases(string markupName, string expectedPropertyName)
     {
