@@ -144,10 +144,11 @@ dotnet test Square.slnx
 需要 Windows x64、PowerShell 7、.NET 10 SDK、Node.js/npm、Flutter Windows 桌面 SDK，以及 Visual Studio C++ / Windows SDK 工具链（用于 NativeAOT 和 Flutter）。将 `flutter` 加入 PATH，或通过 `-FlutterCommand` 指定 `flutter.bat` 的完整路径。
 
 ```powershell
-pwsh -NoProfile -File samples/Square.Sample.PerfComparison/Run-Comparison.ps1
+pwsh -NoProfile -File samples/Square.Sample.PerfComparison/Run-Comparison.ps1 `
+  -Seconds 30 -WarmupSeconds 5
 ```
 
-脚本先构建所有 Release 发布物，再按固定顺序逐个运行；每个目标预热 2 秒、测量 30 秒，目标之间间隔 2 秒。测量期间不构建、不挂接 DevTools。Square Direct2D 必须使用硬件设备；Square 使用 Auto 脏区渲染，各框架原生的布局与合成优化保持启用。Flutter 按绝对 60 Hz 截止点驱动动画，避免原生时钟高于 60 Hz 时增加负载；实际产出帧率仍由下面的计数定义决定。
+脚本先构建所有 Release 发布物，再按固定顺序逐个运行；上述命令每个目标预热 5 秒、测量 30 秒，目标之间间隔 2 秒。测量期间不构建、不挂接 DevTools。Square Direct2D 必须使用硬件设备；Square 使用 Auto 脏区渲染，各框架原生的布局与合成优化保持启用。Flutter 按绝对 60 Hz 截止点驱动动画，避免原生时钟高于 60 Hz 时增加负载；实际产出帧率仍由下面的计数定义决定。
 
 默认将逐目标 JSON、stdout/stderr 和汇总 `results.json` 写入 `artifacts/perf-comparison-时间戳/`。可通过 `-OutputDirectory` 指定目录，`-Seconds` / `-WarmupSeconds` 调整时长，已有发布物时可用 `-SkipBuild`。发布目录由脚本管理，重新构建时会清空对应的 .NET 输出目录，避免旧文件虚增体积。
 
@@ -162,20 +163,20 @@ Avalonia 的 JIT / NativeAOT 构建共用同一界面、动画和采样逻辑。
 
 ### 本机实测（2026-10-19）
 
-Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 个逻辑处理器）；NVIDIA GeForce GTX 1660 SUPER，2560×1440 / 60 Hz。使用 .NET SDK 10.0.303、Avalonia 11.3.12、Electron 44.7.2、Flutter 3.47.7 stable。全部为 Release / Windows x64，单轮串行运行，预热 2 秒，请求测量 30 秒；计算采用 JSON 中记录的实际区间。
+Square 基于 `08da487`。Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 个逻辑处理器）；NVIDIA GeForce GTX 1660 SUPER，2560×1440 / 60 Hz。使用 .NET SDK 10.0.303、Avalonia 11.3.12、Electron 44.7.2、Flutter 3.47.7 stable。全部为重新构建的 Release / Windows x64 发布物，单轮串行运行，预热 5 秒，请求测量 30 秒；计算采用 JSON 中记录的实际区间。
 
-**同步配置说明：下表为修复前快照。** 采样时 Win32 在 Windows 8+ 关闭 VSync，Direct2D 使用 `IMMEDIATELY`；当前版本已恢复垂直同步。下表与 JSON 的旧数据保留用于追溯，不代表当前同步配置的性能复测。
+**同步配置：本次为恢复垂直同步及 CPU 优化后的复测。** Win32 保持 `VSync=true`，Direct2D 保留 `RETAIN_CONTENTS`，不启用 `IMMEDIATELY`；不能将其与此前关闭 VSync 的快照视为相同条件。
 
 | 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
 |---|---:|---:|---:|---:|---:|
-| Square Software · JIT | 56.0% | 60.01 | 57.57 | 108.53 | 99.91 |
-| Square Direct2D · JIT | 34.9% | 60.01 | 110.07 | 150.34 | 99.91 |
-| Square Software · NativeAOT | 64.8% | 60.01 | 48.20 | 78.21 | 9.40 |
-| Square Direct2D · NativeAOT | 43.8% | 60.01 | 95.62 | 103.81 | 9.40 |
-| Avalonia · JIT | 27.4% | 59.97 | 127.47 | 153.50 | 102.67 |
-| Avalonia · NativeAOT | 32.1% | 59.97 | 117.05 | 118.87 | 34.88 |
-| Electron · packaged | 117.0% | 59.97 | 267.49 | 419.94 | 366.89 |
-| Flutter · Release | 37.7% | 60.03 | 174.07 | 125.48 | 23.37 |
+| Square Software · JIT | 44.23% | 60.01 | 58.68 | 107.98 | 99.93 |
+| Square Direct2D · JIT | 22.17% | 60.01 | 111.41 | 147.51 | 99.93 |
+| Square Software · NativeAOT | 48.14% | 60.01 | 51.48 | 80.58 | 9.40 |
+| Square Direct2D · NativeAOT | 26.48% | 60.01 | 100.78 | 106.72 | 9.40 |
+| Avalonia · JIT | 26.81% | 59.97 | 124.29 | 149.10 | 102.67 |
+| Avalonia · NativeAOT | 29.20% | 59.97 | 115.45 | 115.26 | 34.88 |
+| Electron · packaged | 93.67% | 59.97 | 267.35 | 416.74 | 366.89 |
+| Flutter · Release | 37.13% | 59.83 | 176.47 | 125.95 | 23.37 |
 
 [原始汇总数据](samples/Square.Sample.PerfComparison/results.json)包含实际时长、帧数、内存峰值、CPU 每帧成本、发布字节数、运行环境和逐目标 FPS 定义。比较 CPU 时应同时看实测 FPS。单轮结果受后台负载、执行顺序、JIT 和温度影响，不代表统计上成立的跨框架排名。
 
