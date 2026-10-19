@@ -319,10 +319,9 @@ public class Canvas : UIElement, ITextSelectable
     /// <inheritdoc/>
     public Rect SelectableTextBounds => Geometry;
 
-    /// <summary>请求后续帧；默认 30fps，避免软件全窗口 Present 时 CPU 过高。</summary>
+    /// <summary>登记后续帧（默认 30fps）；由宿主在到期时标记绘制失效。</summary>
     public void RequestFrame(double fps = 30d)
     {
-        InvalidatePaint();
         DispatchEvent(StandardEvents.CreateRequestFrame(fps));
     }
 

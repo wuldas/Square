@@ -1286,13 +1286,13 @@ public class Canvas : UIElement
 {
     public Action<IRenderContext, Rect>? DrawContent { get; set; }
 
-    public void RequestFrame(double fps = 60d);
+    public void RequestFrame(double fps = 30d);
     public void RequestAnimationFrame(Action<IRenderContext, Rect> callback);
     public void RequestAnimationFrame(Action<IRenderContext, Rect> callback, double fps);
 }
 ```
 
-`RequestFrame()` 通过 `StandardEvents.RequestFrame` 冒泡并合并，`DesktopApplication` 在 Tick 中检查调度帧并触发重绘。
+`RequestFrame()` 通过 `StandardEvents.RequestFrame` 冒泡并合并，只登记后续帧，不立即标记绘制失效或请求渲染。`DesktopApplication` 在 Tick 中到期后才标记目标重绘，因此在绘制回调中继续请求帧不会绕过 FPS 上限。`RequestFrame()` 和无 FPS 参数的 `RequestAnimationFrame()` 均默认 30 FPS；实际频率受宿主 Tick 节奏与绘制耗时影响。需要立即刷新时使用 `InvalidatePaint()`。
 
 `FrameRequestEvent` 同时支持 FPS 构造和精确 `TimeSpan` 延迟。图片动画使用精确延迟，以保留不规则或长帧时长。
 

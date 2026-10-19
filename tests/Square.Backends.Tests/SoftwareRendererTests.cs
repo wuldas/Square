@@ -1234,6 +1234,50 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void CanvasAnimationFrameWaitsForHostDeadline()
+    {
+        using var context = CreateContext(64, 48);
+        var canvas = new Canvas
+        {
+            Geometry = new Rect(0, 0, 64, 48),
+            DrawContent = (ctx, bounds) => ctx.FillRect(bounds, new SolidColorBrush(Color.Red))
+        };
+        var tree = new DisplayTree();
+        tree.BuildFrom(canvas);
+        tree.Render(context);
+        tree.CommitPresentedFrame();
+        var calls = 0;
+        Action<IRenderContext, Rect> draw = null!;
+        draw = (ctx, bounds) =>
+        {
+            calls++;
+            ctx.FillRect(bounds, new SolidColorBrush(Color.Blue));
+            canvas.RequestAnimationFrame(draw, fps: 20);
+        };
+
+        canvas.RequestAnimationFrame(draw, fps: 20);
+        tree.UpdateDirty();
+        tree.Render(context);
+
+        Assert.Equal(0, calls);
+        Assert.Equal(new byte[] { 0, 0, 255, 255 }, context.GetBitmap().GetPixel(10, 10).ToArray());
+
+        ((Square.Events.IFrameScheduledElement)canvas).OnFrameDue();
+        tree.UpdateDirty();
+        tree.Render(context);
+        tree.CommitPresentedFrame();
+
+        Assert.Equal(1, calls);
+        Assert.Equal(new byte[] { 255, 0, 0, 255 }, context.GetBitmap().GetPixel(10, 10).ToArray());
+
+        tree.UpdateDirty();
+        tree.Render(context);
+
+        Assert.Equal(1, calls);
+        Assert.Equal(new byte[] { 255, 0, 0, 255 }, context.GetBitmap().GetPixel(10, 10).ToArray());
+    }
+
+    [Fact]
     public void ButtonHoverAndActiveStatesProvideDefaultVisualFeedback()
     {
         var button = new Button("Press") { Geometry = new Rect(2, 2, 100, 40) };
