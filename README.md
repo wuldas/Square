@@ -135,6 +135,50 @@ dotnet run --project samples/Square.Sample.RichText/Square.Sample.RichText.cspro
 dotnet test Square.slnx
 ```
 
+## 布局动画性能对比
+
+[对比示例](samples/Square.Sample.PerfComparison)包含 Square Software / Direct2D（JIT 与 NativeAOT）、Avalonia（JIT 与 NativeAOT）、Electron 和 Flutter。各目标使用 900×1240 客户区、3 组各 240 个方块，分别运行 transform、opacity、width 动画，6 秒线性循环，目标更新频率为 60 FPS。width 组改变真实宽度并触发行重排，不用缩放代替布局。
+
+### 复现
+
+需要 Windows x64、PowerShell 7、.NET 10 SDK、Node.js/npm、Flutter Windows 桌面 SDK，以及 Visual Studio C++ / Windows SDK 工具链（用于 NativeAOT 和 Flutter）。将 `flutter` 加入 PATH，或通过 `-FlutterCommand` 指定 `flutter.bat` 的完整路径。
+
+```powershell
+pwsh -NoProfile -File samples/Square.Sample.PerfComparison/Run-Comparison.ps1
+```
+
+脚本先构建所有 Release 发布物，再按固定顺序逐个运行；每个目标预热 2 秒、测量 30 秒，目标之间间隔 2 秒。测量期间不构建、不挂接 DevTools。Square Direct2D 必须使用硬件设备；Square 使用 Auto 脏区渲染，各框架原生的布局与合成优化保持启用。Flutter 按绝对 60 Hz 截止点驱动动画，避免原生时钟高于 60 Hz 时增加负载；实际产出帧率仍由下面的计数定义决定。
+
+默认将逐目标 JSON、stdout/stderr 和汇总 `results.json` 写入 `artifacts/perf-comparison-时间戳/`。可通过 `-OutputDirectory` 指定目录，`-Seconds` / `-WarmupSeconds` 调整时长，已有发布物时可用 `-SkipBuild`。发布目录由脚本管理，重新构建时会清空对应的 .NET 输出目录，避免旧文件虚增体积。
+
+Avalonia 的 JIT / NativeAOT 构建共用同一界面、动画和采样逻辑。NativeAOT 按 [Avalonia 11.x 的要求](https://github.com/AvaloniaUI/avalonia-docs/blob/main/docs/deployment/native-aot.md)设置 `BuiltInComInteropSupport=false`，不启用基于内建 COM 互操作的辅助功能路径。
+
+### 统计口径
+
+- **CPU**：测量区间的进程 CPU 时间 / 实际经过秒数 × 100%；100% 表示占满一个逻辑处理器，不是任务管理器的整机百分比。Electron 汇总浏览器、渲染、GPU 和 utility 等所属进程；进程在两次采样之间退出时，最后一次观察之后的 CPU 时间可能漏计。JSON 另存整机折算值和每帧 CPU 毫秒数。
+- **内存**：约每秒采样一次，分别记录私有提交内存（Private Bytes）和驻留工作集（Working Set）的均值、观察到的峰值，单位为 MiB；不含独立 GPU 显存。Electron 为多进程合计，工作集可能重复计入共享页。
+- **FPS**：实际帧计数 / 实际测量秒数，不写死为 60。Square 计渲染提交，Avalonia / Electron 计动画帧回调，Flutter 计区间内栅格完成的引擎 `FrameTiming`。这些都不是显示器物理扫描输出计数；原始 JSON 的 `fpsDefinition` 保留各目标的具体定义，不应据此比较细微的呈现帧率差异。
+- **发布体积**：未压缩、可运行的 Windows x64 发布目录总大小，包含运行时、动态库和资源，排除 `.pdb` / `.dbg` 调试符号；不是仅比较 EXE。JIT 目标均为 self-contained；Square 的两个后端共用同一份对应发布物。JSON 同时保留入口 EXE 字节数。
+
+### 本机实测（2026-10-19）
+
+Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 个逻辑处理器）；NVIDIA GeForce GTX 1660 SUPER，2560×1440 / 60 Hz。使用 .NET SDK 10.0.303、Avalonia 11.3.12、Electron 44.7.2、Flutter 3.47.7 stable。全部为 Release / Windows x64，单轮串行运行，预热 2 秒，请求测量 30 秒；计算采用 JSON 中记录的实际区间。
+
+**同步配置说明：下表为修复前快照。** 采样时 Win32 在 Windows 8+ 关闭 VSync，Direct2D 使用 `IMMEDIATELY`；当前版本已恢复垂直同步。下表与 JSON 的旧数据保留用于追溯，不代表当前同步配置的性能复测。
+
+| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
+|---|---:|---:|---:|---:|---:|
+| Square Software · JIT | 56.0% | 60.01 | 57.57 | 108.53 | 99.91 |
+| Square Direct2D · JIT | 34.9% | 60.01 | 110.07 | 150.34 | 99.91 |
+| Square Software · NativeAOT | 64.8% | 60.01 | 48.20 | 78.21 | 9.40 |
+| Square Direct2D · NativeAOT | 43.8% | 60.01 | 95.62 | 103.81 | 9.40 |
+| Avalonia · JIT | 27.4% | 59.97 | 127.47 | 153.50 | 102.67 |
+| Avalonia · NativeAOT | 32.1% | 59.97 | 117.05 | 118.87 | 34.88 |
+| Electron · packaged | 117.0% | 59.97 | 267.49 | 419.94 | 366.89 |
+| Flutter · Release | 37.7% | 60.03 | 174.07 | 125.48 | 23.37 |
+
+[原始汇总数据](samples/Square.Sample.PerfComparison/results.json)包含实际时长、帧数、内存峰值、CPU 每帧成本、发布字节数、运行环境和逐目标 FPS 定义。比较 CPU 时应同时看实测 FPS。单轮结果受后台负载、执行顺序、JIT 和温度影响，不代表统计上成立的跨框架排名。
+
 ## Android Experimental
 
 Android 首期使用 .NET 10 for Android、单 Activity 和单 `SquareView`，通过 `ApplicationSession` 由 Activity/Looper/Choreographer 驱动。默认路径为 Software BGRA bitmap 到 Android `ARGB_8888` bitmap；也可通过 Activity extra 选择 `AndroidCanvas`、`AndroidSkia` 或 `Vulkan` 直绘路径。Android 不引入 MAUI、原生 View/Compose 控件树或桌面窗口操作。

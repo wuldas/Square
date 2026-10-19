@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Console subsystem so the benchmark result line is printable to stdout. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Square.Sample.PerfComparison.Avalonia</RootNamespace>
+    <AssemblyName>Square.PerfComparison.Avalonia</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SquarePerfPublishAot)' == 'true'">
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Versions are centrally managed in Directory.Packages.props. -->
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+
+</Project>

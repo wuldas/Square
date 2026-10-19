@@ -49,6 +49,10 @@ line/cluster metrics、BiDi、命中测试、selection/caret 和 `DrawTextLayout
 绘制导致几何不一致。它支持 transform、矩形/几何 clip、渐变/描边、group opacity、bitmap 版本更新、
 resize/DPI 和 `D2DERR_RECREATE_TARGET` 重建；保留 HWND 目标支持局部渲染，目标创建、resize 或设备重建后要求完整重绘。它不提供真实 framebuffer readback。
 
+Win32 宿主向原生后端请求垂直同步；Direct2D 保留 `RETAIN_CONTENTS` 以支持局部重绘，
+但不启用跳过显示刷新等待的 `IMMEDIATELY`。60 Hz 的宿主定时器只限制提交频率，不能替代垂直同步；
+即使启用 DWM 合成，也不能据此关闭后端的同步呈现。参见 [Direct2D 呈现选项](https://learn.microsoft.com/en-us/windows/win32/api/d2d1/ne-d2d1-d2d1_present_options)。
+
 DirectWrite 的 `TextFormat` cache 上限为 128 项，`TextLayout` cache 上限为 256 项/估算 16 MiB；
 Direct2D fallback glyph cache 为 4096 项/8 MiB，image cache 为 256 项/64 MiB。动画 Bitmap 复用同一
 `ID2D1Bitmap.CopyFromMemory`，预乘上传使用最大 256 KiB 分块缓冲，不再每帧分配整图 LOH 数组。

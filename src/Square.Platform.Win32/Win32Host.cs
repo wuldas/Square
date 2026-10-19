@@ -311,9 +311,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         {
             CanvasSize = _clientSize,
             DpiScale = _dpiScale,
-            // DWM composites modern HWNDs at display refresh; the host already paces frames.
-            // A second synchronous present wait can miss deadlines and stall submissions.
-            VSync = !OperatingSystem.IsWindowsVersionAtLeast(6, 2),
+            VSync = true,
             SoftwareSurface = _softwareSurface,
             PresentFrame = _softwareSurface == null ? PresentFrame : null,
             NativeTarget = new Win32RenderTarget(_hwnd, Win32Api.GetModuleHandle(null)),
