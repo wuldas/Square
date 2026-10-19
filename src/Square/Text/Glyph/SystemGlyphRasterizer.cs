@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using Square.Graphics;
 
 namespace Square.Text.Glyph;
@@ -35,6 +36,7 @@ public sealed partial class SystemGlyphRasterizer
     private readonly bool _cacheGlyphs;
     private static Func<Font, char, RasterizedGlyph?>? _platformRasterizer;
     private static Func<Font, FontMetrics?>? _platformMetrics;
+    private static int _platformMetricsGeneration;
 
     /// <summary>初始化实例。</summary>
     /// <param name="cacheGlyphs">是否缓存已光栅化的字形。</param>
@@ -55,7 +57,13 @@ public sealed partial class SystemGlyphRasterizer
     {
         ArgumentNullException.ThrowIfNull(metricsProvider);
         _platformMetrics = metricsProvider;
+        // 先写委托再递增代际：观察到新代际的读者必然能看到新委托，
+        // 度量缓存据此淘汰替换提供器之前缓存的估算/回退值。
+        Interlocked.Increment(ref _platformMetricsGeneration);
     }
+
+    /// <summary>平台度量提供器代际；参与字体度量缓存键，防止旧提供器的结果遮蔽新提供器。</summary>
+    internal static int PlatformMetricsGeneration => Volatile.Read(ref _platformMetricsGeneration);
 
     internal static bool TryGetPlatformFontMetrics(Font font, out FontMetrics metrics)
     {
@@ -410,6 +418,10 @@ internal static class SystemTextMeasurementRegistration
 /// <summary>基于系统光栅器提供字体与字形度量。</summary>
 internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer) : ITextMetricsProvider
 {
+    // 度量缓存上限：键为 (族, 字号, 字重, 样式, 字体/提供器代际)，溢出时整体清空重建，
+    // 与字形缓存保持同等简单的生命周期约定，避免无界增长；重新计算仅一轮原生查询。
+    private const int MaxMetricsEntries = 256;
+
     private readonly object _sync = new();
     private readonly Dictionary<FontMetricsKey, FontMetrics> _fontMetrics = [];
 
@@ -419,20 +431,39 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
     /// <returns>始终返回 true。</returns>
     public bool TryGetFontMetrics(Font font, out FontMetrics metrics)
     {
+        // 键携带自定义字体与平台度量提供器代际：代际不变意味着自定义面集合未变
+        // （FontCollection.Register 是唯一变更入口并递增 CustomGeneration），
+        // 因此命中时可安全跳过自定义面解析与原生 GDI 查询，也不会用旧值
+        // 遮蔽之后注册/替换的真实字体度量（注册本身会推进代际使旧键失配）。
+        var key = new FontMetricsKey(
+            font.Family,
+            font.Size,
+            font.Weight,
+            font.Style,
+            FontCollection.Shared.CustomGeneration,
+            SystemGlyphRasterizer.PlatformMetricsGeneration);
+        lock (_sync)
+        {
+            if (_fontMetrics.TryGetValue(key, out metrics))
+                return true;
+        }
+
         var customFace = FontCollection.Shared.ResolveCustomFace(font.Family, font.Weight, font.Style);
         if (customFace?.TryGetFontMetrics(font.Size, out metrics) == true)
+        {
+            Store(key, metrics);
             return true;
+        }
 
-        var key = new FontMetricsKey(font.Family, font.Size, font.Weight, font.Style);
         if (SystemGlyphRasterizer.TryGetPlatformFontMetrics(font, out metrics))
         {
-            lock (_sync) _fontMetrics[key] = metrics;
+            Store(key, metrics);
             return true;
         }
 
         if (SystemGlyphRasterizer.TryGetWin32FontMetrics(font, out metrics))
         {
-            lock (_sync) _fontMetrics[key] = metrics;
+            Store(key, metrics);
             return true;
         }
 
@@ -441,14 +472,14 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
         var resolved = FontCollection.Shared.Resolve(font.Family, 'A', font.Weight, font.Style);
         if (resolved?.TryGetFontMetrics(font.Size, out metrics) == true)
         {
-            lock (_sync) _fontMetrics[key] = metrics;
+            Store(key, metrics);
             return true;
         }
 
         var height = Math.Max(1, font.Size * TextLayout.DefaultLineHeight);
         var ascent = font.Size * 0.8f;
         metrics = new FontMetrics(-ascent, -ascent, height - ascent, height - ascent, 0);
-        lock (_sync) _fontMetrics[key] = metrics;
+        Store(key, metrics);
         return true;
     }
 
@@ -484,10 +515,21 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
         return true;
     }
 
+    private void Store(FontMetricsKey key, FontMetrics metrics)
+    {
+        lock (_sync)
+        {
+            if (_fontMetrics.Count >= MaxMetricsEntries && !_fontMetrics.ContainsKey(key))
+                _fontMetrics.Clear();
+            _fontMetrics[key] = metrics;
+        }
+    }
+
     private readonly record struct FontMetricsKey(
         string Family,
         float Size,
         FontWeight Weight,
-        FontStyle Style);
-
+        FontStyle Style,
+        int CustomGeneration,
+        int PlatformMetricsGeneration);
 }

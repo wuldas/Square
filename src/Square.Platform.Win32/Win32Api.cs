@@ -44,10 +44,17 @@ internal static partial class Win32Api
     public const int WM_KEYUP = 0x0101;
     public const int WM_CHAR = 0x0102;
     public const int WM_UNICHAR = 0x0109;
-    public const int WM_TIMER = 0x0113;
     public const int WM_IME_STARTCOMPOSITION = 0x010D;
     public const int WM_QUIT = 0x0012;
     public const int CS_HREDRAW = 0x0002;
+    public const uint PM_REMOVE = 0x0001;
+    public const uint QS_ALLINPUT = 0x04FF;
+    public const uint MWMO_INPUTAVAILABLE = 0x0004;
+    public const uint INFINITE = uint.MaxValue;
+    public const uint WAIT_FAILED = uint.MaxValue;
+    public const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
+    public const uint TIMER_MODIFY_STATE = 0x0002;
+    public const uint SYNCHRONIZE = 0x00100000;
     public const int CS_VREDRAW = 0x0001;
     public const uint BI_RGB = 0;
     public const uint DIB_RGB_COLORS = 0;
@@ -141,8 +148,12 @@ internal static partial class Win32Api
     [LibraryImport("user32.dll", EntryPoint = "DestroyWindow")]
     public static partial bool DestroyWindow(IntPtr hWnd);
 
-    [LibraryImport("user32.dll", EntryPoint = "GetMessageW", SetLastError = true)]
-    public static partial int GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    [LibraryImport("user32.dll", EntryPoint = "PeekMessageW")]
+    public static partial bool PeekMessage(out MSG message, IntPtr window, uint minFilter, uint maxFilter, uint remove);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    public static unsafe partial uint MsgWaitForMultipleObjectsEx(uint count, IntPtr* handles, uint milliseconds, uint wakeMask, uint flags);
 
     [return: MarshalAs(UnmanagedType.Bool)]
     [LibraryImport("user32.dll", EntryPoint = "TranslateMessage")]
@@ -293,12 +304,18 @@ internal static partial class Win32Api
     [LibraryImport("user32.dll", EntryPoint = "ReleaseCapture")]
     public static partial bool ReleaseCapture();
 
-    [LibraryImport("user32.dll", EntryPoint = "SetTimer")]
-    public static partial UIntPtr SetTimer(IntPtr hWnd, UIntPtr timerId, uint intervalMilliseconds, IntPtr callback);
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateWaitableTimerExW", SetLastError = true,
+        StringMarshalling = StringMarshalling.Utf16)]
+    public static partial IntPtr CreateWaitableTimerEx(IntPtr attributes, string? name, uint flags, uint access);
 
     [return: MarshalAs(UnmanagedType.Bool)]
-    [LibraryImport("user32.dll", EntryPoint = "KillTimer")]
-    public static partial bool KillTimer(IntPtr hWnd, UIntPtr timerId);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial bool SetWaitableTimer(IntPtr timer, in long dueTime, int period,
+        IntPtr completionRoutine, IntPtr argument, [MarshalAs(UnmanagedType.Bool)] bool resume);
+
+    [return: MarshalAs(UnmanagedType.Bool)]
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial bool CancelWaitableTimer(IntPtr timer);
 
     [LibraryImport("user32.dll", EntryPoint = "GetKeyState")]
     public static partial short GetKeyState(int virtualKey);

@@ -111,7 +111,7 @@ internal static class DrawCommandBounds
         return Rect.Intersect(bounds, clips.Peek());
     }
 
-    private static Rect TransformBounds(Rect bounds, Matrix3x2 transform)
+    internal static Rect TransformBounds(Rect bounds, Matrix3x2 transform)
     {
         if (bounds.IsEmpty || transform.IsIdentity) return bounds;
 

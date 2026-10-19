@@ -41,6 +41,10 @@ public sealed partial class HtmlElement : HTMLElement
 
     public override string TagName => _tagName;
 
+    internal bool AcceptsDirectTextContent =>
+        TagName is not ("img" or "video" or "audio" or "iframe" or "embed" or "progress" or "meter" or
+            "input" or "textarea" or "select");
+
     public bool HasAttribute(string name)
     {
         name = Normalize(name);

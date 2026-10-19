@@ -1,6 +1,8 @@
 using Square.Graphics;
 using Square.Hosting;
 using System.ComponentModel;
+using System.Diagnostics;
+using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -31,8 +33,10 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
     private AppWindowState _state = AppWindowState.Normal;
     private bool _closed;
     private bool _skipPointerCapture;
+    private IntPtr _frameTimer;
+    private double _nextFrameTimestamp;
 
-    private const uint FrameTimerIntervalMs = 16;
+    private static readonly double FramePeriodTicks = Stopwatch.Frequency / 60d;
     private const int WheelDeltaUnit = 120;
 
     private static readonly Dictionary<IntPtr, Win32Host> Hosts = [];
@@ -176,7 +180,6 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         Win32Api.GetClientRect(_hwnd, out var rect);
         UpdateClientSize(rect);
 
-        Win32Api.SetTimer(_hwnd, new UIntPtr(1), FrameTimerIntervalMs, IntPtr.Zero);
         _running = true;
     }
 
@@ -308,6 +311,9 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         {
             CanvasSize = _clientSize,
             DpiScale = _dpiScale,
+            // DWM composites modern HWNDs at display refresh; the host already paces frames.
+            // A second synchronous present wait can miss deadlines and stall submissions.
+            VSync = !OperatingSystem.IsWindowsVersionAtLeast(6, 2),
             SoftwareSurface = _softwareSurface,
             PresentFrame = _softwareSurface == null ? PresentFrame : null,
             NativeTarget = new Win32RenderTarget(_hwnd, Win32Api.GetModuleHandle(null)),
@@ -519,20 +525,77 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         return width > 0 && height > 0;
     }
 
-    public void PumpEvents()
+    public unsafe void PumpEvents()
     {
-        while (_running)
+        var handle = Win32Api.CreateWaitableTimerEx(IntPtr.Zero, null,
+            Win32Api.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+            Win32Api.TIMER_MODIFY_STATE | Win32Api.SYNCHRONIZE);
+        // Older Windows versions do not support the high-resolution flag.
+        if (handle == IntPtr.Zero && Marshal.GetLastPInvokeError() == 87)
+            handle = Win32Api.CreateWaitableTimerEx(IntPtr.Zero, null, 0,
+                Win32Api.TIMER_MODIFY_STATE | Win32Api.SYNCHRONIZE);
+        if (handle == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        using var timer = new SafeWaitHandle(handle, ownsHandle: true);
+        _frameTimer = handle;
+        try
         {
-            var result = Win32Api.GetMessage(out var msg, IntPtr.Zero, 0, 0);
-            if (result <= 0)
+            RestartFrameTimer();
+            while (_running)
             {
-                _running = false;
-                break;
-            }
+                var count = _state == AppWindowState.Minimized ? 0u : 1u;
+                var result = Win32Api.MsgWaitForMultipleObjectsEx(count, count == 0 ? null : &handle,
+                    Win32Api.INFINITE, Win32Api.QS_ALLINPUT, Win32Api.MWMO_INPUTAVAILABLE);
+                if (result == Win32Api.WAIT_FAILED)
+                    throw new Win32Exception(Marshal.GetLastPInvokeError());
+                if (!_running) break;
 
-            Win32Api.TranslateMessage(ref msg);
-            Win32Api.DispatchMessage(ref msg);
+                // Bound queue draining so continuous mouse/input traffic cannot starve frames.
+                for (var messages = 0; messages < 64 && _running &&
+                     Win32Api.PeekMessage(out var message, IntPtr.Zero, 0, 0, Win32Api.PM_REMOVE); messages++)
+                {
+                    if (message.message == Win32Api.WM_QUIT)
+                    {
+                        _running = false;
+                        break;
+                    }
+                    Win32Api.TranslateMessage(ref message);
+                    Win32Api.DispatchMessage(ref message);
+                }
+                if (!_running || count == 0 || result != 0 || _state == AppWindowState.Minimized) continue;
+
+                var now = Stopwatch.GetTimestamp();
+                if (now < _nextFrameTimestamp) continue;
+                // Advance before rendering: a slightly over-budget frame must not halve FPS.
+                _nextFrameTimestamp += (Math.Floor((now - _nextFrameTimestamp) / FramePeriodTicks) + 1) * FramePeriodTicks;
+                Tick?.Invoke();
+                if (_running && _state != AppWindowState.Minimized) ArmFrameTimer();
+            }
         }
+        finally
+        {
+            StopFrameTimer();
+            _frameTimer = IntPtr.Zero;
+        }
+    }
+
+    private void RestartFrameTimer()
+    {
+        if (_frameTimer == IntPtr.Zero || !_running || _state == AppWindowState.Minimized) return;
+        _nextFrameTimestamp = Stopwatch.GetTimestamp() + FramePeriodTicks;
+        ArmFrameTimer();
+    }
+
+    private void ArmFrameTimer()
+    {
+        var remainingTicks = _nextFrameTimestamp - Stopwatch.GetTimestamp();
+        var dueTime = -(long)Math.Max(1, Math.Ceiling(remainingTicks * 10_000_000d / Stopwatch.Frequency));
+        if (!Win32Api.SetWaitableTimer(_frameTimer, in dueTime, 0, IntPtr.Zero, IntPtr.Zero, false))
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+    }
+
+    private void StopFrameTimer()
+    {
+        if (_frameTimer != IntPtr.Zero) Win32Api.CancelWaitableTimer(_frameTimer);
     }
 
     private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -690,9 +753,6 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
             case Win32Api.WM_IME_STARTCOMPOSITION:
                 host.ApplyTextInputRect(hWnd);
                 break;
-            case Win32Api.WM_TIMER:
-                host.Tick?.Invoke();
-                return IntPtr.Zero;
             case Win32Api.WM_SETCURSOR:
                 if ((lParam.ToInt64() & 0xffff) == Win32Api.HTCLIENT)
                 {
@@ -733,13 +793,13 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
                 if (closing.Cancel)
                     return IntPtr.Zero;
 
-                Win32Api.KillTimer(hWnd, new UIntPtr(1));
+                host.StopFrameTimer();
                 host._running = false;
                 Win32Api.DestroyWindow(hWnd);
                 return IntPtr.Zero;
             }
             case Win32Api.WM_DESTROY:
-                Win32Api.KillTimer(hWnd, new UIntPtr(1));
+                host.StopFrameTimer();
                 host.ReleasePresentResources();
                 host._hwnd = IntPtr.Zero;
                 host._running = false;
@@ -959,6 +1019,8 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
     {
         if (_state == state) return;
         _state = state;
+        if (state == AppWindowState.Minimized) StopFrameTimer();
+        else RestartFrameTimer();
         StateChanged?.Invoke(state);
     }
 
@@ -991,6 +1053,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
 
     public void Dispose()
     {
+        StopFrameTimer();
         ReleasePresentResources();
         _lastFrame = null;
         _renderContext = null;

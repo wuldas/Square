@@ -137,6 +137,7 @@ public sealed class TextLayout
 
 - Caret 位置计算
 - Caret 绘制
+- Caret 闪烁仅在显示/隐藏状态切换时重绘光标矩形，不再逐帧更新透明度；获得焦点或输入后立即恢复显示
 - 单行和多行编辑器选择
 - DOM `Range` 文本选择
 - CSS `selection-background` / `selection-background-color` / `selection-color`

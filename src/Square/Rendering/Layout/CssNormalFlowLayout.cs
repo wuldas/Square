@@ -55,6 +55,7 @@ public sealed partial class LayoutEngine
             if (ReferenceEquals(entry.Element, element) || entry.Element.IsScrollContainer())
                 UpdateCssScrollContentSize(entry.Element, entry.Bounds);
         }
+
     }
 
     private CssLayoutPlan BuildCssPlan(Element root, Rect requestedBounds)
@@ -192,7 +193,9 @@ public sealed partial class LayoutEngine
         var bottom = viewport.Height;
         foreach (var child in element.Children)
         {
-            if (!child.IsVisible ||
+            // display:none 子元素不参与排列，其 Geometry 是上一帧的陈旧值，
+            // 不得计入可滚动溢出（与 !IsVisible 跳过同理）。
+            if (!child.IsVisible || CssKeyword(child, "display") == "none" ||
                 ElementLayoutStore.TryGet(child, out var data) && data.IsFixedRoot) continue;
             right = Math.Max(right, child.Geometry.Right - viewport.X);
             bottom = Math.Max(bottom, child.Geometry.Bottom - viewport.Y);
@@ -217,7 +220,24 @@ public sealed partial class LayoutEngine
 
         if (display is "flex" or "grid")
         {
-            var atomicHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
+            // HTML intrinsic Measure stacks children, but a flex row's auto height comes from
+            // its laid-out cross axis. Measure it with Yoga before positioning later blocks.
+            float atomicHeight;
+            if (display == "flex")
+            {
+                if (_retainFlexLayout)
+                {
+                    // 同一外部 flex 根的自然测高与随后的绝对排列共用一个保留缓存会话；
+                    // 约束与修订戳未变时直接复用上次自然高度，不再建树。
+                    atomicHeight = MeasureRetainedFlexNaturalHeight(element, proposed.Width);
+                }
+                else
+                {
+                    using var measured = BuildYogaTree(element, proposed.Width, float.NaN);
+                    atomicHeight = Facebook.Yoga.YGNodeLayoutAPI.YGNodeLayoutGetHeight(measured.Root);
+                }
+            }
+            else atomicHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
             var bounds = new Rect(proposed.X, proposed.Y, proposed.Width, atomicHeight);
             plan.ExternalLayouts.Add(new CssLayoutEntry(element, bounds));
             return atomicHeight;
@@ -255,7 +275,10 @@ public sealed partial class LayoutEngine
             naturalHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);
         }
 
-        var height = ResolveOuterHeight(box, naturalHeight);
+        // Body 的 auto 高度固定于视口，避免布局中途把 scrollTop 夹回零。
+        var height = element is UIBodyElement && float.IsNaN(box.Height)
+            ? Math.Max(0, containingBlock.Rect.Bottom - proposed.Y)
+            : ResolveOuterHeight(box, naturalHeight);
         borderBounds = new Rect(proposed.X, proposed.Y, proposed.Width, height);
         plan.Set(element, borderBounds);
         return height;

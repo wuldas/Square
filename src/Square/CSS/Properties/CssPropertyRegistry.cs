@@ -138,6 +138,7 @@ internal static class CssPropertyRegistry
         Add("text-indent", "0", true, value => IsLength(value, allowPercent: true));
         Add("text-transform", "none", true, value => IsKeyword(value, "none", "capitalize", "uppercase", "lowercase"));
         Add("top", "auto", false, IsInset);
+        Add("transform", "none", false, CssTransformParser.IsValid);
         Add("unicode-bidi", "normal", false, value => IsKeyword(value, "normal", "embed", "bidi-override"));
         Add("vertical-align", "baseline", false, IsVerticalAlign);
         Add("visibility", "visible", true, value => IsKeyword(value, "visible", "hidden", "collapse"));

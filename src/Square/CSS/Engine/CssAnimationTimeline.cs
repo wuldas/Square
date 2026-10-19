@@ -1,6 +1,7 @@
 using System.Globalization;
 using Square.CSS.Ast;
 using Square.UI;
+using Square.UI.ElementApi;
 
 namespace Square.CSS.Engine;
 
@@ -109,7 +110,9 @@ public sealed class CssAnimationTimeline
         foreach (var track in _tracks)
         {
             var value = track.ValueAt(progress);
-            _visual.Style.SetAnimated(track.Property, FormatNumber(value));
+            // 纯数字/px/单函数轨道写入数值 overlay；比较/输出沿用 FormatNumber("0.###") 量化语义。
+            _visual.Style.SetAnimatedNumeric(track.Property,
+                new AnimatedNumericValue(value, track.Format.Prefix, track.Format.Suffix));
         }
     }
 
@@ -124,12 +127,18 @@ public sealed class CssAnimationTimeline
     private static List<AnimationTrack> BuildTracks(KeyFramesRule keyFrames)
     {
         var values = new Dictionary<string, List<AnimationStop>>(StringComparer.OrdinalIgnoreCase);
+        var formats = new Dictionary<string, AnimationValueFormat>(StringComparer.OrdinalIgnoreCase);
         foreach (var stop in keyFrames.Stops)
         {
             if (!TryParseProgress(stop.Selector, out var progress)) continue;
             foreach (var declaration in stop.Declarations)
             {
-                if (!TryParseFloat(declaration.Value, out var value)) continue;
+                if (!TryParseAnimationValue(declaration.Value, out var value, out var format)) continue;
+                if (formats.TryGetValue(declaration.Property, out var known))
+                {
+                    if (known != format) continue;
+                }
+                else formats.Add(declaration.Property, format);
                 if (!values.TryGetValue(declaration.Property, out var stops))
                     values.Add(declaration.Property, stops = []);
                 stops.Add(new AnimationStop(progress, value));
@@ -137,7 +146,7 @@ public sealed class CssAnimationTimeline
         }
         return values
             .Where(pair => pair.Value.Count >= 2)
-            .Select(pair => new AnimationTrack(pair.Key, pair.Value.OrderBy(stop => stop.Progress).ToArray()))
+            .Select(pair => new AnimationTrack(pair.Key, formats[pair.Key], pair.Value.OrderBy(stop => stop.Progress).ToArray()))
             .ToList();
     }
 
@@ -170,10 +179,28 @@ public sealed class CssAnimationTimeline
         return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
     }
 
-    private static string FormatNumber(float value) =>
-        value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static bool TryParseAnimationValue(string value, out float number, out AnimationValueFormat format)
+    {
+        number = 0;
+        format = AnimationValueFormat.Number;
+        value = value.Trim();
+        if (TryParseFloat(value, out number)) return true;
+        var open = value.IndexOf('(');
+        if (open <= 0 || value[^1] != ')') return false;
+        var name = value[..open].Trim();
+        if (name.Length == 0 || !name.All(char.IsLetter)) return false;
+        var argument = value[(open + 1)..^1].Trim();
+        var unitStart = 0;
+        while (unitStart < argument.Length &&
+            (char.IsDigit(argument[unitStart]) || argument[unitStart] is '+' or '-' or '.' or 'e' or 'E')) unitStart++;
+        var unit = argument[unitStart..].Trim().ToLowerInvariant();
+        if (!unit.All(char.IsLetter)) return false;
+        if (!float.TryParse(argument[..unitStart], NumberStyles.Float, CultureInfo.InvariantCulture, out number)) return false;
+        format = new AnimationValueFormat(name.ToLowerInvariant() + "(", unit + ")");
+        return true;
+    }
 
-    private sealed record AnimationTrack(string Property, AnimationStop[] Stops)
+    private sealed record AnimationTrack(string Property, AnimationValueFormat Format, AnimationStop[] Stops)
     {
         public float ValueAt(float progress)
         {
@@ -191,6 +218,11 @@ public sealed class CssAnimationTimeline
     }
 
     private readonly record struct AnimationStop(float Progress, float Value);
+
+    private readonly record struct AnimationValueFormat(string Prefix, string Suffix)
+    {
+        public static readonly AnimationValueFormat Number = new("", "");
+    }
     private enum AnimationDirection { Normal, Reverse, Alternate, AlternateReverse }
 
     private static AnimationDirection ParseDirection(string value) => value.Trim().ToLowerInvariant() switch

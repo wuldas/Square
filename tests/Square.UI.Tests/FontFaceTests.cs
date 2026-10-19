@@ -172,6 +172,44 @@ public class FontFaceTests
     }
 
     [Fact]
+    public async Task LateCustomFaceRegistrationReplacesCachedSystemMetrics()
+    {
+        const string family = "SquareLateCustomFace";
+        var font = new Font(family, 32);
+        var provider = new Square.Text.Glyph.SystemTextMetricsProvider(new SystemGlyphRasterizer());
+
+        // Family is unknown before registration: the provider resolves and caches
+        // native (Windows) or system-fallback metrics for it.
+        Assert.True(provider.TryGetFontMetrics(font, out _));
+
+        // A late FontFace registration with the same family must take precedence
+        // over the cached system/fallback metrics (icon face: 896-unit ascent,
+        // -128-unit descent at a 1024-unit em → -28/4 at 32px).
+        var bytes = ApplicationResource.ReadAllBytes("iconfont/iconfont.ttf", typeof(UIDocument).Assembly);
+        await new FontFace(family, bytes).LoadAsync();
+        Assert.True(provider.TryGetFontMetrics(font, out var loaded));
+        Assert.Equal(-28f, loaded.Ascent);
+        Assert.Equal(4f, loaded.Descent);
+
+        // Replacing the same family (2048-unit head) must invalidate the cached
+        // face metrics too, not serve either earlier cached value.
+        var replacement = (byte[])bytes.Clone();
+        var tableCount = BinaryPrimitives.ReadUInt16BigEndian(replacement.AsSpan(4));
+        for (var i = 0; i < tableCount; i++)
+        {
+            var record = 12 + i * 16;
+            if (BinaryPrimitives.ReadUInt32BigEndian(replacement.AsSpan(record)) != 0x68656164) continue; // head
+            var offset = checked((int)BinaryPrimitives.ReadUInt32BigEndian(replacement.AsSpan(record + 8)));
+            BinaryPrimitives.WriteUInt16BigEndian(replacement.AsSpan(offset + 18), 2048);
+            break;
+        }
+        await new FontFace(family, replacement).LoadAsync();
+        Assert.True(provider.TryGetFontMetrics(font, out var replaced));
+        Assert.Equal(-14f, replaced.Ascent);
+        Assert.Equal(2f, replaced.Descent);
+    }
+
+    [Fact]
     public void DocumentFontsIsSharedDefaultSet()
     {
         var doc = new UIDocument();
