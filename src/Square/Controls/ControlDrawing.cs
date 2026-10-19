@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Square.CSS.Properties;
 using System.Text;
@@ -366,8 +367,8 @@ internal static class ControlDrawing
     }
 
     internal static bool TryGetStyledRoundedGeometry(
-        Element element, Rect geometry, out RoundedRectGeometry roundedGeometry) =>
-        CssBorderRadiusParser.TryResolve(element.Style.GetAll(), element.Style.Get, geometry, out roundedGeometry) &&
+        Element element, Rect geometry, [NotNullWhen(true)] out RoundedRectGeometry? roundedGeometry) =>
+        CssBorderRadiusParser.TryResolve(element.Style, geometry, out roundedGeometry) &&
         (roundedGeometry.TopLeft.X > 0 || roundedGeometry.TopLeft.Y > 0 ||
          roundedGeometry.TopRight.X > 0 || roundedGeometry.TopRight.Y > 0 ||
          roundedGeometry.BottomRight.X > 0 || roundedGeometry.BottomRight.Y > 0 ||

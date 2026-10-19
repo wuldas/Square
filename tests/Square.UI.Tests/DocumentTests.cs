@@ -1517,6 +1517,85 @@ public class DocumentTests
     }
 
     [Fact]
+    public void ChildrenIterationFiltersTextAndKeepsTheLiveElementOrder()
+    {
+        var parent = new View();
+        var first = new View();
+        var second = new View();
+        parent.ChildNodes.Add(new Square.UI.Text("before"));
+        parent.Children.Add(first);
+        parent.ChildNodes.Add(new Square.UI.Text("between"));
+        parent.Children.Add(second);
+
+        var direct = new System.Collections.Generic.List<Element>();
+        foreach (var element in parent.Children) direct.Add(element);
+        Assert.Equal(new Element[] { first, second }, direct);
+        Assert.Equal(direct, ((System.Collections.Generic.IEnumerable<Element>)parent.Children).ToArray());
+        Assert.Equal(2, parent.Children.Count);
+        Assert.Same(second, parent.Children[1]);
+        Assert.Equal(1, parent.Children.IndexOf(second));
+
+        parent.Children.Remove(first);
+        Assert.Same(second, Assert.Single(parent.Children));
+        Assert.Equal(0, parent.Children.IndexOf(second));
+        Assert.Equal(3, parent.ChildNodes.Count);
+    }
+
+    [Fact]
+    public void ChildrenEnumeratorDefersVersionCaptureButRejectsMutationDuringIteration()
+    {
+        var parent = new View();
+        var first = new View();
+        var second = new View();
+        var enumerator = parent.Children.GetEnumerator();
+        parent.Children.Add(first);
+        parent.ChildNodes.Add(new Square.UI.Text("text"));
+        parent.Children.Add(second);
+
+        Assert.True(enumerator.MoveNext());
+        Assert.Same(first, enumerator.Current);
+
+        parent.Children.Add(new View());
+
+        Assert.Throws<InvalidOperationException>(() => enumerator.MoveNext());
+        enumerator.Dispose();
+    }
+
+    [Fact]
+    public void ChildrenClearDetachesInOrderAndPreservesTextAndCallbackAdditions()
+    {
+        var parent = new View();
+        var text = new Square.UI.Text("retained");
+        var addedDuringDetach = new View();
+        var detached = new System.Collections.Generic.List<string>();
+        var first = new DetachCallbackView(() =>
+        {
+            detached.Add("first");
+            parent.Children.Add(addedDuringDetach);
+        });
+        var second = new DetachCallbackView(() => detached.Add("second"));
+        parent.ChildNodes.Add(text);
+        parent.Children.Add(first);
+        parent.Children.Add(second);
+        var lifecycle = (Square.Runtime.IComponentLifecycle)parent;
+        lifecycle.OnAttached();
+        try
+        {
+            parent.Children.Clear();
+
+            Assert.Equal(new[] { "first", "second" }, detached);
+            Assert.Equal(new Node[] { text, addedDuringDetach }, parent.ChildNodes.ToArray());
+            Assert.Same(addedDuringDetach, Assert.Single(parent.Children));
+            Assert.Null(first.ParentNode);
+            Assert.Null(second.ParentNode);
+        }
+        finally
+        {
+            lifecycle.OnDetached();
+        }
+    }
+
+    [Fact]
     public void RangeExtractsTextAcrossDomTextNodes()
     {
         var doc = new UIDocument();
@@ -1642,6 +1721,15 @@ public class DocumentTests
         range.SetStart(linkText, 0);
         range.SetEnd(buttonText, 6);
         Assert.Equal("documentationsubmit", range.ToString());
+    }
+
+    private sealed class DetachCallbackView(Action onDetached) : View
+    {
+        protected override void OnDetachedCore()
+        {
+            base.OnDetachedCore();
+            onDetached();
+        }
     }
 
     private sealed class SplitterTestHost : IPlatformHost, IPlatformNativeWindow

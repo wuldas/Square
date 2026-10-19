@@ -540,7 +540,7 @@ internal sealed class TableLayoutEngine
         var result = new CollapsedBorderModel();
         foreach (var cell in model.Cells)
         {
-            CssBoxPainter.TryGetBorderEdges(cell.Element, cell.Element.Style.GetAll(), out var edges);
+            CssBoxPainter.TryGetBorderEdges(cell.Element, out var edges);
             if (edges.Length == 0)
             {
                 edges =

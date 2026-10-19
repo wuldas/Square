@@ -64,6 +64,55 @@ public class CssAnimationOverlayTests
     }
 
     [Fact]
+    public void InlineAnimationNameChangeStopsAndRestartsTheScopedAnimation()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes grow { from { width: 8px; } to { width: 30px; } }
+            Text { width: 20px; animation: grow 1s linear infinite; }
+            """).Tokenize()).Parse());
+        var text = new Square.Controls.Text();
+        using var scope = CssStyleReconciler.ApplyOwnedScope(engine, text);
+        CssStyleReconciler.Flush(text);
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.25f));
+        Assert.Equal("13.5", text.Style.Get("width"));
+
+        text.Style.Set("animation-name", "none");
+        CssStyleReconciler.Flush(text);
+
+        Assert.False(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("20px", text.Style.Get("width"));
+
+        text.Style.RemoveProperty("animation-name");
+        CssStyleReconciler.Flush(text);
+
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("19", text.Style.Get("width"));
+    }
+
+    [Fact]
+    public void InlineAnimationDurationChangeReplacesTheRunningTiming()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes grow { from { width: 8px; } to { width: 30px; } }
+            Text { width: 20px; animation: grow 1s linear infinite; }
+            """).Tokenize()).Parse());
+        var text = new Square.Controls.Text();
+        using var scope = CssStyleReconciler.ApplyOwnedScope(engine, text);
+        CssStyleReconciler.Flush(text);
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.25f));
+
+        text.Style.Set("animation-duration", "2s");
+        CssStyleReconciler.Flush(text);
+
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("13.5", text.Style.Get("width"));
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("19", text.Style.Get("width"));
+    }
+
+    [Fact]
     public void ManagerCancelsAlreadyCompletedTimelineBeforeRetiringIt()
     {
         var engine = new CssEngine();

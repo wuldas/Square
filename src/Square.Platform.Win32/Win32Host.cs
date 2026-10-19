@@ -311,6 +311,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         {
             CanvasSize = _clientSize,
             DpiScale = _dpiScale,
+            // The frame timer limits submissions; native presentation still needs VSync to avoid tearing.
             VSync = true,
             SoftwareSurface = _softwareSurface,
             PresentFrame = _softwareSurface == null ? PresentFrame : null,

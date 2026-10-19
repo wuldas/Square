@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Square.Graphics;
 using Square.CSS.Values;
+using Square.UI.ElementApi;
 
 namespace Square.CSS.Properties;
 
@@ -55,26 +57,35 @@ internal static class CssBorderRadiusParser
         return true;
     }
 
+    private static readonly string[] CornerRadiusProperties =
+    [
+        "border-top-left-radius", "border-top-right-radius",
+        "border-bottom-right-radius", "border-bottom-left-radius"
+    ];
+
+    /// <summary>
+    /// 解析元素最终应用样式中的 border-radius 及四角覆盖。border-radius 为非继承属性，
+    /// 解析值非空即代表存在声明（含 UA、initial/inherit/unset、var 回退）；未声明时直接返回
+    /// false 且不构造几何。
+    /// </summary>
     public static bool TryResolve(
-        IReadOnlyDictionary<string, string> declarations,
-        Func<string, string?> getValue,
+        StyleAccessor style,
         Rect box,
-        out RoundedRectGeometry geometry)
+        [NotNullWhen(true)] out RoundedRectGeometry? geometry)
     {
-        if (!TryResolve(getValue("border-radius"), box, out geometry)) return false;
-
-        var names = new[] { "top-left", "top-right", "bottom-right", "bottom-left" };
-        var radii = new[] { geometry.TopLeft, geometry.TopRight, geometry.BottomRight, geometry.BottomLeft };
-        for (var i = 0; i < names.Length; i++)
+        var radius = style.Get("border-radius");
+        if (radius != null && TryResolve(radius, box, out var resolved))
         {
-            var property = $"border-{names[i]}-radius";
-            if (declarations.ContainsKey(property) && TryResolveCorner(getValue(property), box, out var radius))
-                radii[i] = radius;
+            var radii = new[] { resolved.TopLeft, resolved.TopRight, resolved.BottomRight, resolved.BottomLeft };
+            for (var i = 0; i < CornerRadiusProperties.Length; i++)
+                if (TryResolveCorner(style.Get(CornerRadiusProperties[i]), box, out var corner))
+                    radii[i] = corner;
+            Normalize(radii, box.Width, box.Height);
+            geometry = new RoundedRectGeometry(box, radii[0], radii[1], radii[2], radii[3]);
+            return true;
         }
-
-        Normalize(radii, box.Width, box.Height);
-        geometry = new RoundedRectGeometry(box, radii[0], radii[1], radii[2], radii[3]);
-        return true;
+        geometry = null;
+        return false;
     }
 
     private static bool TryResolveCorner(string? value, Rect box, out CornerRadius radius)

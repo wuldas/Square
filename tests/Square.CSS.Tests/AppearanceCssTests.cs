@@ -4,6 +4,7 @@ using Square.CSS.Tokenizer;
 using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
+using Square.Rendering.Paint;
 using Square.UI;
 using Xunit;
 
@@ -1079,5 +1080,69 @@ public sealed class AppearanceCssTests
 
         Assert.False(foundFluentHover, "Select popup hover must not paint Fluent #e6f2fc");
         Assert.True(foundSelectedGray, "selected option should use Chrome list-box #cecece");
+    }
+
+    [Fact]
+    public void BorderSideColorResolvedFromVariablePaintsResolvedEdge()
+    {
+        var view = new View { Geometry = new Rect(4, 4, 40, 20) };
+        view.Style.Set("--edge", "#FF0000");
+        view.Style.Set("border", "4px solid #000000");
+        view.Style.Set("border-top-color", "var(--edge)");
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(48, 28)
+        });
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(view);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var topEdge = bitmap.GetPixel(20, 6);
+        var leftEdge = bitmap.GetPixel(6, 14);
+        Assert.Equal(255, topEdge[2]);
+        Assert.Equal(0, topEdge[1]);
+        Assert.Equal(0, topEdge[0]);
+        Assert.Equal(0, leftEdge[2]);
+        Assert.Equal(0, leftEdge[1]);
+        Assert.Equal(0, leftEdge[0]);
+    }
+
+    [Fact]
+    public void StyleChangesDuringPaintAffectBorderAndOutlineInTheSameFrame()
+    {
+        var view = new PaintStyleChangingView { Geometry = new Rect(4, 4, 40, 20) };
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(48, 28)
+        });
+        context.Clear(Color.White);
+
+        CssBoxPainter.PaintBeforeContent(context, view);
+        view.Paint(context);
+        CssBoxPainter.PaintAfterContent(context, view);
+        CssBoxPainter.PaintAfterChildren(context, view);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var border = bitmap.GetPixel(6, 14);
+        Assert.Equal(0, border[2]);
+        Assert.Equal(0, border[1]);
+        Assert.Equal(255, border[0]);
+        var outline = bitmap.GetPixel(3, 14);
+        Assert.Equal(0, outline[2]);
+        Assert.Equal(255, outline[1]);
+        Assert.Equal(0, outline[0]);
+    }
+
+    private sealed class PaintStyleChangingView : View
+    {
+        public override void Paint(IRenderContext context)
+        {
+            Style.Set("border", "4px solid #0000FF");
+            Style.Set("outline", "2px solid #00FF00");
+            base.Paint(context);
+        }
     }
 }

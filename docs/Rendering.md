@@ -387,9 +387,9 @@ Win32 窗口先以隐藏状态创建并完成 DPI 调整。`DesktopApplication` 
 
 Win32 自有消息泵通过高精度 one-shot waitable timer 与 `MsgWaitForMultipleObjectsEx` 同时等待帧截止时间和窗口消息，以连续 60Hz 截止时间推进。不忙等，不追赶补交错过的帧；最小化停钟，恢复重置截止时间，消息泵退出后释放 timer 句柄。旧 Windows 不支持高精度标志时使用普通 waitable timer，不能保证同样的时间精度。
 
-现代 Windows 的 HWND 由 DWM 合成，Win32 宿主负责提交节奏，因此向后端传入 `VSync=false`，避免在 60Hz 帧时钟之外再次同步等待显示刷新。`RenderContextCreateInfo.VSync` 的公开默认值仍为 `true`，独立创建后端上下文时仍由调用者决定。窗口渲染默认模式仍是 `FullFrame`；外部宿主仍通过 `ApplicationSession.Tick()` 驱动会话。
+Win32 宿主保留帧时钟并向后端传入 `VSync=true`。帧时钟只限制提交节奏，不能替代垂直同步；Direct2D 保留 `RETAIN_CONTENTS`，不启用 `IMMEDIATELY`，避免以立即提交换取较低的 CPU 测量值。`RenderContextCreateInfo.VSync` 的公开默认值仍为 `true`，独立创建后端上下文时由调用者决定。窗口渲染默认模式仍是 `FullFrame`；外部宿主仍通过 `ApplicationSession.Tick()` 驱动会话。
 
-帧提交率不是屏幕扫描率。开启 Direct2D 的立即提交只取消应用侧等待，不能把提交次数当作屏幕实际显示帧数。API 契约见 [waitable timer](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw)、[消息队列等待](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex) 和 [Direct2D Present options](https://learn.microsoft.com/en-us/windows/win32/api/d2d1/ne-d2d1-d2d1_present_options)。
+帧提交率不是屏幕扫描率；性能对比必须保留相同的同步配置。API 契约见 [waitable timer](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw)、[消息队列等待](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex) 和 [Direct2D Present options](https://learn.microsoft.com/en-us/windows/win32/api/d2d1/ne-d2d1-d2d1_present_options)。
 
 ### 9.5 CPU 热路径缓存与像素契约
 
@@ -397,3 +397,5 @@ Win32 自有消息泵通过高精度 one-shot waitable timer 与 `MsgWaitForMult
 - 元素的 overflow / scrollbar 样式快照使用独立样式版本；Body 同时检查文档根的版本与身份。Scrollbar 几何缓存还检查元素矩形、内容尺寸、滚动偏移、设备配置、可见性和伪元素样式版本，不能用缓存跳过这些失效。
 - 保留式 flex 布局复用 gutter 收敛快照，并在候选比较时重新解析当前 gutter；快照在比较和会话分离时清空元素引用。`display:none` 子元素不贡献滚动内容范围，重新显示后重新参与布局。
 - Software 变换矩形保留原 2×2 采样、半开边界和 alpha 量化。内部全覆盖区间仅是性能提示：两端必须用原浮点采样表达式确认全覆盖，否则退回逐像素路径；gradient 仍在同一像素中心取色。
+- CSS 盒绘制按需读取最终应用的背景、边框、圆角、阴影与 outline，不再为每个绘制阶段构造完整样式字典。各阶段保持独立读取，使自定义 `Element.Paint` 中新增的边框或 outline 在同一帧生效；`Style.GetAll()` 仍是显式分配的样式快照 API。
+- 直接遍历 `Children` / `ChildNodes` 使用结构体枚举器，避免 LINQ 过滤迭代器和底层列表枚举器装箱。`Children` 仍过滤非元素节点；接口形式的枚举保留标准 `IEnumerable` 契约。

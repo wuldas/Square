@@ -919,10 +919,22 @@ public sealed class ChildrenCollection : IList<Element>
     public void Clear();
     public int IndexOf(Element item);
     public bool Contains(Element item);
+    public Enumerator GetEnumerator();
+
+    public struct Enumerator : IEnumerator<Element>
+    {
+        public Element Current { get; }
+        public bool MoveNext();
+        public void Dispose();
+    }
 }
 ```
 
 > 添加子节点时自动触发 `OnAttached`/`OnLoaded`；移除时触发 `OnUnloaded`/`OnDetached`。
+
+`Children` 只枚举元素，`ChildNodes` 还包含文本等节点。直接 `foreach` 使用结构体枚举器；转为 `IEnumerable<Element>` / `IEnumerable<Node>` 后仍支持接口枚举。`Children` 在首次 `MoveNext()` 时捕获底层列表版本，遍历开始后的结构修改会使枚举失败；`ChildNodes` 在获取枚举器时捕获版本。`Children.Count` 与索引器不分配临时迭代器，但仍按元素过滤进行线性扫描。`Children.Clear()` 按原有元素顺序卸载快照中的节点，保留文本和卸载回调中新添加的节点。
+
+`ChildrenCollection.GetEnumerator()` 返回 `ChildrenCollection.Enumerator`，`ChildNodeCollection.GetEnumerator()` 返回 `List<Node>.Enumerator`；这是返回类型的二进制契约变更，使用旧程序集编译的消费者需要重新编译。
 
 ### SlotCollection
 

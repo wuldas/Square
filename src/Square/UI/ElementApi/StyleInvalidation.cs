@@ -22,6 +22,9 @@ internal static class StyleInvalidation
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
                 "selection-background" or "selection-color" or "scrollbar-color" => ElementInvalidation.Paint,
 
+            "animation-name" or "animation-duration" or "animation-delay" or "animation-iteration-count" or
+                "animation-direction" or "animation-timing-function" => ElementInvalidation.Style,
+
             "transform" => ElementInvalidation.Composite | ElementInvalidation.HitTest,
             "opacity" => ElementInvalidation.Composite,
             "display" => ElementInvalidation.Layout | ElementInvalidation.DisplayTree,
