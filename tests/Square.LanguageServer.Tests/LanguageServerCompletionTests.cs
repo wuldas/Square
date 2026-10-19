@@ -16,6 +16,7 @@ public sealed class LanguageServerCompletionTests
         await session.SendAsync("""{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx"},"position":{"line":0,"character":13}}}""");
         var tags = await session.ReadResponseAsync();
         Assert.Contains("\"label\":\"Button\"", tags, StringComparison.Ordinal);
+        Assert.Contains("\"label\":\"button\"", tags, StringComparison.Ordinal);
 
         await session.SendAsync("""{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","version":2},"contentChanges":[{"text":"<template><Button on"}]}}""");
         await session.SendAsync("""{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx"},"position":{"line":0,"character":20}}}""");

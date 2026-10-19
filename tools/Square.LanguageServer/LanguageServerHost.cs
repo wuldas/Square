@@ -747,7 +747,9 @@ public sealed class LanguageServerHost
                 TemplateCatalog.BuiltIn, context.TagName, resolutionContext);
 
         var items = completionItems
-            .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(item => item.Label, context.Kind == TemplateCompletionKind.Tag
+                ? StringComparer.Ordinal
+                : StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .Select(item =>
             {

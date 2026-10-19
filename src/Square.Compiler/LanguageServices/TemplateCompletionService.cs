@@ -330,7 +330,7 @@ public static class TemplateCompletionService
                             componentItems.Add(new TemplateCompletionItem(qualifiedName, component.IsBuiltIn ? 7 : 14, component.TypeName, qualifiedName));
                 }
                 var components = componentItems
-                    .GroupBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+                    .GroupBy(item => item.Label, StringComparer.Ordinal)
                     .Select(group => group.First());
                 var structural = new[] { "Show", "For", "Index", "Switch", "Match", "Slot", "Outlet", "Fragment", "template" }
                     .Where(name => name.StartsWith(context.Prefix, StringComparison.OrdinalIgnoreCase))

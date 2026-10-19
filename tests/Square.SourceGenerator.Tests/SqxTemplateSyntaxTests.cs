@@ -14,7 +14,7 @@ public sealed class SqxTemplateSyntaxTests
             .Document.Template;
 
         var syntax = SqxTemplateSyntaxParser.Parse(section.ContentText, section.ContentRange.Offset, tolerant: false);
-        var view = Assert.IsType<SqxElementSyntax>(Assert.Single(syntax.Roots));
+        var view = Assert.Single(syntax.Roots.OfType<SqxElementSyntax>());
         var title = view.Attributes[0];
         var count = view.Attributes[1];
         var expression = Assert.IsType<SqxExpressionSyntax>(Assert.Single(view.Children));

@@ -48,15 +48,28 @@ public sealed class TemplateCompletionServiceTests
     }
 
     [Fact]
-    public void CssTypeSelectorCompletesBuiltInControls()
+    public void CssTypeSelectorDeduplicatesCaseAliasesAndFiltersByPrefix()
     {
         const string source = "<template><View /></template><style>But</style>";
         var offset = source.IndexOf("</style>", StringComparison.Ordinal);
 
         var items = TemplateCompletionService.GetItems(source, offset, "Editing.sqx");
 
-        Assert.Contains(items, item => item.Label == "Button");
-        Assert.DoesNotContain(items, item => item.Label == "View");
+        var selector = Assert.Single(items);
+        Assert.Equal("button", selector.InsertText, ignoreCase: true);
+    }
+
+    [Theory]
+    [InlineData("Editing.sqx")]
+    [InlineData("Editing.sqv")]
+    public void TagCompletionPreservesDistinctHtmlAndSquareControls(string sourcePath)
+    {
+        const string source = "<template><Bu";
+
+        var items = TemplateCompletionService.GetItems(source, source.Length, sourcePath);
+
+        Assert.Contains(items, item => item.Label == "button" && item.Detail == "Square.UI.Html.HtmlElement");
+        Assert.Contains(items, item => item.Label == "Button" && item.Detail == "Square.Controls.Button");
     }
 
     [Fact]
