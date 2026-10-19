@@ -399,3 +399,6 @@ Win32 宿主保留帧时钟并向后端传入 `VSync=true`。帧时钟只限制�
 - Software 变换矩形保留原 2×2 采样、半开边界和 alpha 量化。内部全覆盖区间仅是性能提示：两端必须用原浮点采样表达式确认全覆盖，否则退回逐像素路径；gradient 仍在同一像素中心取色。
 - CSS 盒绘制按需读取最终应用的背景、边框、圆角、阴影与 outline，不再为每个绘制阶段构造完整样式字典。各阶段保持独立读取，使自定义 `Element.Paint` 中新增的边框或 outline 在同一帧生效；`Style.GetAll()` 仍是显式分配的样式快照 API。
 - 直接遍历 `Children` / `ChildNodes` 使用结构体枚举器，避免 LINQ 过滤迭代器和底层列表枚举器装箱。`Children` 仍过滤非元素节点；接口形式的枚举保留标准 `IEnumerable` 契约。
+- Direct2D 缓存 render target 与共享 solid brush 的强类型 COM 引用，避免热路径反复读取 `IComObject<T>.Object` 而执行运行时接口转换。缓存引用仅借用原 wrapper 的 RCW，不新增 AddRef/Release；设备资源释放时先清空借用引用，再由原 owner 释放 brush 和 target，重建时重新绑定。
+- `display:none` 的本地判定缓存在 `StyleAccessor`，通过现有的 display 声明失效与递归 computed-style 清理路径清空。`IsCssDisplayed()` 仍逐级检查当前祖先，不能把某次整条祖先链的结果永久缓存到后代，因此父级隐藏、移除声明、变量变化与重新挂载仍能生效。
+- 动画数值仍按 `0.###` / InvariantCulture 格式化并解析，保留十进制中点、负零及极端浮点值的原始语义；临时格式化文本使用栈上字符缓冲，不再为每次量化创建字符串。不能用简单的 `MathF.Round` 替代该约定。

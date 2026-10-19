@@ -234,7 +234,7 @@ public sealed partial class LayoutEngine
                 else
                 {
                     using var measured = BuildYogaTree(element, proposed.Width, float.NaN);
-                    atomicHeight = Facebook.Yoga.YGNodeLayoutAPI.YGNodeLayoutGetHeight(measured.Root);
+                    atomicHeight = Square.Rendering.Yoga.YGNodeLayoutAPI.YGNodeLayoutGetHeight(measured.Root);
                 }
             }
             else atomicHeight = ResolveAtomicOuterHeight(element, box, proposed.Width, float.MaxValue);

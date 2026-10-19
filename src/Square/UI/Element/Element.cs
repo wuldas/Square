@@ -629,7 +629,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     internal bool IsCssDisplayed()
     {
         for (Element? current = this; current != null; current = current.Parent)
-            if (string.Equals(current.Style.Get("display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase))
+            if (current.Style.IsDisplayNone)
                 return false;
         return true;
     }

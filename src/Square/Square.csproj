@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="StbTrueTypeSharp" />
-    <PackageReference Include="Yoga.Net" />
     <PackageReference Include="LibTessDotNet" />
 
   </ItemGroup>
@@ -30,6 +29,10 @@
     <InternalsVisibleTo Include="Square.Backends.Vulkan" />
     <InternalsVisibleTo Include="Square.Backends.Vulkan.Tests" />
     <InternalsVisibleTo Include="Square.Backends.Godot" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="ThirdParty\Yoga\THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="licenses\Square.Yoga.txt" />
   </ItemGroup>
 
   <ItemGroup>

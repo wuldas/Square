@@ -63,6 +63,26 @@ public class CssAnimationOverlayTests
         Assert.Equal("-0", text.Style.Get("width"));
     }
 
+    [Theory]
+    [InlineData(float.MaxValue)]
+    [InlineData(float.MinValue)]
+    [InlineData(float.Epsilon)]
+    [InlineData(-float.Epsilon)]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void NumericAnimationPreservesExtremeAndSpecialNumberRoundTrips(float value)
+    {
+        var text = new Square.Controls.Text();
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var expected = float.Parse(value.ToString("0.###", culture), culture);
+
+        text.Style.SetAnimatedNumeric("width", new(value, "", ""));
+
+        Assert.True(text.Style.TryGetEffectiveAnimatedNumeric("width", out var animated));
+        Assert.Equal(BitConverter.SingleToInt32Bits(expected), BitConverter.SingleToInt32Bits(animated.Value));
+    }
+
     [Fact]
     public void InlineAnimationNameChangeStopsAndRestartsTheScopedAnimation()
     {

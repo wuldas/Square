@@ -1,15 +1,15 @@
 using System.Globalization;
 using System.Buffers;
-using Facebook.Yoga;
+using Square.Rendering.Yoga;
 using Square.Graphics;
 using Square.UI;
 using Square.UI.Html;
 using Square.Controls;
-using static Facebook.Yoga.YGConfigAPI;
-using static Facebook.Yoga.YGNodeAPI;
-using static Facebook.Yoga.YGNodeLayoutAPI;
-using static Facebook.Yoga.YGNodeStyleAPI;
-using YogaNode = Facebook.Yoga.Node;
+using static Square.Rendering.Yoga.YGConfigAPI;
+using static Square.Rendering.Yoga.YGNodeAPI;
+using static Square.Rendering.Yoga.YGNodeLayoutAPI;
+using static Square.Rendering.Yoga.YGNodeStyleAPI;
+using YogaNode = Square.Rendering.Yoga.Node;
 
 namespace Square.Rendering;
 
@@ -108,7 +108,7 @@ public sealed class ComputedStyle
 }
 
 /// <summary>
-/// 布局引擎：Flex/Block 由 Meta Yoga（Yoga.Net）计算；Grid 使用内置实现。
+/// 布局引擎：Flex/Block 由内置的 Meta Yoga C# 移植计算；Grid 使用内置实现。
 /// CSS 经 <see cref="Element.Style"/> 映射到 Yoga 样式或 Grid 算法。
 /// </summary>
 public sealed partial class LayoutEngine
@@ -1045,13 +1045,13 @@ public sealed partial class LayoutEngine
         {
             switch (cache.NaturalRootHeightStyle.Unit)
             {
-                case Facebook.Yoga.Unit.Point:
+                case Square.Rendering.Yoga.Unit.Point:
                     YGNodeStyleSetHeight(yogaRoot, cache.NaturalRootHeightStyle.Value);
                     break;
-                case Facebook.Yoga.Unit.Percent:
+                case Square.Rendering.Yoga.Unit.Percent:
                     YGNodeStyleSetHeightPercent(yogaRoot, cache.NaturalRootHeightStyle.Value);
                     break;
-                case Facebook.Yoga.Unit.Undefined:
+                case Square.Rendering.Yoga.Unit.Undefined:
                     YGNodeStyleSetHeight(yogaRoot, float.NaN);
                     break;
                 default:

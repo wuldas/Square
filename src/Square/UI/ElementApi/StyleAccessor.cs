@@ -21,8 +21,12 @@ public sealed class StyleAccessor
     private Dictionary<string, string?>? _computedStyles;
     private HashSet<string>? _parentDependentStyles;
     private long _scrollStyleRevision;
+    private bool? _displayNone;
 
     internal long ScrollStyleRevision => _scrollStyleRevision;
+
+    internal bool IsDisplayNone => _displayNone ??=
+        string.Equals(Get("display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase);
 
     internal StyleAccessor(Element owner) { _owner = owner; }
 
@@ -551,6 +555,7 @@ public sealed class StyleAccessor
     internal void ClearComputedStylesRecursive()
     {
         _scrollStyleRevision++;
+        _displayNone = null;
         _computedStyles?.Clear();
         _parentDependentStyles?.Clear();
         foreach (var child in _owner.Children)
@@ -559,6 +564,7 @@ public sealed class StyleAccessor
 
     private void RemoveComputedStyle(string property)
     {
+        if (property == "display") _displayNone = null;
         if (property is "display" or "overflow" or "overflow-x" or "overflow-y" or "scrollbar-width" or "scrollbar-gutter")
             _scrollStyleRevision++;
         _computedStyles?.Remove(property);
@@ -798,8 +804,10 @@ internal readonly record struct AnimatedNumericValue(float Value, string Prefix,
     /// <summary>量化为 FormatNumber("0.###") 字符串的往返值（负零保留符号）。</summary>
     internal AnimatedNumericValue Quantized()
     {
-        var number = Value.ToString("0.###", CultureInfo.InvariantCulture);
-        return this with { Value = float.Parse(number, NumberStyles.Float, CultureInfo.InvariantCulture) };
+        // Covers Single's fixed-point range and invariant NaN / Infinity spellings.
+        Span<char> number = stackalloc char[64];
+        Value.TryFormat(number, out var written, "0.###", CultureInfo.InvariantCulture);
+        return this with { Value = float.Parse(number[..written], NumberStyles.Float, CultureInfo.InvariantCulture) };
     }
 
     /// <summary>输出字符串等价判定（含负零符号差异）。</summary>

@@ -69,7 +69,7 @@ Debug 桌面开发另有一条增量分支：`dotnet watch` 监视 `.sqv` / `.sq
 | `Square.Extensions.Routing` | 可选窗口路由、守卫、KeepAlive 与嵌套 RouterView | `AppWindow.UseRouter` 静态页面工厂、参数/通配符、RouterLink、按路径缓存 |
 | `Square.CSS` | CSS 引擎 | Selector/Cascade/Specificity/Var/Inheritance；Animation；Theme；M1 子集 |
 | `Square.Graphics` | `IRenderContext` 抽象 + 绘图原语 | 工厂 `IRenderBackendFactory`；原语 Geometry/Brush/Pen/Font/Path/Transform/Clip |
-| `Square.Rendering` | Element→Layout→Display Tree→DrawCommand | Flex/Block 经 Yoga.Net（Meta Yoga C# 移植）；Grid 内置；保留模式、脏区/增量 |
+| `Square.Rendering` | Element→Layout→Display Tree→DrawCommand | Flex/Block 经内置的 Yoga C# 移植；Grid 内置；保留模式、脏区/增量 |
 | `Square.Text` | 文本引擎 | Unicode/Glyph/Font/Layout/Caret/Selection/HitTest/BiDi；FontFace/FontFaceSet |
 | `Square.Platform` | 平台宿主抽象 | `IPlatformHost`、`IPlatformFactory`、`PlatformRegistry` 与跨平台截图入口 |
 | `Square.Platform.Win32` | Windows 平台实现 | Win32 窗口、消息循环、输入、IME、剪贴板与窗口截图 |
