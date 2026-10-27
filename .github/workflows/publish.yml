@@ -9,7 +9,7 @@ on:
       version:
         description: 'Package version for build-only verification (does not publish)'
         required: true
-        default: '0.1.0'
+        default: '0.2.0'
         type: string
 
 permissions:
@@ -47,7 +47,10 @@ jobs:
         run: dotnet workload restore Square.Android.slnx
 
       - name: Run release regression tests
-        run: dotnet test Square.slnx -c Release -p:SquareTargetPlatform=Win32 --filter "Category!=ChromiumIntegration"
+        run: dotnet test Square.slnx -c Release -p:SquareTargetPlatform=Win32 --filter "Category!=ChromiumIntegration&Category!=Performance"
+
+      - name: Run isolated CodeEditor performance tests
+        run: dotnet test tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj -c Release --no-build --no-restore -p:SquareTargetPlatform=Win32 --filter "Category=Performance" --logger "console;verbosity=detailed"
 
       - name: Pack and validate release versions
         shell: pwsh
