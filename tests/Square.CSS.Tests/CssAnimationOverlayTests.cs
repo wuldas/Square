@@ -132,6 +132,35 @@ public class CssAnimationOverlayTests
         Assert.Equal("19", text.Style.Get("width"));
     }
 
+    [Theory]
+    [InlineData("0s", "13.5", "19")]
+    [InlineData("-0.5s", "24.5", "8")]
+    public void ReattachingSameAnimationPreservesProgress(string delay, string expectedBefore, string expectedAfter)
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes grow { from { width: 8px; } to { width: 30px; } }
+            Text { animation: grow 1s linear infinite; }
+            """).Tokenize()).Parse());
+        var text = new Square.Controls.Text();
+        text.Style.Set("animation-delay", delay);
+        engine.ApplyStyles(text);
+        var manager = new CssAnimationManager(engine);
+        manager.Attach(text);
+        manager.Tick(0.25f);
+        Assert.Equal(expectedBefore, text.Style.Get("width"));
+
+        // A state-style replay must repaint the same frame before advancing again.
+        text.SetState(ElementState.Hover, true);
+        engine.ApplyStyles(text);
+        manager.Attach(text);
+
+        Assert.Equal(expectedBefore, text.Style.Get("width"));
+        manager.Tick(0.25f);
+        Assert.Equal(expectedAfter, text.Style.Get("width"));
+        manager.Clear();
+    }
+
     [Fact]
     public void ManagerCancelsAlreadyCompletedTimelineBeforeRetiringIt()
     {

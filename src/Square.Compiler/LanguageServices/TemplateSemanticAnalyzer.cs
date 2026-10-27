@@ -19,7 +19,8 @@ public sealed class TemplateSemanticAnalyzer
     internal TemplateProjectAnalysis AnalyzeProject(
         Compilation compilation,
         IEnumerable<(string Path, string Content, string Namespace)> inputs,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string projectDefaultElementNamespaceUri = null)
     {
         var diagnostics = new List<SquareDiagnostic>();
         Directives.DirectiveCatalog directiveCatalog;
@@ -37,7 +38,8 @@ public sealed class TemplateSemanticAnalyzer
             compilation,
             (inputs ?? Array.Empty<(string, string, string)>()).ToArray(),
             directiveCatalog,
-            cancellationToken);
+            cancellationToken,
+            projectDefaultElementNamespaceUri);
         if (diagnostics.Count == 0) return analysis;
         return new TemplateProjectAnalysis(
             analysis.Catalog,
@@ -203,7 +205,7 @@ public sealed class TemplateSemanticAnalyzer
 
     public IReadOnlyDictionary<string, TemplateComponentDescriptor> BuildGeneratedComponents(
         IEnumerable<(string Path, string Content, string Namespace)> inputs) =>
-        BuildGeneratedComponents(TemplateCatalog.ParseInputs(inputs));
+        BuildGeneratedComponents(TemplateCatalog.ParseInputs(inputs, sectionsOnly: true));
 
     internal IReadOnlyDictionary<string, TemplateComponentDescriptor> BuildGeneratedComponents(
         IReadOnlyList<(string Path, string Content, string Namespace, SquareParseResult Parse)> inputs)

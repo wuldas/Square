@@ -1,4 +1,4 @@
-<template>
+<template xmlns:html="http://www.w3.org/1999/xhtml">
   <View class="window-shell">
     <View class="window-title-bar">
       <View class="brand-mark"><Text class="brand-symbol" text="P²" /></View>
@@ -147,9 +147,9 @@
                 <h2>HTML5 inside Square</h2>
                 <p>Hello <strong>世界</strong> !<br>next line keeps its spacing.</p>
                 <ul><li>Native article and list</li><li>Square event bridge</li></ul>
-                <label><input id="html-preview-check" type="checkbox" checked @change="HtmlCheckChanged"> Subscribe</label>
-                <label>Name <input id="html-preview-name" type="text" value="Ada" @input="HtmlInputEdited"></label>
-                <button id="html-preview-button" type="button" @click="HtmlButtonClicked">Confirm HTML state</button>
+                <label><html:input id="html-preview-check" type="checkbox" checked @change="HtmlCheckChanged"> Subscribe</label>
+                <label>Name <html:input id="html-preview-name" type="text" value="Ada" @input="HtmlInputEdited"></label>
+                <html:button id="html-preview-button" type="button" @click="HtmlButtonClicked">Confirm HTML state</html:button>
                 <Text id="html-preview-status" :text="HtmlStatus" />
               </article>
 
@@ -296,12 +296,12 @@
 
   private void HtmlCheckChanged(Event e)
   {
-    HtmlStatus.Value = ((Square.UI.Html.HtmlElement)e.Target!).HasAttribute("checked") ? "Subscribed" : "Unsubscribed";
+    HtmlStatus.Value = ((Square.Html.HTMLInputElement)e.Target!).Checked ? "Subscribed" : "Unsubscribed";
   }
 
   private void HtmlInputEdited(Event e)
   {
-    HtmlStatus.Value = "Name: " + ((Square.UI.Html.HtmlElement)e.Target!).GetAttribute("value");
+    HtmlStatus.Value = "Name: " + ((Square.Html.HTMLInputElement)e.Target!).Value;
   }
 
   private void HtmlButtonClicked(Event e)

@@ -9,6 +9,7 @@ namespace Square.CSS.Engine;
 public sealed class CssAnimationTimeline
 {
     private readonly Element _visual;
+    private readonly KeyFramesRule _keyFrames;
     private readonly List<AnimationTrack> _tracks;
     private readonly float _duration;
     private readonly float _delay;
@@ -30,6 +31,7 @@ public sealed class CssAnimationTimeline
     internal CssAnimationTimeline(Element Element, KeyFramesRule keyFrames, float duration, Func<float, float> easing, float delay = 0, float iterationCount = 1, string direction = "normal")
     {
         _visual = Element;
+        _keyFrames = keyFrames;
         _duration = Math.Max(0.0001f, duration);
         _delay = delay;
         _iterationCount = Math.Max(0, iterationCount);
@@ -41,11 +43,24 @@ public sealed class CssAnimationTimeline
     /// <summary>获取动画是否已完成。</summary>
     public bool IsComplete => _iterationCount != int.MaxValue && _elapsed >= Math.Max(0, _delay) + _duration * _iterationCount;
 
+    /// <summary>动画目标元素；样式作用域重新应用时用它恢复进度。</summary>
+    internal Element Target => _visual;
+
+    internal bool CanResumeFrom(CssAnimationTimeline previous) =>
+        ReferenceEquals(_keyFrames, previous._keyFrames) &&
+        _duration == previous._duration && _delay == previous._delay &&
+        _iterationCount == previous._iterationCount && _direction == previous._direction &&
+        _easing == previous._easing;
+
     /// <summary>启动动画时间线，应用起始帧。</summary>
-    public void Start()
+    public void Start() => Start(0f);
+
+    /// <summary>以给定已流逝时间启动或恢复；点击等状态变化不应把动画倒回起始帧。</summary>
+    public void Start(float elapsedSeconds)
     {
-        _elapsed = 0;
+        _elapsed = Math.Max(0, elapsedSeconds);
         _running = true;
+        _cleared = false;
         if (_iterationCount == 0)
         {
             _running = false;
@@ -53,10 +68,17 @@ public sealed class CssAnimationTimeline
         }
         if (_delay < 0)
         {
-            _elapsed = Math.Min(_duration * _iterationCount, -_delay);
+            _elapsed = Math.Min(_duration * _iterationCount, Math.Max(_elapsed, -_delay));
             Apply(_easing(GetDirectedProgress(_elapsed)));
+            return;
         }
+        // Resuming after a style replay must repaint the current frame, not wait for the next tick.
+        if (_elapsed > 0 && _elapsed >= _delay)
+            Apply(_easing(GetDirectedProgress(_elapsed - _delay)));
     }
+
+    /// <summary>已流逝时间，供样式作用域重新应用时恢复进度。</summary>
+    internal float Elapsed => _elapsed;
 
     /// <summary>推进动画时间线，应用当前帧。</summary>
     /// <param name="deltaSeconds">增量秒数。</param>
@@ -69,7 +91,7 @@ public sealed class CssAnimationTimeline
             ? _elapsed + Math.Max(0, deltaSeconds)
             : Math.Min(total, _elapsed + Math.Max(0, deltaSeconds));
         if (_elapsed >= activeStart)
-            Apply(_easing(GetDirectedProgress(_elapsed - activeStart + Math.Max(0, -_delay))));
+            Apply(_easing(GetDirectedProgress(_elapsed - activeStart)));
         if (IsComplete)
         {
             _running = false;

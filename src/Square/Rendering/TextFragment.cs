@@ -12,6 +12,23 @@ public sealed record TextFragment(Element Element, string Text, Font Font, Rect 
     public TextLayout? Layout { get; init; }
     /// <summary>原始布局在 DisplayTree 中的绘制原点。</summary>
     public Point LayoutOrigin { get; init; }
+    /// <summary>源 DOM Text 节点（HTML 混合文本；Square 控件文本为 null，继续走启发式定位）。</summary>
+    public Square.UI.Text? TextNode { get; init; }
+    /// <summary><see cref="Text"/> 首字符在源节点 <c>data</c> 中的 UTF-16 偏移。</summary>
+    public int TextNodeOffset { get; init; }
+    /// <summary>每个字符的源 UTF-16 偏移；null 表示随 <see cref="TextNodeOffset"/> 恒等递增。</summary>
+    public int[]? TextNodeCharOffsets { get; init; }
+    /// <summary>该段在源 <c>data</c> 中消耗的 UTF-16 单元数；负值表示恒等于文本长度。</summary>
+    public int TextNodeLength { get; init; } = -1;
+
+    /// <summary>把片段内字符偏移映射到源 Text 节点的 UTF-16 偏移。</summary>
+    public int MapCharacterOffsetToTextNode(int offset)
+    {
+        var clamped = Math.Clamp(offset, 0, Text.Length);
+        if (TextNode == null) return clamped;
+        if (clamped >= Text.Length) return TextNodeOffset + Math.Max(0, TextNodeLength);
+        return TextNodeCharOffsets == null ? TextNodeOffset + clamped : TextNodeCharOffsets[clamped];
+    }
 
     /// <summary>按坐标命中测试，返回 UTF-16 偏移。</summary>
     public int HitTestOffset(Point point)

@@ -150,6 +150,9 @@ public sealed class ChildNodeCollection : IList<Node>
         _owner.InvalidateStructureRevision();
         _owner.InvalidateHitTestOrder();
         _owner.Invalidate(ElementInvalidation.Style | ElementInvalidation.Layout);
+        _owner.AppWindow?.NotifyInspectionChanged(
+            Square.Hosting.ElementInspectionChangeKind.Structure |
+            Square.Hosting.ElementInspectionChangeKind.Styles);
     }
 
     private void AttachIfNeeded(Element item)

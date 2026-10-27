@@ -53,6 +53,7 @@ internal sealed class SqvElementSyntax : SqvSyntaxNode
     public SquareSourceRange TagNameRange { get; }
     /// <summary>闭标签名的精确源范围；自闭合或无闭标签时为 default。</summary>
     public SquareSourceRange CloseTagNameRange { get; }
+    public TemplateElementResolution Resolution { get; set; }
 }
 
 internal sealed class SqvTextSyntax : SqvSyntaxNode

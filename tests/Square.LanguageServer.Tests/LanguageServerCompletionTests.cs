@@ -15,7 +15,6 @@ public sealed class LanguageServerCompletionTests
         await session.SendAsync("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","languageId":"sqx","version":1,"text":"<template><Bu"}}}""");
         await session.SendAsync("""{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx"},"position":{"line":0,"character":13}}}""");
         var tags = await session.ReadResponseAsync();
-        Assert.Contains("\"label\":\"Button\"", tags, StringComparison.Ordinal);
         Assert.Contains("\"label\":\"button\"", tags, StringComparison.Ordinal);
 
         await session.SendAsync("""{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///C:/Square/Completion.sqx","version":2},"contentChanges":[{"text":"<template><Button on"}]}}""");
@@ -261,8 +260,8 @@ public sealed class LanguageServerCompletionTests
             Assert.NotEmpty(parameters.GetProperty("diagnostics").EnumerateArray().ToArray());
         }
 
-        Assert.Contains("\"label\":\"Button\"", await session.ReadResponseAsync(10), StringComparison.Ordinal);
-        Assert.Contains("\"label\":\"Button\"", await session.ReadResponseAsync(11), StringComparison.Ordinal);
+        Assert.Contains("\"label\":\"button\"", await session.ReadResponseAsync(10), StringComparison.Ordinal);
+        Assert.Contains("\"label\":\"button\"", await session.ReadResponseAsync(11), StringComparison.Ordinal);
 
         Assert.Equal(0, await session.ShutdownAsync());
     }
@@ -441,7 +440,7 @@ public sealed class LanguageServerCompletionTests
         }));
         await session.SendAsync("""{"jsonrpc":"2.0","method":"initialized","params":{}}""");
 
-        const string source = "<template><markdown:";
+        const string source = "<template xmlns:markdown=\"urn:square:markdown\"><markdown:";
         await OpenDocument(session, documentUri, "sqv", source);
         await session.SendAsync(JsonSerializer.Serialize(new
         {
@@ -456,9 +455,9 @@ public sealed class LanguageServerCompletionTests
         }));
         var completion = await session.ReadResponseAsync();
 
-        Assert.Contains("\"label\":\"markdown:MarkdownViewer\"", completion, StringComparison.Ordinal);
+        Assert.True(completion.Contains("\"label\":\"markdown:MarkdownViewer\"", StringComparison.Ordinal), completion);
 
-        const string propertySource = "<template><markdown:MarkdownViewer Co";
+        const string propertySource = "<template xmlns:markdown=\"urn:square:markdown\"><markdown:MarkdownViewer Co";
         await session.SendAsync(JsonSerializer.Serialize(new
         {
             jsonrpc = "2.0",
@@ -548,6 +547,7 @@ public sealed class LanguageServerCompletionTests
         }));
 
         var definition = await session.ReadResponseAsync();
+        Assert.True(!definition.Contains("\"error\"", StringComparison.Ordinal), definition);
         using var document = JsonDocument.Parse(definition);
         var link = Assert.Single(document.RootElement.GetProperty("result").EnumerateArray());
 

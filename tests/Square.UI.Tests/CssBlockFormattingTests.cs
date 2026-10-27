@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.Html;
 using Square.Graphics;
 using Square.Rendering;
 using Xunit;
@@ -125,23 +126,55 @@ public class CssBlockFormattingTests
     }
 
     [Fact]
+    public void FlexRowInHtmlBlockFlowUsesLaidOutCrossAxisHeight()
+    {
+        var article = new HTMLArticleElement();
+        var row = new HTMLDivElement();
+        row.Style.Set("display", "flex");
+        row.Style.Set("flex-direction", "row");
+        row.Style.Set("gap", "12px");
+        for (var i = 0; i < 2; i++)
+        {
+            var panel = new HTMLDivElement();
+            panel.Style.Set("min-height", "72px");
+            panel.Style.Set("min-width", "0");
+            panel.Style.Set("flex-grow", "1");
+            panel.Style.Set("flex-basis", "0");
+            panel.Style.Set("box-sizing", "border-box");
+            panel.Style.Set("padding", "10px");
+            panel.Style.Set("border", "2px solid #2563eb");
+            panel.ChildNodes.Add(new Square.UI.Text("Panel"));
+            row.Children.Add(panel);
+        }
+        var following = new HTMLDivElement();
+        following.Style.Set("height", "10px");
+        article.Children.Add(row);
+        article.Children.Add(following);
+
+        new LayoutEngine().MeasureAndArrange(article, new Size(830, 200));
+
+        Assert.Equal(72, row.Geometry.Height);
+        Assert.Equal(row.Geometry.Bottom, following.Geometry.Y);
+    }
+
+    [Fact]
     public void RetainedExternalFlexRowWrapTracksWidthChangesAcrossFrames()
     {
-        var article = new Square.UI.Html.HtmlElement("article");
-        var row = new Square.UI.Html.HtmlElement("div");
+        var article = new HTMLArticleElement();
+        var row = new HTMLDivElement();
         row.Style.Set("display", "flex");
         row.Style.Set("flex-wrap", "wrap");
         row.Style.Set("width", "300px");
-        var leaves = new List<Square.UI.Html.HtmlElement>();
+        var leaves = new List<HTMLDivElement>();
         foreach (var width in new[] { "120px", "120px", "120px" })
         {
-            var leaf = new Square.UI.Html.HtmlElement("div");
+            var leaf = new HTMLDivElement();
             leaf.Style.Set("width", width);
             leaf.Style.Set("height", "40px");
             row.Children.Add(leaf);
             leaves.Add(leaf);
         }
-        var following = new Square.UI.Html.HtmlElement("div");
+        var following = new HTMLDivElement();
         following.Style.Set("height", "10px");
         article.Children.Add(row);
         article.Children.Add(following);
@@ -177,7 +210,7 @@ public class CssBlockFormattingTests
         AssertExternalFixtureMatchesTransient(article, row, following, leaves, frame);
 
         // 结构插入/删除后回到两行布局。
-        var extra = new Square.UI.Html.HtmlElement("div");
+        var extra = new HTMLDivElement();
         extra.Style.Set("width", "100px");
         extra.Style.Set("height", "40px");
         row.Children.Add(extra);
@@ -201,17 +234,17 @@ public class CssBlockFormattingTests
     [Fact]
     public void RetainedFlexWidthReflowPreservesAuthoredHeightAndFollowingBlock()
     {
-        var article = new Square.UI.Html.HtmlElement("article");
+        var article = new HTMLArticleElement();
         article.Style.Set("display", "block");
-        var row = new Square.UI.Html.HtmlElement("div");
+        var row = new HTMLDivElement();
         row.Style.CssText = "display:flex;flex-wrap:wrap;height:100px";
         for (var i = 0; i < 4; i++)
         {
-            var child = new Square.UI.Html.HtmlElement("div");
+            var child = new HTMLDivElement();
             child.Style.CssText = "flex:none;width:30px;height:20px";
             row.Children.Add(child);
         }
-        var following = new Square.UI.Html.HtmlElement("div");
+        var following = new HTMLDivElement();
         following.Style.Set("display", "block");
         article.Children.Add(row);
         article.Children.Add(following);
@@ -232,16 +265,16 @@ public class CssBlockFormattingTests
         // 自然测高（auto 行高 + min-height）与排列（精确行高）的百分比子项约束不等价：
         // 行内容高 0、min-height 100 → 排列期 100；子项 height:50% 只能在排列精确高度下
         // 解析为 50，不得复用自然测高结果。
-        var article = new Square.UI.Html.HtmlElement("article");
-        var row = new Square.UI.Html.HtmlElement("div");
+        var article = new HTMLArticleElement();
+        var row = new HTMLDivElement();
         row.Style.Set("display", "flex");
         row.Style.Set("min-height", "100px");
         row.Style.Set("align-items", "flex-start");
-        var panel = new Square.UI.Html.HtmlElement("div");
+        var panel = new HTMLDivElement();
         panel.Style.Set("width", "40px");
         panel.Style.Set("height", "50%");
         row.Children.Add(panel);
-        var following = new Square.UI.Html.HtmlElement("div");
+        var following = new HTMLDivElement();
         following.Style.Set("height", "10px");
         article.Children.Add(row);
         article.Children.Add(following);
@@ -299,16 +332,16 @@ public class CssBlockFormattingTests
         Assert.Equal(plainRow.Children[1].Geometry, retainedRow.Children[1].Geometry);
     }
 
-    private static Square.UI.Html.HtmlElement CreateTextPanelArticle()
+    private static HTMLArticleElement CreateTextPanelArticle()
     {
-        var article = new Square.UI.Html.HtmlElement("article");
-        var row = new Square.UI.Html.HtmlElement("div");
+        var article = new HTMLArticleElement();
+        var row = new HTMLDivElement();
         row.Style.Set("display", "flex");
         row.Style.Set("flex-direction", "row");
         row.Style.Set("gap", "12px");
         for (var i = 0; i < 2; i++)
         {
-            var panel = new Square.UI.Html.HtmlElement("div");
+            var panel = new HTMLDivElement();
             panel.Style.Set("min-height", "72px");
             panel.Style.Set("min-width", "0");
             panel.Style.Set("flex-grow", "1");
@@ -319,7 +352,7 @@ public class CssBlockFormattingTests
             panel.ChildNodes.Add(new Square.UI.Text("Panel"));
             row.Children.Add(panel);
         }
-        var following = new Square.UI.Html.HtmlElement("div");
+        var following = new HTMLDivElement();
         following.Style.Set("height", "10px");
         article.Children.Add(row);
         article.Children.Add(following);
@@ -356,9 +389,9 @@ public class CssBlockFormattingTests
     [Fact]
     public void RetainedExternalFlexEvictsReplacedRootAndLaysOutNewGrid()
     {
-        var article = new Square.UI.Html.HtmlElement("article");
+        var article = new HTMLArticleElement();
         var row1 = CreateWrapRow("120px", "120px", "120px");
-        var following = new Square.UI.Html.HtmlElement("div");
+        var following = new HTMLDivElement();
         following.Style.Set("height", "10px");
         article.Children.Add(row1);
         article.Children.Add(following);
@@ -377,8 +410,8 @@ public class CssBlockFormattingTests
         Assert.Equal(10, row2.Geometry.Y);
         Assert.Equal(80, row2.Geometry.Height);
 
-        var plainArticle = new Square.UI.Html.HtmlElement("article");
-        var plainFollowing = new Square.UI.Html.HtmlElement("div");
+        var plainArticle = new HTMLArticleElement();
+        var plainFollowing = new HTMLDivElement();
         plainFollowing.Style.Set("height", "10px");
         var plainRow = CreateWrapRow("160px", "120px", "120px");
         plainArticle.Children.Add(plainFollowing);
@@ -394,7 +427,7 @@ public class CssBlockFormattingTests
     {
         // 会话根自身的 Yoga 宽度由约束宽度接管：根的 px→px 宽度声明变化即便满足
         // 原位更新形态，也必须整棵重建，使节点宽度继续跟随 ArrangeRect 约束而非声明值。
-        var retainedRoot = new Square.UI.Html.HtmlElement("div");
+        var retainedRoot = new HTMLDivElement();
         retainedRoot.Style.Set("display", "flex");
         retainedRoot.Style.Set("width", "300px");
         var retained = new LayoutEngine();
@@ -408,7 +441,7 @@ public class CssBlockFormattingTests
         Assert.Equal(900, retainedRoot.Geometry.Width, 3);
         Assert.Equal(0, retainedRoot.Geometry.X, 3);
 
-        var plainRoot = new Square.UI.Html.HtmlElement("div");
+        var plainRoot = new HTMLDivElement();
         plainRoot.Style.Set("display", "flex");
         plainRoot.Style.Set("width", "200px");
         new LayoutEngine().MeasureAndArrange(plainRoot, new Rect(0, 0, 900, 600));
@@ -416,15 +449,15 @@ public class CssBlockFormattingTests
         retained.ClearCachedYoga();
     }
 
-    private static Square.UI.Html.HtmlElement CreateWrapRow(params string[] widths)
+    private static HTMLDivElement CreateWrapRow(params string[] widths)
     {
-        var row = new Square.UI.Html.HtmlElement("div");
+        var row = new HTMLDivElement();
         row.Style.Set("display", "flex");
         row.Style.Set("flex-wrap", "wrap");
         row.Style.Set("width", "300px");
         foreach (var width in widths)
         {
-            var leaf = new Square.UI.Html.HtmlElement("div");
+            var leaf = new HTMLDivElement();
             leaf.Style.Set("width", width);
             leaf.Style.Set("height", "40px");
             row.Children.Add(leaf);

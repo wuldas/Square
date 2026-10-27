@@ -1,3 +1,5 @@
+using Square.Controls;
+using Square.Html;
 using Square.CSS;
 using Square.CSS.Engine;
 
@@ -20,6 +22,11 @@ public sealed class UIDocument : Document
 
     /// <summary>文档独立的调度、协调和 Store 上下文。</summary>
     public UIContext Context { get; } = new();
+    /// <summary>Immutable preferred resolution URI; independent of the C# root namespace.</summary>
+    public string DefaultElementNamespaceUri { get; }
+
+    /// <summary>Definitions and callback diagnostics unique to this document.</summary>
+    public HtmlCustomElementRegistry CustomElements { get; }
 
     internal CssEngine GlobalCssEngine { get; } = new();
 
@@ -28,9 +35,15 @@ public sealed class UIDocument : Document
     /// <summary>承载此文档的应用窗口；未绑定到桌面宿主时为 null。</summary>
     public Square.Hosting.AppWindow? AppWindow { get; internal set; }
 
-    /// <summary>创建带 UI/Head/Body 壳的空文档。</summary>
-    public UIDocument()
+    /// <summary>创建带 UI/Head/Body 壳、固定默认元素 URI 的空文档。</summary>
+    public UIDocument(string defaultElementNamespaceUri = ElementRegistry.HtmlNamespaceUri)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(defaultElementNamespaceUri);
+        if (!Uri.TryCreate(defaultElementNamespaceUri, UriKind.Absolute, out _))
+            throw new ArgumentException("The default element namespace must be an absolute URI.", nameof(defaultElementNamespaceUri));
+        DefaultElementNamespaceUri = defaultElementNamespaceUri;
+        ControlRegistration.RegisterDefaults();
+        CustomElements = new HtmlCustomElementRegistry();
         Ui = new UIRootElement();
         Head = new UIHeadElement();
         Body = new UIBodyElement();
@@ -39,13 +52,40 @@ public sealed class UIDocument : Document
         SetDocumentElement(Ui);
     }
 
-    /// <summary>
-    /// 注册标签名到工厂（AOT 友好；供 <see cref="CreateElement(string)"/> 使用）。
-    /// </summary>
-    /// <summary>按标签名创建元素（对齐 <c>document.createElement</c>；须先注册）。</summary>
-    public Element CreateElement(string tagName)
+    /// <summary>按默认 URI 优先、否则唯一候选创建元素；定制内建用 isName 指定定义。</summary>
+    public Element CreateElement(string localName, string? isName = null)
     {
-        var element = ElementRegistry.Create(tagName);
+        ElementRegistry.ValidateLocalName(localName);
+        Element element = isName == null
+            ? ElementRegistry.Create(DefaultElementNamespaceUri, localName,
+                CustomElements.FindAutonomousFactory(localName))
+            : CustomElements.CreateCustomizedBuiltIn(isName, localName.ToLowerInvariant());
+        AssignOwnerDocument(element);
+        return element;
+    }
+
+    /// <summary>只接受真实 DOM XHTML/SVG URI，包解析 URI 使用 CreateComponentElement。</summary>
+    public Element CreateElementNS(string namespaceUri, string localName, string? isName = null)
+    {
+        ElementRegistry.ValidateLocalName(localName);
+        if (namespaceUri is not (ElementRegistry.HtmlNamespaceUri or ElementRegistry.SvgNamespaceUri))
+            throw new ArgumentException("CreateElementNS accepts only XHTML or SVG DOM namespace URIs.", nameof(namespaceUri));
+        if (isName != null && namespaceUri != ElementRegistry.HtmlNamespaceUri)
+            throw new ArgumentException("Customized built-ins require the XHTML namespace.", nameof(isName));
+        var element = isName == null
+            ? ElementRegistry.CreateNamespace(namespaceUri, localName,
+                namespaceUri == ElementRegistry.HtmlNamespaceUri ? CustomElements.FindAutonomousFactory(localName) : null)
+            : CustomElements.CreateCustomizedBuiltIn(isName, localName.ToLowerInvariant());
+        AssignOwnerDocument(element);
+        return element;
+    }
+
+    /// <summary>用 Square UI 或包解析 URI 显式创建组件，不把包 URI 写作 DOM namespaceURI。</summary>
+    public Element CreateComponentElement(string namespaceUri, string localName)
+    {
+        if (namespaceUri is ElementRegistry.HtmlNamespaceUri or ElementRegistry.SvgNamespaceUri)
+            throw new ArgumentException("Use CreateElementNS for XHTML and SVG DOM elements.", nameof(namespaceUri));
+        var element = ElementRegistry.CreateNamespace(namespaceUri, localName);
         AssignOwnerDocument(element);
         return element;
     }

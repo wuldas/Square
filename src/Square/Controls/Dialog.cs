@@ -1,4 +1,5 @@
 using Square.Graphics;
+using Square.Html;
 using Square.UI;
 
 namespace Square.Controls;
@@ -6,7 +7,7 @@ namespace Square.Controls;
 /// <summary>Modal dialog rendered through the popup layer with a blocking backdrop.</summary>
 public class Dialog : Popup
 {
-    private UIElement? _restoreFocus;
+    private IFocusableElement? _restoreFocus;
 
     /// <summary>初始化 <see cref="Dialog"/> 的新实例。</summary>
     public Dialog()
@@ -49,22 +50,23 @@ public class Dialog : Popup
     public override void Open()
     {
         if (IsOpen) return;
-        _restoreFocus = OwnerDocument?.DocumentElement.QueryAll<UIElement>()
-            .LastOrDefault(element => element.IsFocused);
+        _restoreFocus = OwnerDocument?.DocumentElement is { } root
+            ? CollectFocusables(root).LastOrDefault(element => element.IsFocused)
+            : null;
         _restoreFocus?.Unfocus();
         base.Open();
-        FindInitialFocus()?.Focus();
+        FindInitialFocus()?.Focus(focusVisible: true);
     }
 
     /// <inheritdoc/>
     public override void Close()
     {
         if (!IsOpen) return;
-        foreach (var focused in QueryAll<UIElement>().Where(element => element.IsFocused))
+        foreach (var focused in CollectFocusables(this).Where(element => element.IsFocused))
             focused.Unfocus();
         base.Close();
-        if (_restoreFocus is { IsAttached: true, IsEnabled: true })
-            _restoreFocus.Focus();
+        if (_restoreFocus is Element { IsAttached: true } && _restoreFocus.IsEnabled)
+            _restoreFocus.Focus(focusVisible: true);
         _restoreFocus = null;
     }
 
@@ -99,7 +101,35 @@ public class Dialog : Popup
         return Anchor?.Geometry ?? Geometry;
     }
 
-    private UIElement? FindInitialFocus()
-        => QueryAll<UIElement>().FirstOrDefault(element => element.IsEnabled &&
-            element is Button or Input or TextArea or CheckBox or Radio or Select or Link);
+    /// <summary>
+    /// 收集子树内全部 Element 级可聚焦目标（含 UI 控件与 HTML host），
+    /// 并经由 <see cref="HTMLElement.VisualSidecars"/> 覆盖不在语义 DOM 里的原生代理。
+    /// </summary>
+    private static List<IFocusableElement> CollectFocusables(Element root)
+    {
+        var result = new List<IFocusableElement>();
+        Collect(root, result);
+        return result;
+
+        static void Collect(Element element, List<IFocusableElement> result)
+        {
+            if (element is IFocusableElement focusable) result.Add(focusable);
+            foreach (var child in element.Children)
+                Collect(child, result);
+            if (element is not HTMLElement host) return;
+            foreach (var sidecar in host.VisualSidecars)
+                Collect(sidecar, result);
+        }
+    }
+
+    private IFocusableElement? FindInitialFocus()
+        => CollectFocusables(this).FirstOrDefault(element => element.IsEnabled && IsInitialFocusCandidate(element));
+
+    /// <summary>初始焦点候选：原生交互控件，或 HTML 的 button/input/textarea/select/a/summary。</summary>
+    private static bool IsInitialFocusCandidate(IFocusableElement element) => element switch
+    {
+        Button or Input or TextArea or CheckBox or Radio or Select or Link => true,
+        HTMLElement host => host.LocalName is "button" or "input" or "textarea" or "select" or "a" or "summary",
+        _ => false
+    };
 }

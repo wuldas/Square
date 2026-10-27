@@ -1,4 +1,4 @@
-<template>
+<template xmlns:markdown="urn:square:markdown">
   <View class="markdown-page sample-page">
     <Text class="page-title" text="Markdown extension" />
     <markdown:MarkdownViewer class="markdown-card" :content="Document" ref="markdownViewer" />

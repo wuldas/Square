@@ -4,16 +4,14 @@ namespace Square.UI;
 [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
 public sealed class ElementExportAttribute : Attribute
 {
-    public ElementExportAttribute(string namespaceUri, string prefix, string localName, Type elementType)
+    public ElementExportAttribute(string namespaceUri, string localName, Type elementType)
     {
         NamespaceUri = namespaceUri;
-        Prefix = prefix;
         LocalName = localName;
         ElementType = elementType;
     }
 
     public string NamespaceUri { get; }
-    public string Prefix { get; }
     public string LocalName { get; }
     public Type ElementType { get; }
 }

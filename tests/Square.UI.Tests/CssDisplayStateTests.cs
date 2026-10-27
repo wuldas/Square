@@ -41,6 +41,30 @@ public class CssDisplayStateTests
     }
 
     [Fact]
+    public void CachedDisplayChangesFollowHtmlSidecarHostChain()
+    {
+        var parent = new View();
+        var host = new Square.Html.HTMLInputElement();
+        parent.Children.Add(host);
+        host.Measure(new Square.Graphics.Size(200, 40));
+        var sidecar = Assert.IsType<Input>(Assert.Single(host.VisualSidecars));
+        Assert.Empty(host.ChildNodes);
+        Assert.Null(sidecar.ParentNode);
+        Assert.Same(host, sidecar.VisualParent);
+        Assert.True(sidecar.IsCssDisplayed());
+
+        host.Style.CssText = "display: none;";
+        Assert.False(sidecar.IsCssDisplayed());
+        host.Style.CssText = "";
+        Assert.True(sidecar.IsCssDisplayed());
+
+        parent.Style.Set("display", "none");
+        Assert.False(sidecar.IsCssDisplayed());
+        parent.Style.Remove("display");
+        Assert.True(sidecar.IsCssDisplayed());
+    }
+
+    [Fact]
     public void ReparentingRefreshesExplicitlyInheritedDisplay()
     {
         var hidden = new View();

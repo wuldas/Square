@@ -1,3 +1,4 @@
+using Square.Compiler.LanguageServices;
 using Square.Compiler.Syntax;
 using Square.Compiler.Template.Compatibility;
 
@@ -5,13 +6,14 @@ namespace Square.Compiler.Parser;
 
 /// <summary>
 /// Vue 文档分区解析器：拆分 &lt;template&gt; / &lt;script&gt; / &lt;style&gt;，提取脚本元数据，
-/// 并把模板内容交给 <see cref="SqvTemplateParser"/>。不依赖 <c>SqxCoreParser</c>。
+/// 模板体交给共享 section syntax 管线，保持独立的 SQV 标签词法与指令转换。
 /// </summary>
 internal static class SqvDocumentParser
 {
-    public static SqxDocument Parse(string source, string fileName, bool tolerant = false)
+    public static SqxDocument Parse(string source, string fileName, bool tolerant = false, bool parseTemplateBody = true,
+        TemplateCatalog catalog = null, TemplateResolutionContext context = null)
     {
-        var sections = ReadSections(source, tolerant, out var syntax);
+        var sections = ReadSections(source, tolerant, parseTemplateBody, catalog, context, out var syntax);
         if (!sections.TryGetValue("template", out var templateSection))
         {
             if (tolerant)
@@ -27,14 +29,16 @@ internal static class SqvDocumentParser
             throw new SqxParseException("Missing required <template> section", 0);
         }
 
-        var validationRoots = SqvTemplateParser.Parse(templateSection.Content, templateSection.ContentStart, tolerant);
-        if (!tolerant)
-            SqvValidator.Validate(validationRoots);
+        if (!tolerant && syntax.Template.Diagnostics.FirstOrDefault() is { } templateError)
+            throw new SqxParseException(templateError.Message, templateError.Range.Offset,
+                templateError.Id, templateError.Range.Length);
+
         var roots = TemplateIrCompatibilityAdapter.ToSqxNodes(
             syntax.Template.Ir,
             syntax.SourceText,
             syntax.Dialect,
             syntax.Template.ContentRange.Offset);
+        if (parseTemplateBody && !tolerant) SqvValidator.Validate(roots);
 
         var document = new SqxDocument
         {
@@ -72,13 +76,19 @@ internal static class SqvDocumentParser
     private static Dictionary<string, Section> ReadSections(
         string source,
         bool tolerant,
+        bool parseTemplateBody,
+        TemplateCatalog catalog,
+        TemplateResolutionContext context,
         out ComponentDocumentSyntax syntax)
     {
         var scan = ComponentSectionScanner.Scan(
             source,
             string.Empty,
             ComponentDialect.Sqv,
-            tolerant);
+            tolerant,
+            parseTemplateBody,
+            catalog,
+            context);
         syntax = scan.Document;
         var diagnostic = scan.Diagnostics.FirstOrDefault(item =>
             !tolerant || !CanRecover(item.Kind));

@@ -1,10 +1,11 @@
 using Square.Controls;
 using Square.Backends;
+using Square.CSS.Engine;
 using Square.Graphics;
 using Square.Rendering;
 using Square.UI;
-using Square.UI.Html;
 using Square.UI.Svg;
+using Square.Html;
 using Xunit;
 
 namespace Square.UI.Tests;
@@ -39,6 +40,111 @@ public class CssInlineFormattingTests
 
         Assert.Equal(new Rect(0, 0, 60, 10), first.Geometry);
         Assert.Equal(new Rect(0, 10, 60, 10), second.Geometry);
+    }
+
+    [Fact]
+    public void BlockMarginSeparatesFollowingInlineButCollapsesThroughWhitespaceBeforeBlock()
+    {
+        static HTMLParagraphElement Paragraph()
+        {
+            var paragraph = new HTMLParagraphElement();
+            paragraph.Style.Set("height", "10px");
+            paragraph.Style.Set("margin", "0 0 16px");
+            return paragraph;
+        }
+
+        var inlineRoot = new HTMLArticleElement();
+        var first = Paragraph();
+        var inline = new HTMLSpanElement();
+        inline.Style.Set("display", "inline-block");
+        inline.Style.Set("width", "20px");
+        inline.Style.Set("height", "10px");
+        inlineRoot.Children.Add(first);
+        inlineRoot.Children.Add(inline);
+        new LayoutEngine().MeasureAndArrange(inlineRoot, new Size(100, 80));
+        Assert.Equal(first.Geometry.Bottom + 16, inline.Geometry.Y);
+
+        var blockRoot = new HTMLArticleElement();
+        var preceding = Paragraph();
+        var following = new HTMLDivElement();
+        following.Style.Set("height", "10px");
+        following.Style.Set("margin-top", "8px");
+        blockRoot.Children.Add(preceding);
+        blockRoot.ChildNodes.Add(new Square.UI.Text(" \n "));
+        blockRoot.Children.Add(following);
+        new LayoutEngine().MeasureAndArrange(blockRoot, new Size(100, 80));
+        Assert.Equal(preceding.Geometry.Bottom + 16, following.Geometry.Y);
+    }
+
+    [Fact]
+    public void SquareButtonInHtmlFlowsBesideSvgAtItsTextBaseline()
+    {
+        var article = new HTMLArticleElement();
+        var svg = new SVGSVGElement();
+        svg.SetProperty("Width", 20);
+        svg.SetProperty("Height", 20);
+        var button = new Button("Square");
+        button.Style.Set("appearance", "auto");
+        button.Style.Set("font-size", "13.3333px");
+        button.Style.Set("padding", "1px 6px");
+        button.Style.Set("border", "2px outset #d4d4d4");
+        article.Children.Add(svg);
+        article.Children.Add(button);
+
+        new LayoutEngine().MeasureAndArrange(article, new Size(200, 80));
+
+        Assert.Equal(svg.Geometry.Right, button.Geometry.X);
+        Assert.True(button.Geometry.Y > svg.Geometry.Y);
+        Assert.True(button.Geometry.Width < article.Geometry.Width);
+    }
+
+    [Fact]
+    public void HtmlCheckableInputsKeepWidgetSizeAndAuthorPaddingWins()
+    {
+        var article = new HTMLArticleElement();
+        var checkbox = new HTMLInputElement { Type = "checkbox" };
+        var radio = new HTMLInputElement { Type = "radio" };
+        var text = new HTMLInputElement { Type = "text" };
+        article.Children.Add(checkbox);
+        article.Children.Add(radio);
+        article.Children.Add(text);
+        new CssEngine().ApplyStylesToTree(article);
+
+        var layout = new LayoutEngine();
+        layout.MeasureAndArrange(article, new Size(400, 80));
+        Assert.Equal(new Size(13, 13), checkbox.Geometry.Size);
+        Assert.Equal(new Size(13, 13), radio.Geometry.Size);
+        Assert.Equal(4, checkbox.Geometry.X);
+        Assert.True(text.Geometry.Width > checkbox.Geometry.Width);
+
+        checkbox.Style.Set("padding", "2px");
+        layout.MeasureAndArrange(article, new Size(400, 80));
+        Assert.Equal(17, checkbox.Geometry.Width);
+    }
+
+    [Fact]
+    public void InlineTextInputSharesBaselineWithItsLabel()
+    {
+        var article = new HTMLArticleElement();
+        article.Style.Set("font-family", "Arial");
+        var label = new HTMLLabelElement();
+        label.ChildNodes.Add(new Square.UI.Text("Text "));
+        var input = new HTMLInputElement { Type = "text", Value = "Editable text" };
+        label.Children.Add(input);
+        article.Children.Add(label);
+        new CssEngine().ApplyStylesToTree(article);
+        new LayoutEngine().MeasureAndArrange(article, new Size(400, 60));
+
+        var editor = Assert.IsType<Input>(Assert.Single(input.VisualSidecars));
+        var tree = new DisplayTree();
+        tree.BuildFrom(article);
+        var labelText = Assert.Single(tree.CollectTextFragments(label), fragment => fragment.Text == "Text");
+        var inputText = Assert.Single(tree.CollectTextFragments(editor),
+            fragment => fragment.Text == "Editable text");
+        var labelBaseline = labelText.Bounds.Y + TextMetrics.GetBaselineOffset(labelText.Font, labelText.Bounds.Height);
+        var inputBaseline = inputText.Bounds.Y + TextMetrics.GetBaselineOffset(inputText.Font, inputText.Bounds.Height);
+
+        Assert.InRange(Math.Abs(labelBaseline - inputBaseline), 0, 1f);
     }
 
     [Fact]
@@ -130,35 +236,86 @@ public class CssInlineFormattingTests
     public void NestedHtmlInlineTextAndBreakStayInDocumentOrder()
     {
         var root = InlineRoot(180);
-        var paragraph = new HtmlElement("p");
-        var before = new HtmlTextRun("Hello ");
-        var emphasis = new HtmlElement("strong");
-        var middle = new HtmlTextRun("世界");
-        var after = new HtmlTextRun(" !");
-        var next = new HtmlTextRun("next");
-        emphasis.Children.Add(middle);
-        paragraph.Children.Add(before);
-        paragraph.Children.Add(emphasis);
-        paragraph.Children.Add(after);
-        paragraph.Children.Add(new HtmlElement("br"));
-        paragraph.Children.Add(next);
+        var paragraph = new HTMLParagraphElement();
+        var before = new Square.UI.Text("Hello ");
+        var emphasis = new HTMLStrongElement();
+        var middle = new Square.UI.Text("世界");
+        var after = new Square.UI.Text(" !");
+        var brk = new HTMLBRElement();
+        var next = new Square.UI.Text("next");
+        emphasis.ChildNodes.Add(middle);
+        paragraph.ChildNodes.Add(before);
+        paragraph.ChildNodes.Add(emphasis);
+        paragraph.ChildNodes.Add(after);
+        paragraph.ChildNodes.Add(brk);
+        paragraph.ChildNodes.Add(next);
         root.Children.Add(paragraph);
 
-        CssBlockFormattingTests.Layout(root, 180, 100);
+        // DOM shape: Text/strong/Text/br/Text order; Children holds only the two elements.
+        Assert.Equal(5, paragraph.ChildNodes.Count);
+        Assert.Equal(new Element[] { emphasis, brk }, paragraph.Children.ToArray());
+        Assert.Equal(
+            new[]
+            {
+                Node.NodeType.Text, Node.NodeType.Element, Node.NodeType.Text,
+                Node.NodeType.Element, Node.NodeType.Text
+            },
+            paragraph.ChildNodes.Select(node => node.NodeTypeValue).ToArray());
 
-        Assert.True(before.Geometry.Width > 0);
-        Assert.True(emphasis.Geometry.Width > 0, $"strong={emphasis.Geometry}, middle={middle.Geometry}, before={before.Geometry}, display={emphasis.Style.Get("display")}");
-        Assert.True(middle.Geometry.X >= before.Geometry.Right);
-        Assert.True(after.Geometry.X >= middle.Geometry.Right);
-        Assert.True(next.Geometry.Y > middle.Geometry.Y, $"next={next.Geometry}, middle={middle.Geometry}, after={after.Geometry}");
-        Assert.Contains(ElementLayoutStore.Get(middle).CssTextFragments!, fragment => fragment.Text == "世界");
+        CssBlockFormattingTests.Layout(root, 180, 100);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+
+        var fragments = tree.CollectTextFragments(paragraph)
+            .OrderBy(fragment => fragment.Bounds.Y)
+            .ThenBy(fragment => fragment.Bounds.X)
+            .ToArray();
+
+        Assert.Equal("Hello 世界 !next", string.Concat(fragments.Select(fragment => fragment.Text)));
+        Assert.Equal(new Square.UI.Text[] { before, middle, after, next },
+            fragments.Select(fragment => Assert.IsType<Square.UI.Text>(fragment.TextNode)).Distinct().ToArray());
+        var middleFragment = Assert.Single(fragments, fragment => ReferenceEquals(fragment.TextNode, middle));
+        var nextFragment = Assert.Single(fragments, fragment => ReferenceEquals(fragment.TextNode, next));
+        Assert.Equal("世界", middleFragment.Text);
+        Assert.Equal("next", nextFragment.Text);
+        Assert.Equal(0, middleFragment.TextNodeOffset);
+        Assert.Same(emphasis, middleFragment.Element);
+        Assert.True(middleFragment.Bounds.X >= fragments.Last(fragment => ReferenceEquals(fragment.TextNode, before)).Bounds.Right);
+        Assert.True(fragments.First(fragment => ReferenceEquals(fragment.TextNode, after)).Bounds.X >= middleFragment.Bounds.Right);
+        Assert.True(nextFragment.Bounds.Y > middleFragment.Bounds.Y);
+    }
+
+    [Fact]
+    public void HtmlDomTextDataEditsInvalidateLayoutAndUpdateFragments()
+    {
+        var root = InlineRoot(200);
+        var paragraph = new HTMLParagraphElement();
+        var text = new Square.UI.Text("first");
+        paragraph.ChildNodes.Add(text);
+        root.Children.Add(paragraph);
+
+        CssBlockFormattingTests.Layout(root, 200, 40);
+        root.ClearLayoutDirty();
+
+        text.Data = "second value";
+
+        Assert.True(paragraph.IsLayoutDirty);
+
+        CssBlockFormattingTests.Layout(root, 200, 40);
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        var fragments = tree.CollectTextFragments(paragraph).OrderBy(fragment => fragment.Bounds.X).ToArray();
+        Assert.Equal("second value", string.Concat(fragments.Select(fragment => fragment.Text)));
+        Assert.All(fragments, fragment => Assert.Same(text, fragment.TextNode));
+        Assert.Equal(0, fragments[0].TextNodeOffset);
+        Assert.Equal(text.Data.Length, fragments[^1].MapCharacterOffsetToTextNode(fragments[^1].Text.Length));
     }
 
     [Fact]
     public void HtmlFlowArrangesAndPaintsEmbeddedSvg()
     {
         var root = InlineRoot(200);
-        var article = new HtmlElement("article");
+        var article = new HTMLArticleElement();
         var svg = new SVGSVGElement { ViewBox = "0 0 90 45" };
         svg.SetProperty("Width", 90);
         svg.SetProperty("Height", 45);

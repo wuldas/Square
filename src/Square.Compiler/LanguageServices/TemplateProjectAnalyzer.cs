@@ -23,13 +23,33 @@ internal static class TemplateProjectAnalyzer
         Compilation compilation,
         IReadOnlyList<(string Path, string Content, string Namespace)> inputs,
         DirectiveCatalog directiveCatalog,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string projectDefaultElementNamespaceUri = null)
     {
-        var parsedInputs = TemplateCatalog.ParseInputs(inputs);
+        var metadataInputs = TemplateCatalog.ParseInputs(inputs, sectionsOnly: true);
         var diagnostics = new List<SquareDiagnostic>();
-        var analysisCompilation = TemplateCatalog.AddScriptDeclarations(compilation, parsedInputs);
-        var catalog = TemplateCatalog.FromCompilation(analysisCompilation, parsedInputs);
+        var catalog = TemplateCatalog.FromCompilation(compilation, metadataInputs);
+        var analysisCompilation = catalog.AnalysisCompilation;
         diagnostics.AddRange(catalog.Diagnostics);
+        var contexts = new Dictionary<string, TemplateResolutionContext>(StringComparer.Ordinal);
+        var invalidNamespaces = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var input in metadataInputs)
+        {
+            diagnostics.AddRange(input.Parse.Diagnostics);
+            var document = input.Parse.ParsedSqxDocument;
+            var namespaceName = document == null || string.IsNullOrWhiteSpace(document.Namespace)
+                ? input.Namespace : document.Namespace;
+            var before = diagnostics.Count;
+            contexts[input.Path] = TemplateResolutionContext.Create(namespaceName,
+                document == null ? Array.Empty<string>() : ExtractNamespaceUsings(document),
+                projectDefaultElementNamespaceUri, document?.Syntax?.Template?.XmlnsDeclarations,
+                diagnostics, input.Path);
+            if (diagnostics.Count > before) invalidNamespaces.Add(input.Path);
+        }
+        var parsedInputs = metadataInputs.Select(input => (
+            input.Path, input.Content, input.Namespace,
+            Parse: SquareDocumentService.ParseSyntax(input.Content, input.Path,
+                catalog: catalog, context: contexts[input.Path]))).ToArray();
 
         var documents = new Dictionary<string, TemplateDocumentAnalysis>(StringComparer.Ordinal);
         var emittedSources = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -46,29 +66,21 @@ internal static class TemplateProjectAnalyzer
             {
                 documents[input.Path] = new TemplateDocumentAnalysis(
                     parseResult.ParsedSqxDocument!,
-                    new TemplateResolutionContext(string.Empty, Array.Empty<string>()),
-                    new Dictionary<string, TemplateElementResolution>(StringComparer.Ordinal),
+                    contexts[input.Path],
+                    new Dictionary<int, TemplateElementResolution>(),
                     canEmit: false);
                 continue;
             }
 
             var document = parseResult.ParsedSqxDocument;
-            var namespaceName = string.IsNullOrWhiteSpace(document.Namespace) ? input.Namespace : document.Namespace;
-            var resolutionContext = new TemplateResolutionContext(namespaceName, ExtractNamespaceUsings(document));
-            var resolutions = new Dictionary<string, TemplateElementResolution>(StringComparer.Ordinal);
-            var canEmit = true;
+            var resolutionContext = contexts[input.Path];
+            var resolutions = new Dictionary<int, TemplateElementResolution>();
+            var canEmit = !invalidNamespaces.Contains(input.Path);
             foreach (var element in EnumerateElements(document.Syntax.Template.Ir.Roots))
             {
-                if (element.TagName.IndexOf(':') < 0 &&
-                    (!catalog.IsExactHtmlTag(element.TagName) && directiveCatalog.IsDirective(element.TagName) ||
-                     element.TagName.Equals("Fragment", StringComparison.OrdinalIgnoreCase) ||
-                     element.TagName.Equals("template", StringComparison.OrdinalIgnoreCase)))
-                    continue;
-                if (!resolutions.TryGetValue(element.TagName, out var resolution))
-                {
-                    resolution = catalog.ResolveComponent(element.TagName, resolutionContext);
-                    resolutions[element.TagName] = resolution;
-                }
+                var key = ResolutionKey(element);
+                var resolution = element.Resolution ?? catalog.ResolveComponent(element.TagName, resolutionContext);
+                resolutions[key] = resolution;
                 if (resolution.Status == TemplateElementResolutionStatus.Resolved) continue;
                 canEmit = false;
                 diagnostics.Add(ElementDiagnostics.ForResolution(
@@ -271,19 +283,19 @@ internal static class TemplateProjectAnalyzer
         TemplateCatalog catalog,
         SqxDocument document,
         TemplateResolutionContext resolutionContext,
-        IReadOnlyDictionary<string, TemplateElementResolution> resolutions,
+        IReadOnlyDictionary<int, TemplateElementResolution> resolutions,
         ICollection<SquareDiagnostic> diagnostics)
     {
         var hasErrors = false;
         var seenRefs = new HashSet<string>(StringComparer.Ordinal);
         foreach (var element in EnumerateElements(document.Syntax.Template.Ir.Roots))
         {
-            var resolution = resolutions.TryGetValue(element.TagName, out var cached)
+            var resolution = resolutions.TryGetValue(ResolutionKey(element), out var cached)
                 ? cached
-                : catalog.ResolveComponent(element.TagName, resolutionContext);
+                : element.Resolution ?? catalog.ResolveComponent(element.TagName, resolutionContext);
             if (resolution.Status == TemplateElementResolutionStatus.Resolved)
             {
-                if (resolution.Component.Kind == TemplateElementKind.Html)
+                if (resolution.Component.IsHtmlHost)
                 {
                     foreach (var attribute in element.Attributes)
                     {
@@ -507,7 +519,7 @@ internal static class TemplateProjectAnalyzer
         TemplateCatalog catalog,
         SqxDocument document,
         TemplateResolutionContext resolutionContext,
-        IReadOnlyDictionary<string, TemplateElementResolution> resolutions)
+        IReadOnlyDictionary<int, TemplateElementResolution> resolutions)
     {
         foreach (var element in EnumerateElements(document.Syntax.Template.Ir.Roots))
         {
@@ -516,7 +528,7 @@ internal static class TemplateProjectAnalyzer
                 var scope = slot.Scope;
                 if (scope == null || scope.Properties.Count == 0) continue;
                 if (slot.NameIsExpression) continue;
-                if (!resolutions.TryGetValue(element.TagName, out var resolution) ||
+                if (!resolutions.TryGetValue(ResolutionKey(element), out var resolution) ||
                     resolution.Status != TemplateElementResolutionStatus.Resolved) continue;
                 var slots = catalog.GetSlots(resolution.Component);
                 if (slots == null || !slots.TryGetValue(slot.Name, out var contract)) continue;
@@ -526,6 +538,9 @@ internal static class TemplateProjectAnalyzer
             }
         }
     }
+
+    private static int ResolutionKey(TemplateIrElement element) =>
+        element.TagNameRange.Length > 0 ? element.TagNameRange.Offset : element.Origin.Offset + 1;
 
     private static IEnumerable<TemplateIrElement> EnumerateElements(IEnumerable<TemplateIrNode> nodes)
     {

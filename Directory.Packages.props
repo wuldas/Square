@@ -15,6 +15,7 @@
     <PackageVersion Include="Wuldas.Square.Platform.MacOS" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Native.Html" Version="$(Version)" />
     <PackageVersion Include="Wuldas.Square.Hosting.Web" Version="$(Version)" />
+    <PackageVersion Include="AngleSharp" Version="1.8.4" />
     <PackageVersion Include="WebView2Aot" Version="1.5.0" />
     <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageVersion Include="DirectNAot" Version="1.6.1" />
@@ -47,7 +48,7 @@
     <PackageVersion Include="Avalonia" Version="11.3.12" />
     <PackageVersion Include="Avalonia.Desktop" Version="11.3.12" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.3.12" />
-    <!-- CVE-2026-39959：Avalonia 的传递依赖，0.21.3 为兼容的回移修复。 -->
+    <!-- CVE-2026-39959 / GHSA-xrw6-gwf8-vvr9: Avalonia 传递依赖，0.21.3 为 0.21.x 回移修复；0.22.0-0.91.x 仍受影响 -->
     <PackageVersion Include="Tmds.DBus.Protocol" Version="0.21.3" />
     <PackageVersion Include="TextMateSharp" Version="2.0.4" />
     <PackageVersion Include="TextMateSharp.Grammars" Version="2.0.4" />

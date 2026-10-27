@@ -317,6 +317,38 @@ public class DirtyPartialPresentTests
     }
 
     [Fact]
+    public void HtmlSidecarVisualChangesPreservePartialRenderingAndDomSeparation()
+    {
+        var root = new View { Geometry = new Rect(0, 0, 200, 100) };
+        var host = new Square.Html.HTMLInputElement { Type = "text", Value = "sidecar" };
+        root.Children.Add(host);
+        host.Measure(new Size(80, 30));
+        host.Arrange(new Rect(20, 20, 80, 30));
+        var sidecar = Assert.Single(host.VisualSidecars);
+        Assert.Empty(host.Children);
+        Assert.Empty(host.ChildNodes);
+
+        var tree = new DisplayTree();
+        tree.BuildFrom(root);
+        using var bitmap = new Bitmap(200, 100);
+        using var context = new RenderContext(bitmap, 1f);
+        PresentFrame(tree, context, root, Color.White, expectFullFrame: true);
+
+        sidecar.Style.Set("transform", "translate(60px, 0px)");
+        Assert.False(tree.NeedsSynchronization(root));
+        Assert.True(sidecar.NeedsCompositeUpdate);
+        PresentFrame(tree, context, root, Color.White);
+        AssertFrameMatchesReference(tree, bitmap, 200, 100, Color.White);
+
+        sidecar.IsVisible = false;
+        Assert.True(tree.NeedsSynchronization(root));
+        PresentFrame(tree, context, root, Color.White, expectFullFrame: true);
+        AssertFrameMatchesReference(tree, bitmap, 200, 100, Color.White);
+        Assert.Empty(host.Children);
+        Assert.Empty(host.ChildNodes);
+    }
+
+    [Fact]
     public void RotatedOpacityNodePaintsCornersBeyondAxisAlignedBounds()
     {
         var root = new View { Geometry = new Rect(0, 0, 260, 260) };

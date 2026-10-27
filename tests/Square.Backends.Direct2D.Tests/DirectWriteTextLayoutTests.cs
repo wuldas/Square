@@ -2,6 +2,8 @@ using System.Runtime.Versioning;
 using Square.Graphics;
 using Square.Controls;
 using Square.Text.Fonts;
+using Square.Html;
+using Square.Rendering;
 using Xunit;
 
 namespace Square.Backends.Direct2D.Tests;
@@ -221,6 +223,28 @@ public sealed class DirectWriteTextLayoutTests
 
         Assert.True(rect.Width > 0);
         Assert.True(rect.Height > 0);
+    }
+
+    [Fact]
+    public void InlineHighlightCoversShapedTextAdvance()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(6, 1)) return;
+        using var scope = TextLayoutProviderContext.Push(DirectWriteTextLayoutProvider.Shared);
+        var article = new HTMLArticleElement();
+        var mark = new HTMLMarkElement();
+        var text = new Square.UI.Text("highlighted text");
+        mark.ChildNodes.Add(text);
+        article.Children.Add(mark);
+        new LayoutEngine().MeasureAndArrange(article, new Size(400, 60));
+
+        var tree = new DisplayTree();
+        tree.BuildFrom(article);
+        var fragments = tree.CollectTextFragments(mark)
+            .Where(fragment => ReferenceEquals(fragment.TextNode, text)).ToArray();
+
+        Assert.NotEmpty(fragments);
+        Assert.True(fragments.Max(fragment => fragment.Bounds.Right) <= mark.Geometry.Right + 0.05f,
+            $"Highlight {mark.Geometry} ends before its shaped text.");
     }
 
     [Theory]

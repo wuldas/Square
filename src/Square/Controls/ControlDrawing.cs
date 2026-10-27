@@ -148,20 +148,13 @@ internal static class ControlDrawing
     internal static float MeasureRenderedTextWidth(string text, Font font, float letterSpacing = 0, float wordSpacing = 0)
     {
         if (string.IsNullOrEmpty(text)) return 0;
-        var lineWidth = 0f;
-        var maxWidth = 0f;
-        foreach (var rune in text.EnumerateRunes())
+        // Keep the advance used for inline backgrounds and wrapping on the same shaping path as DrawText.
+        return new TextLayout(text, font)
         {
-            if (rune.Value == '\n')
-            {
-                maxWidth = Math.Max(maxWidth, lineWidth);
-                lineWidth = 0;
-                continue;
-            }
-            lineWidth += MeasureRenderedRuneAdvance(rune, font) + letterSpacing +
-                (Rune.IsWhiteSpace(rune) ? wordSpacing : 0);
-        }
-        return Math.Max(maxWidth, lineWidth);
+            WhiteSpace = TextWhiteSpaceMode.Pre,
+            LetterSpacing = letterSpacing,
+            WordSpacing = wordSpacing
+        }.Measure().Width;
     }
 
     internal static float MeasureRenderedRuneAdvance(Rune rune, Font font)
@@ -179,7 +172,8 @@ internal static class ControlDrawing
         IRenderContext context, Element element, string text, Point position, Color defaultColor, float defaultSize,
         float? lineHeight = null, bool useStyledColor = true, Size? maxSize = null,
         BidiDirection? direction = null, BidiTextMode? unicodeBidi = null,
-        TextWrappingOptions? wrappingOptions = null, float additionalLetterSpacing = 0)
+        TextWrappingOptions? wrappingOptions = null, float additionalLetterSpacing = 0,
+        Square.UI.Text? sourceNode = null, int sourceOffset = 0, int[]? sourceCharOffsets = null, int sourceLength = -1)
     {
         if (string.IsNullOrEmpty(text)) return;
         var font = ResolveFont(element, defaultSize);
@@ -200,6 +194,13 @@ internal static class ControlDrawing
             CollapseNewlines = wrappingOptions?.CollapseNewlines ?? false,
             TextDecorationLines = wrappingOptions?.TextDecorationLines ?? ResolveTextDecorationLines(element)
         };
+        if (sourceNode != null)
+        {
+            layout.SourceNode = sourceNode;
+            layout.SourceOffset = sourceOffset;
+            layout.SourceCharOffsets = sourceCharOffsets;
+            layout.SourceLength = sourceLength;
+        }
         if (font.Size > 0)
             layout.LineHeight = (lineHeight ?? GetStyledLineHeight(element, font.Size)) / font.Size;
         context.DrawText(layout, position, new SolidColorBrush(color));

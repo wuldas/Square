@@ -13,13 +13,13 @@ public sealed class LanguageServerPropertyCompletionTests
         await Write(process, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""");
         _ = await Read(process.StandardOutput);
         await Write(process, """{"jsonrpc":"2.0","method":"initialized","params":{}}""");
-        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Properties.sqx","languageId":"sqx","version":1,"text":"<template><Button te"}}}""");
+        await Write(process, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/Square/Properties.sqx","languageId":"sqx","version":1,"text":"<template><Button ti"}}}""");
         _ = await Read(process.StandardOutput);
 
         await Write(process, """{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///C:/Square/Properties.sqx"},"position":{"line":0,"character":20}}}""");
         var properties = await Read(process.StandardOutput);
-        Assert.Contains("\"label\":\"text\"", properties, StringComparison.Ordinal);
-        Assert.Contains("TextContent", properties, StringComparison.Ordinal);
+        Assert.Contains("\"label\":\"title\"", properties, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"label\":\"text\"", properties, StringComparison.Ordinal);
         Assert.Contains("\"kind\":10", properties, StringComparison.Ordinal);
 
         await Write(process, """{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}""");

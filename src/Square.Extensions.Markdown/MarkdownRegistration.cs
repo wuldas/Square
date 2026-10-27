@@ -1,6 +1,6 @@
 using Square.UI;
 
-[assembly: ElementExport("urn:square:markdown", "markdown", "MarkdownViewer", typeof(Square.Extensions.Markdown.MarkdownViewer))]
+[assembly: ElementExport("urn:square:markdown", "MarkdownViewer", typeof(Square.Extensions.Markdown.MarkdownViewer))]
 
 namespace Square.Extensions.Markdown;
 
@@ -14,6 +14,6 @@ public static class MarkdownRegistration
     {
         if (_registered) return;
         _registered = true;
-        ElementRegistry.Register("MarkdownViewer", static () => new MarkdownViewer());
+        ElementRegistry.Register("urn:square:markdown", "MarkdownViewer", static () => new MarkdownViewer());
     }
 }

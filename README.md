@@ -6,6 +6,16 @@ Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌
 
 > 项目仍处于早期开发阶段，API 与模板语法可能调整。目前主要验证 Windows / Win32 与 Linux / X11 桌面宿主。
 
+## 0.2.0 性能优化
+
+- 优化分词缓存热路径：按需剪枝、二分前驱查询、复用跨行状态，已缓存读取保持零托管分配。
+- 优化大文本回跳：固定检查点预算内保留全局恢复点与目标附近密集点，减少跨区跳转和编辑失效后的重新分词。
+- 继续降低布局、CSS 动画、绘制与局部失效路径的 CPU 和分配开销，完善性能对比与回归测试。
+
+百万行混合 C# 文本测试中，相比前阶段优化版，回跳至第 8,192 行的真实 TextMate 分词从 **1,727.7 ms 降至 434.2 ms**，重扫行数由 8,192 降至 2,048；已缓存读取保持零托管分配。这是指定轨迹的分词缓存测量，不是整帧或任意访问模式的保证。环境、采样及复现方法见[完整性能报告](tools/Square.TokenizationBench/CHECKPOINT-RESULTS.md)。
+
+版本改动与平台边界见 [0.2.0 发布说明](docs/releases/0.2.0.md)。
+
 ## 截图
 
 ![Square sample screenshot](samples/E46602.png)
@@ -75,10 +85,10 @@ new DesktopApplication(window).Run();
 
 ## 创建独立应用
 
-[`Wuldas.Square.Templates` 0.1.0](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0) 已发布到 NuGet.org。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
+[`Wuldas.Square.Templates` 0.2.0](https://www.nuget.org/packages/Wuldas.Square.Templates/0.2.0) 已发布到 NuGet.org。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
 
 ```bash
-dotnet new install Wuldas.Square.Templates@0.1.0
+dotnet new install Wuldas.Square.Templates@0.2.0
 dotnet new square -n MyApp
 dotnet run --project MyApp
 ```
@@ -99,6 +109,15 @@ dotnet restore Square.slnx
 dotnet build Square.slnx
 dotnet run --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
 ```
+
+静态 HTML/CSS 外壳与 SQX/SQV 局部挂载示例（可选包默认不启用）：
+
+```powershell
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseNativeHtml=true -- --backend Software --html-mount-demo
+```
+
+用 `--html-file <path>` 指定自定义外壳；组件挂载到 `#sqx-root` / `#sqv-root`，卸载永久释放绑定与生成样式，再挂载须新实例。完整 API 和文件资源边界见 [本地静态 HTML 与组件挂载](docs/Web-Hosting.md#8-本地静态-html-外壳与编译组件挂载)。
+
 
 Debug 模式下可使用 `dotnet watch` 热更新普通 C#、`.sqx` / `.sqv` 模板和组件 `<style>`：
 
@@ -246,7 +265,7 @@ dotnet publish samples/Square.Sample.Vue/Square.Sample.Vue.csproj \
 
 Square 适合框架设计验证、实验和贡献开发，暂不建议用于生产项目。
 
-首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。源码默认版本仍为 `0.1.0`；正式发布版本由标签决定。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
+首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。当前版本为 `0.2.0`，包含 22 个框架及模板包；源码默认版本与发布标签保持一致。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
 
 贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告。
 
@@ -266,16 +285,16 @@ Wuldas.Square.*
 先在 GitHub Actions 手动运行 **Publish NuGet**，输入版本号。这只构建、验证并上传工作流产物，不向 NuGet.org 发布。本地也可以验证（需要 .NET 10、Android workload 与 JDK 17）：
 
 ```powershell
-pwsh -File tools/Pack-Release.ps1 -Version 0.1.1 -OutputDirectory artifacts/packages
+pwsh -File tools/Pack-Release.ps1 -Version 0.2.0 -OutputDirectory artifacts/packages
 ```
 
-输出目录必须为空。脚本打包全部 20 个框架及模板包，检查内部依赖闭环和版本一致性，并让模板中的包引用使用发布版本；不会修改模板源码。正式发布前应确认该提交的 CI 和 Android 工作流通过，并确认账号有权使用所有目标包 ID。
+输出目录必须为空。脚本打包全部 22 个框架及模板包，检查内部依赖闭环和版本一致性，并让模板中的包引用使用发布版本；不会修改模板源码。正式发布前应确认该提交的 CI 和 Android 工作流通过，并确认账号有权使用所有目标包 ID。
 
-推送 `v` 开头的版本标签会正式发布。`v0.1.0` 已存在，不要重建或移动；以下仅以 `0.1.1` 演示后续发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
+推送 `v` 开头的版本标签会正式发布。`v0.1.0` 已存在，不要重建或移动；以下以 `0.2.0` 演示发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
 
 ```bash
-git tag -a v0.1.1 -m "Release Wuldas.Square 0.1.1"
-git push origin v0.1.1
+git tag -a v0.2.0 -m "Release Wuldas.Square 0.2.0"
+git push origin v0.2.0
 ```
 
 标签去掉 `v` 后成为统一包版本，也支持 `v0.2.0-preview.1`。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。

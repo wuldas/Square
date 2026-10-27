@@ -1,3 +1,4 @@
+using Square.Compiler.LanguageServices;
 using Square.Compiler.ParserCore;
 using Square.Compiler.Template.Compatibility;
 
@@ -5,17 +6,21 @@ namespace Square.Compiler.Parser
 {
     internal static class SqxParser
     {
-        public static SqxDocument Parse(string source, string fileName)
+        public static SqxDocument Parse(string source, string fileName, bool parseTemplateBody = true,
+            TemplateCatalog catalog = null, TemplateResolutionContext context = null)
         {
             try
             {
                 var core = SqxCoreParser.Parse(source, fileName, new SqxCoreParserOptions
                 {
                     StrictTemplate = true,
-                    CaseSensitiveSectionNames = true
+                    CaseSensitiveSectionNames = true,
+                    ParseTemplateBody = parseTemplateBody,
+                    Catalog = catalog,
+                    ResolutionContext = context
                 });
                 var document = ConvertDocument(core);
-                SqxValidator.Validate(document.Template.Roots);
+                if (parseTemplateBody) SqxValidator.Validate(document.Template.Roots);
                 return document;
             }
             catch (CoreParseException exception)

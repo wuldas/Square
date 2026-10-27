@@ -1,3 +1,4 @@
+using Square.CSS.Ast;
 using Square.CSS.Properties;
 using Square.UI;
 using Square.UI.ElementApi;
@@ -238,7 +239,10 @@ public static class CssStyleReconciler
                 .Distinct()
                 .ToArray();
         foreach (var root in roots)
+        {
             root.Invalidate(ElementInvalidation.Style);
+            root.AppWindow?.NotifyInspectionChanged(Square.Hosting.ElementInspectionChangeKind.Styles);
+        }
     }
 
     internal static IReadOnlyList<CssInspectionRule> GetMatchedRules(Element element)
@@ -251,6 +255,33 @@ public static class CssStyleReconciler
         return scopes
             .SelectMany(scope => scope.Engine.GetMatchedRules(element))
             .ToArray();
+    }
+
+    /// <summary>返回当前为给定元素树提供样式的 distinct 引擎，供运行时样式编辑器枚举资源。</summary>
+    internal static IReadOnlyList<CssEngine> GetInspectionEngines(Element root)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        lock (Gate)
+        {
+            var engines = new List<CssEngine>();
+            foreach (var scope in Scopes)
+                if (ReferenceEquals(FindTreeRoot(scope.Root), root) && !engines.Contains(scope.Engine))
+                    engines.Add(scope.Engine);
+            return engines;
+        }
+    }
+
+    /// <summary>Resolve an animation from the closest registered component scope.</summary>
+    internal static KeyFramesRule? GetKeyFrames(Element element, string name)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        lock (Gate)
+            for (var i = Scopes.Count - 1; i >= 0; i--)
+                if (IsAncestorOrSelf(Scopes[i].Root, element) &&
+                    Scopes[i].Engine.GetKeyFrames(name) is { } keyFrames)
+                    return keyFrames;
+        return null;
     }
 
     /// <summary>释放与指定元素树关联的 CSS scope 和待处理样式失效。</summary>

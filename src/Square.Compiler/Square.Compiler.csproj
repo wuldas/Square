@@ -37,7 +37,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Square\UI\Html\HtmlTagCatalog.cs" Link="HtmlTagCatalog.cs" />
+    <Compile Include="..\Square\Html\HtmlTagCatalog.cs" Link="HtmlTagCatalog.cs" />
+    <Compile Include="..\Square\Html\HtmlCustomElementNames.cs" Link="HtmlCustomElementNames.cs" />
+    <Compile Include="..\Square\Html\SvgAttributeCatalog.cs" Link="SvgAttributeCatalog.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">

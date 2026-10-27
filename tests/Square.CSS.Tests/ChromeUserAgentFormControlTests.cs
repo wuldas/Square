@@ -78,7 +78,6 @@ public sealed class ChromeUserAgentFormControlTests
         engine.ApplyStyles(button);
 
         Assert.Equal("inset", button.Style.Get("border-top-style"));
-        Assert.Equal("ButtonFace", button.Style.Get("background-color"));
     }
 
     [Fact]

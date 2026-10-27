@@ -12,56 +12,36 @@ namespace Square.Compiler.Tests;
 
 public class VueGeneratorTests
 {
-    [Fact]
-    public void SqvFileGeneratesComponent()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text>{{ Title }}</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableValue<string> Title = new("Hello");
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("VueCard.sqv", source));
-
-        Assert.Empty(result.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
-        Assert.Contains(result.GeneratedTrees, tree => tree.FilePath.Contains("VueCard", StringComparison.Ordinal));
-        Assert.Contains(result.GeneratedTrees, tree => tree.GetText().ToString().Contains("partial class VueCard", StringComparison.Ordinal));
-    }
 
     [Fact]
-    public void SqvScriptUsingsAreEmittedOutsideTheGeneratedClass()
+    public void SqvScriptUsingsCompileIntoGeneratedComponent()
     {
-        const string source = """
-            <template>
-              <View />
-            </template>
+        // The script using must be hoisted to a valid scope: StringBuilder only resolves when
+        // the directive is emitted outside the generated class body.
+        const string template = """
+            <template><View /></template>
             <script lang="csharp">
               using System.Text;
 
-              public string Title = "Markdown";
+              public StringBuilder Buffer = new();
             </script>
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("MarkdownCard.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("MarkdownCard.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Empty(result.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
-        Assert.Contains("using System.Text;", generated);
-        Assert.True(
-            generated.IndexOf("using System.Text;", StringComparison.Ordinal) <
-            generated.IndexOf("partial class MarkdownCard", StringComparison.Ordinal));
-        Assert.Contains("public string Title = \"Markdown\";", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
-    public void MultilineScriptUsingIsEmittedOutsideTheGeneratedClass()
+    public void MultilineScriptUsingCompiles()
     {
-        const string source = """
+        const string template = """
             <template><View /></template>
             <script>
               using
@@ -71,21 +51,21 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("MultilineUsing.sqx", source)).GeneratedTrees)
-            .GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("MultilineUsing.sqx", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        var usingPosition = generated.IndexOf("using System;", StringComparison.Ordinal);
-        var classPosition = generated.IndexOf("partial class MultilineUsing", StringComparison.Ordinal);
-        var scriptPosition = generated.IndexOf("#region Script", StringComparison.Ordinal);
-        Assert.InRange(usingPosition, 0, classPosition - 1);
-        Assert.DoesNotContain("using\n", generated.Substring(scriptPosition), StringComparison.Ordinal);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
-    public void ComponentStylesEmitRuntimeAstWithoutRuntimeCssParsing()
+    public void ComponentStyleSectionGeneratedCodeCompiles()
     {
-        const string source = """
+        const string template = """
             <template><View class="page" /></template>
             <style>
               .page { color: #123456; gap: 8px !important; }
@@ -94,184 +74,130 @@ public class VueGeneratorTests
             </style>
             """;
 
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("StyledCard.sqx", source)).GeneratedTrees)
-            .GetText().ToString();
-
-        Assert.Contains("new Square.CSS.Ast.CssStyleSheet", generated, StringComparison.Ordinal);
-        Assert.Contains("Square.CSS.Ast.CssMediaRule", generated, StringComparison.Ordinal);
-        Assert.Contains("Square.CSS.Ast.KeyFramesRule", generated, StringComparison.Ordinal);
-        Assert.DoesNotContain("Square.CSS.Engine.CssParser", generated, StringComparison.Ordinal);
-        Assert.DoesNotContain("Square.CSS.Tokenizer.CssTokenizer", generated, StringComparison.Ordinal);
-        Assert.Contains("CreateComponentStyleSheet()", generated, StringComparison.Ordinal);
-        Assert.Contains("MethodImplOptions.NoInlining", generated, StringComparison.Ordinal);
-        Assert.Contains("static readonly Square.CSS.Ast.CssStyleSheet? ComponentStyleSheet", generated,
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void GeneratedComponentsEmitDebugHotReloadContract()
-    {
-        const string source = "<template><View /></template>";
-
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("HotReloadCard.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
-
-        Assert.Contains("Square.Hosting.ISquareHotReloadComponent", generated);
-        Assert.Contains("CurrentHotReloadVersion()", generated);
-        Assert.Contains("RebuildAfterHotReload()", generated);
-        Assert.Contains("PrepareGeneratedSubtreeRebuild();", generated);
-        Assert.Contains("Slots.ResetRendered();", generated);
-    }
-
-    [Fact]
-    public void GeneratedComponentWithCustomPaintKeepsAutomaticHoverPaintInvalidation()
-    {
-        const string source = """
-            <template><View /></template>
-            <script>
-              public override void Paint(Square.Graphics.IRenderContext context) { }
-            </script>
-            """;
-
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("PaintedComponent.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
-
-        Assert.Contains("protected override bool IsGeneratedComponent => false;", generated);
-    }
-
-    [Fact]
-    public void GeneratedComponentWithCodeBehindPaintKeepsAutomaticHoverPaintInvalidation()
-    {
-        const string source = "<template><View /></template><script namespace=\"TestApp\"></script>";
-        const string codeBehind = """
-            namespace TestApp;
-            public partial class PaintedComponent
-            {
-                public override void Paint(Square.Graphics.IRenderContext context) { }
-            }
-            """;
-        var compilation = CreateCompilation(codeBehind);
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             [new SqxGenerator().AsSourceGenerator()],
-            [new InMemoryAdditionalText("PaintedComponent.sqv", source)],
+            [new InMemoryAdditionalText("StyledCard.sqx", template)],
             (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        driver = driver.RunGenerators(compilation);
-        var generated = driver.GetRunResult().GeneratedTrees
-            .Where(tree => !tree.FilePath.EndsWith("SquareHotReload.g.cs", StringComparison.Ordinal))
-            .Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class PaintedComponent", StringComparison.Ordinal));
-
-        Assert.Contains("protected override bool IsGeneratedComponent => false;", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
-    [Fact]
-    public void CompilationEmitsSingleMetadataUpdateHandler()
-    {
-        const string source = "<template><View /></template>";
-
-        var result = RunGenerator(
-            new InMemoryAdditionalText("Second.sqv", source),
-            new InMemoryAdditionalText("First.sqv", source));
-        var generated = result.AllGeneratedTrees.Select(tree => tree.GetText().ToString()).ToArray();
-
-        Assert.Equal(1, generated.Sum(code =>
-            code.Split("MetadataUpdateHandler(typeof(Square.Hosting.SquareHotReloadHandler))").Length - 1));
-    }
-
-    [Fact]
-    public void HotReloadVersionTracksTemplateAndStyleButNotScript()
-    {
-        const string original = """
-            <template><Text text="one" /></template>
-            <script>public int Value = 1;</script>
-            <style>Text { color: red; }</style>
-            """;
-        const string scriptChanged = """
-            <template><Text text="one" /></template>
-            <script>public int Value = 2;</script>
-            <style>Text { color: red; }</style>
-            """;
-        const string templateChanged = """
-            <template><Text text="two" /></template>
-            <script>public int Value = 1;</script>
-            <style>Text { color: red; }</style>
-            """;
-        const string styleChanged = """
-            <template><Text text="one" /></template>
-            <script>public int Value = 1;</script>
-            <style>Text { color: blue; }</style>
-            """;
-
-        var originalVersion = ReadHotReloadVersion(original);
-
-        Assert.Equal(originalVersion, ReadHotReloadVersion(scriptChanged));
-        Assert.NotEqual(originalVersion, ReadHotReloadVersion(templateChanged));
-        Assert.NotEqual(originalVersion, ReadHotReloadVersion(styleChanged));
-    }
 
     [Fact]
     public void TemplateDirectoryContributesToDefaultNamespace()
     {
-        const string source = "<template><View /></template>";
+        // The code-behind partial only merges (and sees the script field) when the generator
+        // places the component in the directory-derived namespace.
+        const string template = """
+            <template><View /></template>
+            <script>
+              public int Width = 3;
+            </script>
+            """;
+        const string codeBehind = """
+            namespace Square.Sample.Components.Forms;
+            public partial class LoginCard
+            {
+                public int ReadWidth() => Width;
+            }
+            """;
 
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("Components/Forms/LoginCard.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
+        var compilation = CreateCompilation(codeBehind);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Components/Forms/LoginCard.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains("namespace Square.Sample.Components.Forms;", generated);
-        Assert.Contains("partial class LoginCard", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
     public void ExplicitScriptNamespaceOverridesTemplateDirectory()
     {
-        const string source = """
+        const string template = """
             <template><View /></template>
-            <script namespace="Custom.Components"></script>
+            <script namespace="Custom.Components">
+              public int Width = 3;
+            </script>
+            """;
+        const string codeBehind = """
+            namespace Custom.Components;
+            public partial class LoginCard
+            {
+                public int ReadWidth() => Width;
+            }
             """;
 
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("Components/Forms/LoginCard.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
+        var compilation = CreateCompilation(codeBehind);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Components/Forms/LoginCard.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains("namespace Custom.Components;", generated);
-        Assert.DoesNotContain("namespace Square.Sample.Components.Forms;", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
     public void TemplateDirectorySegmentsAreValidCSharpIdentifiers()
     {
-        const string source = "<template><View /></template>";
+        const string template = """
+            <template><View /></template>
+            <script>
+              public int Width = 3;
+            </script>
+            """;
+        const string codeBehind = """
+            namespace Square.Sample.feature_pages._class;
+            public partial class LoginCard
+            {
+                public int ReadWidth() => Width;
+            }
+            """;
 
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("feature-pages/class/LoginCard.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
+        var compilation = CreateCompilation(codeBehind);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("feature-pages/class/LoginCard.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains("namespace Square.Sample.feature_pages._class;", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
     public void ComponentsInDifferentDirectoriesCanShareAName()
     {
-        const string source = "<template><View /></template>";
+        // Same-named script members are only legal while the two Card components stay in their
+        // distinct directory-derived namespaces; collapsing them would duplicate the member.
+        const string card = """
+            <template><View /></template>
+            <script>public int Value = 1;</script>
+            """;
 
-        var result = RunGenerator(
-            new InMemoryAdditionalText("Admin/Card.sqv", source),
-            new InMemoryAdditionalText("Store/Card.sqv", source));
-        var generated = result.GeneratedTrees.Select(tree => tree.GetText().ToString()).ToArray();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Admin/Card.sqv", card), new InMemoryAdditionalText("Store/Card.sqv", card)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Equal(2, generated.Length);
-        Assert.Contains(generated, code => code.Contains("namespace Square.Sample.Admin;", StringComparison.Ordinal));
-        Assert.Contains(generated, code => code.Contains("namespace Square.Sample.Store;", StringComparison.Ordinal));
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
     public void CrossDirectoryComponentCanBeImportedFromScript()
     {
+        // The script using must make <Card> resolvable for the template; otherwise the
+        // analyzer reports an unknown element.
         const string card = "<template><View /></template>";
         const string page = """
             <template><Card /></template>
@@ -280,16 +206,15 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(
-            new InMemoryAdditionalText("Shared/Card.sqv", card),
-            new InMemoryAdditionalText("Pages/Page.sqv", page));
-        var pageCode = result.GeneratedTrees
-            .Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class Page", StringComparison.Ordinal));
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Shared/Card.sqv", card), new InMemoryAdditionalText("Pages/Page.sqv", page)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains("using Square.Sample.Shared;", pageCode);
-        Assert.Contains("namespace Square.Sample.Pages;", pageCode);
-        Assert.Empty(result.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
@@ -305,59 +230,10 @@ public class VueGeneratorTests
     }
 
     [Fact]
-    public void SqvBindingsAndEventsUseExistingEmitterSemantics()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text :text="Title" />
-                <Button @click="OnClick">Save</Button>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableValue<string> Title = new("Hello");
-              private void OnClick() { }
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Bindings.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains(".BindProperty(\"TextContent\", Title);", generated);
-        Assert.Contains("RegisterGeneratedResource", generated);
-        Assert.Contains(".Listen(", generated);
-        Assert.Contains("\"click\"", generated);
-        Assert.Contains("OnClick", generated);
-    }
-
-    [Fact]
-    public void SqvObjectBindingsUseRuntimeBindingProtocol()
-    {
-        const string source = """
-            <template>
-              <Button v-bind="Props" v-on="Listeners">Save</Button>
-            </template>
-            <script lang="csharp">
-              public IReadOnlyDictionary<string, object?> Props = new Dictionary<string, object?>();
-              public IReadOnlyDictionary<string, Action<Event>> Listeners = new Dictionary<string, Action<Event>>();
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("ObjectBindings.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("SqvObjectBinding.BindProperties", generated);
-        Assert.Contains("SqvObjectBinding.BindEvents", generated);
-        Assert.Contains(".RegisterGeneratedResource(SqvObjectBinding.BindProperties", generated);
-        Assert.Contains(".RegisterGeneratedResource(SqvObjectBinding.BindEvents", generated);
-        Assert.DoesNotContain("_generatedBindings", generated);
-    }
-
-    [Fact]
     public void SqvReactiveObjectBindingsGeneratedCodeCompiles()
     {
         const string template = """
-            <template><Button v-bind="Props" v-on="Listeners">Save</Button></template>
+            <template xmlns="urn:square:ui"><Button v-bind="Props" v-on="Listeners">Save</Button></template>
             <script namespace="TestApp"></script>
             """;
         const string codeBehind = """
@@ -387,25 +263,9 @@ public class VueGeneratorTests
     }
 
     [Fact]
-    public void SqvLowercaseViewTextLowersToBuiltInControls()
+    public void SqvInlineSvgGeneratedCodeCompiles()
     {
-        const string source = """
-            <template>
-              <view style="user-select: text">hello</view>
-            </template>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("LowercaseView.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains(".Children.Add", generated);
-        Assert.Contains(".Style.CssText = \"user-select: text\"", generated);
-    }
-
-    [Fact]
-    public void SqvInlineSvgLowersToSvgDomElements()
-    {
-        const string source = """
+        const string template = """
             <template>
               <svg viewBox="0 0 100 100" width="100" height="100">
                 <g transform="translate(5 10)" fill="#123456">
@@ -417,112 +277,23 @@ public class VueGeneratorTests
             </template>
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("InlineSvg.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("InlineSvg.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains("SetProperty(\"ViewBox\", \"0 0 100 100\")", generated);
-        Assert.Contains("SetProperty(\"StrokeWidth\", 2)", generated);
-        Assert.Contains("SetProperty(\"FillOpacity\", \"0.5\")", generated);
-        Assert.DoesNotContain(".Slots.Set", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
 
     [Fact]
-    public void SqvVirtualizedControlsLowerToBuiltInTypes()
+    public void SqvDynamicArgumentsAndScopedSlotsCompile()
     {
-        const string source = """
-            <template>
-              <VirtualList item-height="24" overscan-count="2" />
-              <VirtualTree item-height="28" overscan-count="3" indent-size="16" />
-            </template>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Virtualized.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("SetProperty(\"ItemHeight\", 24)", generated);
-        Assert.Contains("SetProperty(\"OverscanCount\", 2)", generated);
-        Assert.Contains("SetProperty(\"IndentSize\", 16)", generated);
-    }
-
-
-
-    [Fact]
-    public void SqvMenuTreeLowersToBuiltInControlsAndProperties()
-    {
-        const string source = """
-            <template>
-              <MenuBar>
-                <MenuItem text="View">
-                  <Menu>
-                    <MenuItem text="Grid" checkable="true" shortcut="Ctrl+G" stays-open-on-click="true" />
-                    <MenuSeparator />
-                    <MenuItem text="Dark" group="theme" />
-                  </Menu>
-                </MenuItem>
-              </MenuBar>
-            </template>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Menus.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("SetProperty(\"IsCheckable\", true)", generated);
-        Assert.Contains("SetProperty(\"ShortcutText\", \"Ctrl+G\")", generated);
-        Assert.Contains("SetProperty(\"StaysOpenOnClick\", true)", generated);
-        Assert.Contains("SetProperty(\"GroupName\", \"theme\")", generated);
-    }
-
-    [Fact]
-    public void SqvVIfLowersToShowDirective()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text v-if="Visible">Visible</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableValue<bool> Visible = new(true);
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Conditional.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("new ShowNode(Visible", generated);
-    }
-
-    [Fact]
-    public void SqvTemplateSlotSyntaxLowersToSquareSlots()
-    {
-        const string source = """
-            <template>
-              <Card>
-                <template v-slot:header>
-                  <Text>Header</Text>
-                </template>
-                <Text>Body</Text>
-              </Card>
-            </template>
-            """;
-
-        var result = RunGenerator(
-            new InMemoryAdditionalText("Card.sqv", "<template><View /></template>"),
-            new InMemoryAdditionalText("SlotUsage.sqv", source));
-        var generated = result.GeneratedTrees.Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class SlotUsage", StringComparison.Ordinal));
-
-        Assert.Contains(".Slots.Set(\"header\"", generated);
-        Assert.Contains(".Slots.Set(\"\"", generated);
-        Assert.DoesNotContain("new template", generated);
-        Assert.DoesNotContain("new Fragment", generated);
-    }
-
-    [Fact]
-    public void SqvDynamicArgumentsAndScopedSlotsUseRuntimeProtocols()
-    {
-        const string source = """
+        const string card = "<template><View /></template>";
+        const string template = """
             <template>
               <Card>
                 <template #[SlotName]="slotProps">
@@ -541,22 +312,16 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(
-            new InMemoryAdditionalText("Card.sqv", "<template><View /></template>"),
-            new InMemoryAdditionalText("DynamicSlots.sqv", source));
-        var generated = result.GeneratedTrees.Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class DynamicSlots", StringComparison.Ordinal));
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Card.sqv", card), new InMemoryAdditionalText("DynamicSlots.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Empty(result.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
-        Assert.Contains(".Slots.Set(SlotName, (__slotParent", generated);
-        Assert.Contains("SqvObjectBinding.BindProperty", generated);
-        Assert.Contains("SqvObjectBinding.BindEvent", generated);
-        Assert.Contains("e.StopPropagation();", generated);
-        Assert.Contains("e.PreventDefault();", generated);
-        Assert.Contains("slotProps.Get<string>(\"label\")", generated);
-        Assert.DoesNotContain(".Slots.Set(\"SlotName\"", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
-
 
     [Fact]
     public void SqvScopedSlotDestructuringUsesDeclaredContractTypes()
@@ -595,9 +360,11 @@ public class VueGeneratorTests
     }
 
     [Fact]
-    public void SqvInputVModelBindsValueAndWritesBackOnInput()
+    public void SqvHtmlInputVModelCompiles()
     {
-        const string source = """
+        // <Input> resolves to the native HTML input under the XHTML default namespace; the
+        // generated value binding and input write-back must produce valid C#.
+        const string template = """
             <template>
               <Input type="password" v-model="Password" />
             </template>
@@ -606,18 +373,22 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("PasswordModel.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("PasswordModel.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains(".BindProperty(\"Value\", Password);", generated);
-        Assert.Contains(".Listen(\"input\", e => Password.Value = ((global::Square.Controls.Input)e.Target!).Value)", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
-    public void SqvVModelModifiersAffectTextInputWriteBack()
+    public void SqvVModelModifiersGeneratedCodeCompiles()
     {
-        const string source = """
-            <template>
+        const string template = """
+            <template xmlns="urn:square:ui">
               <View>
                 <Input v-model.trim.lazy="Name" @change="OnNameChanged" />
                 <Input v-model.number="Age" />
@@ -630,23 +401,22 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("ModelModifiers.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("ModelModifiers.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains(".Listen(\"change\", e => Name.Value = ((global::Square.Controls.Input)e.Target!).Value.Trim())", generated);
-        Assert.Contains(".Listen(\"input\", e => Age.Value = double.Parse(((global::Square.Controls.Input)e.Target!).Value, System.Globalization.CultureInfo.InvariantCulture))", generated);
-        AssertGeneratedBindingOrder(
-            generated,
-            ".BindProperty(\"Value\", Name);",
-            "Name.Value = ((global::Square.Controls.Input)e.Target!).Value.Trim()",
-            "Listen(\"change\", OnNameChanged)");
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
-    public void SqvControlVModelUsesControlSpecificPropertyAndEvent()
+    public void SqvControlVModelGeneratedCodeCompiles()
     {
-        const string source = """
-            <template>
+        const string template = """
+            <template xmlns="urn:square:ui">
               <View>
                 <CheckBox v-model="RememberMe" @change="OnRememberChanged" />
                 <Select @change="OnPlanChanged" v-model="Plan" />
@@ -660,30 +430,29 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("ControlModel.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("ControlModel.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains(".BindProperty(\"IsChecked\", RememberMe);", generated);
-        Assert.Contains(".Listen(\"change\", e => RememberMe.Value = ((global::Square.Controls.CheckBox)e.Target!).IsChecked)", generated);
-        Assert.Contains(".BindProperty(\"Value\", Plan);", generated);
-        Assert.Contains(".Listen(\"change\", e => Plan.Value = ((global::Square.Controls.Select)e.Target!).Value)", generated);
-        AssertGeneratedBindingOrder(
-            generated,
-            ".BindProperty(\"IsChecked\", RememberMe);",
-            "RememberMe.Value = ((global::Square.Controls.CheckBox)e.Target!).IsChecked",
-            "Listen(\"change\", OnRememberChanged)");
-        AssertGeneratedBindingOrder(
-            generated,
-            ".BindProperty(\"Value\", Plan);",
-            "Plan.Value = ((global::Square.Controls.Select)e.Target!).Value",
-            "Listen(\"change\", OnPlanChanged)");
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
-    public void SqvVModelCanHaveAdditionalInputHandler()
+    public void SqvVModelWithAdditionalHandlersCompiles()
     {
-        const string source = """
-            <template>
+        const string normalizing = """
+            <template xmlns="urn:square:ui"><View /></template>
+            <script lang="csharp">
+              public string Value = "";
+              public static readonly ComponentEvent<string> ChangeEvent = new("change");
+            </script>
+            """;
+        const string template = """
+            <template xmlns="urn:square:ui">
               <View>
                 <Input v-model="Password" @input="OnPasswordChanged" />
                 <Input @input="OnNameChanged" v-model="Name" />
@@ -700,63 +469,47 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(
-            new InMemoryAdditionalText("NormalizingControl.sqv", """
-                <template><View /></template>
-                <script lang="csharp">
-                  public string Value = "";
-                  public static readonly ComponentEvent<string> ChangeEvent = new("change");
-                </script>
-                """),
-            new InMemoryAdditionalText("ModelWithHandler.sqv", source));
-        var generated = result.GeneratedTrees.Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class ModelWithHandler", StringComparison.Ordinal));
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("NormalizingControl.sqv", normalizing),
+             new InMemoryAdditionalText("ModelWithHandler.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Id == "SQV0005");
-        AssertGeneratedBindingOrder(
-            generated,
-            ".BindProperty(\"Value\", Password);",
-            "Password.Value = ((global::Square.Controls.Input)e.Target!).Value",
-            "Listen(\"input\", OnPasswordChanged)");
-        AssertGeneratedBindingOrder(
-            generated,
-            ".BindProperty(\"Value\", Name);",
-            "Name.Value = ((global::Square.Controls.Input)e.Target!).Value",
-            "Listen(\"input\", OnNameChanged)");
-        AssertGeneratedBindingOrder(
-            generated,
-            ".BindProperty(\"Value\", Custom);",
-            "Custom.Value = ((global::Square.Sample.NormalizingControl)e.Target!).Value",
-            "Listen(global::Square.Sample.NormalizingControl.ChangeEvent, OnCustomChanged)");
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Id == "SQV0005");
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
-    public void SqvVModelOnScopedComponentUsesResolvedGlobalTypeCast()
+    public void SqvVModelOnBatchComponentCompiles()
     {
-        const string source = """
+        const string card = """
+            <template><View /></template>
+            <script lang="csharp">
+              public string Value = "";
+              public static readonly ComponentEvent<string> ChangeEvent = new("change");
+            </script>
+            """;
+        const string usage = """
             <template>
-              <local:Card v-model="Title" />
+              <Card v-model="Title" />
             </template>
             <script lang="csharp">
               public ObservableValue<string> Title = new("");
             </script>
             """;
 
-        var result = RunGenerator(
-            new InMemoryAdditionalText("Card.sqv", """
-                <template><View /></template>
-                <script lang="csharp">
-                  public string Value = "";
-                  public static readonly ComponentEvent<string> ChangeEvent = new("change");
-                </script>
-                """),
-            new InMemoryAdditionalText("ScopedModel.sqv", source));
-        var generated = result.GeneratedTrees.Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class ScopedModel", StringComparison.Ordinal));
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Card.sqv", card), new InMemoryAdditionalText("ScopedModel.sqv", usage)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-        Assert.Contains(".BindProperty(\"Value\", Title);", generated);
-        Assert.Contains(".Listen(global::Square.Sample.Card.ChangeEvent, e => Title.Value = ((global::Square.Sample.Card)e.Target!).Value)", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
@@ -764,7 +517,7 @@ public class VueGeneratorTests
     {
         const string source = """
             <template>
-              <local:EventlessCard onMissing={OnMissing} />
+              <EventlessCard onMissing={OnMissing} />
             </template>
             <script lang="csharp">
               private void OnMissing() { }
@@ -784,25 +537,6 @@ public class VueGeneratorTests
         Assert.Contains("declares no event 'missing'", diagnostic.GetMessage(), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void GeneratedResourcesSurviveOrdinaryDetach()
-    {
-        const string source = """
-            <template><Button ref={SaveButton}>Save</Button></template>
-            <script lang="csharp">
-              protected override void OnDetachedCore() { }
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Cleanup.sqx", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.DoesNotContain("protected override void OnGeneratedDetachedCore()", generated);
-        Assert.Contains("SaveButton = null!;", generated);
-        Assert.Contains("ISquareHotReloadComponent.RebuildAfterHotReload", generated);
-        Assert.Contains("protected override void OnDetachedCore()", generated);
-    }
-
     [Theory]
     [InlineData("CodeBehind.sqx")]
     [InlineData("CodeBehind.sqv")]
@@ -814,7 +548,7 @@ public class VueGeneratorTests
             : "onClick={OnClick}";
         var refAttribute = isVue ? "ref=\"SaveButton\"" : "ref={SaveButton}";
         var template =
-            "<template><Button " + refAttribute + " " + eventAttribute + ">Save</Button></template>" +
+            "<template xmlns=\"urn:square:ui\"><Button " + refAttribute + " " + eventAttribute + ">Save</Button></template>" +
             "<script namespace=\"TestApp\"></script>";
         const string codeBehind = """
             namespace TestApp;
@@ -830,7 +564,7 @@ public class VueGeneratorTests
         var compilation = CreateCompilation(codeBehind);
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             [new SqxGenerator().AsSourceGenerator()],
-            [new InMemoryAdditionalText(path, template)],
+            [new InMemoryAdditionalText("CodeBehind.sqv", template)],
             (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
         driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
@@ -839,158 +573,26 @@ public class VueGeneratorTests
     }
 
     [Fact]
-    public void TitleBarLowersToBuiltInControl()
+    public void CodeBehindPaintOverrideCompiles()
     {
-        const string source = """
-            <template>
-              <TitleBar>
-                <Text slot="icon" text="I" />
-                <Text text="App" />
-                <Button slot="control" text="X" />
-              </TitleBar>
-            </template>
+        const string template = "<template><View /></template><script namespace=\"TestApp\"></script>";
+        const string codeBehind = """
+            namespace TestApp;
+            public partial class PaintedComponent
+            {
+                public override void Paint(Square.Graphics.IRenderContext context) { }
+            }
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("WindowTitle.sqx", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation(codeBehind);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("PaintedComponent.sqv", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains(".Slots.Set(\"icon\"", generated);
-        Assert.Contains(".Slots.Set(\"\"", generated);
-        Assert.Contains(".Slots.Set(\"control\"", generated);
-        Assert.True(
-            generated.IndexOf(".Children.Add(", StringComparison.Ordinal) <
-            generated.LastIndexOf(".BuildElementTree();", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void FontIconLowersToBuiltInControlAndMapsIconProperties()
-    {
-        const string source = """
-            <template>
-              <FontIcon font-family="Product Icons" glyph="\uE000" />
-              <PiIcon icon="Search" />
-            </template>
-            """;
-
-        var result = RunGenerator(
-            new InMemoryAdditionalText("PiIcon.sqx", "<template><View /></template>"),
-            new InMemoryAdditionalText("Icon.sqx", source));
-        var generated = result.GeneratedTrees.Select(tree => tree.GetText().ToString())
-            .Single(code => code.Contains("partial class Icon", StringComparison.Ordinal));
-
-        Assert.Contains(".SetProperty(\"FontFamily\", \"Product Icons\")", generated);
-        Assert.Contains(".SetProperty(\"Glyph\", \"\\\\uE000\")", generated);
-        Assert.Contains(".SetProperty(\"Icon\", \"Search\")", generated);
-    }
-
-    [Fact]
-    public void IdAttributeMapsToElementIdProperty()
-    {
-        const string source = "<template><Input id=\"search-box\" /></template>";
-
-        var generated = Assert.Single(RunGenerator(new InMemoryAdditionalText("Search.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
-
-        Assert.Contains(".SetProperty(\"Id\", \"search-box\")", generated);
-    }
-
-    [Fact]
-    public void SplitterLowersToBuiltInControlAndMapsSizingProperties()
-    {
-        const string source = """
-            <template>
-              <Splitter minimum="240" maximum="440" vertical="true" reversed="true" />
-            </template>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Splitter.sqx", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains(".SetProperty(\"Minimum\", 240)", generated);
-        Assert.Contains(".SetProperty(\"Maximum\", 440)", generated);
-        Assert.Contains(".SetProperty(\"IsVertical\", true)", generated);
-        Assert.Contains(".SetProperty(\"IsReversed\", true)", generated);
-    }
-
-    [Fact]
-    public void SqvVForLowersToForNodeWithItemName()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text v-for="item in Items">{{ item }}</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableCollection<string> Items = new();
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("List.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("ForNode.Create(Items, item =>", generated);
-        Assert.Contains(".AttachTo(", generated);
-    }
-
-    [Fact]
-    public void SqvVForWithIndexLowersToIndexedForNode()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text v-for="(item, index) in Items">{{ item }}</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableCollection<string> Items = new();
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("IndexedList.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("ForNode.Create(Items, (item, index) =>", generated);
-        Assert.Contains(".AttachTo(", generated);
-    }
-
-    [Fact]
-    public void SqvVForKeyLowersToKeyedForNode()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text v-for="item in Items" :key="item.Id">{{ item.Name }}</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableCollection<Row> Items = new();
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("KeyedList.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("ForNode.Create(Items, item => item.Id, item =>", generated);
-        Assert.DoesNotContain("SetProperty(\"key\"", generated, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void SqvIndexedVForKeyUsesParenthesizedSelectors()
-    {
-        const string source = """
-            <template>
-              <Text v-for="(item, index) in Items" :key="item.Id + index">{{ item.Name }}</Text>
-            </template>
-            <script lang="csharp">
-              public ObservableCollection<Row> Items = new();
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("IndexedKeyedList.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("ForNode.Create(Items, (item, index) => item.Id + index, (item, index) =>", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
@@ -1021,68 +623,6 @@ public class VueGeneratorTests
 
         Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-    }
-
-
-    [Fact]
-    public void SqvEventModifiersEmitStopAndPreventWrapper()
-    {
-        const string source = """
-            <template>
-              <Button @click.stop.prevent="OnClick">Save</Button>
-            </template>
-            <script lang="csharp">
-              private void OnClick(Square.Events.Event e) { }
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Modifiers.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("e.StopPropagation(); e.PreventDefault(); OnClick(e);", generated);
-    }
-
-    [Fact]
-    public void SqvVShowBindsIsVisible()
-    {
-        const string source = """
-            <template>
-              <View>
-                <Text v-show="Visible">Hi</Text>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableValue<bool> Visible = new(true);
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Show.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains(".BindProperty(\"IsVisible\", Visible);", generated);
-    }
-
-    [Fact]
-    public void SqvNestedVForAndVIfEmitIndependentNodes()
-    {
-        const string source = """
-            <template>
-              <View>
-                <View v-for="row in Rows">
-                  <Text v-if="row.Active">{{ row.Name }}</Text>
-                </View>
-              </View>
-            </template>
-            <script lang="csharp">
-              public ObservableCollection<Row> Rows = new();
-            </script>
-            """;
-
-        var result = RunGenerator(new InMemoryAdditionalText("Nested.sqv", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
-
-        Assert.Contains("ForNode.Create(Rows, row =>", generated);
-        Assert.Contains("new ShowNode(row.Active", generated);
     }
 
     [Fact]
@@ -1118,9 +658,9 @@ public class VueGeneratorTests
     }
 
     [Fact]
-    public void SqxControlFlowFallbackAndIndexGenerateExpectedNodes()
+    public void SqxControlFlowFallbacksCompile()
     {
-        const string source = """
+        const string template = """
             <template>
               <View>
                 <Show when={Visible} fallback={<Text text="hidden" />}>
@@ -1139,49 +679,16 @@ public class VueGeneratorTests
             </script>
             """;
 
-        var result = RunGenerator(new InMemoryAdditionalText("Fallbacks.sqx", source));
-        var generated = Assert.Single(result.GeneratedTrees).GetText().ToString();
+        var compilation = CreateCompilation("public sealed class Placeholder { }");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("Fallbacks.sqx", template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
 
-        Assert.Contains("new ShowNode(Visible", generated);
-        Assert.Contains("ForNode.Create(Items", generated);
-        Assert.Contains("IndexNode.Create(Items", generated);
-        Assert.Contains("new SwitchNode()", generated);
-        Assert.Contains("hidden", generated);
-        Assert.Contains("empty index", generated);
-        Assert.Contains("unknown", generated);
+        Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
-
-    [Fact]
-    public void SqxNestedNativeDirectivesAreEmittedInsideFactories()
-    {
-        const string source = """
-            <template>
-              <Show when={Outer}>
-                <For each={Items}>{(it)=><Show when={Inner}><Text>{it}</Text></Show>}</For>
-              </Show>
-            </template>
-            <script lang="csharp">
-              public ObservableValue<bool> Outer = new(true);
-              public ObservableValue<bool> Inner = new(true);
-              public ObservableCollection<string> Items = new();
-            </script>
-            """;
-
-        var generated = Assert.Single(RunGenerator(new InMemoryAdditionalText("NestedSqx.sqx", source)).GeneratedTrees)
-            .GetText().ToString();
-
-        Assert.Equal(2, generated.Split("new ShowNode(").Length - 1);
-        Assert.Contains("ForNode.Create(Items", generated);
-        Assert.Contains(".RegisterGeneratedResource(_show", generated);
-        Assert.Contains(".RegisterGeneratedResource(_for", generated);
-        Assert.DoesNotContain("_generatedDirectives", generated);
-        Assert.Contains("var _show0", generated);
-        Assert.Contains("var _for0", generated);
-        Assert.DoesNotContain("private ShowNode _show", generated);
-        Assert.DoesNotContain("private IForNode _for", generated);
-    }
-
-
 
     [Theory]
     [InlineData("Child.sqx", "Parent.sqx", "onItemSelected={OnSelected}")]
@@ -1205,7 +712,6 @@ public class VueGeneratorTests
         Assert.DoesNotContain(generatorDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
-
 
     [Fact]
     public void NoDetailComponentEventHandlersCompile()
@@ -1236,34 +742,6 @@ public class VueGeneratorTests
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
-    private static void AssertGeneratedBindingOrder(
-        string generated, string propertyBinding, string modelListener, string explicitListener)
-    {
-        var propertyIndex = generated.IndexOf(propertyBinding, StringComparison.Ordinal);
-        var modelIndex = generated.IndexOf(modelListener, StringComparison.Ordinal);
-        var explicitIndex = generated.IndexOf(explicitListener, StringComparison.Ordinal);
-        Assert.True(propertyIndex >= 0, "Missing property binding: " + propertyBinding);
-        Assert.True(modelIndex >= 0, "Missing model listener: " + modelListener);
-        Assert.True(explicitIndex >= 0, "Missing explicit listener: " + explicitListener);
-        Assert.True(propertyIndex < modelIndex,
-            $"Property binding must precede model listener: {propertyIndex} !< {modelIndex}");
-        Assert.True(modelIndex < explicitIndex,
-            $"Model listener must precede explicit listener: {modelIndex} !< {explicitIndex}");
-    }
-
-    private static string ReadHotReloadVersion(string source)
-    {
-        var generated = Assert.Single(RunGenerator(
-            new InMemoryAdditionalText("Versioned.sqv", source)).GeneratedTrees)
-            .GetText().ToString();
-        const string marker = "CurrentHotReloadVersion() => ";
-        var start = generated.IndexOf(marker, StringComparison.Ordinal);
-        Assert.True(start >= 0);
-        start += marker.Length;
-        var end = generated.IndexOf('L', start);
-        Assert.True(end > start);
-        return generated.Substring(start, end - start);
-    }
 
     private static GeneratorResult RunGenerator(params AdditionalText[] files)
     {

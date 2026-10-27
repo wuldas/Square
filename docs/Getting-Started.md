@@ -25,16 +25,16 @@ dotnet --version
 
 `Wuldas.Square.Templates` 提供 `square` 应用模板和 `square-component` 组件模板。NuGet 包统一使用 `Wuldas.Square` / `Wuldas.Square.*`，程序集与 C# 命名空间仍为 `Square`。生成的应用只引用 NuGet 包，不依赖 Square 仓库的 `Directory.Build.*` 或源码项目路径。
 
-`0.1.0` 已正式发布。以下命令可在普通工作目录执行，无需克隆 Square 仓库，也无需配置本地包源：
+当前稳定包版本为 `0.2.0`。以下命令可在普通工作目录执行，无需克隆 Square 仓库，也无需配置本地包源：
 
 ```bash
-dotnet new install Wuldas.Square.Templates@0.1.0
+dotnet new install Wuldas.Square.Templates@0.2.0
 dotnet new square -n MyApp
 cd MyApp
 dotnet run
 ```
 
-框架、编译器及匹配当前操作系统的平台包会从 NuGet.org 自动还原。默认项目包含欢迎页和计数按钮，点击按钮应更新计数。包信息见[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)和[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。
+框架、编译器及匹配当前操作系统的平台包会从 NuGet.org 自动还原。默认项目包含欢迎页和计数按钮，点击按钮应更新计数。包信息见[核心包](https://www.nuget.org/packages/Wuldas.Square/0.2.0)和[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.2.0)。
 
 默认生成 `.sqv`、Software 后端和当前操作系统的桌面宿主。选择原生 SQX 语法：`dotnet new square -n MyApp --markup sqx`。
 
@@ -156,7 +156,7 @@ dotnet pack src/Square/Square.csproj -c Release -o artifacts/template-feed
 dotnet pack src/Square.Compiler/Square.Compiler.csproj -c Release -o artifacts/template-feed
 dotnet pack src/Square.Platform.Win32/Square.Platform.Win32.csproj -c Release -o artifacts/template-feed
 dotnet pack templates/Square.Templates.csproj -c Release -o artifacts/template-feed
-dotnet new install ./artifacts/template-feed/Wuldas.Square.Templates.0.1.0.nupkg --force
+dotnet new install ./artifacts/template-feed/Wuldas.Square.Templates.0.2.0.nupkg --force
 dotnet new square -n LocalApp -o ../LocalApp
 ```
 

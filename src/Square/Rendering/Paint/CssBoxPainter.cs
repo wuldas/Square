@@ -3,6 +3,7 @@ using System.Globalization;
 using Square.CSS.Properties;
 using Square.Controls;
 using Square.Graphics;
+using Square.Html;
 using Square.UI;
 
 namespace Square.Rendering.Paint;
@@ -66,7 +67,9 @@ internal static class CssBoxPainter
         }
 
         var geometry = element.Geometry;
-        if (element is Button button && UsesDefaultButtonWidgetPaint(button))
+        // HTML button proxies and author-specified appearance keep their CSS box painting.
+        if (element is Button button && button.VisualParent is not HTMLElement &&
+            !button.Style.IsAuthorSpecified("appearance") && UsesDefaultButtonWidgetPaint(button))
         {
             PaintButtonWidget(context, button, geometry);
             return;
@@ -96,7 +99,11 @@ internal static class CssBoxPainter
     public static void PaintAfterContent(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
-        if (element is Button button && UsesDefaultButtonWidgetPaint(button)) return;
+        if (element is Button button && button.VisualParent is not HTMLElement &&
+            !button.Style.IsAuthorSpecified("appearance") && UsesDefaultButtonWidgetPaint(button)) return;
+        // A text-form sidecar paints no chrome of its own: the HTML host box owns the single
+        // frame, and the sidecar renders only editor content, caret and scrollbar.
+        if (IsHtmlFormSidecar(element)) return;
         if (element is Input input && ControlDrawing.UsesWidgetAppearance(input) && !HasAuthorBorderStyle(input))
         {
             PaintInputWidgetBorder(context, input, input.Geometry);
@@ -111,6 +118,13 @@ internal static class CssBoxPainter
             !HasAuthorBorderStyle(select))
         {
             PaintSelectWidgetBorder(context, select, select.Geometry);
+            return;
+        }
+        // Text input hosts paint their inset UA border through PaintBorder below. Textarea/select
+        // still delegate their default widget frame to the host border box, not the sidecar.
+        if (IsHtmlFormHost(element) && TryGetDelegatedFormProxy(element, out var formProxy))
+        {
+            PaintDelegatedFormChrome(context, formProxy, element.Geometry);
             return;
         }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
@@ -143,6 +157,13 @@ internal static class CssBoxPainter
             return;
         }
         if (element is Select select && UsesDefaultWidgetFocusBorder(select))
+        {
+            return;
+        }
+        // A delegated HTML form chrome shows focus through the widget's own frame (painted in
+        // PaintAfterContent on the host box); the host must not add a second focus outline.
+        if (IsHtmlFormHost(element) && TryGetDelegatedFormProxy(element, out var delegatedProxy) &&
+            UsesDefaultWidgetFocusBorder(delegatedProxy) && !HasAuthorOutlineStyle(element))
         {
             return;
         }
@@ -181,6 +202,51 @@ internal static class CssBoxPainter
         foreach (var property in AuthorOutlineProperties)
             if (element.Style.IsAuthorSpecified(property)) return true;
         return false;
+    }
+
+    /// <summary>HTML textarea/select host whose widget frame is painted on its border box.</summary>
+    private static bool IsHtmlFormHost(Element element) =>
+        element is HTMLElement { TagName: "textarea" or "select" };
+
+    /// <summary>
+    /// The native text-editor sidecar of such a host. The host box owns the chrome, so the
+    /// sidecar paints no border, frame or background of its own — only editor content, caret
+    /// and scrollbar inside the host content box.
+    /// </summary>
+    private static bool IsHtmlFormSidecar(Element element) =>
+        element is Input or TextArea or Select &&
+        element.VisualParent is HTMLElement { TagName: "input" or "textarea" or "select" };
+
+    /// <summary>
+    /// Resolves the text-form sidecar whose widget frame stands in for the host's CSS border
+    /// (the appearance:auto model): active when the host carries no author border style and the
+    /// proxy uses widget appearance (author appearance:none mirrors onto the proxy). An author
+    /// border keeps the host as the painter through the regular border path.
+    /// </summary>
+    private static bool TryGetDelegatedFormProxy(Element host, out UIElement proxy)
+    {
+        proxy = null!;
+        if (HasAuthorBorderStyle(host)) return false;
+        foreach (var sidecar in host.VisualSidecars)
+        {
+            if (sidecar is not (Input or TextArea or Select) ||
+                sidecar is not UIElement control ||
+                !ControlDrawing.UsesWidgetAppearance(control)) continue;
+            proxy = control;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Paints the delegated widget frame on the host box, reading proxy hover/focus state.</summary>
+    private static void PaintDelegatedFormChrome(IRenderContext context, UIElement proxy, Rect geometry)
+    {
+        switch (proxy)
+        {
+            case Input input: PaintInputWidgetBorder(context, input, geometry); break;
+            case TextArea textArea: PaintTextAreaWidgetBorder(context, textArea, geometry); break;
+            case Select select: PaintSelectWidgetBorder(context, select, geometry); break;
+        }
     }
 
     private static void PaintButtonWidget(IRenderContext context, Button button, Rect geometry)

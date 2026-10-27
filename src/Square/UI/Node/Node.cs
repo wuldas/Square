@@ -40,11 +40,13 @@ public abstract class Node : EventTarget
     public abstract string NodeName { get; }
 
     /// <summary>
-    /// 事件路径父目标：先 <see cref="ParentNode"/>，否则（非 Document）为 <see cref="OwnerDocument"/>。
+    /// 事件路径父目标：先 <see cref="ParentNode"/>；无语义父节点的视觉 sidecar（HTML host 的
+    /// 原生代理/列表标记）沿 <see cref="Element.VisualParent"/> 回到宿主；否则（非 Document）为 <see cref="OwnerDocument"/>。
     /// </summary>
     protected override EventTarget? GetEventParent()
     {
         if (ParentNode != null) return ParentNode;
+        if (this is Element { VisualParent: { } visualParent }) return visualParent;
         if (this is Document) return null;
         return OwnerDocument;
     }

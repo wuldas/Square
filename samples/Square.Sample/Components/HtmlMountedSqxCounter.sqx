@@ -1,0 +1,22 @@
+<template>
+  <View class="dynamic-counter">
+    <Text class="counter-value" text={Display} />
+    <Button class="counter-button" onClick={Increment}>SQX +1</Button>
+  </View>
+</template>
+<script lang="csharp">
+  public ObservableValue<string> Display { get; } = new("SQX 0");
+
+  private int _count;
+
+  private void Increment()
+  {
+    _count++;
+    Display.Value = "SQX " + _count;
+  }
+</script>
+<style>
+  .dynamic-counter { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 20px; background: #f5f7f9; border-radius: 10px; }
+  .dynamic-counter .counter-value { color: #b45309; font-size: 24px; font-weight: bold; }
+  .dynamic-counter .counter-button { min-width: 170px; padding: 10px 24px; background: #0078d4; color: #ffffff; font-size: 16px; }
+</style>

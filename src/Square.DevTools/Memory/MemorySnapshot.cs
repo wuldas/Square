@@ -27,7 +27,11 @@ internal sealed record ManagedMemorySnapshot(
     long HighMemoryLoadThresholdBytes,
     long PendingFinalizers,
     long PinnedObjects,
-    double PauseTimePercentage);
+    double PauseTimePercentage)
+{
+    // The non-collecting runtime estimate can transiently be negative during GC.
+    public long CurrentBytes { get; } = Math.Max(0, CurrentBytes);
+}
 
 internal sealed record CollectionSnapshot(int Gen0, int Gen1, int Gen2);
 

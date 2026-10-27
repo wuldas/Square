@@ -20,7 +20,9 @@ public sealed class StyleAccessor
     private Dictionary<string, AnimatedNumericValue>? _animatedNumericStyles;
     private Dictionary<string, string?>? _computedStyles;
     private HashSet<string>? _parentDependentStyles;
+    private int _cssTextDepth;
     private long _scrollStyleRevision;
+    private long _inlineStyleRevision;
     private bool? _displayNone;
 
     internal long ScrollStyleRevision => _scrollStyleRevision;
@@ -28,9 +30,13 @@ public sealed class StyleAccessor
     internal bool IsDisplayNone => _displayNone ??=
         string.Equals(Get("display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>每次外层内联写入通知（含等值显式 CssText 替换）递增一次，用于识别 application 写回。</summary>
+    internal long InlineStyleRevision => _inlineStyleRevision;
+
     internal StyleAccessor(Element owner) { _owner = owner; }
 
-    /// <summary>内联声明块文本（对齐 <c>element.style.cssText</c>）。</summary>
+    /// <summary>内联声明块文本（对齐 <c>element.style.cssText</c>）；只序列化 authored 声明，
+    /// 由 shorthand 展开的隐藏条目不重复输出。</summary>
     public string CssText
     {
         get
@@ -39,6 +45,7 @@ public sealed class StyleAccessor
             var sb = new StringBuilder();
             foreach (var pair in _inlineStyles)
             {
+                if (pair.Value.ShorthandSource != null) continue;
                 if (sb.Length > 0) sb.Append(' ');
                 sb.Append(pair.Key).Append(": ").Append(pair.Value.Value);
                 if (pair.Value.Important) sb.Append(" !important");
@@ -48,17 +55,17 @@ public sealed class StyleAccessor
         }
         set
         {
-            Clear();
-            if (string.IsNullOrWhiteSpace(value)) return;
-            foreach (var declaration in SplitDeclarations(value))
+            _cssTextDepth++;
+            try
             {
-                var separator = FindTopLevelColon(declaration);
-                if (separator <= 0) continue;
-                var property = declaration[..separator].Trim();
-                var propertyValue = declaration[(separator + 1)..].Trim();
-                if (property.Length == 0 || propertyValue.Length == 0) continue;
-                var important = TryRemoveImportant(ref propertyValue);
-                SetProperty(property, propertyValue, important ? "important" : "");
+                Clear();
+                foreach (var entry in CssDeclarationText.Parse(value))
+                    ApplyDeclarationEntry(entry);
+            }
+            finally
+            {
+                _cssTextDepth--;
+                NotifyInlineStyleChanged();
             }
         }
     }
@@ -93,20 +100,167 @@ public sealed class StyleAccessor
 
         value = value.Trim();
         if (!TryGetAssignments(property, value, out var assignments)) return;
-        var important = priority.Length > 0;
-        if (_inlineStyles != null && assignments.All(assignment =>
-                _inlineStyles.TryGetValue(assignment.Property, out var current) &&
-                current.Value == assignment.Value && current.Important == important)) return;
-        var previous = assignments.ToDictionary(assignment => assignment.Property, assignment => CaptureStyleState(assignment.Property),
-            StringComparer.Ordinal);
-        _inlineStyles ??= [];
-        foreach (var assignment in assignments)
+        // 显式 CSSOM 写入是替换语义：同块 !important 折叠只用于声明块整体应用。
+        ApplyAuthoredDeclarations(property, assignments, important: priority.Length > 0, foldBlockDuplicates: false);
+    }
+
+    /// <summary>
+    /// 运行时样式编辑的声明块提交路径：整体清空后按已准备的声明行顺序应用，
+    /// disabled/invalid 行保留原样但不应用；整批只产生一次外层通知。
+    /// </summary>
+    internal void SetInspectionDeclarations(IReadOnlyList<CssDeclarationTextEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        _cssTextDepth++;
+        try
         {
-            _inlineStyles[assignment.Property] = new InlineStyleEntry(assignment.Value, important);
+            Clear();
+            foreach (var entry in entries)
+                ApplyDeclarationEntry(entry);
+        }
+        finally
+        {
+            _cssTextDepth--;
+            NotifyInlineStyleChanged();
+        }
+    }
+
+    private void ApplyDeclarationEntry(CssDeclarationTextEntry entry)
+    {
+        if (entry.Disabled || !entry.ParsedOk || entry.Assignments.Length == 0) return;
+        ApplyAuthoredDeclarations(entry.Property, entry.Assignments, entry.Important, foldBlockDuplicates: true);
+    }
+
+    /// <summary>
+    /// 应用一组 authored 赋值：源敏感的未变化快路径、显式 longhand 写入时收回父 shorthand、
+    /// 按原有效值失效规则逐属性失效，最后统一通知。
+    /// </summary>
+    private void ApplyAuthoredDeclarations(string property, CssPropertyAssignment[] assignments, bool important,
+        bool foldBlockDuplicates)
+    {
+        // 源敏感的未变化快路径：由 shorthand 展开的同值条目不能当作已 authored 跳过。
+        if (IsUnchangedAuthored(property, assignments, important)) return;
+
+        var effective = foldBlockDuplicates ? SelectBlockWinners(assignments, important) : assignments;
+        if (effective.Count == 0) return;
+
+        RetireParentShorthands(property);
+        var previous = new Dictionary<string, StyleState>(effective.Count, StringComparer.Ordinal);
+        foreach (var assignment in effective)
+            previous[assignment.Property] = CaptureStyleState(assignment.Property);
+        _inlineStyles ??= [];
+        foreach (var assignment in effective)
+        {
+            _inlineStyles[assignment.Property] = new InlineStyleEntry(assignment.Value, important,
+                GetExpansionSource(property, assignment.Property));
             RemoveComputedStyle(assignment.Property);
         }
-        foreach (var assignment in assignments)
+        foreach (var assignment in effective)
             InvalidateIfEffectiveStyleChanged(assignment.Property, previous[assignment.Property]);
+        NotifyInlineStyleChanged();
+    }
+
+    private bool IsUnchangedAuthored(string property, CssPropertyAssignment[] assignments, bool important)
+    {
+        if (_inlineStyles == null) return false;
+        foreach (var assignment in assignments)
+        {
+            if (!_inlineStyles.TryGetValue(assignment.Property, out var current) ||
+                current.Value != assignment.Value || current.Important != important ||
+                current.ShorthandSource != GetExpansionSource(property, assignment.Property))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>声明块内同属性重复声明按优先级折叠：!important 胜者不被后面的普通重复覆盖。</summary>
+    private IReadOnlyList<CssPropertyAssignment> SelectBlockWinners(CssPropertyAssignment[] assignments, bool important)
+    {
+        if (important || _inlineStyles == null) return assignments;
+        List<CssPropertyAssignment>? winners = null;
+        for (var index = 0; index < assignments.Length; index++)
+        {
+            var assignment = assignments[index];
+            if (_inlineStyles.TryGetValue(assignment.Property, out var existing) && existing.Important)
+            {
+                winners ??= assignments.Take(index).ToList();
+                continue;
+            }
+            winners?.Add(assignment);
+        }
+        return winners is null ? assignments : winners;
+    }
+
+    /// <summary>赋值条目的预期来源身份：shorthand 自身为 authored，展开条目标记来源 shorthand。</summary>
+    private static string? GetExpansionSource(string property, string assignmentProperty) =>
+        assignmentProperty != property && CssShorthandExpander.IsShorthand(property) ? property : null;
+
+    /// <summary>
+    /// 显式写入/移除 longhand 时：移除残留父 shorthand 条目，并把该 shorthand 其它仍存在的
+    /// 展开项提升为 authored（值不变，无额外有效值布局变化），再写本次值。
+    /// </summary>
+    private void RetireParentShorthands(string property)
+    {
+        if (_inlineStyles == null || _inlineStyles.Count == 0) return;
+        foreach (var shorthand in ParentShorthands(property))
+        {
+            if (!_inlineStyles.TryGetValue(shorthand, out var shorthandEntry) ||
+                shorthandEntry.ShorthandSource != null)
+                continue;
+            _inlineStyles.Remove(shorthand);
+            RemoveComputedStyle(shorthand);
+            foreach (var key in _inlineStyles.Keys.ToArray())
+            {
+                var promoted = _inlineStyles[key];
+                if (promoted.ShorthandSource != shorthand) continue;
+                _inlineStyles[key] = promoted with { ShorthandSource = null };
+            }
+        }
+    }
+
+    private static readonly Dictionary<string, string[]> ParentShorthandsMap = CreateParentShorthandsMap();
+
+    private static string[] ParentShorthands(string property) =>
+        ParentShorthandsMap.TryGetValue(property, out var parents) ? parents : [];
+
+    /// <summary>longhand → 声明它的 shorthand 集合（与 <see cref="CssShorthandExpander"/> 展开互为镜像）。</summary>
+    private static Dictionary<string, string[]> CreateParentShorthandsMap()
+    {
+        var map = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        void Add(string shorthand, IEnumerable<string> longhands)
+        {
+            foreach (var longhand in longhands)
+            {
+                if (!map.TryGetValue(longhand, out var parents))
+                    map[longhand] = [shorthand];
+                else if (!parents.Contains(shorthand))
+                    map[longhand] = [.. parents, shorthand];
+            }
+        }
+
+        string[] sides = ["top", "right", "bottom", "left"];
+        Add("margin", sides.Select(side => $"margin-{side}"));
+        Add("padding", sides.Select(side => $"padding-{side}"));
+        foreach (var side in sides)
+        {
+            string[] longhands = [$"border-{side}-width", $"border-{side}-style", $"border-{side}-color"];
+            Add("border", longhands);
+            Add($"border-{side}", longhands);
+            Add("border-width", [$"border-{side}-width"]);
+            Add("border-style", [$"border-{side}-style"]);
+            Add("border-color", [$"border-{side}-color"]);
+        }
+        string[] corners =
+        [
+            "border-top-left-radius", "border-top-right-radius",
+            "border-bottom-right-radius", "border-bottom-left-radius"
+        ];
+        Add("border-radius", corners);
+        Add("background", ["background-color"]);
+        Add("font", ["font-style", "font-variant", "font-weight", "font-size", "line-height", "font-family"]);
+        Add("outline", ["outline-width", "outline-style", "outline-color"]);
+        Add("list-style", ["list-style-type", "list-style-position", "list-style-image"]);
+        return map;
     }
 
     /// <summary>读取内联声明值；未设置返回空字符串。</summary>
@@ -125,11 +279,12 @@ public sealed class StyleAccessor
             : "";
     }
 
-    /// <summary>移除内联声明并返回原值。</summary>
+    /// <summary>移除内联声明并返回原值；显式移除 longhand 时收回残留父 shorthand。</summary>
     public string RemoveProperty(string property)
     {
         property = NormalizePropertyName(property);
         if (_inlineStyles == null || !_inlineStyles.TryGetValue(property, out var entry)) return "";
+        RetireParentShorthands(property);
         var properties = GetDeclarationProperties(property).Where(_inlineStyles.ContainsKey).ToArray();
         var previous = properties.ToDictionary(name => name, CaptureStyleState, StringComparer.Ordinal);
         foreach (var name in properties)
@@ -138,6 +293,7 @@ public sealed class StyleAccessor
             RemoveComputedStyle(name);
         }
         foreach (var name in properties) InvalidateIfEffectiveStyleChanged(name, previous[name], allowWidthUpdate: false);
+        NotifyInlineStyleChanged();
         return entry.Value ?? "";
     }
 
@@ -226,6 +382,7 @@ public sealed class StyleAccessor
             ? LayoutDirtyKind.WidthPoints
             : LayoutDirtyKind.Other;
         _owner.Invalidate(invalidation, kind);
+        _owner.AppWindow?.NotifyInspectionChanged(Square.Hosting.ElementInspectionChangeKind.Styles);
     }
 
     internal void RemoveAnimated(string property)
@@ -346,7 +503,21 @@ public sealed class StyleAccessor
         foreach (var property in properties) RemoveComputedStyle(property);
         foreach (var property in properties)
             InvalidateIfEffectiveStyleChanged(property, previous[property], allowWidthUpdate: false);
+        NotifyInlineStyleChanged();
     }
+    private void NotifyInlineStyleChanged()
+    {
+        if (_cssTextDepth == 0)
+        {
+            _inlineStyleRevision++;
+            if (_owner is Square.Html.HTMLElement html)
+                html.NotifyDomAttributeMutation("style");
+        }
+        _owner.AppWindow?.NotifyInspectionChanged(
+            Square.Hosting.ElementInspectionChangeKind.Attributes |
+            Square.Hosting.ElementInspectionChangeKind.Styles);
+    }
+
 
     /// <summary>清除全部非内联级联候选。</summary>
     public void ClearCascaded()
@@ -502,6 +673,7 @@ public sealed class StyleAccessor
             ? LayoutDirtyKind.WidthPoints
             : LayoutDirtyKind.Other;
         _owner.Invalidate(invalidation, kind);
+        _owner.AppWindow?.NotifyInspectionChanged(Square.Hosting.ElementInspectionChangeKind.Styles);
     }
 
     /// <summary>
@@ -590,63 +762,6 @@ public sealed class StyleAccessor
             : 0;
     }
 
-    private static IEnumerable<string> SplitDeclarations(string value)
-    {
-        var start = 0;
-        var depth = 0;
-        char quote = '\0';
-        for (var i = 0; i <= value.Length; i++)
-        {
-            if (i < value.Length)
-            {
-                var c = value[i];
-                if (quote != '\0')
-                {
-                    if (c == '\\') { i++; continue; }
-                    if (c == quote) quote = '\0';
-                    continue;
-                }
-                if (c is '\'' or '"') { quote = c; continue; }
-                if (c == '(') depth++;
-                else if (c == ')') depth = Math.Max(0, depth - 1);
-                if (c != ';' || depth > 0) continue;
-            }
-            var declaration = value[start..i].Trim();
-            if (declaration.Length > 0) yield return declaration;
-            start = i + 1;
-        }
-    }
-
-    private static int FindTopLevelColon(string value)
-    {
-        var depth = 0;
-        char quote = '\0';
-        for (var i = 0; i < value.Length; i++)
-        {
-            var c = value[i];
-            if (quote != '\0')
-            {
-                if (c == '\\') { i++; continue; }
-                if (c == quote) quote = '\0';
-                continue;
-            }
-            if (c is '\'' or '"') quote = c;
-            else if (c == '(') depth++;
-            else if (c == ')') depth = Math.Max(0, depth - 1);
-            else if (c == ':' && depth == 0) return i;
-        }
-        return -1;
-    }
-
-    private static bool TryRemoveImportant(ref string value)
-    {
-        var index = value.LastIndexOf('!');
-        if (index < 0 || !string.Equals(value[(index + 1)..].Trim(), "important", StringComparison.OrdinalIgnoreCase))
-            return false;
-        value = value[..index].TrimEnd();
-        return value.Length > 0;
-    }
-
     private static int FindMatchingParen(string value, int openParen)
     {
         var depth = 0;
@@ -670,7 +785,8 @@ public sealed class StyleAccessor
         return -1;
     }
 
-    private static bool TryGetAssignments(string property, string value, out CssPropertyAssignment[] assignments)
+    /// <summary>准备属性赋值：校验值合法性，shorthand 展开为 [自身, ..longhands]；调用方共用同一应用入口。</summary>
+    internal static bool TryGetAssignments(string property, string value, out CssPropertyAssignment[] assignments)
     {
         if (property.Length == 0 || value.Length == 0)
         {
@@ -761,7 +877,8 @@ public sealed class StyleAccessor
     private static bool IsPropertyNameTrimChar(char c) =>
         c <= ' ' || c == '\u007f' || c > '\u007f' && char.IsWhiteSpace(c);
 
-    private readonly record struct InlineStyleEntry(string? Value, bool Important);
+    /// <summary>内联条目：<see cref="ShorthandSource"/> 标记由 shorthand 展开的隐藏条目（authored 为 null）。</summary>
+    private readonly record struct InlineStyleEntry(string? Value, bool Important, string? ShorthandSource = null);
     private readonly record struct CascadedStyleEntry(
         string? Value,
         CssSpecificity Specificity,

@@ -6,6 +6,7 @@ using Xunit;
 using Xunit.Abstractions;
 namespace Square.Extensions.CodeEditor.Tests;
 
+[Trait("Category", "Performance")]
 public sealed class LargeDocumentPerformanceTests
 {
     private readonly ITestOutputHelper _output;

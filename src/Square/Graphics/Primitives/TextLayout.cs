@@ -66,6 +66,20 @@ public sealed class TextLayout
     public bool CollapseNewlines { get; set; }
     /// <summary>CSS <c>text-decoration-line</c> 的可绘制子集。</summary>
     public TextDecorationLine TextDecorationLines { get; set; }
+    /// <summary>
+    /// 源 DOM Text 节点（Square 扩展）：HTML 混合文本按原位分段绘制时记录其来源，
+    /// 供显示树收集文本片段并直接构造文档选区 Range；Square 控件文本为 null。
+    /// </summary>
+    public Square.UI.Text? SourceNode { get; set; }
+    /// <summary><see cref="Text"/> 首字符在源节点 <c>data</c> 中的 UTF-16 偏移。</summary>
+    public int SourceOffset { get; set; }
+    /// <summary>
+    /// <see cref="Text"/> 每个字符对应的源 UTF-16 偏移；null 表示与
+    /// <see cref="SourceOffset"/> 逐字符递增的恒等映射（空白折叠/大小写转换展开时非恒等）。
+    /// </summary>
+    public int[]? SourceCharOffsets { get; set; }
+    /// <summary>该段在源 <c>data</c> 中消耗的 UTF-16 单元总数；负值表示恒等于文本长度。</summary>
+    public int SourceLength { get; set; } = -1;
     /// <summary>返回当前文本布局使用的 CSS 文本换行选项。</summary>
     public TextWrappingOptions WrappingOptions => CreateWrappingOptions();
 

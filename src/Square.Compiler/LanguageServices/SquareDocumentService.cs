@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.CodeAnalysis.Text;
 using Square.Compiler.Directives;
 using Square.Compiler.Parser;
+using Square.Compiler.Syntax;
 
 namespace Square.Compiler.LanguageServices;
 
@@ -111,24 +112,34 @@ public static class SquareDocumentService
         }
     }
 
-    internal static SquareParseResult ParseSyntax(string source, string sourcePath)
+    internal static SquareParseResult ParseSyntax(string source, string sourcePath, bool sectionsOnly = false,
+        TemplateCatalog catalog = null, TemplateResolutionContext context = null)
     {
         source ??= string.Empty;
         sourcePath ??= string.Empty;
 
         var sourceText = SourceText.From(source, Encoding.UTF8);
         var isSqv = sourcePath.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase);
+        var namespaceDiagnostics = new List<SquareDiagnostic>();
+        if (!sectionsOnly && context == null)
+        {
+            var dialect = isSqv ? ComponentDialect.Sqv : ComponentDialect.Sqx;
+            var sections = ComponentSectionScanner.Scan(source, sourcePath, dialect, tolerant: true, parseTemplateBody: false);
+            context = TemplateResolutionContext.Create(string.Empty, Array.Empty<string>(), null,
+                sections.Document.Template?.XmlnsDeclarations, namespaceDiagnostics, sourcePath);
+        }
+        catalog ??= TemplateCatalog.BuiltIn;
 
         try
         {
             object document = isSqv
-                ? SqvParser.Parse(source, sourcePath)
-                : SqxParser.Parse(source, sourcePath);
+                ? SqvParser.Parse(source, sourcePath, parseTemplateBody: !sectionsOnly, catalog: catalog, context: context)
+                : SqxParser.Parse(source, sourcePath, parseTemplateBody: !sectionsOnly, catalog: catalog, context: context);
 
             return new SquareParseResult(
                 sourcePath,
                 sourceText,
-                Array.Empty<SquareDiagnostic>(),
+                namespaceDiagnostics,
                 document);
         }
         catch (SqxParseException exception)

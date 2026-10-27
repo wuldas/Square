@@ -23,13 +23,23 @@ public sealed class CssAnimationManager
     /// <param name="root">根元素。</param>
     public void Attach(Element root)
     {
+        // Preserve progress: a click only changes state pseudo-classes, and re-applying the
+        // scope must not rewind an infinite animation to its first frame (extra full frames
+        // and a visible jump on every interaction).
+        var previous = new Dictionary<Element, CssAnimationTimeline>();
+        foreach (var timeline in _timelines)
+        {
+            if (!timeline.IsComplete)
+                previous[timeline.Target] = timeline;
+        }
         Clear();
         Collect(root);
         foreach (var timeline in _timelines)
-            timeline.Start();
+            timeline.Start(previous.TryGetValue(timeline.Target, out var old) && timeline.CanResumeFrom(old)
+                ? old.Elapsed : 0f);
     }
 
-    /// <summary>推进所有未完成动画的时间线。</summary>
+    /// <summary>推进所有未完成动画的时间线；重复应用样式不会重置进度。</summary>
     /// <param name="deltaSeconds">增量秒数。</param>
     public void Tick(float deltaSeconds)
     {

@@ -58,6 +58,7 @@
     _count++;
     ShowCount.Value = true;
     Items.Add("Click " + _count);
+    System.Console.WriteLine($"Square.Sample activity {_count}");
   }
 
   private void OnAcceptedChanged(Event e)

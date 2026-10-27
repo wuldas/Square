@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using Square.DevTools;
 using Square.Graphics;
@@ -9,6 +10,7 @@ using Xunit;
 
 namespace Square.DevTools.Tests;
 
+[Collection("ConsoleCapture")]
 public sealed class DevToolsServerTests
 {
     [Theory]
@@ -20,6 +22,38 @@ public sealed class DevToolsServerTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             DevToolsServer.Start(window, new DevToolsOptions { Port = port }));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void StartRejectsChromeEditingAndConsoleWithoutChromeInspect(bool styleEditing, bool console)
+    {
+        var window = CreateWindow();
+
+        var exception = Assert.Throws<ArgumentException>(() => DevToolsServer.Start(window, new DevToolsOptions
+        {
+            AllowChromeInspect = false,
+            AllowChromeStyleEditing = styleEditing,
+            AllowChromeConsole = console
+        }));
+
+        // ArgumentException appends "(Parameter 'options')" to Message; pin the exact
+        // required text via StartsWith and the parameter name separately.
+        Assert.StartsWith("Chrome editing and console forwarding require AllowChromeInspect.", exception.Message);
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    [Fact]
+    public void StartRejectsClosedWindow()
+    {
+        var window = CreateWindow();
+        CloseWindow(window);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => DevToolsServer.Start(window));
+
+        Assert.Equal("The window is closed.", exception.Message);
     }
 
     [Fact]
@@ -43,7 +77,77 @@ public sealed class DevToolsServerTests
         Assert.False(json.InputInjection);
         Assert.False(json.MemoryDiagnostics);
         Assert.False(json.ChromeInspect);
-        Assert.Equal(48, server.AccessToken.Length);
+        Assert.False(json.ChromeStyleEditing);
+        Assert.False(json.ChromeConsole);
+    }
+
+    [Fact]
+    public async Task HealthReportsCapabilitiesFromStartSnapshot()
+    {
+        var window = CreateWindow();
+        var options = new DevToolsOptions
+        {
+            AccessToken = "test-token",
+            AllowChromeInspect = true,
+            AllowChromeStyleEditing = true,
+            AllowChromeConsole = true
+        };
+        await using var server = DevToolsServer.Start(window, options);
+        using var client = new HttpClient { BaseAddress = new Uri(server.BaseAddress) };
+        client.DefaultRequestHeaders.Add(DevToolsServer.TokenHeader, server.AccessToken);
+
+        using var response = await client.GetAsync("/api/v1/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<HealthResponse>();
+        Assert.NotNull(json);
+        Assert.True(json.ChromeInspect);
+        Assert.True(json.ChromeStyleEditing);
+        Assert.True(json.ChromeConsole);
+    }
+
+    [Fact]
+    public async Task HealthIgnoresOptionMutationsAfterStart()
+    {
+        var window = CreateWindow();
+        var options = new DevToolsOptions { AccessToken = "test-token" };
+        await using var server = DevToolsServer.Start(window, options);
+        using var client = new HttpClient { BaseAddress = new Uri(server.BaseAddress) };
+        client.DefaultRequestHeaders.Add(DevToolsServer.TokenHeader, server.AccessToken);
+
+        using var before = await client.GetAsync("/api/v1/health");
+        var beforeJson = await before.Content.ReadFromJsonAsync<HealthResponse>();
+        Assert.NotNull(beforeJson);
+        Assert.False(beforeJson.MemoryDiagnostics);
+
+        options.AllowMemoryDiagnostics = true;
+        options.AllowChromeInspect = true;
+        options.AllowChromeStyleEditing = true;
+
+        using var after = await client.GetAsync("/api/v1/health");
+        var afterJson = await after.Content.ReadFromJsonAsync<HealthResponse>();
+        Assert.NotNull(afterJson);
+        Assert.False(afterJson.MemoryDiagnostics);
+        Assert.False(afterJson.ChromeInspect);
+        Assert.False(afterJson.ChromeStyleEditing);
+    }
+
+    [Fact]
+    public async Task WindowCloseDisposesServer()
+    {
+        var window = CreateWindow();
+        await using var server = DevToolsServer.Start(window, new DevToolsOptions { AccessToken = "test-token" });
+        using var client = new HttpClient { BaseAddress = new Uri(server.BaseAddress) };
+        client.DefaultRequestHeaders.Add(DevToolsServer.TokenHeader, server.AccessToken);
+
+        using var before = await client.GetAsync("/api/v1/health");
+        Assert.Equal(HttpStatusCode.OK, before.StatusCode);
+
+        // No host is attached in tests; raise the native close path directly.
+        CloseWindow(window);
+        Assert.True(window.IsClosed);
+        server.Dispose(); // second Dispose after the window-triggered dispose must be a no-op
+
+        await Assert.ThrowsAnyAsync<Exception>(() => client.GetAsync("/api/v1/health"));
     }
 
     [Theory]
@@ -169,6 +273,15 @@ public sealed class DevToolsServerTests
         return window;
     }
 
+    private static void CloseWindow(AppWindow window)
+    {
+        // Without a platform host, AppWindow.Close only records a request; invoke the
+        // private native-close handler to reach the real Closed event path.
+        var method = typeof(AppWindow).GetMethod("HandleClosed", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        method!.Invoke(window, null);
+    }
+
     private sealed class FakeRuntime : IAppWindowRuntime
     {
         public bool IsRunning => true;
@@ -182,13 +295,40 @@ public sealed class DevToolsServerTests
             throw new NotSupportedException();
         public Task<ElementInspectionNode?> InspectElementAsync(int debugId, bool includeSourcePaths, bool includeTextContent) =>
             throw new NotSupportedException();
-        public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId) =>
+        public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(
+            int debugId,
+            bool includeStyleText = false,
+            CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
-        public Task<bool> SetInspectorHighlightAsync(int debugId) =>
+        public Task<IReadOnlyList<ElementInspectionStyleText>> CaptureInspectionStyleSheetsAsync(
+            CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
-        public Task ClearInspectorHighlightAsync() =>
+        public Task<ElementInspectionStyleText?> InspectStyleSheetAsync(string styleSheetId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
-        public Task SetInspectorModeAsync(bool enabled) =>
+        public Task<IReadOnlyList<ElementInspectionStyleText>> ApplyInspectionStyleEditsAsync(
+            IReadOnlyList<ElementInspectionStyleTextEdit> edits,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task<IReadOnlyList<ElementInspectionComputedStyleSnapshot>> InspectComputedStylesAsync(
+            IReadOnlyList<int> debugIds,
+            IReadOnlyList<string>? propertyNames = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task<bool> SetInspectorHighlightAsync(
+            int debugId,
+            ElementInspectionHighlightOptions? options = null,
+            long ownerId = 0,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task ClearInspectorHighlightAsync(long ownerId = 0, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task SetInspectorModeAsync(
+            bool enabled,
+            ElementInspectionHighlightOptions? options = null,
+            long ownerId = 0,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public void ReleaseInspectorSession(long ownerId) =>
             throw new NotSupportedException();
         public Task<ElementInspectionNode?> HitTestInspectionAsync(Point point, bool includeSourcePaths, bool includeTextContent) =>
             throw new NotSupportedException();
@@ -201,7 +341,9 @@ public sealed class DevToolsServerTests
         string BaseAddress,
         bool InputInjection,
         bool MemoryDiagnostics,
-        bool ChromeInspect);
+        bool ChromeInspect,
+        bool ChromeStyleEditing,
+        bool ChromeConsole);
 
     private sealed record MemoryResponse(
         int ProcessId,

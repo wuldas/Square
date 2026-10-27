@@ -2,6 +2,9 @@ using Square.Controls;
 using Square.CSS.Ast;
 using Square.CSS.Engine;
 using Square.CSS.Tokenizer;
+using Square.Graphics;
+using Square.Rendering;
+using Square.Html;
 using Xunit;
 
 namespace Square.CSS.Tests;
@@ -198,21 +201,42 @@ public sealed class GeneratedContentTests
     [Fact]
     public void HtmlOrderedListStartsAndReversesWithoutDuplicateMarkerRows()
     {
-        var list = new Square.UI.Html.HtmlElement("ol");
+        var list = new HTMLOListElement();
         list.SetAttribute("start", "5");
         list.SetAttribute("reversed", "");
-        var first = new Square.UI.Html.HtmlElement("li");
-        first.Children.Add(new Square.UI.Html.HtmlTextRun("first"));
-        var second = new Square.UI.Html.HtmlElement("li");
-        second.Children.Add(new Square.UI.Html.HtmlTextRun("second"));
+        var first = new HTMLLIElement();
+        var firstText = new Square.UI.Text("first");
+        first.ChildNodes.Add(firstText);
+        var second = new HTMLLIElement();
+        var secondText = new Square.UI.Text("second");
+        second.ChildNodes.Add(secondText);
         list.Children.Add(first);
         list.Children.Add(second);
 
         new CssEngine().ApplyStylesToTree(list);
 
-        Assert.Equal("5. ", Assert.IsAssignableFrom<Square.Controls.Text>(first.Children[0]).TextContent);
-        Assert.Equal("4. ", Assert.IsAssignableFrom<Square.Controls.Text>(second.Children[0]).TextContent);
-        Assert.Equal("inline", first.Children[0].Style.Get("display"));
+        // Start/reversed numbering renders on each host's private marker text; exactly one
+        // marker row per list item, never duplicated as semantic children.
+        var firstMarker = first.FindListMarker();
+        var secondMarker = second.FindListMarker();
+        Assert.NotNull(firstMarker);
+        Assert.NotNull(secondMarker);
+        Assert.NotSame(firstMarker, secondMarker);
+        Assert.Equal("5. ", firstMarker!.TextContent);
+        Assert.Equal("4. ", secondMarker!.TextContent);
+
+        // The marker is a visual sidecar: DOM queries and Children/ChildNodes stay source-only.
+        Assert.Empty(first.Children);
+        Assert.Empty(second.Children);
+        Assert.Same(firstText, Assert.Single(first.ChildNodes));
+        Assert.Same(secondText, Assert.Single(second.ChildNodes));
+        Assert.Empty(list.QueryAll<Square.Controls.Text>());
+
+        // The sidecar is laid into the line as the visible marker next to the item text.
+        new LayoutEngine().MeasureAndArrange(list, new Size(200, 100));
+        Assert.True(firstMarker.Geometry.Width > 0, $"marker={firstMarker.Geometry}");
+        Assert.True(secondMarker.Geometry.Y >= firstMarker.Geometry.Y,
+            $"first={firstMarker.Geometry}, second={secondMarker.Geometry}");
     }
 
     private static CssEngine CreateEngine(string css)

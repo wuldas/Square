@@ -38,65 +38,41 @@ public static class TemplateDocumentSymbols
         TemplateResolutionContext resolutionContext = null)
     {
         catalog ??= TemplateCatalog.BuiltIn;
-        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
-        var document = SquareDocumentService.ParseSyntaxTree(text ?? string.Empty, sourcePath ?? string.Empty)
-            .ParsedSqxDocument?.Syntax;
-        if (document == null) return Array.Empty<TemplateDocumentSymbol>();
+        resolutionContext ??= TemplateResolutionContext.FromTemplateText(text, sourcePath ?? string.Empty);
+        var dialect = sourcePath?.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase) == true
+            ? ComponentDialect.Sqv : ComponentDialect.Sqx;
+        var document = ComponentSectionScanner.Scan(text ?? string.Empty, sourcePath ?? string.Empty,
+            dialect, tolerant: true, catalog: catalog, context: resolutionContext).Document;
         var symbols = document.Template?.SqxSyntax != null
-            ? CollectSqx(document.Template.SqxSyntax.Roots, catalog, resolutionContext).ToList()
+            ? CollectSqx(document.Template.SqxSyntax.Roots).ToList()
             : document.Template?.SqvSyntax != null
-                ? CollectSqv(document.Template.SqvSyntax.Roots, catalog, resolutionContext).ToList()
+                ? CollectSqv(document.Template.SqvSyntax.Roots).ToList()
                 : new List<TemplateDocumentSymbol>();
         if (document.Script?.CSharp != null) symbols.AddRange(CollectScript(document.Script.CSharp));
         return symbols;
     }
 
-    private static IReadOnlyList<TemplateDocumentSymbol> CollectSqx(
-        IEnumerable<SqxSyntaxNode> nodes,
-        TemplateCatalog catalog,
-        TemplateResolutionContext context) =>
+    private static IReadOnlyList<TemplateDocumentSymbol> CollectSqx(IEnumerable<SqxSyntaxNode> nodes) =>
         nodes.OfType<SqxElementSyntax>()
-            .Select(element => Create(
-                element.TagName,
-                element.Origin,
-                element.TagNameRange,
-                CollectSqx(element.Children, catalog, context),
-                catalog,
-                context))
+            .Select(element => Create(element.TagName, element.Origin, element.TagNameRange,
+                CollectSqx(element.Children), element.Resolution))
             .ToArray();
 
-    private static IReadOnlyList<TemplateDocumentSymbol> CollectSqv(
-        IEnumerable<SqvSyntaxNode> nodes,
-        TemplateCatalog catalog,
-        TemplateResolutionContext context) =>
+    private static IReadOnlyList<TemplateDocumentSymbol> CollectSqv(IEnumerable<SqvSyntaxNode> nodes) =>
         nodes.OfType<SqvElementSyntax>()
-            .Select(element => Create(
-                element.TagName,
-                element.Origin,
-                element.TagNameRange,
-                CollectSqv(element.Children, catalog, context),
-                catalog,
-                context))
+            .Select(element => Create(element.TagName, element.Origin, element.TagNameRange,
+                CollectSqv(element.Children), element.Resolution))
             .ToArray();
 
     private static TemplateDocumentSymbol Create(
-        string tagName,
-        SquareSourceRange range,
-        SquareSourceRange tagNameRange,
-        IReadOnlyList<TemplateDocumentSymbol> children,
-        TemplateCatalog catalog,
-        TemplateResolutionContext context)
+        string tagName, SquareSourceRange range, SquareSourceRange tagNameRange,
+        IReadOnlyList<TemplateDocumentSymbol> children, TemplateElementResolution resolution)
     {
-        var resolution = catalog.ResolveComponent(tagName, context);
         var selectionRange = tagNameRange.Length > 0
-            ? tagNameRange
-            : new SquareSourceRange(range.Offset + 1, tagName.Length);
-        return new TemplateDocumentSymbol(
-            tagName,
-            resolution.Status == TemplateElementResolutionStatus.Resolved ? resolution.Component.TypeName : tagName,
-            range,
-            selectionRange,
-            children);
+            ? tagNameRange : new SquareSourceRange(range.Offset + 1, tagName.Length);
+        return new TemplateDocumentSymbol(tagName,
+            resolution?.Status == TemplateElementResolutionStatus.Resolved ? resolution.Component.TypeName : tagName,
+            range, selectionRange, children);
     }
 
     private static IEnumerable<TemplateDocumentSymbol> CollectScript(CSharpScriptSyntax script)

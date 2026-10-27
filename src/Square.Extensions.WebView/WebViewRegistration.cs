@@ -1,6 +1,6 @@
 using Square.UI;
 
-[assembly: ElementExport("urn:square:webview", "webview", "WebView", typeof(Square.Extensions.WebView.WebView))]
+[assembly: ElementExport("urn:square:webview", "WebView", typeof(Square.Extensions.WebView.WebView))]
 
 namespace Square.Extensions.WebView;
 
@@ -14,6 +14,6 @@ public static class WebViewRegistration
     {
         if (_registered) return;
         _registered = true;
-        ElementRegistry.Register("WebView", static () => new WebView());
+        ElementRegistry.Register("urn:square:webview", "WebView", static () => new WebView());
     }
 }

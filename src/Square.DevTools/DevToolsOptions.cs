@@ -8,6 +8,8 @@ public sealed class DevToolsOptions
     public bool AllowInspector { get; set; }
     public bool AllowMemoryDiagnostics { get; set; }
     public bool AllowChromeInspect { get; set; }
+    public bool AllowChromeStyleEditing { get; set; }
+    public bool AllowChromeConsole { get; set; }
     public bool IncludeSourcePaths { get; set; }
     public bool IncludeTextContent { get; set; }
 }

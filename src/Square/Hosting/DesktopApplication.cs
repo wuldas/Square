@@ -5,10 +5,12 @@ using Square.Controls;
 using Square.CSS.Engine;
 using Square.Events;
 using Square.Graphics;
+using Square.Html;
 using Square.Rendering;
 using Square.Platform;
 using Square.Runtime;
 using Square.UI;
+using Square.UI.ElementApi;
 using Square.UI.Scrolling;
 using Reconciler = Square.UI.Reconciler;
 
@@ -19,6 +21,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 {
     private static readonly Color DefaultSelectionBackground = Color.FromRgb(51, 144, 255);
     private static readonly Color DefaultSelectionForeground = Color.White;
+
+    /// <summary>未提供配置时的 Inspector 高亮默认四层颜色。</summary>
+    private static readonly ElementInspectionHighlightOptions DefaultInspectorHighlightOptions = new(
+        Color.FromRgba(111, 168, 220, 168),
+        Color.FromRgba(147, 196, 125, 140),
+        Color.FromRgba(250, 215, 132, 166),
+        Color.FromRgba(246, 178, 107, 140));
 
     private readonly UIDocument _document;
     private readonly Element _root;
@@ -32,7 +41,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private double _lastAnimationTickSeconds;
     private IPlatformHost? _host;
     private IRenderContext? _renderContext;
-    private UIElement? _focusedInput;
+    private Element? _focusedElement;
     private ITextEditor? _focusedEditor;
     private TextSelectionState? _textSelection;
     private Point? _pendingTextSelectionPoint;
@@ -50,16 +59,26 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private Element? _lastClickTarget;
     private Point _lastClickPoint;
     private double _lastClickSeconds = double.NegativeInfinity;
-    private readonly List<UIElement> _hoverPath = [];
+    private readonly List<Element> _hoverPath = [];
     private Element? _hoveringScrollbar;
-    private readonly List<UIElement> _activePath = [];
+    private readonly List<Element> _activePath = [];
     private readonly TooltipPopup _tooltipPopup;
-    private UIElement? _tooltipTarget;
+    private Element? _tooltipTarget;
     private bool _renderRequested;
     private KeyModifiers? _devToolsModifiers;
+    private long _inspectorOwner;
     private int? _inspectorHighlightDebugId;
     private bool _inspectorModeEnabled;
+    private ElementInspectionHighlightOptions? _inspectorHighlightOptions;
     private bool _inspectorOverlayDirty;
+    private bool _inspectorConsumeNextPointerUp;
+    private ElementInspectionHighlightOptions? _inspectorRenderedOptions;
+    private SolidColorBrush? _inspectorContentBrush;
+    private SolidColorBrush? _inspectorPaddingBrush;
+    private SolidColorBrush? _inspectorBorderBrush;
+    private SolidColorBrush? _inspectorMarginBrush;
+    private Pen? _inspectorBorderOutlinePen;
+    private ElementInspectionStyleEditor? _inspectionStyleEditor;
     private int _hotReloadPending;
     private IDisposable? _textLayoutScope;
     private bool _sessionPrepared;
@@ -76,8 +95,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     /// <summary>主窗口。</summary>
     public AppWindow MainWindow { get; }
 
-    /// <summary>Inspector 点选元素时触发。</summary>
-    public event Action<int>? InspectorNodeSelected;
+    /// <summary>Inspector 点选元素时触发；参数为发起点选的 owner ID 与元素调试 ID。</summary>
+    public event Action<long, int>? InspectorNodeSelected;
+    /// <summary>Inspector 点选被新 owner 接管或 Escape 取消时触发；参数为被取消的 owner ID。</summary>
+    public event Action<long>? InspectorModeCanceled;
     /// <summary>基于现有窗口构造桌面应用程序。</summary>
     public DesktopApplication(AppWindow window)
     {
@@ -88,6 +109,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _hostCreateInfo = window.CreateHostInfo();
         window.BindApplication(Dispatcher, this);
         InspectorNodeSelected += window.RaiseInspectorNodeSelected;
+        InspectorModeCanceled += window.RaiseInspectorModeCanceled;
         _tooltipPopup = new TooltipPopup();
         _document.Body.Children.Add(_tooltipPopup);
     }
@@ -449,6 +471,27 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
 
         if (!input.IsPrimary) return;
+
+        // 触摸点选同样先于应用的 pointerdown/move/cancel 派发。
+        if (_inspectorModeEnabled || (_inspectorConsumeNextPointerUp && input.Action is PointerAction.Move or PointerAction.Up))
+        {
+            switch (input.Action)
+            {
+                case PointerAction.Down:
+                    HandleInspectorPointer(input.Position, MouseAction.Down);
+                    return;
+                case PointerAction.Move:
+                    HandleInspectorPointer(input.Position, MouseAction.Move);
+                    return;
+                case PointerAction.Up:
+                    HandleInspectorPointer(input.Position, MouseAction.Up);
+                    return;
+                default:
+                    _inspectorConsumeNextPointerUp = false;
+                    return;
+            }
+        }
+
         if (input.Action == PointerAction.Down)
         {
             if (_activePointerId >= 0) return;
@@ -536,7 +579,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (_host == null || _sessionSuspended) return false;
         if (!_displayTree.DismissTopmostPopupOnEscape()) return false;
-        SyncFocusedInputFromTree();
+        SyncFocusedElementFromTree();
         RequestRender();
         ProcessSessionFrame();
         return true;
@@ -591,7 +634,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (component is not ISquareHotReloadComponent hotReloadComponent)
         {
-            Debug.WriteLine($"Square Hot Reload requires a generated top-level component: {component.GetType().FullName}");
+            ReportHotReloadDiagnostic(
+                "Square Hot Reload requires a generated top-level component: ", component, null, TraceEventType.Warning);
             return;
         }
 
@@ -606,7 +650,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         }
         catch (Exception exception)
         {
-            Debug.WriteLine($"Square Hot Reload failed to rebuild {component.GetType().FullName}: {exception}");
+            ReportHotReloadDiagnostic("Square Hot Reload failed to rebuild ", component, exception, TraceEventType.Error);
         }
         finally
         {
@@ -617,11 +661,33 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             }
             catch (Exception exception)
             {
-                Debug.WriteLine(
-                    $"Square Hot Reload failed to restore lifecycle for {component.GetType().FullName}: {exception}");
+                ReportHotReloadDiagnostic(
+                    "Square Hot Reload failed to restore lifecycle for ", component, exception, TraceEventType.Error);
             }
         }
     }
+
+    /// <summary>
+    /// 保留原始完整 Debug 输出，同时向窗口 DiagnosticMessage 订阅者转发同一条消息；
+    /// Release 且无订阅者时不构造任何字符串（Debug.WriteLine 调用点随条件编译移除）。
+    /// </summary>
+    private void ReportHotReloadDiagnostic(string prefix, Element component, Exception? exception, TraceEventType level)
+    {
+        if (!MainWindow.HasDiagnosticListeners)
+        {
+            Debug.WriteLine(FormatHotReloadDiagnostic(prefix, component, exception));
+            return;
+        }
+
+        var message = FormatHotReloadDiagnostic(prefix, component, exception);
+        MainWindow.RaiseDiagnosticMessage(level, message);
+        Debug.WriteLine(message);
+    }
+
+    private static string FormatHotReloadDiagnostic(string prefix, Element component, Exception? exception) =>
+        exception is null
+            ? $"{prefix}{component.GetType().FullName}"
+            : $"{prefix}{component.GetType().FullName}: {exception}";
 
     private void ClearTransientInteractionState()
     {
@@ -629,13 +695,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         ClearHoverInteractionState();
         _scheduledFrames.Clear();
         _inspectorHighlightDebugId = null;
+        _inspectorHighlightOptions = null;
         _inspectorOverlayDirty = true;
     }
 
     private void ClearInputInteractionState()
     {
-        _focusedInput?.Unfocus();
-        _focusedInput = null;
+        (_focusedElement as IFocusableElement)?.Unfocus();
+        _focusedElement = null;
         _focusedEditor = null;
         _isSelectingText = false;
         _pendingTextSelectionPoint = null;
@@ -782,8 +849,11 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     public Task<ElementInspectionSnapshot> CaptureInspectionSnapshotAsync(bool includeSourcePaths = true,
         bool includeTextContent = true) =>
         InvokeOnDispatcherAsync(() =>
-            new ElementInspectionSnapshot(CreateInspectionNode(_root, includeSourcePaths, includeTextContent,
-                includeChildren: true)));
+        {
+            FlushPendingInspectionWork();
+            return new ElementInspectionSnapshot(CreateInspectionNode(_root, includeSourcePaths, includeTextContent,
+                includeChildren: true));
+        });
 
     /// <inheritdoc/>
     public Task<ElementInspectionNode?> InspectElementAsync(int debugId, bool includeSourcePaths = true,
@@ -793,55 +863,292 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             : null);
 
     /// <inheritdoc/>
-    public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId) =>
-        InvokeOnDispatcherAsync(() => FindElementByDebugId(_root, debugId) is { } element
-            ? new ElementInspectionStyleSnapshot(
-                element.Style.GetAll(),
-                element.Style.CssText,
-                CssStyleReconciler.GetMatchedRules(element)
-                    .Select(rule => new ElementInspectionStyleRule(
-                        rule.Selector,
-                        rule.Declarations
-                            .Select(declaration => new ElementInspectionStyleDeclaration(
-                                declaration.Property,
-                                declaration.Value,
-                                declaration.Important))
-                            .ToArray()))
-                    .ToArray())
-            : null);
+    public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId,
+        bool includeStyleText = false, CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync(_ =>
+        {
+            FlushPendingInspectionWork();
+            RequestRender();
+            if (FindElementByDebugId(_root, debugId) is not { } element) return default(ElementInspectionStyleSnapshot?);
+            return includeStyleText ? StyleEditor.BuildSnapshot(element) : BuildStyleSnapshot(element);
+        }, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<bool> SetInspectorHighlightAsync(int debugId) =>
-        InvokeOnDispatcherAsync(() =>
+    public Task<IReadOnlyList<ElementInspectionStyleText>> CaptureInspectionStyleSheetsAsync(
+        CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync<IReadOnlyList<ElementInspectionStyleText>>(_ =>
+        {
+            FlushPendingInspectionWork();
+            RequestRender();
+            return StyleEditor.CaptureStyleSheets();
+        }, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<ElementInspectionStyleText?> InspectStyleSheetAsync(string styleSheetId,
+        CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync<ElementInspectionStyleText?>(_ =>
+        {
+            FlushPendingInspectionWork();
+            RequestRender();
+            return StyleEditor.InspectStyleSheet(styleSheetId);
+        }, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<ElementInspectionStyleText>> ApplyInspectionStyleEditsAsync(
+        IReadOnlyList<ElementInspectionStyleTextEdit> edits, CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync<IReadOnlyList<ElementInspectionStyleText>>(token =>
+        {
+            token.ThrowIfCancellationRequested();
+            ArgumentNullException.ThrowIfNull(edits);
+            if (edits.Count == 0) return [];
+            var results = StyleEditor.ApplyEdits(edits, token);
+            FlushPendingInspectionWork();
+            RequestRender();
+            return results;
+        }, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<ElementInspectionComputedStyleSnapshot>> InspectComputedStylesAsync(
+        IReadOnlyList<int> debugIds, IReadOnlyList<string>? propertyNames = null,
+        CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync<IReadOnlyList<ElementInspectionComputedStyleSnapshot>>(_ =>
+        {
+            FlushPendingInspectionWork();
+            RequestRender();
+            return CollectComputedStyles(debugIds, propertyNames);
+        }, cancellationToken);
+
+    /// <summary>不含编辑元数据的样式快照：computed、inline 与 matched 规则；来源仍如实标注。</summary>
+    private ElementInspectionStyleSnapshot BuildStyleSnapshot(Element element)
+    {
+        var matched = CssStyleReconciler.GetMatchedRules(element);
+        var rules = new ElementInspectionStyleRule[matched.Count];
+        for (var index = 0; index < matched.Count; index++)
+        {
+            var rule = matched[index];
+            rules[index] = new ElementInspectionStyleRule(
+                rule.Selector,
+                ElementInspectionStyleEditor.CreateDeclarationSnapshots(rule.Declarations),
+                Origin: rule.Source is { } source && source.Origin == CssCascadeOrigin.UserAgent
+                    ? "user-agent"
+                    : "regular");
+        }
+
+        return new ElementInspectionStyleSnapshot(element.Style.GetAll(), element.Style.CssText, rules);
+    }
+
+    /// <summary>批量读取最终应用样式：单节点直接查找，多节点一次遍历；未知/已移除节点省略。</summary>
+    private IReadOnlyList<ElementInspectionComputedStyleSnapshot> CollectComputedStyles(
+        IReadOnlyList<int> debugIds, IReadOnlyList<string>? propertyNames)
+    {
+        ArgumentNullException.ThrowIfNull(debugIds);
+        var results = new List<ElementInspectionComputedStyleSnapshot>(debugIds.Count);
+        if (debugIds.Count == 0) return results;
+
+        if (debugIds.Count == 1)
+        {
+            if (FindElementByDebugId(_root, debugIds[0]) is { } element)
+                results.Add(new ElementInspectionComputedStyleSnapshot(
+                    debugIds[0], ReadComputedProperties(element, propertyNames)));
+            return results;
+        }
+
+        var remaining = new HashSet<int>(debugIds);
+        var snapshots = new Dictionary<int, IReadOnlyDictionary<string, string>>();
+        CollectComputedStyles(_root, remaining, snapshots, propertyNames);
+        HashSet<int>? reported = null;
+        foreach (var debugId in debugIds)
+        {
+            if (!snapshots.TryGetValue(debugId, out var snapshot)) continue;
+            reported ??= [];
+            if (!reported.Add(debugId)) continue;
+            results.Add(new ElementInspectionComputedStyleSnapshot(debugId, snapshot));
+        }
+
+        return results;
+    }
+
+    private void CollectComputedStyles(Element element, HashSet<int> remaining,
+        Dictionary<int, IReadOnlyDictionary<string, string>> snapshots, IReadOnlyList<string>? propertyNames)
+    {
+        if (remaining.Count == 0) return;
+        if (remaining.Remove(element.DebugId))
+            snapshots[element.DebugId] = ReadComputedProperties(element, propertyNames);
+        foreach (var child in element.Children)
+            CollectComputedStyles(child, remaining, snapshots, propertyNames);
+    }
+
+    /// <summary>读取最终应用值；propertyNames 为 null 时取全部，否则只读取所给属性。</summary>
+    private static IReadOnlyDictionary<string, string> ReadComputedProperties(
+        Element element, IReadOnlyList<string>? propertyNames)
+    {
+        if (propertyNames == null) return element.Style.GetAll();
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in propertyNames)
+        {
+            var normalized = StyleAccessor.NormalizePropertyName(name);
+            if (normalized.Length == 0 || result.ContainsKey(normalized)) continue;
+            if (element.Style.Get(normalized) is { } value) result[normalized] = value;
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc/>
+    public Task<bool> SetInspectorHighlightAsync(int debugId, ElementInspectionHighlightOptions? options = null,
+        long ownerId = 0, CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync(_ =>
         {
             if (FindElementByDebugId(_root, debugId) == null) return false;
+            AcquireInspectorOwnership(ownerId);
             _inspectorHighlightDebugId = debugId;
+            _inspectorHighlightOptions = options;
             _inspectorOverlayDirty = true;
             RequestRender();
             return true;
-        });
+        }, cancellationToken);
 
     /// <inheritdoc/>
-    public Task ClearInspectorHighlightAsync() =>
-        InvokeOnDispatcherAsync(() =>
+    public Task ClearInspectorHighlightAsync(long ownerId = 0, CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync(_ =>
         {
-            if (_inspectorHighlightDebugId.HasValue)
-            {
-                _inspectorHighlightDebugId = null;
-                _inspectorOverlayDirty = true;
-                RequestRender();
-            }
-        });
-
-    /// <inheritdoc/>
-    public Task SetInspectorModeAsync(bool enabled) =>
-        InvokeOnDispatcherAsync(() =>
-        {
-            _inspectorModeEnabled = enabled;
-            if (!enabled) _inspectorHighlightDebugId = null;
+            if (ownerId != _inspectorOwner) return;
+            if (!_inspectorHighlightDebugId.HasValue && _inspectorHighlightOptions == null) return;
+            _inspectorHighlightDebugId = null;
+            _inspectorHighlightOptions = null;
             _inspectorOverlayDirty = true;
             RequestRender();
-        });
+        }, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task SetInspectorModeAsync(bool enabled, ElementInspectionHighlightOptions? options = null,
+        long ownerId = 0, CancellationToken cancellationToken = default) =>
+        InvokeOnDispatcherAsync(_ =>
+        {
+            if (enabled)
+            {
+                AcquireInspectorOwnership(ownerId);
+                _inspectorModeEnabled = true;
+                _inspectorHighlightOptions = options;
+            }
+            else
+            {
+                if (ownerId != _inspectorOwner) return;
+                _inspectorModeEnabled = false;
+                _inspectorConsumeNextPointerUp = false;
+                _inspectorHighlightDebugId = null;
+                _inspectorHighlightOptions = null;
+            }
+
+            _inspectorOverlayDirty = true;
+            RequestRender();
+        }, cancellationToken);
+
+    /// <inheritdoc/>
+    public void ReleaseInspectorSession(long ownerId)
+    {
+        if (ownerId == 0) return;
+        if (Dispatcher.CheckAccess())
+        {
+            ReleaseInspectorSessionCore(ownerId);
+            return;
+        }
+
+        // 窗口已关闭时不排队、不等待；否则仅排队，立即返回。
+        if (MainWindow.IsClosed) return;
+        Dispatcher.Invoke(() => ReleaseInspectorSessionCore(ownerId));
+    }
+
+    /// <summary>新 owner 接管 overlay：先结束旧 owner 的活跃点选并通知其取消。</summary>
+    private void AcquireInspectorOwnership(long ownerId)
+    {
+        if (ownerId == _inspectorOwner) return;
+        var previousOwner = _inspectorOwner;
+        var hadActiveMode = _inspectorModeEnabled;
+        _inspectorModeEnabled = false;
+        _inspectorConsumeNextPointerUp = false;
+        _inspectorHighlightDebugId = null;
+        _inspectorHighlightOptions = null;
+        _inspectorOwner = ownerId;
+        _inspectorOverlayDirty = true;
+        if (hadActiveMode) InspectorModeCanceled?.Invoke(previousOwner);
+    }
+
+    private void ReleaseInspectorSessionCore(long ownerId)
+    {
+        if (ownerId != _inspectorOwner) return;
+        _inspectorModeEnabled = false;
+        _inspectorConsumeNextPointerUp = false;
+        _inspectorHighlightDebugId = null;
+        _inspectorHighlightOptions = null;
+        _inspectorOwner = 0;
+        _inspectorOverlayDirty = true;
+        RequestRender();
+    }
+
+    /// <summary>Escape 取消点选：退出模式、清高亮并通知 owner，不进入全局快捷键/popup/编辑器。</summary>
+    private void CancelInspectorMode()
+    {
+        var hadActiveMode = _inspectorModeEnabled;
+        _inspectorModeEnabled = false;
+        _inspectorConsumeNextPointerUp = false;
+        _inspectorHighlightDebugId = null;
+        _inspectorHighlightOptions = null;
+        _inspectorOverlayDirty = true;
+        if (hadActiveMode) InspectorModeCanceled?.Invoke(_inspectorOwner);
+    }
+
+    /// <summary>
+    /// 点选模式独占指针流：move 只反选高亮，down 命中即选中并一次性退出点选，
+    /// 消费对应 up；不向应用派发任何 pointer/hover/click。
+    /// </summary>
+    private bool HandleInspectorPointer(Point point, MouseAction action)
+    {
+        if (_inspectorModeEnabled)
+        {
+            switch (action)
+            {
+                case MouseAction.Move:
+                {
+                    var nextHighlight = HitTest(point)?.DebugId;
+                    if (_inspectorHighlightDebugId != nextHighlight)
+                    {
+                        _inspectorHighlightDebugId = nextHighlight;
+                        _inspectorOverlayDirty = true;
+                        RequestRender();
+                    }
+
+                    return true;
+                }
+                case MouseAction.Down:
+                {
+                    if (HitTest(point) is { } hit)
+                    {
+                        _inspectorHighlightDebugId = hit.DebugId;
+                        _inspectorModeEnabled = false;
+                        _inspectorConsumeNextPointerUp = true;
+                        _inspectorOverlayDirty = true;
+                        InspectorNodeSelected?.Invoke(_inspectorOwner, hit.DebugId);
+                        RequestRender();
+                    }
+
+                    return true;
+                }
+                default:
+                    _inspectorConsumeNextPointerUp = false;
+                    return true;
+            }
+        }
+
+        if (_inspectorConsumeNextPointerUp)
+        {
+            // 消费选中后配对的 up（及同一手势内的 move），保证下一次正常点击生效。
+            if (action == MouseAction.Up) _inspectorConsumeNextPointerUp = false;
+            return true;
+        }
+
+        return false;
+    }
 
     /// <inheritdoc/>
     public Task<ElementInspectionNode?> HitTestInspectionAsync(Point point, bool includeSourcePaths = true,
@@ -932,7 +1239,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 if (hadPendingTextSelection && !textSelectionChanged && _pendingRendererCaptures.Count == 0)
                 {
                     if (_focusedEditor != null)
-                        _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+                        _host.SetTextInputRect(MapContentRectToScreen(_focusedElement, _focusedEditor.CaretRect));
                     return;
                 }
                 // 无节点标脏时仍全量重绘一帧，避免“状态已变但未 InvalidatePaint”时界面卡住
@@ -987,9 +1294,21 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _displayTree.CommitPresentedFrame();
 
         if (_focusedEditor != null)
-            _host.SetTextInputRect(MapContentRectToScreen(_focusedInput, _focusedEditor.CaretRect));
+            _host.SetTextInputRect(MapContentRectToScreen(_focusedElement, _focusedEditor.CaretRect));
         CompleteRendererCaptures();
         FramePresented?.Invoke();
+    }
+
+    /// <summary>惰性创建运行时样式编辑器；仅在需要可编辑元数据时构造。</summary>
+    private ElementInspectionStyleEditor StyleEditor => _inspectionStyleEditor ??= new(_root);
+
+    /// <summary>在构建检查快照前冲刷文档 reconciler 与当前树的 CSS 工作，保证快照看到最新状态。</summary>
+    private void FlushPendingInspectionWork()
+    {
+        if (_document.Context.Reconciler.HasWork)
+            _document.Context.Reconciler.Flush();
+        if (CssStyleReconciler.HasWorkForTree(_root))
+            CssStyleReconciler.Flush(_root);
     }
 
     private ElementInspectionNode CreateInspectionNode(Element element, bool includeSourcePaths,
@@ -1015,7 +1334,23 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             element.Children.Count,
             children,
             element.ClassList.GetAll().OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
-            CreateInspectionBoxModel(element));
+            CreateInspectionBoxModel(element),
+            CreateInspectionAttributes(element));
+    }
+
+    /// <summary>构建元素属性快照：HTMLElement 复用真实属性字典，普通元素仅承载 id/class/style。</summary>
+    private static IReadOnlyDictionary<string, string>? CreateInspectionAttributes(Element element)
+    {
+        if (element is HTMLElement htmlElement) return htmlElement.GetAttributes();
+        var id = element.Id;
+        var classNames = element.ClassList.GetAll();
+        var hasInlineStyle = element.Style.Length != 0;
+        if (id == null && classNames.Count == 0 && !hasInlineStyle) return null;
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (id != null) attributes["id"] = id;
+        if (classNames.Count != 0) attributes["class"] = element.ClassList.ToClassString();
+        if (hasInlineStyle) attributes["style"] = element.Style.CssText;
+        return attributes;
     }
 
     private ElementInspectionBoxModel? CreateInspectionBoxModel(Element element)
@@ -1026,32 +1361,38 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             : null;
     }
 
-    private Task InvokeOnDispatcherAsync(Action action)
-    {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Dispatcher.Invoke(() =>
+    private Task InvokeOnDispatcherAsync(Action action) =>
+        InvokeOnDispatcherAsync<object?>(_ =>
         {
-            try
-            {
-                action();
-                completion.SetResult();
-            }
-            catch (Exception exception)
-            {
-                completion.SetException(exception);
-            }
-        });
-        return completion.Task;
-    }
+            action();
+            return null;
+        }, CancellationToken.None);
 
-    private Task<T> InvokeOnDispatcherAsync<T>(Func<T> action)
+    private Task<T> InvokeOnDispatcherAsync<T>(Func<T> action) =>
+        InvokeOnDispatcherAsync(_ => action(), CancellationToken.None);
+
+    private Task InvokeOnDispatcherAsync(Action<CancellationToken> action, CancellationToken cancellationToken) =>
+        InvokeOnDispatcherAsync<object?>(token =>
+        {
+            action(token);
+            return null;
+        }, cancellationToken);
+
+    /// <summary>排队到 Dispatcher；在实际变更状态前立即检查取消，取消的排队操作不产生任何状态变化。</summary>
+    private Task<T> InvokeOnDispatcherAsync<T>(Func<CancellationToken, T> action, CancellationToken cancellationToken)
     {
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.Invoke(() =>
         {
             try
             {
-                completion.SetResult(action());
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    completion.SetCanceled(cancellationToken);
+                    return;
+                }
+
+                completion.SetResult(action(cancellationToken));
             }
             catch (Exception exception)
             {
@@ -1147,7 +1488,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _root.Children.Count == 2 &&
         ReferenceEquals(_root.Children[0], _document.Head) &&
         ReferenceEquals(_root.Children[1], _document.Body) &&
-        !_root.Style.HasAuthorDeclarations && !_root.IsScrollContainer();
+        !_root.Style.HasAuthorDeclarations && !_root.IsScrollContainer() &&
+        _root.VisualSidecars.Count == 0;
 
     private void ArrangeWindowShell(Size size)
     {
@@ -1201,10 +1543,73 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             return;
         }
 
-        var bounds = element.Geometry;
-        if (bounds.IsEmpty) return;
-        context.FillRect(bounds, new SolidColorBrush(Color.FromRgba(51, 144, 255, 48)));
-        context.DrawRect(bounds, Pen.FromColor(Color.FromRgba(51, 144, 255, 220), 2));
+        var options = _inspectorHighlightOptions ?? DefaultInspectorHighlightOptions;
+        if (_inspectorRenderedOptions is not { } rendered || rendered != options)
+            RebuildInspectorBrushes(options);
+
+        // 元素几何位于其滚动/弹层内容坐标系：按 MapPointerPoint 的逆偏移换回客户区。
+        var contentOrigin = MapPointerPoint(element, Point.Zero);
+        var box = CreateInspectionBoxModel(element);
+        if (box == null)
+        {
+            // 无法证明四层时仅绘制真实 border bounds 轮廓，不伪造 edges。
+            context.DrawRect(ShiftToClientSpace(element.Geometry, contentOrigin), _inspectorBorderOutlinePen!);
+            return;
+        }
+
+        DrawInspectionRing(context,
+            ShiftToClientSpace(box.Margin, contentOrigin),
+            ShiftToClientSpace(box.Border, contentOrigin),
+            _inspectorMarginBrush!);
+        DrawInspectionRing(context,
+            ShiftToClientSpace(box.Border, contentOrigin),
+            ShiftToClientSpace(box.Padding, contentOrigin),
+            _inspectorBorderBrush!);
+        DrawInspectionRing(context,
+            ShiftToClientSpace(box.Padding, contentOrigin),
+            ShiftToClientSpace(box.Content, contentOrigin),
+            _inspectorPaddingBrush!);
+        var contentRect = ShiftToClientSpace(box.Content, contentOrigin);
+        if (options.ContentColor.A > 0 && !contentRect.IsEmpty)
+            context.FillRect(contentRect, _inspectorContentBrush!);
+    }
+
+    /// <summary>按配置重建高亮画刷与描边；仅在配置变化时分配并跨帧复用。</summary>
+    private void RebuildInspectorBrushes(ElementInspectionHighlightOptions options)
+    {
+        _inspectorContentBrush = new SolidColorBrush(options.ContentColor);
+        _inspectorPaddingBrush = new SolidColorBrush(options.PaddingColor);
+        _inspectorBorderBrush = new SolidColorBrush(options.BorderColor);
+        _inspectorMarginBrush = new SolidColorBrush(options.MarginColor);
+        _inspectorBorderOutlinePen = Pen.FromColor(options.BorderColor, 2);
+        _inspectorRenderedOptions = options;
+    }
+
+    private static Rect ShiftToClientSpace(Rect rect, Point contentOrigin) => rect.IsEmpty
+        ? rect
+        : new Rect(rect.X - contentOrigin.X, rect.Y - contentOrigin.Y, rect.Width, rect.Height);
+
+    /// <summary>绘制 outer−inner 的非重叠矩形环：以交集裁切，空或负面积条带不绘制。</summary>
+    private static void DrawInspectionRing(IRenderContext context, Rect outer, Rect inner, SolidColorBrush brush)
+    {
+        if (brush.Color.A == 0 || outer.IsEmpty) return;
+        var clip = Rect.Intersect(outer, inner);
+        if (clip.IsEmpty)
+        {
+            FillInspectorStrip(context, outer, brush);
+            return;
+        }
+
+        FillInspectorStrip(context, new Rect(outer.X, outer.Y, outer.Width, clip.Y - outer.Y), brush);
+        FillInspectorStrip(context, new Rect(outer.X, clip.Bottom, outer.Width, outer.Bottom - clip.Bottom), brush);
+        FillInspectorStrip(context, new Rect(outer.X, clip.Y, clip.X - outer.X, clip.Height), brush);
+        FillInspectorStrip(context, new Rect(clip.Right, clip.Y, outer.Right - clip.Right, clip.Height), brush);
+    }
+
+    private static void FillInspectorStrip(IRenderContext context, Rect rect, SolidColorBrush brush)
+    {
+        if (rect.IsEmpty) return;
+        context.FillRect(rect, brush);
     }
 
     private void RenderDiagnosticsOverlay(IRenderContext context)
@@ -1260,6 +1665,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         PointerInput? pointerInput = null)
     {
         if (_sessionSuspended || _host == null) return;
+        // 点选模式独占指针流：先于应用 popup/drag/scrollbar/focus/click 的任何派发。
+        if (HandleInspectorPointer(point, action)) return;
         if (action == MouseAction.Move || button == MouseButton.Left) UpdateScrollbarHover(point);
 
         if (_draggingScrollbar is { } dragging &&
@@ -1415,35 +1822,6 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var hit = HitTest(point);
         if (pointerInput is { Action: PointerAction.Move } moveInput && hit != null)
             hit.DispatchTrusted(StandardEvents.CreatePointerMove(moveInput));
-        if (_inspectorModeEnabled)
-        {
-            if (action == MouseAction.Move)
-            {
-                var nextHighlight = hit?.DebugId;
-                if (_inspectorHighlightDebugId != nextHighlight)
-                {
-                    _inspectorHighlightDebugId = nextHighlight;
-                    _inspectorOverlayDirty = true;
-                    RequestRender();
-                }
-                return;
-            }
-
-            if (action == MouseAction.Down)
-            {
-                if (hit != null)
-                {
-                    _inspectorHighlightDebugId = hit.DebugId;
-                    _inspectorOverlayDirty = true;
-                    InspectorNodeSelected?.Invoke(hit.DebugId);
-                    RequestRender();
-                }
-                return;
-            }
-
-            if (action == MouseAction.Up)
-                return;
-        }
 
         if (action == MouseAction.Down && MainWindow.TitleStyle == TitleStyle.Custom &&
             _document.Head.Geometry.Contains(point) && !IsInteractiveTitleBarElement(hit))
@@ -1460,7 +1838,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             _host.Cursor = ResolveCursor(hit, point);
             if (_isSelectingText && _focusedEditor != null)
             {
-                _focusedEditor.HandlePointerMove(MapPointerPoint(_focusedInput, point));
+                _focusedEditor.HandlePointerMove(MapPointerPoint(_focusedElement, point));
                 needsRender = true;
             }
             else if (_textSelection is { IsSelecting: true })
@@ -1494,7 +1872,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             if (_isSelectingText && _focusedEditor != null)
             {
-                _focusedEditor.HandlePointerUp(MapPointerPoint(_focusedInput, point));
+                _focusedEditor.HandlePointerUp(MapPointerPoint(_focusedElement, point));
                 _isSelectingText = false;
             }
 
@@ -1580,22 +1958,22 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         var focusTarget = FindFocusableAncestor(hit);
 
-        if (_focusedInput != focusTarget)
+        if (_focusedElement != focusTarget)
         {
-            var previous = _focusedInput;
-            previous?.Unfocus();
-            if (previous?.IsFocused == true)
+            var previous = _focusedElement;
+            (previous as IFocusableElement)?.Unfocus();
+            if (previous is IFocusableElement { IsFocused: true })
             {
-                _focusedInput = previous;
+                _focusedElement = previous;
                 _focusedEditor = previous as ITextEditor;
                 return;
             }
-            _focusedInput = focusTarget;
+            _focusedElement = focusTarget;
             _focusedEditor = focusTarget as ITextEditor;
-            focusTarget?.Focus(focusVisible: false);
-            if (focusTarget?.IsFocused != true)
+            (focusTarget as IFocusableElement)?.Focus(focusVisible: false);
+            if (focusTarget is not IFocusableElement { IsFocused: true })
             {
-                _focusedInput = null;
+                _focusedElement = null;
                 _focusedEditor = null;
             }
         }
@@ -1617,8 +1995,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (TryStartTextSelection(hit, point, selectWord))
         {
-            _focusedInput?.Unfocus();
-            _focusedInput = null;
+            (_focusedElement as IFocusableElement)?.Unfocus();
+            _focusedElement = null;
             _focusedEditor = null;
             _isSelectingText = false;
             return;
@@ -1648,7 +2026,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             return targetPopup.MapPointToContent(point);
         if (target?.IsFixedPositioned() == true) return point;
         var mapped = point;
-        for (var current = target?.Parent; current != null; current = current.Parent)
+        for (var current = target == null ? null : VisualAncestorOf(target); current != null; current = VisualAncestorOf(current))
         {
             if (current is IPopupElement popup)
             {
@@ -1673,7 +2051,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (!element.IsAttached || !ReferenceEquals(element.OwnerDocument, _document) ||
             !element.IsEffectivelyVisible) return false;
-        for (var current = element; current != null; current = current.Parent)
+        for (var current = element; current != null; current = VisualAncestorOf(current))
             if (current is IPopupElement popup && !popup.IsPopupOpen) return false;
         if (element is ITextEditor customEditor && customEditor.OwnsScrollbarChrome)
             return customEditor.IsScrollbarInteractionUsable(part);
@@ -1692,7 +2070,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static Rect MapContentRectToScreen(Element? target, Rect rect)
     {
-        for (var current = target?.Parent; current != null; current = current.Parent)
+        for (var current = target == null ? null : VisualAncestorOf(target); current != null; current = VisualAncestorOf(current))
         {
             if (current is not IPopupElement popup) continue;
             var origin = popup.MapPointToContent(Point.Zero);
@@ -1705,17 +2083,29 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return rect;
     }
 
-    private static UIElement? FindFocusableAncestor(Element? hit)
+    private static Element? FindFocusableAncestor(Element? hit)
     {
-        for (var current = hit; current != null; current = current.Parent)
-            if (current is UIElement element && IsFocusable(element))
-                return element;
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
+        {
+            // UIElement 的可聚焦判定保持原样；HTML host 以 Element 焦点目标身份参与。
+            if (current is UIElement element && IsFocusable(element)) return element;
+            if (current is IFocusableElement { IsEnabled: true } && current is HTMLElement host &&
+                IsHtmlFocusableTag(host.LocalName))
+                return current;
+        }
         return null;
     }
 
+    /// <summary>本地名对应的 HTML host 是否可作为键盘焦点目标（对齐 Square 已支持的交互控件）。</summary>
+    private static bool IsHtmlFocusableTag(string localName) =>
+        localName is "button" or "input" or "textarea" or "select" or "a" or "summary";
+
+    /// <summary>命中路径的上一跳：先语义父级，内部视觉 sidecar 则回到其宿主。</summary>
+    private static Element? VisualAncestorOf(Element element) => element.Parent ?? element.VisualParent;
+
     private static T? FindAncestor<T>(Element? hit) where T : Element
     {
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
             if (current is T match) return match;
         return null;
     }
@@ -1734,7 +2124,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private static CursorKind ResolveCursor(Element? hit, Point point)
     {
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
             var value = current.Style.Get("cursor")?.Trim();
             if (!string.IsNullOrEmpty(value))
@@ -1751,7 +2141,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
             }
         }
 
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
             if (current is Link link) return link.IsEnabled ? CursorKind.Hand : CursorKind.Arrow;
             if (current is Splitter splitter)
@@ -1786,7 +2176,12 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private void UpdateTooltip(Element? hit)
     {
         var target = FindTooltipTarget(hit);
-        var text = target?.Tooltip;
+        var text = target switch
+        {
+            UIElement uiElement => uiElement.Tooltip,
+            HTMLElement htmlElement => htmlElement.Tooltip,
+            _ => null
+        };
         if (ReferenceEquals(_tooltipTarget, target) &&
             (target == null || string.Equals(_tooltipPopup.Message, text, StringComparison.Ordinal)))
             return;
@@ -1807,12 +2202,18 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         RequestRender();
     }
 
-    private static UIElement? FindTooltipTarget(Element? hit)
+    private static Element? FindTooltipTarget(Element? hit)
     {
-        for (var current = hit; current != null; current = current.Parent)
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
-            if (current is UIElement element && !string.IsNullOrWhiteSpace(element.Tooltip))
-                return element;
+            var tooltip = current switch
+            {
+                UIElement uiElement => uiElement.Tooltip,
+                HTMLElement htmlElement => htmlElement.Tooltip,
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(tooltip))
+                return current;
         }
 
         return null;
@@ -1822,13 +2223,13 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private bool ClearActivePath() => UpdateStatePath(_activePath, null, ElementState.Active);
 
-    private static bool UpdateStatePath(List<UIElement> currentPath, Element? hit, ElementState state)
+    private static bool UpdateStatePath(List<Element> currentPath, Element? hit, ElementState state)
     {
-        UIElement? pathStart = null;
-        for (var current = hit; current != null; current = current.Parent)
+        Element? pathStart = null;
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
         {
-            if (current is not UIElement uiElement) continue;
-            pathStart = uiElement;
+            if (!IsStatePathElement(current)) continue;
+            pathStart = current;
             break;
         }
 
@@ -1856,16 +2257,19 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         return true;
     }
 
-    private static List<UIElement> BuildElementPath(Element? hit)
+    /// <summary>参与 hover/active 伪状态路径的元素：原生 UI 控件与 HTML host。</summary>
+    private static bool IsStatePathElement(Element element) => element is UIElement or HTMLElement;
+
+    private static List<Element> BuildElementPath(Element? hit)
     {
-        var path = new List<UIElement>();
-        for (var current = hit; current != null; current = current.Parent)
-            if (current is UIElement uiElement)
-                path.Add(uiElement);
+        var path = new List<Element>();
+        for (var current = hit; current != null; current = VisualAncestorOf(current))
+            if (IsStatePathElement(current))
+                path.Add(current);
         return path;
     }
 
-    private static bool PathsEqual(List<UIElement> left, List<UIElement> right)
+    private static bool PathsEqual(List<Element> left, List<Element> right)
     {
         if (left.Count != right.Count) return false;
         for (var i = 0; i < left.Count; i++)
@@ -1877,6 +2281,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     private void HandleKey(int keyCode, KeyAction action)
     {
         if (_sessionSuspended || _host == null) return;
+
+        // Escape 先于全局快捷键、popup 与焦点编辑器取消点选。
+        if (_inspectorModeEnabled && action == KeyAction.Down && keyCode == 27)
+        {
+            CancelInspectorMode();
+            RenderFrame();
+            return;
+        }
 
         MainWindow.RaiseGlobalKeyEvent(keyCode, action);
 
@@ -1892,14 +2304,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         if (action == KeyAction.Down && keyCode == 27 && _displayTree.DismissTopmostPopupOnEscape())
         {
-            SyncFocusedInputFromTree();
+            SyncFocusedElementFromTree();
             RenderFrame();
             return;
         }
 
-        SyncFocusedInputFromTree();
+        SyncFocusedElementFromTree();
 
-        _focusedInput?.DispatchTrusted(
+        _focusedElement?.DispatchTrusted(
             action == KeyAction.Down
                 ? StandardEvents.CreateKeyDown(keyCode, shift, control, alt)
                 : StandardEvents.CreateKeyUp(keyCode, shift, control, alt));
@@ -1951,18 +2363,33 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         RenderFrame();
     }
 
-    private void SyncFocusedInputFromTree()
+    private void SyncFocusedElementFromTree()
     {
-        var focused = _root.QueryAll<UIElement>().LastOrDefault(element => element.IsFocused);
-        if (ReferenceEquals(_focusedInput, focused)) return;
-        _focusedInput = focused;
+        Element? focused = null;
+        CollectFocusedElement(_root, ref focused);
+        if (ReferenceEquals(_focusedElement, focused)) return;
+        _focusedElement = focused;
         _focusedEditor = focused as ITextEditor;
+    }
+
+    /// <summary>
+    /// 深度优先寻找最后一个持有焦点的可聚焦元素（与原 QueryAll 的文档序 LastOrDefault 一致），
+    /// 并经由 <see cref="HTMLElement.VisualSidecars"/> 覆盖不在语义 DOM 里的原生代理。
+    /// </summary>
+    private static void CollectFocusedElement(Element element, ref Element? last)
+    {
+        if (element is IFocusableElement { IsFocused: true }) last = element;
+        foreach (var child in element.Children)
+            CollectFocusedElement(child, ref last);
+        if (element is not HTMLElement host) return;
+        foreach (var sidecar in host.VisualSidecars)
+            CollectFocusedElement(sidecar, ref last);
     }
 
     private void HandleTextInput(string text)
     {
         if (_sessionSuspended) return;
-        SyncFocusedInputFromTree();
+        SyncFocusedElementFromTree();
         _focusedEditor?.HandleTextInput(text);
         RenderFrame();
     }
@@ -2075,6 +2502,27 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         if (!element.IsVisible || !element.IsUserSelectText()) return;
         var selectableStart = items.Count;
+
+        if (element is HTMLElement host)
+        {
+            // All painted fragments of a host share it as their element; walking ChildNodes once
+            // keeps Text/Element/Text items in document order instead of per-element command order.
+            fragmentsByElement.TryGetValue(element, out var hostFragments);
+            foreach (var node in host.ChildNodes)
+            {
+                if (node is Square.UI.Text { Data.Length: > 0 } text &&
+                    host.AcceptsDirectTextContent && hostFragments != null)
+                {
+                    foreach (var fragment in hostFragments)
+                        if (ReferenceEquals(fragment.TextNode, text))
+                            items.Add(new TextSelectionItem(element, fragment.Text, fragment.Bounds, fragment, text));
+                }
+                else if (node is Element child)
+                    CollectSelectableText(child, items, fragmentsByElement);
+            }
+            return;
+        }
+
         if (fragmentsByElement.TryGetValue(element, out var fragments))
         {
             if (element is ITextSelectable selectable && !string.IsNullOrEmpty(selectable.SelectableText))
@@ -2095,7 +2543,9 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                         fragment.Text,
                         fragment.Bounds,
                         fragment,
-                        FindTextNode(element, fragment.Text)));
+                        // Square control text keeps the text-equality lookup; its fragments carry
+                        // no source DOM Text node.
+                        fragment.TextNode ?? FindTextNode(element, fragment.Text)));
             }
         }
         else if (element is ITextSelectable selectable && !string.IsNullOrEmpty(selectable.SelectableText))
@@ -2268,8 +2718,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         var range = _document.CreateRange();
         if (startItem.TextNode is { } startText && endItem.TextNode is { } endText)
         {
-            range.SetStart(startText, Math.Clamp(startPoint.Offset, 0, startText.Length));
-            range.SetEnd(endText, Math.Clamp(endPoint.Offset, 0, endText.Length));
+            range.SetStart(startText, MapSelectionOffsetToNode(startItem, startPoint.Offset, startText));
+            range.SetEnd(endText, MapSelectionOffsetToNode(endItem, endPoint.Offset, endText));
         }
         else if (startItem.TextNode == null || endItem.TextNode == null)
         {
@@ -2286,6 +2736,14 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
         documentSelection.SetRange(range);
     }
+
+    /// <summary>Maps a fragment-relative selection offset onto the source Text node's UTF-16
+    /// coordinates, honoring whitespace collapse and text-transform expansion.</summary>
+    private static int MapSelectionOffsetToNode(TextSelectionItem item, int offset, Square.UI.Text node) =>
+        Math.Clamp(
+            item.Fragment != null ? item.Fragment.MapCharacterOffsetToTextNode(offset) : offset,
+            0,
+            node.Length);
 
     private static Square.UI.Text? FindTextNode(Element element, string text)
     {
@@ -2691,6 +3149,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         if (element.IsLayoutDirty || element.NeedsPaint || element.NeedsCompositeUpdate) return true;
         foreach (var child in element.Children)
             if (HasVisualInvalidation(child)) return true;
+        foreach (var sidecar in element.VisualSidecars)
+            if (HasVisualInvalidation(sidecar)) return true;
         return false;
     }
 }

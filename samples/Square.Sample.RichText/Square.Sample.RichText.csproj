@@ -5,6 +5,7 @@
     <OutputType Condition="'$(IsWindowsBuild)' != 'false'">WinExe</OutputType>
     <OutputType Condition="'$(IsWindowsBuild)' == 'false'">Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
+    <SquareDefaultElementNamespace>urn:square:ui</SquareDefaultElementNamespace>
     <Description>Square RichText Editor Demo</Description>
     <PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
     <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>

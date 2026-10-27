@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Static HTML shell with mounted Square components</title>
+  <link rel="stylesheet" href="shell.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1 class="page-title">Static HTML shell with mounted Square components</h1>
+    <p class="lede">This page is plain markup and CSS with no scripts. The two dashed slots below are ordinary elements; Square compiles the SQX and SQV counter components and mounts them into these nodes at startup, the same way Vue mounts into a selector.</p>
+  </header>
+  <main class="content">
+    <section class="mount-block">
+      <h2 class="block-title">SQX counter</h2>
+      <div id="sqx-root" class="static-slot">SQX component mounts here</div>
+    </section>
+    <section class="mount-block">
+      <h2 class="block-title">SQV counter</h2>
+      <div id="sqv-root" class="static-slot">SQV component mounts here</div>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <p>Static shell &mdash; components keep their own state; unmounting releases their bindings and styles.</p>
+  </footer>
+</body>
+</html>

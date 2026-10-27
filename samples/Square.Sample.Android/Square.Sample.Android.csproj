@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-android</TargetFramework>
+    <SquareDefaultElementNamespace>urn:square:ui</SquareDefaultElementNamespace>
     <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>

@@ -42,6 +42,21 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void RotatedSolidRectanglePaintsItsSilhouetteNotItsAxisAlignedBounds()
+    {
+        using var context = CreateContext(40, 40);
+        context.Clear(Color.White);
+        context.PushTransform(Matrix3x2.CreateRotation(MathF.PI / 4, new Vector2(20, 20)));
+        context.FillRect(new Rect(12, 16, 16, 8), new SolidColorBrush(Color.Red));
+        context.PopTransform();
+
+        var bitmap = context.GetBitmap();
+        Assert.Equal(Color.White.G, bitmap.GetPixel(12, 12)[1]);
+        Assert.Equal(Color.Red.G, bitmap.GetPixel(17, 13)[1]);
+        Assert.Equal(Color.Red.G, bitmap.GetPixel(20, 20)[1]);
+    }
+
+    [Fact]
     public void RendersSvgImageThroughImageControl()
     {
         using var context = CreateContext(40, 40);
@@ -1314,6 +1329,34 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void HtmlInputButtonSidecarPreservesHostBackgroundAndBorder()
+    {
+        var host = new Square.Html.HTMLInputElement { Type = "button", Value = "" };
+        host.Style.Set("appearance", "auto");
+        host.Style.Set("background-color", "#123456");
+        host.Style.Set("border", "2px solid #654321");
+        host.Style.Set("padding", "0");
+        new CssEngine().ApplyStyles(host);
+        host.Measure(new Size(100, 40));
+        host.Arrange(new Rect(4, 4, 100, 40));
+        var sidecar = Assert.IsType<Button>(Assert.Single(host.VisualSidecars));
+        Assert.Same(host, sidecar.VisualParent);
+        Assert.Equal("auto", sidecar.Style.Get("appearance"));
+
+        using var context = CreateContext(112, 52);
+        context.Clear(Color.White);
+        Render(host, context);
+
+        var bitmap = context.GetBitmap();
+        var x = (int)sidecar.Geometry.X;
+        var y = (int)sidecar.Geometry.Y;
+        // Check the proxy's would-be native border and face as well as the host border.
+        Assert.Equal(new byte[] { 0x56, 0x34, 0x12, 255 }, bitmap.GetPixel(x, y + 3).ToArray());
+        Assert.Equal(new byte[] { 0x56, 0x34, 0x12, 255 }, bitmap.GetPixel(x + 3, y + 3).ToArray());
+        Assert.Equal(new byte[] { 0x21, 0x43, 0x65, 255 }, bitmap.GetPixel(4, 20).ToArray());
+    }
+
+    [Fact]
     public void AppearanceNoneDisablesButtonNativeHoverChrome()
     {
         static int Brightness(ReadOnlySpan<byte> pixel) => pixel[0] + pixel[1] + pixel[2];
@@ -1616,10 +1659,16 @@ public class SoftwareRendererTests
         var popupOffset = new Point(
             (document.Ui.Geometry.Width - dialog.Geometry.Width) / 2f + dialog.HorizontalOffset,
             (document.Ui.Geometry.Height - dialog.Geometry.Height) / 2f + dialog.VerticalOffset);
-        AssertControlChrome(context.GetBitmap(), autoInput.Geometry, popupOffset, Color.White, expectAuthorBorder: false);
-        AssertControlChrome(context.GetBitmap(), autoButton.Geometry, popupOffset, Color.FromRgb(239, 239, 239), expectAuthorBorder: false);
-        AssertControlChrome(context.GetBitmap(), authorInput.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
-        AssertControlChrome(context.GetBitmap(), authorButton.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
+        var bitmap = context.GetBitmap();
+        AssertControlChrome(bitmap, autoInput.Geometry, popupOffset, Color.White, expectAuthorBorder: false);
+        AssertControlEdges(bitmap, autoButton.Geometry, popupOffset, expectAuthorBorder: false);
+        var face = bitmap.GetPixel(
+            (int)(popupOffset.X + autoButton.Geometry.Right) - 9,
+            (int)(popupOffset.Y + autoButton.Geometry.Y) + 8);
+        Assert.True(face[0] > 200 && face[1] > 200 && face[2] > 200,
+            "Default button must paint its light UA face above the dark dialog background.");
+        AssertControlChrome(bitmap, authorInput.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
+        AssertControlChrome(bitmap, authorButton.Geometry, popupOffset, Color.FromRgb(0x12, 0x34, 0x56), expectAuthorBorder: true);
         CssStyleReconciler.UnregisterScopesForTree(document.Ui);
     }
 

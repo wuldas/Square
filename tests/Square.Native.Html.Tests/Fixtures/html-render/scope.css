@@ -1,0 +1,9 @@
+/* html/body 规则必须只作用于加载的 HTML 根，不允许泄漏到外层 UIDocument 壳。 */
+html { background-color: #eef2f7; }
+body { padding-top: 7px; }
+.shell-header { color: #8a4b08; }
+.shell-footer { color: #4c5b70; }
+#first-slot { padding-left: 11px; }
+#second-slot { padding-left: 29px; }
+/* 作者作用域需在动态挂载后重新命中组件子树中的后代。 */
+.mount-zone .mount-label { color: #12406e; }

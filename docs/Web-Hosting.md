@@ -4,7 +4,7 @@
 
 Square 的 Web Server 模式由两个可选包组成：
 
-- `Square.Native.Html`：将已经求值的 `Element Tree` 生成语义 HTML/CSS。
+- `Square.Native.Html`：将已经求值的 `Element Tree` 生成语义 HTML/CSS，也可将本地无脚本 HTML/CSS 文件加载为原生树。
 - `Square.Hosting.Web`：把组件工厂映射为 ASP.NET Core 静态或交互 endpoint。
 
 它不是 WASM，也不会引入 JavaScript 引擎。`.sqx` / `.sqv` 仍由现有 Source Generator 编译为 C# 组件。
@@ -108,10 +108,15 @@ finally
 | `Image.Source` / `Bitmap` | `img` / PNG data URI |
 | `List` / `ListItem` | `ul` / `li` |
 | 内联 SVG DOM | 原生 SVG 标签 |
+| `Square.Html` 元素（113 个 WHATWG 标签） | 对应原生语义标签，按 [HTML5-Elements.md](HTML5-Elements.md) 矩阵输出与禁用；混合文本按 `ChildNodes` 原序编码为裸文本 |
 
-最终已应用样式默认去重为 head 中的 CSS class，也可通过 `UseInlineStyles` 输出 inline `style`。组件样式表无需在浏览器中重新执行 Square selector/cascade。交互页面在每次事件后同时返回当前页面 CSS，不使用共享 stylesheet endpoint 表达会话动态状态。
+包导出与已定义的自定义元素仅输出 `IHtmlStaticRepresentation` 返回的安全静态表示；本轮不输出浏览器 `customElements.define` 注册脚本或可升级的 `is` 标记。
 
-表单控件默认 `appearance: auto`：基线 CSS 把它写在 `button,input,select,textarea` 上，让浏览器使用原生控件外观。`CheckBox` / `Radio` 的 `appearance` 写在内部 `input` 上，而不是外层 `label`。`appearance: none` 覆盖该基线，关闭原生 chrome。
+最终已应用样式默认按完整声明集去重为 head 中的 `sq-style-*` CSS class，原始 class 仍保留；不同元素即使共享原始 class，也不会串用背景或边框。也可通过 `UseInlineStyles` 输出 inline `style`。组件样式表无需在浏览器中重新执行 Square selector/cascade。交互页面在每次事件后同时返回当前页面 CSS，不使用共享 stylesheet endpoint 表达会话动态状态。
+
+组件 `<style>` 中被 `animation-name` 引用的数值关键帧（含 `width` / `opacity`）会被安全归一化、重命名为作用域化 `sq-kf-*` 并写入 Web CSS；`UseInlineStyles` 模式同样保留关键帧定义。其他关键帧属性不会作为原始 CSS 导出。
+
+表单控件默认 `appearance: auto`：基线 CSS 把它写在 `button,input,select,textarea` 上，Square 的 UA 级默认边框、背景和字体不导出为更高优先级的 author 样式，由浏览器呈现原生控件；作者自定义边框等仍保留。为使按下状态在仅微调边框的浏览器主题中也可见，Web 基线与桌面 UA 同步将默认按钮的 `:active` 背景压暗；Web 仅给未指定作者背景且使用默认外观的按钮附加内部反馈类，不覆盖作者背景。`CheckBox` / `Radio` 的 `appearance` 写在内部 `input` 上，而不是外层 `label`。`appearance: none` 覆盖该基线，关闭原生 chrome。
 
 ## 4. 不支持控件
 
@@ -140,6 +145,7 @@ app.MapSquarePage<Main>("/", options =>
 - `Link` 仅允许相对 URL、fragment、HTTP、HTTPS 和 mailto。
 - `Image` 仅允许相对 URL、HTTP、HTTPS 和 `data:image/*`。
 - 不自动序列化任意 `PropertyStore` 值。
+- 模板 HTML 元素受相同导出限制：拒绝 `on*`、`srcdoc`、不安全 URL/`srcset`、提供者写入的 `data-square-*` 保留属性与所有 `is` 属性；`script`/`html:script` 内容与 `src` 永不输出。
 
 ## 6. 运行示例
 
@@ -147,7 +153,13 @@ app.MapSquarePage<Main>("/", options =>
 dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj
 ```
 
-访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面。
+访问启动日志中的地址。示例页面由 `.sqv` Source Generator 生成，并包含表单控件、选择框、链接和路由参数页面；`/html-elements` 混合页覆盖 HTML 元素、SVG、Square UI、安全自定义元素静态表示，以及普通流/Flex/Grid、背景颜色、边框和表格的双端对照。
+
+`/html-elements` 还展示同一份 8 帧、4fps 的不透明循环 GIF（`Assets/animated-demo.gif`）：Web 通过固定 `image/gif` 路由返回原文件，桌面由 `Square.Images` 从输出资源目录解码并按帧延迟重绘；无需客户端脚本。
+
+同一页还有一个纯 CSS loading 动画（三条圆角条按 `animation-delay` 错峰循环）：桌面按帧循环 tick，浏览器直接运行 CSS；重复应用样式不会把动画倒回起始帧。
+
+对照桌面渲染时，运行 `dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csproj -- --desktop --html-elements`。此模式与浏览器 `/html-elements` 使用同一 `HtmlElementsPage.sqv`，默认窗口为 900×960；比较几何时也把 Chrome 视口设为 900×960。`Square.Sample --html-regression` 是另一份布局回归页，正文内容本来不同。
 
 ## 7. 当前边界
 
@@ -158,3 +170,43 @@ dotnet run --project samples/Square.Sample.WebServer/Square.Sample.WebServer.csp
 - SignalR 主动推送、离线恢复、WASM 和通用 pointer/keyboard 事件属于独立阶段。
 - Debug 模板 Hot Reload 首期仅接入 `DesktopApplication`；已经建立的 Web interactive session 不会随 `.sqv` / `.sqx` metadata update 自动重建。
 - 浏览器布局是权威来源，输出不保证与 Software Renderer 像素完全一致。
+
+## 8. 本地静态 HTML 外壳与编译组件挂载
+
+桌面程序引用可选 `Square.Native.Html` 后，可加载标准 HTML5 文件，再显式挂载编译好的 SQX/SQV 实例。HTML 只负责静态结构与 CSS，不注册或解释组件类型，也不执行脚本。
+
+```csharp
+using Square.Hosting;
+using Square.Native.Html;
+using Square.UI;
+
+var window = new AppWindow("Static HTML + components");
+var root = HtmlLoader.LoadFile("html-mount/shell.html");
+window.Load(root); // 先赋予真实 UIDocument 和所属 Dispatcher
+var app = new DesktopApplication(window); // 先绑定应用实际使用的 Dispatcher
+using var sqx = root.Mount("#sqx-root", new HtmlMountedSqxCounter());
+using var sqv = root.Mount("#sqv-root", new HtmlMountedSqvCounter());
+app.Run();
+```
+
+`LoadFile` 返回实际 HTML `documentElement`，保留 html/head/body、原生 SVG 和有序 DOM Text，不建立运行中的第二套 DOM。相对入口路径基于 `AppContext.BaseDirectory`；link 的本地 CSS、内联 style 的相对 `@import` 与 img 的相对 src 基于 HTML 文件目录。样式沿现有 CSS 引擎和作用域运作，不影响外层 UIDocument 壳；条件 stylesheet media 和远程 stylesheet URL 明确拒绝。
+
+挂载替换容器的全部子节点，保留容器、id/class/style；组件 Props/Slots 在挂载前设置。`Unmount`/`Dispose` 永久释放绑定、生成资源和组件样式，重复调用无效果，重新挂载须 `new` 实例。所有操作在所属 UI Dispatcher 线程执行；直接原生移除仍是 soft detach。独立于窗口管理加载树时，结束其生命周期调用 `root.DiscardGeneratedSubtree()` 释放作者样式作用域。
+
+script（包括 SVG/模板内容）和 on* 属性被拒绝，`{...}` 等模板样字符串保持字面量。未知标签/namespace 不降级；自定义 is 属性不触发自动组件注册。这里只提供 Square 已有原生 HTML/SVG 行为，不引入 JS、浏览器导航或运行时模板编译。
+
+运行仓库中的双组件桌面样例：
+
+```powershell
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseNativeHtml=true -- --backend Software --html-mount-demo
+```
+
+`--html-file <path>` 在 demo 分支指定另一份外壳，默认 `html-mount/shell.html`，必须保留两个挂载 id。`Public/html-mount/` 自动复制为输出/发布目录的 `html-mount/`，无需 Public 前缀。`SquareSampleUseNativeHtml` 默认 false；未编入该包时 demo flag 在创建窗口前抛 `NotSupportedException`。普通启动仍加载原 Main 页面，现有 backend/DevTools flags 不变。
+
+
+NativeAOT 发布同一真实样例（包含复制后的静态文件）：
+
+```powershell
+dotnet publish samples/Square.Sample/Square.Sample.csproj -c Release -f net10.0 -r win-x64 --self-contained true -p:SquareSamplePublishAot=true -p:SquareSampleUseNativeHtml=true -o artifacts/static-html-mount-aot
+& ./artifacts/static-html-mount-aot/Square.Sample.exe --backend Software --html-mount-demo
+```

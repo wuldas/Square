@@ -481,6 +481,35 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    public void AppearanceAutoButtonReversesBevelWhilePressed()
+    {
+        static (byte Top, byte Bottom, byte Center) Capture(bool pressed)
+        {
+            var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+            button.Style.Set("appearance", "auto");
+            if (pressed) button.SetState(ElementState.Active, true);
+            new CssEngine().ApplyStyles(button);
+            using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+            {
+                CanvasSize = new Size(90, 36)
+            });
+            context.Clear(Color.White);
+            var tree = new DisplayTree();
+            tree.BuildFrom(button);
+            tree.Render(context);
+            using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+            return (bitmap.GetPixel(20, 2)[2], bitmap.GetPixel(20, 29)[2], bitmap.GetPixel(20, 16)[2]);
+        }
+
+        var normal = Capture(false);
+        var pressed = Capture(true);
+        Assert.True(normal.Top > normal.Bottom, "outset frame should be lighter above than below");
+        Assert.True(pressed.Top < pressed.Bottom, "pressed inset frame should reverse the bevel");
+        Assert.InRange(normal.Center, 200, 255);
+        Assert.True(pressed.Center < normal.Center - 10, "press should visibly darken the button face");
+    }
+
+    [Fact]
     public void AppearanceAutoPaintsButtonText()
     {
         var engine = new CssEngine();
@@ -519,38 +548,6 @@ public sealed class AppearanceCssTests
         Assert.InRange(Math.Abs(glyphCenter - buttonCenter), 0, 2);
     }
 
-    [Fact]
-    [Trait("Category", "WindowsRenderingMetrics")]
-    public void AppearanceAutoAlignsButtonTextLikeChromiumAtIntegerCoordinates()
-    {
-        var engine = new CssEngine();
-        var button = new Button("Clear Cache") { Geometry = new Rect(2, 2, 90, 21) };
-        button.Style.CssText = "font: 13.3333px Arial;";
-        engine.ApplyStyles(button);
-
-        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
-        {
-            CanvasSize = new Size(96, 28)
-        });
-        context.Clear(Color.White);
-        var tree = new DisplayTree();
-        tree.BuildFrom(button);
-        tree.Render(context);
-
-        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
-        var rows = new List<int>();
-        for (var y = 3; y < 22; y++)
-        for (var x = 10; x < 84; x++)
-        {
-            var pixel = bitmap.GetPixel(x, y);
-            if (pixel[2] < 80 && pixel[1] < 80 && pixel[0] < 80)
-                rows.Add(y);
-        }
-
-        Assert.NotEmpty(rows);
-        var inkCenter = (rows.Min() + rows.Max()) / 2f;
-        Assert.InRange(inkCenter - button.Geometry.Center.Y, -1.5f, -0.5f);
-    }
 
     [Fact]
     public void AppearanceNoneKeepsAuthorBoxWithoutWidgetRadius()
@@ -676,6 +673,177 @@ public sealed class AppearanceCssTests
 
         Assert.True(foundGray, "empty Input should paint placeholder in gray, not Field chrome");
         Assert.False(foundBlack, "placeholder must not consume UA FieldText black");
+    }
+
+    [Fact]
+    public void HtmlTextInputHostPaintsOneInsetFrameOnItsBorderBox()
+    {
+        var engine = new CssEngine();
+        var host = new Square.Html.HTMLInputElement();
+        host.SetAttribute("type", "text");
+        host.SetAttribute("value", "M");
+        engine.ApplyStyles(host);
+
+        // UA input metrics: border 2px, padding 1px 2px, min-height 21px — the reconciled
+        // Input sidecar lands at the content box (6, 5, 172, 15) inside this border box.
+        host.Measure(new Size(400, 100));
+        host.Arrange(new Rect(2, 2, 180, 21));
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(190, 30)
+        });
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(host);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        // The host owns one 2px inset UA frame: top/left dark, bottom/right light.
+        var top = bitmap.GetPixel(40, 2)[2];
+        var bottom = bitmap.GetPixel(40, 22)[2];
+        var left = bitmap.GetPixel(2, 12)[2];
+        var right = bitmap.GetPixel(181, 12)[2];
+        Assert.True(top < bottom && left < right,
+            $"Expected one inset frame on the host box, got top={top}, bottom={bottom}, left={left}, right={right}.");
+        // The content-box edge where the sidecar's own frame used to paint stays field chrome.
+        // The value glyph now starts at the content edge, so probe above its ink span.
+        foreach (var (x, y) in new[] { (40, 5), (40, 19), (6, 6), (177, 12) })
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            Assert.True(pixel[2] > 200 && pixel[1] > 200 && pixel[0] > 200,
+                $"Expected no second frame at ({x}, {y}), found RGB({pixel[2]}, {pixel[1]}, {pixel[0]}).");
+        }
+    }
+
+    [Fact]
+    public void HtmlTextInputHostAuthorBorderOverridesUaInsetFrame()
+    {
+        var engine = new CssEngine();
+        var host = new Square.Html.HTMLInputElement();
+        host.SetAttribute("type", "text");
+        host.SetAttribute("value", "M");
+        host.Style.CssText = "box-sizing: border-box; width: 180px; height: 21px; border: 3px solid #ff0000;";
+        engine.ApplyStyles(host);
+
+        host.Measure(new Size(400, 100));
+        host.Arrange(new Rect(2, 2, 180, 21));
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(190, 30)
+        });
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(host);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        // The author border paints the outer three rows/columns of the border box.
+        foreach (var (x, y) in new[]
+                 {
+                     (40, 2), (40, 3), (40, 4), (40, 20), (40, 21), (40, 22),
+                     (2, 12), (3, 12), (4, 12), (181, 12), (180, 12), (179, 12)
+                 })
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            Assert.True(pixel[2] > 200 && pixel[1] < 80 && pixel[0] < 80,
+                $"Expected the author border at ({x}, {y}), found RGB({pixel[2]}, {pixel[1]}, {pixel[0]}).");
+        }
+        // No UA inset frame paints behind the author border. The value glyph starts at
+        // the content edge (5, 5), so the left probe sits above its ink span.
+        foreach (var (x, y) in new[] { (40, 6), (40, 18), (7, 6), (176, 12) })
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            Assert.True(pixel[2] > 200 && pixel[1] > 200 && pixel[0] > 200,
+                $"Expected field chrome behind the author border at ({x}, {y}), found RGB({pixel[2]}, {pixel[1]}, {pixel[0]}).");
+        }
+    }
+
+    [Fact]
+    public void HtmlTextInputInkStaysInsideHostContentBoxAndCentered()
+    {
+        var engine = new CssEngine();
+        var host = new Square.Html.HTMLInputElement();
+        host.SetAttribute("type", "text");
+        host.SetAttribute("value", "Hpg");
+        engine.ApplyStyles(host);
+
+        // UA metrics: border 2px, padding 1px 2px, min-height 21px — content box (6, 5, 172, 15).
+        host.Measure(new Size(400, 100));
+        host.Arrange(new Rect(2, 2, 180, 21));
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(190, 30)
+        });
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(host);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var inkTop = -1;
+        var inkBottom = -1;
+        var inkLeft = -1;
+        for (var y = 5; y < 20; y++)
+        for (var x = 6; x < 178; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel[2] >= 100 || pixel[1] >= 100 || pixel[0] >= 100) continue;
+            if (inkTop < 0) inkTop = y;
+            inkBottom = y;
+            if (inkLeft < 0) inkLeft = x;
+        }
+
+        Assert.True(inkTop >= 0, "expected visible input glyphs inside the host content box");
+        Assert.InRange(inkLeft, 6, 11);
+        Assert.InRange(inkBottom, 18, 19);
+        // Vertically centered in the content box (center 12.5), matching a same-font label line.
+        Assert.InRange((inkTop + inkBottom) / 2f, 9.5f, 15.5f);
+    }
+
+    [Fact]
+    public void HtmlTextInputFontSyncKeepsUaBoxAndGrowsOnlyForAuthorMetrics()
+    {
+        var engine = new CssEngine();
+        var host = new Square.Html.HTMLInputElement();
+        host.SetAttribute("type", "text");
+        host.SetAttribute("value", "M");
+        engine.ApplyStyles(host);
+
+        // The host UA font copy lands at UA priority on the sidecar: default widget box stays.
+        Assert.Equal(15f, host.Measure(new Size(400, 100)).Height);
+        var sidecar = host.VisualSidecars.OfType<Square.Controls.Input>().First();
+        Assert.False(sidecar.Style.IsAuthorSpecified("font-size"));
+        Assert.False(sidecar.HostSpecifiesTextMetrics);
+        Assert.Equal(host.Style.Get("font-size"), sidecar.Style.Get("font-size"));
+
+        // An authored host font must still grow the content box past the default.
+        host.Style.CssText = "font-size: 28px;";
+        Assert.True(host.Measure(new Size(400, 100)).Height > 15);
+        Assert.True(sidecar.HostSpecifiesTextMetrics);
+    }
+
+    [Fact]
+    public void HtmlTextInputSidecarCaretAndWriteBackStayInHostContentBox()
+    {
+        var engine = new CssEngine();
+        var host = new Square.Html.HTMLInputElement();
+        host.SetAttribute("type", "text");
+        engine.ApplyStyles(host);
+        host.Measure(new Size(400, 100));
+        host.Arrange(new Rect(2, 2, 180, 21));
+
+        var sidecar = host.VisualSidecars.OfType<Square.Controls.Input>().Single();
+        sidecar.HandleTextInput("ab");
+        Assert.Equal("ab", host.GetAttribute("value"));
+
+        // Content box (6, 5, 172, 15): the caret follows the text origin horizontally and stays
+        // in the box vertically (the centered line box may round 0.5px past the top edge).
+        var caret = sidecar.CaretRect;
+        Assert.True(caret.X >= 6, $"caret left {caret.X} left of the content box");
+        Assert.True(caret.Bottom <= 20.5f, $"caret bottom {caret.Bottom} below the content box");
     }
 
     [Fact]

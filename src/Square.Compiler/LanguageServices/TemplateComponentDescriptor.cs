@@ -18,7 +18,11 @@ public sealed class TemplateComponentDescriptor
         bool isBuiltIn,
         bool requiresBuildAfterAttach,
         bool isTextContentElement,
-        bool isSlotHost = false)
+        bool isSlotHost = false,
+        string customElementName = null,
+        string customExtendsTag = null,
+        IReadOnlyList<string> observedAttributes = null,
+        bool isHtmlHost = false)
     {
         if (string.IsNullOrWhiteSpace(tagName))
             throw new ArgumentException("A component tag name is required.", nameof(tagName));
@@ -40,6 +44,10 @@ public sealed class TemplateComponentDescriptor
         RequiresBuildAfterAttach = requiresBuildAfterAttach;
         IsTextContentElement = isTextContentElement;
         IsSlotHost = isSlotHost;
+        CustomElementName = customElementName;
+        CustomExtendsTag = customExtendsTag;
+        ObservedAttributes = observedAttributes ?? Array.Empty<string>();
+        IsHtmlHost = isHtmlHost || kind is TemplateElementKind.Html or TemplateElementKind.HtmlCustom;
     }
 
     public string TagName { get; }
@@ -55,11 +63,16 @@ public sealed class TemplateComponentDescriptor
     public bool RequiresBuildAfterAttach { get; }
     public bool IsTextContentElement { get; }
     internal bool IsSlotHost { get; }
+    public string CustomElementName { get; }
+    public string CustomExtendsTag { get; }
+    public IReadOnlyList<string> ObservedAttributes { get; }
+    public bool IsHtmlHost { get; }
 }
 
 public enum TemplateElementKind
 {
     Html,
+    HtmlCustom,
     Square,
     Svg,
     Extension,

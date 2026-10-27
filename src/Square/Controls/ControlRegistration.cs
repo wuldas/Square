@@ -1,4 +1,5 @@
 using Square.Controls;
+using Square.Html;
 using Square.UI;
 
 namespace Square.Controls;
@@ -7,62 +8,68 @@ namespace Square.Controls;
 public static class ControlRegistration
 {
     private static bool _registered;
+    private static readonly object Gate = new();
 
-    /// <summary>注册所有默认控件与 SVG 元素。</summary>
+    /// <summary>注册所有默认控件、SVG 与 113 个 HTML 元素。</summary>
     public static void RegisterDefaults()
     {
-        if (_registered) return;
-        _registered = true;
+        lock (Gate)
+        {
+            if (_registered) return;
 
-        ElementRegistry.Register("View", static () => new View());
-        ElementRegistry.Register("ScrollViewer", static () => new ScrollViewer());
-        ElementRegistry.Register("Popup", static () => new Popup());
-        ElementRegistry.Register("Dialog", static () => new Dialog());
-        ElementRegistry.Register("MenuBar", static () => new MenuBar());
-        ElementRegistry.Register("Menu", static () => new Menu());
-        ElementRegistry.Register("ContextMenu", static () => new ContextMenu());
-        ElementRegistry.Register("MenuItem", static () => new MenuItem());
-        ElementRegistry.Register("MenuSeparator", static () => new MenuSeparator());
-        ElementRegistry.Register("Text", static () => new Controls.Text());
-        ElementRegistry.Register("FontIcon", static () => new FontIcon());
-        ElementRegistry.Register("Splitter", static () => new Splitter());
-        ElementRegistry.Register("SplitContainer", static () => new SplitContainer());
-        ElementRegistry.Register("List", static () => new Controls.List());
-        ElementRegistry.Register("VirtualList", static () => new VirtualList());
-        ElementRegistry.Register("ListItem", static () => new ListItem());
-        ElementRegistry.Register("Tree", static () => new Tree());
-        ElementRegistry.Register("VirtualTree", static () => new VirtualTree());
-        ElementRegistry.Register("TreeItem", static () => new TreeItem());
-        ElementRegistry.Register("Swiper", static () => new Swiper());
-        ElementRegistry.Register("Link", static () => new Controls.Link());
-        ElementRegistry.Register("Button", static () => new Button());
-        ElementRegistry.Register("Input", static () => new Input());
-        ElementRegistry.Register("TextArea", static () => new TextArea());
-        ElementRegistry.Register("CheckBox", static () => new CheckBox());
-        ElementRegistry.Register("Radio", static () => new Radio());
-        ElementRegistry.Register("Select", static () => new Select());
-        ElementRegistry.Register("Image", static () => new Controls.Image());
-        ElementRegistry.Register("Canvas", static () => new Canvas());
-        ElementRegistry.Register("TitleBar", static () => new TitleBar());
-        ElementRegistry.Register("Table", static () => new Table());
-        ElementRegistry.Register("InlineTable", static () => new InlineTable());
-        ElementRegistry.Register("TableRowGroup", static () => new TableRowGroup());
-        ElementRegistry.Register("TableHeaderGroup", static () => new TableHeaderGroup());
-        ElementRegistry.Register("TableFooterGroup", static () => new TableFooterGroup());
-        ElementRegistry.Register("TableRow", static () => new TableRow());
-        ElementRegistry.Register("TableCell", static () => new TableCell());
-        ElementRegistry.Register("TableCaption", static () => new TableCaption());
-        ElementRegistry.Register("UI", static () => new UIRootElement());
-        ElementRegistry.Register("Head", static () => new UIHeadElement());
-        ElementRegistry.Register("Body", static () => new UIBodyElement());
-        ElementRegistry.Register("svg", static () => new Square.UI.Svg.SVGSVGElement());
-        ElementRegistry.Register("g", static () => new Square.UI.Svg.SVGGElement());
-        ElementRegistry.Register("path", static () => new Square.UI.Svg.SVGPathElement());
-        ElementRegistry.Register("rect", static () => new Square.UI.Svg.SVGRectElement());
-        ElementRegistry.Register("circle", static () => new Square.UI.Svg.SVGCircleElement());
-        ElementRegistry.Register("ellipse", static () => new Square.UI.Svg.SVGEllipseElement());
-        ElementRegistry.Register("line", static () => new Square.UI.Svg.SVGLineElement());
-        ElementRegistry.Register("polyline", static () => new Square.UI.Svg.SVGPolylineElement());
-        ElementRegistry.Register("polygon", static () => new Square.UI.Svg.SVGPolygonElement());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "View", static () => new View());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "ScrollViewer", static () => new ScrollViewer());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Popup", static () => new Popup());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Dialog", static () => new Dialog());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "MenuBar", static () => new MenuBar());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Menu", static () => new Menu());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "ContextMenu", static () => new ContextMenu());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "MenuItem", static () => new MenuItem());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "MenuSeparator", static () => new MenuSeparator());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Text", static () => new Controls.Text());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "FontIcon", static () => new FontIcon());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Splitter", static () => new Splitter());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "SplitContainer", static () => new SplitContainer());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "List", static () => new Controls.List());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "VirtualList", static () => new VirtualList());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "ListItem", static () => new ListItem());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Tree", static () => new Tree());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "VirtualTree", static () => new VirtualTree());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TreeItem", static () => new TreeItem());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Swiper", static () => new Swiper());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Link", static () => new Controls.Link());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Button", static () => new Button());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Input", static () => new Input());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TextArea", static () => new TextArea());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "CheckBox", static () => new CheckBox());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Radio", static () => new Radio());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Select", static () => new Select());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Image", static () => new Controls.Image());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Canvas", static () => new Canvas());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TitleBar", static () => new TitleBar());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Table", static () => new Table());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "InlineTable", static () => new InlineTable());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TableRowGroup", static () => new TableRowGroup());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TableHeaderGroup", static () => new TableHeaderGroup());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TableFooterGroup", static () => new TableFooterGroup());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TableRow", static () => new TableRow());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TableCell", static () => new TableCell());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TableCaption", static () => new TableCaption());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "UI", static () => new UIRootElement());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Head", static () => new UIHeadElement());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Body", static () => new UIBodyElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "svg", static () => new Square.UI.Svg.SVGSVGElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "g", static () => new Square.UI.Svg.SVGGElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "path", static () => new Square.UI.Svg.SVGPathElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "rect", static () => new Square.UI.Svg.SVGRectElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "circle", static () => new Square.UI.Svg.SVGCircleElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "ellipse", static () => new Square.UI.Svg.SVGEllipseElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "line", static () => new Square.UI.Svg.SVGLineElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "polyline", static () => new Square.UI.Svg.SVGPolylineElement());
+            ElementRegistry.Register(ElementRegistry.SvgNamespaceUri, "polygon", static () => new Square.UI.Svg.SVGPolygonElement());
+            foreach (var (tag, factory) in HtmlElementFactory.Registrations)
+                ElementRegistry.Register(ElementRegistry.HtmlNamespaceUri, tag, factory);
+            _registered = true;
+        }
     }
 }

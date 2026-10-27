@@ -22,6 +22,7 @@
     <InternalsVisibleTo Include="Square.Platform.X11" />
     <InternalsVisibleTo Include="Square.Platform.MacOS" />
     <InternalsVisibleTo Include="Square.UI.Tests" />
+    <InternalsVisibleTo Include="Square.DevTools" />
     <InternalsVisibleTo Include="Square.DevTools.Tests" />
     <InternalsVisibleTo Include="Square.Backends.Skia" />
     <InternalsVisibleTo Include="Square.Backends.Direct2D" />
@@ -29,6 +30,7 @@
     <InternalsVisibleTo Include="Square.Backends.Vulkan" />
     <InternalsVisibleTo Include="Square.Backends.Vulkan.Tests" />
     <InternalsVisibleTo Include="Square.Backends.Godot" />
+    <InternalsVisibleTo Include="Square.Native.Html" />
   </ItemGroup>
 
   <ItemGroup>

@@ -382,6 +382,31 @@ public sealed class SkiaBackendTests
     }
 
     [Fact]
+    public void AppearanceAutoButtonReversesBevelOnSkia()
+    {
+        static (byte Top, byte Bottom, byte Face) Capture(bool active)
+        {
+            var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+            button.Style.Set("appearance", "auto");
+            if (active) button.SetState(ElementState.Active, true);
+            new CssEngine().ApplyStyles(button);
+            using var context = CreateContext(90, 36);
+            context.Clear(Color.White);
+            var tree = new DisplayTree();
+            tree.BuildFrom(button);
+            tree.Render(context);
+            using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+            return (bitmap.GetPixel(20, 2)[2], bitmap.GetPixel(20, 29)[2], bitmap.GetPixel(20, 16)[2]);
+        }
+
+        var normal = Capture(false);
+        var pressed = Capture(true);
+        Assert.True(normal.Top > normal.Bottom);
+        Assert.True(pressed.Top < pressed.Bottom);
+        Assert.True(pressed.Face < normal.Face - 10);
+    }
+
+    [Fact]
     public void AppearanceNoneKeepsAuthorBoxWithoutWidgetRadius()
     {
         var engine = new CssEngine();

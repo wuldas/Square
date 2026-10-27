@@ -33,6 +33,9 @@ namespace Square.Compiler.ParserCore
         public bool StrictTemplate { get; set; }
         public bool CaseSensitiveSectionNames { get; set; }
         public bool Tolerant { get; set; }
+        public bool ParseTemplateBody { get; set; } = true;
+        public TemplateCatalog Catalog { get; set; }
+        public TemplateResolutionContext ResolutionContext { get; set; }
     }
 
     internal static class SqxCoreParser
@@ -46,6 +49,9 @@ namespace Square.Compiler.ParserCore
                 source,
                 options.CaseSensitiveSectionNames,
                 options.Tolerant,
+                options.ParseTemplateBody,
+                options.Catalog,
+                options.ResolutionContext,
                 out var syntax);
             Section templateSection;
             if (!sections.TryGetValue("template", out templateSection))
@@ -107,13 +113,19 @@ namespace Square.Compiler.ParserCore
             string source,
             bool caseSensitive,
             bool tolerant,
+            bool parseTemplateBody,
+            TemplateCatalog catalog,
+            TemplateResolutionContext context,
             out ComponentDocumentSyntax syntax)
         {
             var scan = ComponentSectionScanner.Scan(
                 source,
                 string.Empty,
                 caseSensitive ? ComponentDialect.Sqx : ComponentDialect.Sqv,
-                tolerant);
+                tolerant,
+                parseTemplateBody,
+                catalog,
+                context);
             syntax = scan.Document;
             var diagnostic = scan.Diagnostics.FirstOrDefault(item =>
                 !tolerant || !CanRecover(item.Kind));

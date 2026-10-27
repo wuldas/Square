@@ -6,7 +6,7 @@ using Square.Events;
 using Square.Native.Html;
 using Square.Runtime;
 using Square.UI;
-using Square.UI.Html;
+using Square.Html;
 
 namespace Square.Hosting.Web;
 
@@ -111,15 +111,15 @@ internal sealed class SquareWebInteractiveSession : IDisposable
     private static bool IsDisabledInPath(Element target)
     {
         for (Element? current = target; current != null; current = current.Parent)
-            if (current is UIElement { IsDisabled: true }) return true;
+            if (current is UIElement { IsDisabled: true } or HTMLElement { IsDisabled: true }) return true;
         return false;
     }
 
     private static void SynchronizeControlValue(Element target, SquareWebEventRequest request)
     {
-        if (target is HtmlElement host)
+        if (target is HTMLElement)
         {
-            SynchronizeHtmlFormState(host, request);
+            SynchronizeHtmlFormState(target, request);
             return;
         }
         if (request.Type is not ("input" or "change")) return;
@@ -153,46 +153,40 @@ internal sealed class SquareWebInteractiveSession : IDisposable
     /// sweeps same-name hosts), and selected on the matching option. Handlers then observe current
     /// state and the next export reflects it; host OnPropertyChanged reconciles native proxies.
     /// </summary>
-    private static void SynchronizeHtmlFormState(HtmlElement host, SquareWebEventRequest request)
+    private static void SynchronizeHtmlFormState(Element host, SquareWebEventRequest request)
     {
-        switch (host.TagName)
+        switch (host)
         {
-            case "input":
-                SynchronizeHtmlInput(host, request);
+            case HTMLInputElement input:
+                SynchronizeHtmlInput(input, request);
                 break;
-            case "textarea" when request.Value != null:
-                host.SetAttribute("value", request.Value);
+            case HTMLTextAreaElement textarea when request.Value != null:
+                textarea.Value = request.Value;
                 break;
-            case "select" when request.Value != null:
-                SynchronizeHtmlSelectedOption(host, request.Value);
+            case HTMLSelectElement select when request.Value != null:
+                SynchronizeHtmlSelectedOption(select, request.Value);
                 break;
         }
     }
 
-    private static void SynchronizeHtmlInput(HtmlElement input, SquareWebEventRequest request)
+    private static void SynchronizeHtmlInput(HTMLInputElement input, SquareWebEventRequest request)
     {
-        var type = (input.GetAttribute("type") ?? "text").Trim().ToLowerInvariant();
+        var type = (input.Type ?? "text").Trim().ToLowerInvariant();
         if (type is "checkbox" or "radio")
         {
             if (!request.Checked.HasValue) return;
-            if (!request.Checked.Value)
-            {
-                input.RemoveAttribute("checked");
-                return;
-            }
-            if (type == "radio") UncheckHtmlRadioGroup(input);
-            input.SetAttribute("checked", string.Empty);
+            if (request.Checked.Value && type == "radio") UncheckHtmlRadioGroup(input);
+            input.Checked = request.Checked.Value;
             return;
         }
-        if (request.Value != null) input.SetAttribute("value", request.Value);
+        if (request.Value != null) input.Value = request.Value;
     }
 
     /// <summary>Radio exclusivity: clears the checked attribute of same-name radio hosts tree-wide.</summary>
-    private static void UncheckHtmlRadioGroup(HtmlElement radio)
+    private static void UncheckHtmlRadioGroup(HTMLInputElement radio)
     {
-        var name = radio.GetAttribute("name");
-        if (string.IsNullOrEmpty(name) || RootOf(radio) is not { } root) return;
-        ClearHtmlCheckedAttribute(root, radio, name);
+        if (string.IsNullOrEmpty(radio.Name) || RootOf(radio) is not { } root) return;
+        ClearHtmlCheckedAttribute(root, radio, radio.Name);
     }
 
     private static Element? RootOf(Element element)
@@ -202,58 +196,48 @@ internal sealed class SquareWebInteractiveSession : IDisposable
         return root;
     }
 
-    private static void ClearHtmlCheckedAttribute(Element element, HtmlElement radio, string name)
+    private static void ClearHtmlCheckedAttribute(Element element, HTMLInputElement radio, string name)
     {
         foreach (var child in element.Children)
         {
-            if (child is HtmlElement { TagName: "input" } input &&
-                !ReferenceEquals(input, radio) &&
-                string.Equals((input.GetAttribute("type") ?? "text").Trim(), "radio", StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(input.GetAttribute("name"), name, StringComparison.Ordinal) &&
-                input.HasAttribute("checked"))
-            {
-                input.RemoveAttribute("checked");
-            }
+            if (child is HTMLInputElement input && !ReferenceEquals(input, radio) &&
+                string.Equals((input.Type ?? "text").Trim(), "radio", StringComparison.OrdinalIgnoreCase) &&
+                input.Name == name && input.Checked)
+                input.Checked = false;
             ClearHtmlCheckedAttribute(child, radio, name);
         }
     }
 
     /// <summary>Selects the first option whose effective value matches and deselects every other one.</summary>
-    private static void SynchronizeHtmlSelectedOption(HtmlElement select, string value)
+    private static void SynchronizeHtmlSelectedOption(HTMLSelectElement select, string value)
     {
-        var options = new List<HtmlElement>();
+        var options = new List<HTMLOptionElement>();
         CollectHtmlOptions(select, options);
-        HtmlElement? match = null;
+        HTMLOptionElement? match = null;
         foreach (var option in options)
-        {
-            if (string.Equals(HtmlOptionValue(option), value, StringComparison.Ordinal))
+            if (HtmlOptionValue(option) == value)
             {
                 match = option;
                 break;
             }
-        }
         foreach (var option in options)
-        {
-            if (ReferenceEquals(option, match)) option.SetAttribute("selected", string.Empty);
-            else if (option.HasAttribute("selected")) option.RemoveAttribute("selected");
-        }
-        select.SetAttribute("value", value);
+            option.Selected = ReferenceEquals(option, match);
+        select.Value = value;
     }
 
-    private static void CollectHtmlOptions(Element element, List<HtmlElement> options)
+    private static void CollectHtmlOptions(Element element, List<HTMLOptionElement> options)
     {
         foreach (var child in element.Children)
         {
-            if (child is HtmlElement { TagName: "option" } option) options.Add(option);
+            if (child is HTMLOptionElement option) options.Add(option);
             else CollectHtmlOptions(child, options);
         }
     }
 
     /// <summary>Option value mirrors the DOM: the value attribute, else the concatenated text runs.</summary>
-    private static string HtmlOptionValue(HtmlElement option)
+    private static string HtmlOptionValue(HTMLOptionElement option)
     {
-        var value = option.GetAttribute("value");
-        if (value != null) return value;
+        if (option.Value != null) return option.Value;
         var builder = new StringBuilder();
         AppendHtmlText(option, builder);
         return builder.ToString();
@@ -266,8 +250,11 @@ internal sealed class SquareWebInteractiveSession : IDisposable
             builder.Append(run.TextContent);
             return;
         }
-        foreach (var child in element.Children)
-            AppendHtmlText(child, builder);
+        foreach (var child in element.ChildNodes)
+        {
+            if (child is Square.UI.Text text) builder.Append(text.Data);
+            else if (child is Element childElement) AppendHtmlText(childElement, builder);
+        }
     }
 }
 

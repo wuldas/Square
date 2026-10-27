@@ -107,7 +107,9 @@ internal static class DirectiveValidator
             }
             if (node is not TemplateIrElement element) continue;
 
-            if (catalog.TryGet(element.TagName, out var descriptor))
+            if (element.Resolution?.Component?.IsHtmlHost != true &&
+                element.Resolution?.Component?.Kind != TemplateElementKind.Svg &&
+                catalog.TryGet(element.TagName, out var descriptor))
             {
                 var id = descriptor.TagName;
 
@@ -164,7 +166,9 @@ internal static class DirectiveValidator
                     foreach (var child in element.Children.OfType<TemplateIrElement>())
                     {
                         var childId = child.TagName;
-                        if (catalog.TryGet(child.TagName, out var childDescriptor))
+                        if (child.Resolution?.Component?.IsHtmlHost != true &&
+                            child.Resolution?.Component?.Kind != TemplateElementKind.Svg &&
+                            catalog.TryGet(child.TagName, out var childDescriptor))
                             childId = childDescriptor.TagName;
                         if (descriptor.AllowedChildTags.Any(allowed =>
                             string.Equals(allowed, childId, StringComparison.Ordinal))) continue;

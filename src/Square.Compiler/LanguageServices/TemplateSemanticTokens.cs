@@ -32,10 +32,11 @@ public static class TemplateSemanticTokens
         TemplateResolutionContext resolutionContext = null)
     {
         catalog ??= TemplateCatalog.BuiltIn;
-        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
-        var result = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty);
-        var document = result.ParsedSqxDocument?.Syntax;
-        if (document == null) return Array.Empty<int>();
+        resolutionContext ??= TemplateResolutionContext.FromTemplateText(text, sourcePath ?? string.Empty);
+        var dialect = sourcePath?.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase) == true
+            ? ComponentDialect.Sqv : ComponentDialect.Sqx;
+        var document = ComponentSectionScanner.Scan(text ?? string.Empty, sourcePath ?? string.Empty,
+            dialect, tolerant: true, catalog: catalog, context: resolutionContext).Document;
 
         var tokens = new List<(int Offset, int Length, int Type, int Modifiers)>();
         if (document.Template?.SqvSyntax != null)
@@ -56,12 +57,12 @@ public static class TemplateSemanticTokens
         foreach (var node in nodes)
         {
             if (node is not SqxElementSyntax element) continue;
-            CollectElement(element.TagName, element.TagNameRange, element.CloseTagNameRange, element.Origin, tokens, catalog, context);
+            CollectElement(element.TagName, element.TagNameRange, element.CloseTagNameRange,
+                element.Origin, element.Resolution, tokens);
             foreach (var attribute in element.Attributes)
             {
                 var type = attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) && attribute.Name.Length > 2
-                    ? Event
-                    : Property;
+                    ? Event : Property;
                 Add(tokens, attribute.NameRange.Offset, attribute.NameRange.Length, type, 0);
             }
             CollectSqx(element.Children, tokens, catalog, context);
@@ -77,7 +78,8 @@ public static class TemplateSemanticTokens
         foreach (var node in nodes)
         {
             if (node is not SqvElementSyntax element) continue;
-            CollectElement(element.TagName, element.TagNameRange, element.CloseTagNameRange, element.Origin, tokens, catalog, context);
+            CollectElement(element.TagName, element.TagNameRange, element.CloseTagNameRange,
+                element.Origin, element.Resolution, tokens);
             foreach (var attribute in element.Attributes)
                 Add(tokens, attribute.NameRange.Offset, attribute.NameRange.Length,
                     attribute.DirectiveName == null ? Property : Keyword, 0);
@@ -86,20 +88,16 @@ public static class TemplateSemanticTokens
     }
 
     private static void CollectElement(
-        string tagName,
-        SquareSourceRange tagNameRange,
-        SquareSourceRange closeTagNameRange,
-        SquareSourceRange origin,
-        List<(int Offset, int Length, int Type, int Modifiers)> tokens,
-        TemplateCatalog catalog,
-        TemplateResolutionContext context)
+        string tagName, SquareSourceRange tagNameRange, SquareSourceRange closeTagNameRange,
+        SquareSourceRange origin, TemplateElementResolution resolution,
+        List<(int Offset, int Length, int Type, int Modifiers)> tokens)
     {
-        var resolution = catalog.ResolveComponent(tagName, context);
-        var resolved = resolution.Status == TemplateElementResolutionStatus.Resolved;
-        var isBuiltIn = resolved && resolution.Component.IsBuiltIn;
-        var type = isBuiltIn ? Class : Type;
-        var modifiers = isBuiltIn || IsControlFlow(tagName) ? 2 : 0;
-        if (IsControlFlow(tagName)) type = Type;
+        var component = resolution?.Status == TemplateElementResolutionStatus.Resolved ? resolution.Component : null;
+        var isBuiltIn = component?.IsBuiltIn == true;
+        var controlFlow = component?.NamespaceUri == TemplateCatalog.SquareNamespaceUri &&
+            component.LocalName is "Show" or "For" or "Index" or "Switch" or "Match" or "Slot" or "Outlet" or "Fragment";
+        var type = controlFlow ? Type : isBuiltIn ? Class : Type;
+        var modifiers = isBuiltIn || controlFlow ? 2 : 0;
         var offset = tagNameRange.Length > 0 ? tagNameRange.Offset : origin.Offset + 1;
         Add(tokens, offset, tagName.Length, type, modifiers);
         if (closeTagNameRange.Length > 0)
@@ -150,14 +148,6 @@ public static class TemplateSemanticTokens
         tokens.Add((offset, length, type, modifiers));
     }
 
-    private static bool IsControlFlow(string tagName) =>
-        tagName.Equals("Show", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("For", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Index", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Switch", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Match", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Slot", StringComparison.OrdinalIgnoreCase) ||
-        tagName.Equals("Outlet", StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<int> Encode(
         string text,

@@ -122,11 +122,14 @@ public static class CSharpScriptCompletionService
         TemplateResolutionContext resolutionContext = null)
     {
         catalog ??= TemplateCatalog.BuiltIn;
-        resolutionContext ??= new TemplateResolutionContext(string.Empty, Array.Empty<string>());
+        resolutionContext ??= TemplateResolutionContext.FromTemplateText(text, sourcePath ?? string.Empty);
         if (context == null || context.Kind == CSharpScriptCompletionKind.None)
             return Array.Empty<TemplateCompletionItem>();
-        var document = SquareDocumentService.ParseSyntaxTree(text, sourcePath ?? string.Empty).ParsedSqxDocument;
-        var script = document?.Syntax?.Script?.CSharp;
+        var dialect = sourcePath?.EndsWith(".sqv", StringComparison.OrdinalIgnoreCase) == true
+            ? ComponentDialect.Sqv : ComponentDialect.Sqx;
+        var document = ComponentSectionScanner.Scan(text ?? string.Empty, sourcePath ?? string.Empty,
+            dialect, tolerant: true, catalog: catalog, context: resolutionContext).Document;
+        var script = document.Script?.CSharp;
         if (script == null) return Array.Empty<TemplateCompletionItem>();
 
         IEnumerable<TemplateCompletionItem> items = context.Kind switch
@@ -135,7 +138,7 @@ public static class CSharpScriptCompletionService
             CSharpScriptCompletionKind.Attribute => Attributes.Select(name => Item(name, 7, "C# attribute")),
             CSharpScriptCompletionKind.AttributeArgument => GetAttributeArgumentItems(context.Receiver),
             CSharpScriptCompletionKind.Type => GetTypeItems(catalog),
-            CSharpScriptCompletionKind.Member => GetMemberItems(document.Syntax, script, context, catalog, resolutionContext),
+            CSharpScriptCompletionKind.Member => GetMemberItems(document, script, context, catalog, resolutionContext),
             _ => GetGeneralItems(script, context.Position, catalog)
         };
         return items
@@ -302,13 +305,7 @@ public static class CSharpScriptCompletionService
             return InferType(declaration.Type, variable.Initializer?.Value);
 
         var refType = FindTemplateRefType(document.Template, identifier);
-        if (refType.Length > 0)
-        {
-            var resolution = catalog.ResolveComponent(refType, resolutionContext);
-            return resolution.Status == TemplateElementResolutionStatus.Resolved
-                ? resolution.Component.TypeName
-                : refType;
-        }
+        if (refType.Length > 0) return refType;
         return CommonTypes.Concat(catalog.Components.SelectMany(item => new[] { item.LocalName, SimpleTypeName(item.TypeName) }))
             .FirstOrDefault(item => item.Equals(identifier, StringComparison.Ordinal)) ?? string.Empty;
     }
@@ -343,7 +340,8 @@ public static class CSharpScriptCompletionService
             var reference = element.Attributes.FirstOrDefault(attribute =>
                 attribute.Name.Equals("ref", StringComparison.OrdinalIgnoreCase));
             if (reference != null && reference.Value != null &&
-                reference.Value.Trim().Equals(identifier, StringComparison.Ordinal)) return element.TagName;
+                reference.Value.Trim().Equals(identifier, StringComparison.Ordinal))
+                return element.Resolution?.Component?.TypeName ?? string.Empty;
             var nested = FindSqxRef(element.Children, identifier);
             if (nested.Length > 0) return nested;
         }
@@ -357,7 +355,8 @@ public static class CSharpScriptCompletionService
             var reference = element.Attributes.FirstOrDefault(attribute =>
                 attribute.Name.Equals("ref", StringComparison.OrdinalIgnoreCase));
             if (reference != null && reference.Value != null &&
-                reference.Value.Trim().Equals(identifier, StringComparison.Ordinal)) return element.TagName;
+                reference.Value.Trim().Equals(identifier, StringComparison.Ordinal))
+                return element.Resolution?.Component?.TypeName ?? string.Empty;
             var nested = FindSqvRef(element.Children, identifier);
             if (nested.Length > 0) return nested;
         }

@@ -1,6 +1,6 @@
 # DevTools
 
-> Document Revision: 0.7
+> Document Revision: 0.8
 > 配套：`Getting-Started.md`、`API-Reference.md`、`Rendering.md`
 
 `Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集、输入自动化、元素检查和低开销内存诊断。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
@@ -50,8 +50,12 @@ app.Run();
 | `AllowInspector` | `false` | 是否允许 `/inspect/*` 运行时检查接口；关闭后返回 `403` |
 | `AllowMemoryDiagnostics` | `false` | 是否允许 `/memory` 只读运行时内存快照；关闭后返回 `403` |
 | `AllowChromeInspect` | `false` | 是否启用 Chrome DevTools Protocol discovery/WebSocket；关闭后 `/json/*` 返回 `404` |
+| `AllowChromeStyleEditing` | `false` | 独立开启运行时样式编辑；要求同时开启 `AllowChromeInspect`，不写回源文件 |
+| `AllowChromeConsole` | `false` | 独立开启 framework diagnostics 和进程 managed Console 输出采集；要求同时开启 `AllowChromeInspect` |
 | `IncludeSourcePaths` | `false` | Inspector 响应是否包含模板源码路径 |
 | `IncludeTextContent` | `false` | Inspector 响应是否包含元素文本内容 |
+
+Chrome 能力取 `DevToolsServer.Start` 时的值，运行中修改 options 不改变权限。`/api/v1/health` 的 `chromeInspect`、`chromeStyleEditing`、`chromeConsole` 返回实际开关；仅开启 Inspector 不授予编辑或日志捕获权限。
 
 RichText 示例已经集成 DevTools：
 
@@ -79,6 +83,10 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj -- --backend=Vul
 | `--devtools-token=<token>` | 指定访问令牌；省略时自动生成随机 token |
 | `--devtools-memory` | 显式启用 `/memory` 只读内存诊断；必须与 `--devtools` 一起使用 |
 | `--devtools-chrome-inspect` | 显式启用 Chrome Inspector discovery 和 CDP WebSocket；必须与 `--devtools` 一起使用 |
+| `--devtools-chrome-edit` | 允许运行时 `element.style` / author-rule 声明编辑；必须同时指定 `--devtools` 和 `--devtools-chrome-inspect` |
+| `--devtools-chrome-console` | 采集进程 managed `Console.Out/Error` 和该窗口诊断；必须同时指定 `--devtools` 和 `--devtools-chrome-inspect` |
+
+任一 edit/console flag 缺少依赖时，样例在创建窗口前报错。启动输出列出实际能力；bootstrap 地址、token 和权限警告通过 Start 前保存的 writer 输出，不进入日志历史。Controls 页的普通 activity 按钮点击会输出真实 `Square.Sample activity N`。
 
 启动后控制台会输出实际 base address 和 token header，例如：
 
@@ -106,7 +114,7 @@ Console.WriteLine($"DevTools endpoint: {devTools.BaseAddress}/api/v1");
 Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
 ```
 
-`UseDevToolsServer()` 会在应用退出时自动释放服务。需要自行控制生命周期时仍可直接调用 `DevToolsServer.Start()` 并手工释放。
+`UseDevToolsServer()` 和直接 `DevToolsServer.Start()` 均随窗口 `Closed` 停止服务；已关闭窗口不能启动服务。`Dispose()` 只发起取消并停止监听，不阻塞 UI。需要确认所有请求、CDP session 和事件泵已退出时，使用 `await server.DisposeAsync()`。
 
 `DevToolsServer.Start` 返回前，`HttpListener` 已完成监听。此时：
 
@@ -195,9 +203,9 @@ Inspector endpoint 见 [7. 元素调试与 Inspector](#7-元素调试与-inspect
 主示例可以显式启用 Chrome Inspector：
 
 ```bash
-dotnet run --project samples/Square.Sample/Square.Sample.csproj -- \
-  --devtools \
-  --devtools-chrome-inspect
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -c Release \
+  -p:SquareSampleUseDevTools=true -- --backend Software \
+  --devtools --devtools-chrome-inspect
 ```
 
 启动后控制台会输出 `/json/list` 地址。打开 Chrome：
@@ -208,7 +216,21 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj -- \
 
 端口可以使用 `Port = 0` 自动分配；多个 Square 进程应分别使用各自输出的端口配置。`--devtools` 不会自动开启 CDP，必须额外指定 `--devtools-chrome-inspect`。
 
-本轮在 Chrome Stable `151.0.7922.76` 上验证了 CDP 1.3 discovery、WebSocket 和 DevTools frontend 连接；Chrome frontend 会探测额外的 Debugger/Network/Accessibility 能力，这些能力仍返回 unsupported 或兼容空操作，不代表 Square 已实现对应面板。NativeAOT 使用显式 JSON 和无反射命令分发设计，最终支持状态以实际 AOT publish + CDP smoke 为准。
+按需在上述命令末尾加 `--devtools-chrome-edit --devtools-chrome-console`，两个权限独立 opt-in。样式编辑只修改运行时；Console 捕获是进程级 managed 输出，可能包含应用敏感信息。
+
+本轮在 Chrome Stable `155.0.8059.39` 上验证了 CDP 1.3 discovery、WebSocket、原生 Elements 点选/Escape、Styles 运行时 inline/author 编辑和 Console 清空/重连；Computed 与实际 renderer/盒模型一并检查。Chrome frontend 会探测额外的 Debugger/Network/Accessibility 能力，这些能力仍返回 unsupported 或兼容空操作，不代表 Square 已实现对应面板。NativeAOT 使用显式 JSON 和无反射命令分发设计，最终支持状态以实际 AOT publish + CDP smoke 为准。
+
+NativeAOT 默认不包含 DevTools，发布时必须显式保留：
+
+```powershell
+dotnet publish samples/Square.Sample/Square.Sample.csproj -c Release -f net10.0 `
+  -r win-x64 --self-contained true -p:SquareSamplePublishAot=true `
+  -p:SquareSampleUseDevTools=true -o artifacts/aot-devtools-win-x64
+& ./artifacts/aot-devtools-win-x64/Square.Sample.exe --backend Software `
+  --devtools --devtools-chrome-inspect --devtools-chrome-edit --devtools-chrome-console
+```
+
+本轮 `win-x64` NativeAOT 发布 exe 已从原输出目录完成 discovery、DOM 点选/Escape、inline/author 样式编辑、computed tracking、managed Console 清空/重连及活动连接下关闭验收。Windows 的 `HttpListener` 依赖 HTTP.sys；发布/链接成功不代表执行环境已授予访问权限。本机 exe 初始继承 Low 完整性标签，HTTP.sys 被拒绝；经用户授权仅将本次 exe 设为 Medium 后通过，未更改工作区目录或全局安全策略。受保护执行环境应使用授权机制，不通过换目录绕过安全策略。
 
 如果 target 不出现，确认已配置 `127.0.0.1:<port>` 而不是 `/api/v1/health` URL，并检查 `AllowChromeInspect` 和 `--devtools-chrome-inspect`。如果 WebSocket 被拒绝，检查浏览器 Origin 是否为 Chrome DevTools origin；普通网页 Origin 会被拒绝。面板显示 unsupported 方法属于当前 CDP 子集限制。
 
@@ -218,14 +240,38 @@ dotnet run --project samples/Square.Sample/Square.Sample.csproj -- \
 |---|---|
 | Discovery | `/json/version`、`/json`、`/json/list`、`/json/protocol` |
 | `Runtime` | `enable`、`disable`、`getProperties`、`callFunctionOn`、`releaseObject`，以及默认 execution context 事件 |
-| `DOM` | `enable`、`disable`、`getDocument`、`getFlattenedDocument`、`requestChildNodes`、`describeNode`、`getAttributes`、`getNodeForLocation`、`getBoxModel`、`getOuterHTML`、`resolveNode` |
-| `CSS` | `getComputedStyleForNode`、`getMatchedStylesForNode`、`getAnimatedStylesForNode`、`getInlineStylesForNode`、`getPlatformFontsForNode`、`getEnvironmentVariables` |
+| `DOM` | `enable`、`disable`、`getDocument`、`getFlattenedDocument`、`requestChildNodes`、`pushNodesByBackendIdsToFrontend`、`describeNode`、`getAttributes`、`getNodeForLocation`、`getBoxModel`、`getOuterHTML`、`resolveNode`；增量 child/attribute/text 事件 |
+| `CSS` | computed/matched/inline 读取，`getStyleSheetText`、`setStyleTexts`、ForNode/batch computed tracking 与 stylesheet/computed-style 事件 |
 | `Page` | `enable`、`disable`、`getFrameTree`、`getResourceTree`、`getNavigationHistory`、`getLayoutMetrics`、`captureScreenshot` |
 | `Target` | `getTargetInfo`、`setDiscoverTargets`、`setAutoAttach` |
-| `Overlay` | `enable`、`disable`、`hideHighlight`、`setInspectMode`、`highlightNode`；支持基础 Square 高亮和 `inspectNodeRequested` 事件 |
-| 兼容空操作 | `Inspector`、`Console`、`Log`、`Network` 的部分 enable/disable 和前端探测命令 |
+| `Overlay` | `enable`、`disable`、`hideHighlight`、`setInspectMode`、`highlightNode`；真实盒模型高亮、`inspectNodeRequested` 和 `inspectModeCanceled` |
+| `Log` | `enable`、`disable`、`clear` 与真实 `entryAdded`；独立 opt-in 的 managed/window 日志 |
+| 兼容空操作 | `Inspector`、`Console`、`Network` 的部分 enable/disable 和前端探测命令 |
+| `Schema` | `getDomains` 返回实际固定的 11-domain 列表，与 `/json/protocol` 共用；metadata 显式描述本子集的 commands/params/returns/events/types |
 
-Square Element Tree 会映射为一个合成 Document 节点和 Element/Text 节点，并保留 Square 元素的 `id` 与 `class` 属性。节点 ID 在单次 CDP session 内稳定，Element ID 使用当前运行时的 `DebugId` 映射；当前只读，computed/inline styles、匹配到的 selector/declarations 快照和真实 content/padding/border/margin 四层 Box Model 均来自当前 Square 布局与 CSS 解析结果。当前 CSS AST 尚未保留源码文件、source range 和完整 cascade provenance，因此 Styles 面板不声称提供完整 stylesheet source 定位。Overlay 已支持基础节点高亮和点选模式；暂不支持 CSS 样式编辑、Console、Debugger、Network 或 Memory 面板。
+Square Element Tree 映射为 Document、Element 和合成 Text，保留真实属性及 component 元数据。frontend/backend ID 按 `(DebugId, node kind)` 分别分配，不能把 native DebugId 当作 backend ID；同批次移动保留身份，删除后旧 node/object ID 失效且不复用。`getDocument` 和 `getFlattenedDocument` 隐式开启 DOM，depth 默认 `1`，`-1` 返回全部，其余必须为正整数；`describeNode` 默认 depth `0`。backend 反选先公布祖先，再返回对应 frontend ID。
+
+元素结构、属性和文本通过所属窗口的源级通知合并同步；已展开父节点接收 child inserted/removed，未展开父节点只接收 count，已公布节点接收 attribute/characterData 变化。普通变更不发送 `documentUpdated`，不需要手工 reload；DOM disable 停止这些事件。Styles-only 通知不重建 DOM 快照。computed/inline styles、匹配规则和 content/padding/border/margin 来自真实 Square CSS/布局，不声称实现 V8、Debugger、Network 或 Memory 面板。
+
+点选在应用 pointer/focus/click 分发前消费一次 Down/Up；选中后工具退出，下一次普通点击恢复。原生 Escape 优先取消点选，不进入全局快捷键、popup 或 focused editor。每条 CDP 连接持有独立非零 owner，最后发起 highlight/inspect 的连接接管窗口 overlay；旧 owner 的 hide/disable/断开不会清掉新 owner，接管旧点选会通知其 `inspectModeCanceled`。
+
+高亮用真实 content 和三层非重叠矩形环，沿用 scroll/popup 客户区坐标。无法证明四层盒模型时只描画真实 border bounds。`highlightConfig` 缺失使用默认四色；存在时缺失 layer 为透明，RGB 要求 0–255 整数，alpha 要求 0–1（缺失默认 1）。`searchForNode` 和 `searchForUAShadowDOM` 进入真实点选，`none` 停止；`captureAreaScreenshot` 明确 unsupported。
+
+`AllowChromeStyleEditing=true` 允许编辑运行中的 `element.style` 和已加载 author-rule 的声明：新增、修改、删除、comment 禁用/恢复与 `!important`。仅开启 Inspector 时这些样式仍可读，但写请求返回 `-32000 / "Chrome style editing is disabled."`，不提供可编辑 ID/range。UA 只读；selector/new-rule 和 `setEffectivePropertyValueForNode` 未实现，不自动添加 inline override 代替 winning-rule 语义。
+
+虚拟资源位于 `square://runtime-style/{styleSheetId}`：inline 是声明块本身，rule 是真实 selector group 加声明块，不声称原 `.sqx` 文件位置。`setStyleTexts` 按输入顺序在 staging text 上应用范围，整批先验证 live resource/range 并准备赋值，再提交；任一 unknown/stale/read-only/bad-range 都不部分修改。响应按 edit 顺序保留每步的 metadata。range 使用 UTF-16 column、CRLF 单次换行和 end-exclusive；invalid/disabled 行保留原文及 parsedOk/disabled 状态，不应用。完整声明块替换可修复未闭合 quote/comment。
+
+运行时样式断开后保留、不写回磁盘；应用显式 `CssText` 写回（即使有效值相同）接管 inline 草稿，engine/component 重建接管 rule。共享声明组只影响该 engine，同 AST 的另一个 engine 不变。ForNode 比较真实 computed 值并合并单次 50ms 通知；batch 只监视已公布 live Element，old/new 不同且任一属于配置 value 集合时返回 nodeId。空 `takeComputedStyleUpdates` 登记 pending request，不阻塞后续 DOM/编辑命令；CSS disable/空配置完成等待并停止追踪。
+
+batch computed tracking 在公布新 live Element 的响应或 DOM 事件发送前建立基线；客户端收到新节点后立即触发的样式变化会正常进入待取结果，不会被误当成初始化基线。
+
+编辑沿用 Square 的 CSS registry、布局和绘制语义。已知既有边界：绘制器的命名色支持少于 registry（例如 purple/orange 会回退）；不要据 computed 字符串推断该颜色已绘制，使用已支持的颜色语法并检查实际 renderer。
+
+`AllowChromeConsole=true` 在 server Start 时接入进程 managed `Console.Out/Error` 与该窗口的 framework diagnostics；它可能包含应用敏感输出，默认不捕获。stdout 映射 info，stderr 和实际 custom-element/Hot Reload failure 映射 error，Warning/Verbose 保留相应等级。Chrome 只收到 `Log.entryAdded` 的 source=`other`、level、真实 text 和 Unix 毫秒 timestamp，不伪造 JS args/context/stack，也不重复发送 Runtime/Console 事件。
+
+每个 target 保存最近 256 条历史；`Log.enable` ack 后按序重放并与 live stream 去重，重复 enable 不重复显示。disable ack 后停止该连接的日志，重新 enable 只补仍在 ring 中的未见记录。`Log.clear` 清该 target 并过滤所有连接尚未发送的旧项，不清另一个 server 的历史或原 Console 输出。未开 Console 能力时 Log 域可初始化为空，不接管 writer。
+
+多个 server 共享一个 tee，分别持有 collector；最后一个关闭才恢复仍由 tee 持有的 Out/Error，应用后来自行 `SetOut/SetError` 的替换不被覆盖。原输出/异常保留，CR/LF/CRLF 和 partial Flush 合并，长行按最多 8192 UTF-16 units 无损分段。Stop 立即退订；`DisposeAsync` 在请求/session/event pump 收尾后释放 collector。bootstrap 地址/token/权限警告应由 Start 前保存的 writer 输出，绕过采集，不猜测过滤密码内容。
 
 Chrome Inspector 是显式 opt-in 的本地调试能力。由于 Chrome discovery/WebSocket 连接不能附加 Square 的 `X-Square-DevTools-Token` header，CDP discovery 在开启后不要求该 header；服务仍只监听 `127.0.0.1`，并限制 WebSocket Origin。不要在不受信任的机器或生产构建中开启 `AllowChromeInspect`。
 
@@ -241,7 +287,9 @@ Chrome Inspector 是显式 opt-in 的本地调试能力。由于 Chrome discover
   "baseAddress": "http://127.0.0.1:54321",
   "inputInjection": true,
   "memoryDiagnostics": true,
-  "chromeInspect": true
+  "chromeInspect": true,
+  "chromeStyleEditing": false,
+  "chromeConsole": false
 }
 ```
 
@@ -774,4 +822,4 @@ public sealed class DevToolsOptions
 | D6 | Style / layout diagnostics | 可查看 computed style、matched rules、box model |
 | D7 | IDE 集成 | 外部工具可基于 DevTools 响应跳转源码 |
 
-优先级建议：先完成 D1-D4，形成“点选 UI -> 定位 `.sqx/.sqv` 源码”的闭环；样式规则解释、IDE 打开、热编辑可以后置。
+CDP 的元素增量同步、真实盒模型、运行时声明编辑和 managed Console 转发已接通，详见 [Chrome Inspector（CDP 子集）](#chrome-inspectorcdp-子集)。本节 HTTP / IDE endpoint 表仍是路线图；IDE 打开和磁盘源码热编辑不在当前实现范围。

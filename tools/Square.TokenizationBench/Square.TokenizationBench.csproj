@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RestoreSources>$(MSBuildThisFileDirectory)..\..\artifacts\tokenization-bench\feed</RestoreSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BBTree" VersionOverride="0.1.1" />
+    <PackageReference Include="TextMateSharp" />
+    <PackageReference Include="TextMateSharp.Grammars" />
+    <Compile Include="..\..\src\Square.Extensions.CodeEditor\Language\Tokenization\*.cs" Link="Production\%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\Square.Extensions.CodeEditor\Model\ICodeEditorTextModel.cs" Link="Production\ICodeEditorTextModel.cs" />
+    <Compile Include="..\..\src\Square.Extensions.CodeEditor\Model\CodeEditorTextModel.cs" Link="Production\CodeEditorTextModel.cs" />
+    <Compile Include="..\..\src\Square.Extensions.CodeEditor\Model\PieceTable.cs" Link="Production\PieceTable.cs" />
+    <Compile Include="..\..\artifacts\tokenization-bench\generated\Caches.g.cs" Link="Generated\Caches.g.cs" />
+  </ItemGroup>
+</Project>

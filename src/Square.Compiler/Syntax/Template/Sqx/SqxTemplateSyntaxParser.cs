@@ -1,7 +1,7 @@
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
 using Square.Compiler.ParserCore;
-using Square.UI.Html;
+using Square.Html;
 
 namespace Square.Compiler.Syntax;
 
@@ -12,20 +12,27 @@ internal sealed class SqxTemplateSyntaxParser
     private readonly int _baseOffset;
     private readonly bool _tolerant;
     private readonly List<SquareDiagnostic> _diagnostics = new();
+    private readonly TemplateCatalog _catalog;
+    private readonly TemplateResolutionContext _context;
+    private int _svgDepth;
     private int _index;
 
-    private SqxTemplateSyntaxParser(List<CoreToken> tokens, string source, int baseOffset, bool tolerant)
+    private SqxTemplateSyntaxParser(List<CoreToken> tokens, string source, int baseOffset, bool tolerant,
+        TemplateCatalog catalog, TemplateResolutionContext context)
     {
         _tokens = tokens;
         _source = source;
         _baseOffset = baseOffset;
         _tolerant = tolerant;
+        _catalog = catalog ?? TemplateCatalog.BuiltIn;
+        _context = context ?? new TemplateResolutionContext(string.Empty, Array.Empty<string>());
     }
 
-    public static SqxTemplateSyntax Parse(string source, int baseOffset = 0, bool tolerant = false)
+    public static SqxTemplateSyntax Parse(string source, int baseOffset = 0, bool tolerant = false,
+        TemplateCatalog catalog = null, TemplateResolutionContext context = null)
     {
         var tokens = new SqxCoreLexer(source ?? string.Empty, tolerant).Tokenize();
-        return new SqxTemplateSyntaxParser(tokens, source ?? string.Empty, baseOffset, tolerant).ParseDocument();
+        return new SqxTemplateSyntaxParser(tokens, source ?? string.Empty, baseOffset, tolerant, catalog, context).ParseDocument();
     }
 
     private SqxTemplateSyntax ParseDocument()
@@ -74,79 +81,79 @@ internal sealed class SqxTemplateSyntaxParser
         while (Peek().Type is not (CoreTokenType.CloseTag or CoreTokenType.CloseSelfTag or CoreTokenType.Eof))
         {
             var attribute = ParseAttribute();
-            if (attribute != null) attributes.Add(attribute);
+            if (attribute == null) continue;
+            if (attribute.Name == "xmlns" || attribute.Name.StartsWith("xmlns:", StringComparison.Ordinal))
+            {
+                if (!_tolerant)
+                    throw new SqxParseException("xmlns may only be declared on the top-level template.",
+                        attribute.NameRange.Offset, "SQXE001", attribute.NameRange.Length);
+                _diagnostics.Add(new SquareDiagnostic("SQXE001", SquareDiagnosticSeverity.Error,
+                    "xmlns may only be declared on the top-level template.", attribute.NameRange, string.Empty));
+            }
+            attributes.Add(attribute);
         }
+        var isAttribute = attributes.FirstOrDefault(attribute => attribute.Name == "is");
+        if (isAttribute?.IsExpression == true && !_tolerant)
+            throw new SqxParseException("The customized built-in is name must be static at creation.",
+                isAttribute.NameRange.Offset, "SQXE001", isAttribute.NameRange.Length);
+        var resolution = TemplateTagResolver.Resolve(_catalog, _context, name.Text, _svgDepth > 0,
+            isAttribute?.IsExpression == false ? isAttribute.Value : null);
+        SqxElementSyntax Create(IReadOnlyList<SqxSyntaxNode> children, bool selfClosing,
+            SquareSourceRange range, SquareSourceRange closingRange = default) =>
+            new(name.Text, attributes.ToArray(), children, selfClosing, range,
+                Range(name.Offset, name.Text.Length), closingRange) { Resolution = resolution };
+
         if (Peek().Type == CoreTokenType.CloseSelfTag)
         {
             var close = Next();
-            return new SqxElementSyntax(
-                name.Text,
-                attributes.ToArray(),
-                Array.Empty<SqxSyntaxNode>(),
-                true,
-                Range(open.Offset, close.Offset + 2 - open.Offset),
-                Range(name.Offset, name.Text.Length));
+            return Create(Array.Empty<SqxSyntaxNode>(), true, Range(open.Offset, close.Offset + 2 - open.Offset));
         }
         if (Peek().Type == CoreTokenType.Eof && _tolerant)
-        {
-            return new SqxElementSyntax(
-                name.Text,
-                attributes.ToArray(),
-                Array.Empty<SqxSyntaxNode>(),
-                false,
-                Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)),
-                Range(name.Offset, name.Text.Length));
-        }
+            return Create(Array.Empty<SqxSyntaxNode>(), false,
+                Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)));
 
         var startTagEnd = Expect(CoreTokenType.CloseTag);
-        if (IsHtmlVoidElement(name.Text))
+        if (TemplateTagResolver.IsHtmlVoid(name.Text, resolution))
+            return Create(Array.Empty<SqxSyntaxNode>(), true,
+                Range(open.Offset, startTagEnd.Offset + 1 - open.Offset));
+
+        var svg = TemplateTagResolver.IsSvg(resolution);
+        if (svg) _svgDepth++;
+        try
         {
-            // 识别的 HTML void 元素（精确小写或 html: 前缀）在 '>' 处即完整，
-            // 后续兄弟节点不会被吞入子节点列表。
-            return new SqxElementSyntax(
-                name.Text,
-                attributes.ToArray(),
-                Array.Empty<SqxSyntaxNode>(),
-                true,
-                Range(open.Offset, startTagEnd.Offset + 1 - open.Offset),
-                Range(name.Offset, name.Text.Length));
-        }
-        var children = new List<SqxSyntaxNode>();
-        while (Peek().Type != CoreTokenType.Eof)
-        {
-            if (Peek().Type == CoreTokenType.EndTag)
+            var children = new List<SqxSyntaxNode>();
+            while (Peek().Type != CoreTokenType.Eof)
             {
-                var end = Next();
-                ValidateElementName(end, true);
-                if (end.Text != name.Text)
+                if (Peek().Type == CoreTokenType.EndTag)
                 {
-                    if (!_tolerant)
-                        throw Error("Closing tag </" + end.Text + "> does not match <" + name.Text + ">", end.Offset);
-                    _diagnostics.Add(Diagnostic("SQX0001",
-                        "Closing tag </" + end.Text + "> does not match <" + name.Text + ">",
-                        end.Offset + 2, end.Text.Length));
+                    var end = Next();
+                    ValidateElementName(end, true);
+                    var matches = TemplateTagResolver.IsHtml(resolution)
+                        ? string.Equals(end.Text, name.Text, StringComparison.OrdinalIgnoreCase)
+                        : end.Text == name.Text;
+                    if (!matches)
+                    {
+                        if (!_tolerant)
+                            throw Error("Closing tag </" + end.Text + "> does not match <" + name.Text + ">", end.Offset);
+                        _diagnostics.Add(Diagnostic("SQX0001",
+                            "Closing tag </" + end.Text + "> does not match <" + name.Text + ">",
+                            end.Offset + 2, end.Text.Length));
+                    }
+                    return Create(children.ToArray(), false,
+                        Range(open.Offset, end.Offset + end.Text.Length + 3 - open.Offset),
+                        Range(end.Offset + 2, end.Text.Length));
                 }
-                return new SqxElementSyntax(
-                    name.Text,
-                    attributes.ToArray(),
-                    children.ToArray(),
-                    false,
-                    Range(open.Offset, end.Offset + end.Text.Length + 3 - open.Offset),
-                    Range(name.Offset, name.Text.Length),
-                    Range(end.Offset + 2, end.Text.Length));
+                var child = ParseNode();
+                if (child != null) children.Add(child);
             }
-            var child = ParseNode();
-            if (child != null) children.Add(child);
+            if (!_tolerant) throw Error("Unclosed element <" + name.Text + ">", open.Offset);
+            _diagnostics.Add(Diagnostic("SQX0001", "Unclosed element <" + name.Text + ">", open.Offset, name.Text.Length + 1));
+            return Create(children.ToArray(), false, Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)));
         }
-        if (!_tolerant) throw Error("Unclosed element <" + name.Text + ">", open.Offset);
-        _diagnostics.Add(Diagnostic("SQX0001", "Unclosed element <" + name.Text + ">", open.Offset, name.Text.Length + 1));
-        return new SqxElementSyntax(
-            name.Text,
-            attributes.ToArray(),
-            children.ToArray(),
-            false,
-            Range(open.Offset, Math.Max(0, Peek().Offset - open.Offset)),
-            Range(name.Offset, name.Text.Length));
+        finally
+        {
+            if (svg) _svgDepth--;
+        }
     }
 
     private SqxAttributeSyntax ParseAttribute()
@@ -183,9 +190,7 @@ internal sealed class SqxTemplateSyntaxParser
             value.Text.TrimStart().StartsWith("<", StringComparison.Ordinal))
         {
             var fragment = value.Text.Trim();
-            if (fragment.StartsWith("<>", StringComparison.Ordinal) && fragment.EndsWith("</>", StringComparison.Ordinal))
-                fragment = "<Fragment>" + fragment.Substring(2, fragment.Length - 5) + "</Fragment>";
-            fragmentNodes = Parse(fragment, valueRange.Offset, _tolerant).Roots;
+            fragmentNodes = Parse(fragment, valueRange.Offset, _tolerant, _catalog, _context).Roots;
         }
         return new SqxAttributeSyntax(
             name.Text,
@@ -231,14 +236,6 @@ internal sealed class SqxTemplateSyntaxParser
         return _source.Length - token.Offset;
     }
 
-    /// <summary>仅精确小写的 HTML 目录 void 标签或 html: 前缀标签被视为无闭合元素；大写 Square 名称不适用。</summary>
-    private static bool IsHtmlVoidElement(string tagName)
-    {
-        if (string.IsNullOrEmpty(tagName)) return false;
-        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            return HtmlTagCatalog.IsVoid(tagName.Substring("html:".Length).ToLowerInvariant());
-        return HtmlTagCatalog.IsVoid(tagName);
-    }
 
     private void ValidateElementName(CoreToken token, bool closing)
     {

@@ -401,19 +401,7 @@ namespace Square.UI;
 [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
 public sealed class ElementExportAttribute : Attribute
 {
-    public ElementExportAttribute(string namespaceUri, string prefix, string localName, Type elementType);
-}
-
-[AttributeUsage(AttributeTargets.Assembly)]
-public sealed class ElementNamespaceOrderAttribute : Attribute
-{
-    public ElementNamespaceOrderAttribute(params string[] namespaceUris);
-}
-
-[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
-public sealed class ElementNamespaceAliasAttribute : Attribute
-{
-    public ElementNamespaceAliasAttribute(string namespaceUri, string prefix);
+    public ElementExportAttribute(string namespaceUri, string localName, Type elementType);
 }
 
 [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
@@ -423,7 +411,21 @@ public sealed class ElementEventContractAttribute : Attribute
 }
 ```
 
-`ElementExportAttribute` 是组件包的编译期公开清单；不会自动公开程序集中的每个 `Element` 子类。`ElementNamespaceOrderAttribute` 与 `ElementNamespaceAliasAttribute` 只从消费应用程序集读取。`ElementEventContractAttribute` 持久化已编译组件的 `ComponentEvent` 名称，使引用 DLL 的强类型事件校验和编辑器补全与源码组件一致。这些属性不注册运行时字符串工厂。
+```csharp
+namespace Square.Html;
+
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+public sealed class HtmlCustomElementExportAttribute : Attribute
+{
+    public HtmlCustomElementExportAttribute(string name, Type elementType);
+    public string Name { get; }
+    public Type ElementType { get; }
+    public string? ExtendsTag { get; set; }        // 定制内建：指向 113 内建标签之一
+    public string[] ObservedAttributes { get; set; }
+}
+```
+
+`ElementExportAttribute` 是组件包的编译期公开清单（解析 URI + local name + 类型），不会自动公开程序集中的每个 `Element` 子类；包 URI 只参与模板解析，不写入 DOM `NamespaceURI`。`HtmlCustomElementExportAttribute` 声明自主自定义元素（`name` 需合规小写连字符名称）或定制内建元素（`ExtendsTag` + 类型继承对应 `Square.Html` 具体类），模板据此识别 `<acme-badge>` 与 `<button is="acme-button">`。`ElementEventContractAttribute` 持久化已编译组件的 `ComponentEvent` 名称，使引用 DLL 的强类型事件校验和编辑器补全与源码组件一致。这些属性不注册运行时字符串工厂。
 
 ### IComponentLifecycle
 
@@ -652,6 +654,30 @@ public sealed class FrameRequestEvent : Event
 
 ## 4. Square.UI — 元素树 API
 
+### ComponentMount — 显式挂载与永久卸载
+
+```csharp
+namespace Square.UI;
+
+public static class ComponentMountExtensions
+{
+    public static ComponentMount Mount(this Element container, UIElement component);
+    public static ComponentMount Mount(this Element root, string selector, UIElement component);
+}
+
+public sealed class ComponentMount : IDisposable
+{
+    public UIElement Component { get; }
+    public bool IsMounted { get; }
+    public void Unmount();
+    public void Dispose();
+}
+```
+
+先用 `window.Load(root)` 或 `document.Body.Children.Add(root)` 赋予目标真实 `UIDocument`，再在所属 Dispatcher 线程调用 `Mount`。它先构建组件，成功后替换目标的全部子节点，保留容器本身、id/class/style 和外部树；失败的构建不会清空旧内容。
+
+句柄仅拥有该组件。`Unmount`/`Dispose` 移除并永久释放生成绑定、事件资源和组件样式，重复调用无效果；再次挂载必须创建新实例。替换会结束旧句柄，旧句柄不能移除新组件。普通原生 `ChildNodes.Remove` 仍只是 soft detach，不推断永久销毁；不要将句柄拥有的组件移到其它容器。用包围应用运行的 `using`/`finally` 释放句柄。
+
 ### Element
 
 ```csharp
@@ -742,13 +768,18 @@ public sealed class UIDocument : Document
     public UIRootElement Ui { get; }     // documentElement，TagName "UI"
     public UIHeadElement Head { get; }   // 元数据；本阶段不参与布局
     public UIBodyElement Body { get; }   // 窗口客户区内容宿主
+    public HtmlCustomElementRegistry CustomElements { get; }   // 自定义元素定义与诊断
 
-    public static void RegisterElement(string tagName, Func<Element> factory);
-    public Element CreateElement(string tagName);
+    public UIDocument(string defaultElementNamespaceUri = "http://www.w3.org/1999/xhtml");
+    public Element CreateElement(string localName, string? isName = null);
+    public Element CreateElementNS(string namespaceUri, string localName, string? isName = null);
+    public Element CreateComponentElement(string namespaceUri, string localName);
     public T CreateElement<T>() where T : Element, new();
     public void Build();                 // 对 Body 子树 BuildElementTree
 }
 ```
+
+构造时保存不可变的文档默认 URI 并确保 `ControlRegistration.RegisterDefaults()` 执行一次；运行时工厂经 `ElementRegistry.Register(namespaceUri, localName, factory)` 显式注册（AOT 显式表，无反射扫描；同 URI+local 冲突拒绝，同一工厂重注册幂等）。`CreateElement` 按模板相同的默认优先/唯一候选规则解析，未知或歧义名称抛含候选 URI 的异常，拒绝 `prefix:local` 形式；`CreateElementNS` 只处理 XHTML/SVG 真 DOM 命名空间；`CreateComponentElement` 处理 UI/包解析 URI。`CustomElements.DefineAutonomous<T>` / `DefineCustomizedBuiltIn<T>` 程序化登记自定义元素定义。
 
 壳结构：`DocumentElement = UI`（只读）→ 子节点 `Head` + `Body`。应用内容挂在 `Body` 下，**不是** documentElement。
 
@@ -790,12 +821,29 @@ public sealed class Range
 ### HTMLElement / XMLDocument / SVGElement
 
 ```csharp
-namespace Square.UI;
+namespace Square.Html;
 
-public abstract class HTMLElement : Element
+public abstract class HTMLElement : Square.UI.Element
 {
+    protected HTMLElement(string localName);   // TagName/LocalName 固定为小写
+
     public override string? NamespaceURI => "http://www.w3.org/1999/xhtml";
+
+    public bool HasAttribute(string name);
+    public string? GetAttribute(string name);
+    public void SetAttribute(string name, string value);
+    public void RemoveAttribute(string name);
+
+    protected virtual void ConnectedCallback();
+    protected virtual void DisconnectedCallback();
+    protected virtual void AttributeChangedCallback(string name, string? oldValue, string? newValue);
 }
+```
+
+`Square.Html` 含 113 个具体元素类（每个 WHATWG 标签一个，如 `HTMLButtonElement`、`HTMLInputElement`）和共享抽象基类 `HTMLHeadingElement`、`HTMLQuoteElement`、`HTMLTableColElement`、`HTMLModElement`、`HTMLTableSectionElement`、`HTMLTableCellElement`；全部继承 `HTMLElement` 而非 `UIElement`，完整映射见 [HTML-Element-Types-and-Namespaces.md](HTML-Element-Types-and-Namespaces.md)。HTML 混合文本是 `Square.UI.Text` DOM 子节点；响应式文本经 `HtmlTextBinding.Bind`。包导出与已定义自定义元素实现 `IHtmlStaticRepresentation` 提供安全静态 Web 表示。旧的 `Square.UI.HTMLElement` 扩展点已删除。
+
+```csharp
+namespace Square.UI;
 
 public abstract class XMLDocument : Document
 {
@@ -813,7 +861,7 @@ public abstract class SVGElement : Element
 }
 ```
 
-`HTMLElement` 目前仍是 HTML DOM 扩展点。`SVGElement` 已用于真实 SVG DOM；具体元素及 `SVGDocument` 见“SVGDocument 与模板 SVG”。
+`SVGElement` 已用于真实 SVG DOM；具体元素及 `SVGDocument` 见“SVGDocument 与模板 SVG”。
 
 ### UIElement
 
@@ -966,6 +1014,19 @@ public sealed class PropertyStore
 ```
 
 ---
+
+## 4.1. Square.Native.Html — 本地静态 HTML 加载
+
+```csharp
+namespace Square.Native.Html;
+
+public static class HtmlLoader
+{
+    public static Square.Html.HTMLElement LoadFile(string path);
+}
+```
+
+可选包中的同步文件入口；相对路径基于 `AppContext.BaseDirectory`。返回标准 HTML parser 纠正后的真实 html/head/body 原生树，保留有序 `Square.UI.Text` 与已有 SVG 类型。CSS link 与内联 style 的相对 `@import` 基于 HTML 文件目录；作者样式由返回根的生成资源生命周期管理。无 script/on*、无运行时 SQX/SQV 编译；未知标签/namespace、远程 stylesheet URL 和条件 stylesheet media 明确失败。先 `window.Load(root)`，再按 `ComponentMount` API 挂载编译组件。详见 [本地静态 HTML 外壳](Web-Hosting.md#8-本地静态-html-外壳与编译组件挂载)。
 
 ## 5. Square.Controls — 控件
 
@@ -2630,7 +2691,8 @@ private void OnClick(Event e) { }
 | `Square.Runtime.Signals` | `Signal<T>`, `SignalHub` |
 | `Square.Events` | `EventTarget`, `Event`, `WheelEvent`, `KeyboardEvent`, `EventInit`, `EventPhase`, `StandardEvents`, `FrameRequestEvent` |
 | `Square.Directives` | `SqxDirectiveAttribute`（编译期指令发现） |
-| `Square.UI` | `Node`, `Element`, `UIElement`, `ElementState`, `Document`, `UIDocument`, `XMLDocument`, `Range`, `UIRootElement`, `UIHeadElement`, `UIBodyElement`, `HTMLElement`, `SlotCollection`, `RenderFragment` |
+| `Square.UI` | `Node`, `Element`, `UIElement`, `ElementState`, `Document`, `UIDocument`, `XMLDocument`, `Range`, `UIRootElement`, `UIHeadElement`, `UIBodyElement`, `Text`, `CharacterData`, `SlotCollection`, `RenderFragment` |
+| `Square.Html` | `HTMLElement` 与 113 个具体元素类（`HTMLButtonElement`、`HTMLInputElement`…），共享基类 `HTMLHeadingElement`/`HTMLQuoteElement`/`HTMLTableColElement`/`HTMLModElement`/`HTMLTableSectionElement`/`HTMLTableCellElement`，`HtmlTextBinding`、`IHtmlStaticRepresentation`、`HtmlCustomElementExportAttribute`、`HtmlCustomElementRegistry` |
 | `Square.UI.Scrolling` | `ScrollbarGeometry`, `ScrollbarMetrics`, `ScrollbarVisibilityMode`, `ScrollbarDeviceProfile`, `ScrollbarPart` |
 | `Square.UI.Svg` | `SVGDocument`, `SVGElement`, `SVGSVGElement`, `SVGGElement`, `SVGPathElement`, `SVGRectElement`, `SVGCircleElement`, `SVGEllipseElement`, `SVGLineElement`, `SVGPolylineElement`, `SVGPolygonElement` |
 | `Square.UI.ElementApi` | `StyleAccessor`, `ClassListAccessor`, `ChildrenCollection` |

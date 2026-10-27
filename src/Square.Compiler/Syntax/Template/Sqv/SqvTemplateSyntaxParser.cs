@@ -1,6 +1,6 @@
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
-using Square.UI.Html;
+using Square.Html;
 
 namespace Square.Compiler.Syntax;
 
@@ -11,20 +11,27 @@ internal sealed class SqvTemplateSyntaxParser
     private readonly int _baseOffset;
     private readonly bool _tolerant;
     private readonly List<SquareDiagnostic> _diagnostics = new();
+    private readonly TemplateCatalog _catalog;
+    private readonly TemplateResolutionContext _context;
+    private int _svgDepth;
     private int _index;
 
-    private SqvTemplateSyntaxParser(List<SqvToken> tokens, string source, int baseOffset, bool tolerant)
+    private SqvTemplateSyntaxParser(List<SqvToken> tokens, string source, int baseOffset, bool tolerant,
+        TemplateCatalog catalog, TemplateResolutionContext context)
     {
         _tokens = tokens;
         _source = source;
         _baseOffset = baseOffset;
         _tolerant = tolerant;
+        _catalog = catalog ?? TemplateCatalog.BuiltIn;
+        _context = context ?? new TemplateResolutionContext(string.Empty, Array.Empty<string>());
     }
 
-    public static SqvTemplateSyntax Parse(string source, int baseOffset = 0, bool tolerant = false)
+    public static SqvTemplateSyntax Parse(string source, int baseOffset = 0, bool tolerant = false,
+        TemplateCatalog catalog = null, TemplateResolutionContext context = null)
     {
         var tokens = new SqvLexer(source ?? string.Empty, baseOffset, tolerant).Tokenize();
-        return new SqvTemplateSyntaxParser(tokens, source ?? string.Empty, baseOffset, tolerant).ParseDocument();
+        return new SqvTemplateSyntaxParser(tokens, source ?? string.Empty, baseOffset, tolerant, catalog, context).ParseDocument();
     }
 
     private SqvTemplateSyntax ParseDocument()
@@ -72,84 +79,78 @@ internal sealed class SqvTemplateSyntaxParser
         while (Peek().Type is not (SqvTokenType.CloseTag or SqvTokenType.CloseSelfTag or SqvTokenType.Eof))
         {
             var attribute = ParseAttribute();
-            if (attribute != null) attributes.Add(attribute);
+            if (attribute == null) continue;
+            if (attribute.Name == "xmlns" || attribute.Name.StartsWith("xmlns:", StringComparison.Ordinal))
+            {
+                if (!_tolerant)
+                    throw new SqxParseException("xmlns may only be declared on the top-level template.",
+                        attribute.NameRange.Offset, "SQXE001", attribute.NameRange.Length);
+                _diagnostics.Add(new SquareDiagnostic("SQXE001", SquareDiagnosticSeverity.Error,
+                    "xmlns may only be declared on the top-level template.", attribute.NameRange, string.Empty));
+            }
+            attributes.Add(attribute);
         }
+        var isName = attributes.FirstOrDefault(attribute => attribute.Name == "is")?.Value;
+        var resolution = TemplateTagResolver.Resolve(_catalog, _context, name.Text, _svgDepth > 0, isName);
+        SqvElementSyntax Create(IReadOnlyList<SqvSyntaxNode> children, bool selfClosing,
+            SquareSourceRange range, SquareSourceRange closingRange = default) =>
+            new(name.Text, attributes.ToArray(), children, selfClosing, range,
+                new SquareSourceRange(Absolute(name.Offset), name.Text.Length), closingRange) { Resolution = resolution };
 
         if (Peek().Type == SqvTokenType.CloseSelfTag)
         {
             var close = Next();
-            return new SqvElementSyntax(
-                name.Text,
-                attributes.ToArray(),
-                Array.Empty<SqvSyntaxNode>(),
-                true,
-                new SquareSourceRange(Absolute(open.Offset), close.Offset + 2 - open.Offset),
-                new SquareSourceRange(Absolute(name.Offset), name.Text.Length));
+            return Create(Array.Empty<SqvSyntaxNode>(), true,
+                new SquareSourceRange(Absolute(open.Offset), close.Offset + 2 - open.Offset));
         }
-
         if (Peek().Type == SqvTokenType.Eof && _tolerant)
-        {
-            return new SqvElementSyntax(
-                name.Text,
-                attributes.ToArray(),
-                Array.Empty<SqvSyntaxNode>(),
-                false,
-                new SquareSourceRange(Absolute(open.Offset), Math.Max(0, Peek().Offset - open.Offset)),
-                new SquareSourceRange(Absolute(name.Offset), name.Text.Length));
-        }
+            return Create(Array.Empty<SqvSyntaxNode>(), false,
+                new SquareSourceRange(Absolute(open.Offset), Math.Max(0, Peek().Offset - open.Offset)));
 
         var startTagEnd = Expect(SqvTokenType.CloseTag);
-        if (IsHtmlVoidElement(name.Text))
-        {
-            // 识别的 HTML void 元素（精确小写或 html: 前缀）在 '>' 处即完整，
-            // 后续兄弟节点不会被吞入子节点列表。
-            return new SqvElementSyntax(
-                name.Text,
-                attributes.ToArray(),
-                Array.Empty<SqvSyntaxNode>(),
-                true,
-                new SquareSourceRange(Absolute(open.Offset), startTagEnd.Offset + 1 - open.Offset),
-                new SquareSourceRange(Absolute(name.Offset), name.Text.Length));
-        }
-        var children = new List<SqvSyntaxNode>();
-        while (Peek().Type != SqvTokenType.Eof)
-        {
-            if (Peek().Type == SqvTokenType.EndTag)
-            {
-                var end = Next();
-                ValidateElementName(end, true);
-                if (!string.Equals(end.Text, name.Text, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!_tolerant)
-                        throw Error("Closing tag </" + end.Text + "> does not match <" + name.Text + ">", end.Offset);
-                    _diagnostics.Add(Diagnostic("SQV0001",
-                        "Closing tag </" + end.Text + "> does not match <" + name.Text + ">",
-                        end.Offset + 2, end.Text.Length));
-                }
-                return new SqvElementSyntax(
-                    name.Text,
-                    attributes.ToArray(),
-                    children.ToArray(),
-                    false,
-                    new SquareSourceRange(
-                        Absolute(open.Offset),
-                        end.Offset + end.Text.Length + 3 - open.Offset),
-                    new SquareSourceRange(Absolute(name.Offset), name.Text.Length),
-                    new SquareSourceRange(Absolute(end.Offset + 2), end.Text.Length));
-            }
-            var child = ParseNode();
-            if (child != null) children.Add(child);
-        }
+        if (TemplateTagResolver.IsHtmlVoid(name.Text, resolution))
+            return Create(Array.Empty<SqvSyntaxNode>(), true,
+                new SquareSourceRange(Absolute(open.Offset), startTagEnd.Offset + 1 - open.Offset));
 
-        if (!_tolerant) throw Error("Unclosed element <" + name.Text + ">", open.Offset);
-        _diagnostics.Add(Diagnostic("SQV0001", "Unclosed element <" + name.Text + ">", open.Offset, name.Text.Length + 1));
-        return new SqvElementSyntax(
-            name.Text,
-            attributes.ToArray(),
-            children.ToArray(),
-            false,
-            new SquareSourceRange(Absolute(open.Offset), Math.Max(0, Peek().Offset - open.Offset)),
-            new SquareSourceRange(Absolute(name.Offset), name.Text.Length));
+        var svg = TemplateTagResolver.IsSvg(resolution);
+        if (svg) _svgDepth++;
+        try
+        {
+            var children = new List<SqvSyntaxNode>();
+            while (Peek().Type != SqvTokenType.Eof)
+            {
+                if (Peek().Type == SqvTokenType.EndTag)
+                {
+                    var end = Next();
+                    ValidateElementName(end, true);
+                    var matches = resolution.Status == TemplateElementResolutionStatus.Resolved &&
+                        resolution.Component.Kind == TemplateElementKind.Extension
+                        ? end.Text == name.Text
+                        : string.Equals(end.Text, name.Text, StringComparison.OrdinalIgnoreCase);
+                    if (!matches)
+                    {
+                        if (!_tolerant)
+                            throw Error("Closing tag </" + end.Text + "> does not match <" + name.Text + ">", end.Offset);
+                        _diagnostics.Add(Diagnostic("SQV0001",
+                            "Closing tag </" + end.Text + "> does not match <" + name.Text + ">",
+                            end.Offset + 2, end.Text.Length));
+                    }
+                    return Create(children.ToArray(), false,
+                        new SquareSourceRange(Absolute(open.Offset), end.Offset + end.Text.Length + 3 - open.Offset),
+                        new SquareSourceRange(Absolute(end.Offset + 2), end.Text.Length));
+                }
+                var child = ParseNode();
+                if (child != null) children.Add(child);
+            }
+            if (!_tolerant) throw Error("Unclosed element <" + name.Text + ">", open.Offset);
+            _diagnostics.Add(Diagnostic("SQV0001", "Unclosed element <" + name.Text + ">", open.Offset, name.Text.Length + 1));
+            return Create(children.ToArray(), false,
+                new SquareSourceRange(Absolute(open.Offset), Math.Max(0, Peek().Offset - open.Offset)));
+        }
+        finally
+        {
+            if (svg) _svgDepth--;
+        }
     }
 
     private SqvAttributeSyntax ParseAttribute()
@@ -211,14 +212,6 @@ internal sealed class SqvTemplateSyntaxParser
         return close < 0 ? _source.Length - offset : close + 2 - offset;
     }
 
-    /// <summary>仅精确小写的 HTML 目录 void 标签或 html: 前缀标签被视为无闭合元素；大写 Square 名称不适用。</summary>
-    private static bool IsHtmlVoidElement(string tagName)
-    {
-        if (string.IsNullOrEmpty(tagName)) return false;
-        if (tagName.StartsWith("html:", StringComparison.OrdinalIgnoreCase))
-            return HtmlTagCatalog.IsVoid(tagName.Substring("html:".Length).ToLowerInvariant());
-        return HtmlTagCatalog.IsVoid(tagName);
-    }
 
     private void ValidateElementName(SqvToken token, bool closing)
     {

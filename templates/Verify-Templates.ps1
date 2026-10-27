@@ -4,6 +4,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
+$version = ([xml](Get-Content (Join-Path $repo 'Directory.Build.props') -Raw)).SelectSingleNode('/Project/PropertyGroup/Version').InnerText
 $work = [IO.Path]::GetFullPath($WorkDirectory)
 if ($work.StartsWith($repo + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Template validation must run outside the repository.'
@@ -46,7 +47,7 @@ try {
   </packageSourceMapping>
 </configuration>
 "@ | Set-Content (Join-Path $work 'NuGet.Config')
-    Invoke-DotNet @('new', 'install', (Join-Path $feed 'Wuldas.Square.Templates.0.1.0.nupkg'), '--debug:custom-hive', $hive)
+    Invoke-DotNet @('new', 'install', (Join-Path $feed "Wuldas.Square.Templates.$version.nupkg"), '--debug:custom-hive', $hive)
     foreach ($markup in @('sqv', 'sqx')) {
         $name = if ($markup -eq 'sqv') { 'TemplateSqv' } else { 'TemplateSqx' }
         $app = Join-Path $work $name

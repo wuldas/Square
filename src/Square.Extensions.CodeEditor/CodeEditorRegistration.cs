@@ -1,6 +1,6 @@
 using Square.UI;
 
-[assembly: ElementExport("urn:square:codeeditor", "codeeditor", "CodeEditor", typeof(Square.Extensions.CodeEditor.CodeEditor))]
+[assembly: ElementExport("urn:square:codeeditor", "CodeEditor", typeof(Square.Extensions.CodeEditor.CodeEditor))]
 
 namespace Square.Extensions.CodeEditor;
 
@@ -23,6 +23,6 @@ public static class CodeEditorRegistration
 
         if (_registered) return;
         _registered = true;
-        ElementRegistry.Register("CodeEditor", static () => new CodeEditor());
+        ElementRegistry.Register("urn:square:codeeditor", "CodeEditor", static () => new CodeEditor());
     }
 }

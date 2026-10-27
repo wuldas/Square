@@ -2,12 +2,14 @@ using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
+using Square.CSS.Ast;
+using Square.CSS.Engine;
 using Square.Controls;
 using Square.Graphics;
 using Square.Graphics.Codecs;
+using Square.Html;
 using Square.Native;
 using Square.UI;
-using Square.UI.Html;
 using Square.UI.Svg;
 using SquareImage = Square.Controls.Image;
 using SquareText = Square.Controls.Text;
@@ -23,6 +25,7 @@ public static class HtmlExporter
         .square-root{min-width:0;}
         .square-root img,.square-root svg{max-width:100%;}
         button,input,select,textarea{appearance:auto;}
+        :where(.sq-default-button):active:not(:disabled){background-color:#dedede;}
         [data-square-unsupported="true"]{padding:.75rem;border:1px dashed #b42318;color:#b42318;background:#fff5f5;font-family:system-ui,sans-serif;}
         """;
 
@@ -102,12 +105,12 @@ public static class HtmlExporter
     /// 定位穿过单一子节点链（Square 文档外壳、生成的组件包装）可达的唯一 HTML <c>html</c> 根；
     /// 找不到或存在多条分支时返回 null（嵌套 html/head/body 会被压平并诊断）。
     /// </summary>
-    private static HtmlElement? FindSoleHtmlRoot(NativeUiNode root)
+    private static HTMLElement? FindSoleHtmlRoot(NativeUiNode root)
     {
         var current = root;
         while (true)
         {
-            if (current.SourceElement is HtmlElement { TagName: "html" } html) return html;
+            if (current.SourceElement is HTMLElement { TagName: "html" } html) return html;
             if (current.Children.Count != 1) return null;
             current = current.Children[0];
         }
@@ -119,10 +122,19 @@ public static class HtmlExporter
         ExportContext context,
         bool isRoot = false,
         bool isSnapshotRoot = false,
-        bool includeHiddenHtmlChild = false)
+        bool includeHiddenHtmlChild = false,
+        Element? interactionSource = null)
     {
         var element = node.SourceElement;
         if ((!element.IsVisible && !includeHiddenHtmlChild) || element is UIHeadElement) return;
+
+        if (element.TemplateExportNamespaceUri != null ||
+            element is HTMLElement { IsDefinedCustomElement: true } ||
+            element is IHtmlStaticRepresentation)
+        {
+            WriteStaticRepresentation(output, node, context, isRoot, element);
+            return;
+        }
 
         if (element is UIRootElement or UIBodyElement)
         {
@@ -132,12 +144,8 @@ public static class HtmlExporter
 
         switch (element)
         {
-            case HtmlTextRun run:
-                // HTML 文本按原始顺序输出为转义裸文本，不包裹任何标签。
-                output.Append(Encode(run.TextContent));
-                return;
-            case HtmlElement host:
-                WriteHtmlElement(output, node, host, context, isRoot, isSnapshotRoot);
+            case HTMLElement host:
+                WriteHtmlElement(output, node, host, context, isRoot, isSnapshotRoot, interactionSource);
                 return;
             case Canvas:
             case Popup:
@@ -199,15 +207,80 @@ public static class HtmlExporter
         WriteUnsupported(output, node, context, isRoot);
     }
 
+    private static void WriteStaticRepresentation(
+        StringBuilder output, NativeUiNode node, ExportContext context, bool isRoot, Element source)
+    {
+        if (source is not IHtmlStaticRepresentation provider)
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                "Exported package or defined custom element has no safe static HTML representation."));
+            context.RepresentationFailures++;
+            return;
+        }
+        if (!context.ActiveRepresentationTypes.Add(source.GetType()))
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                "Recursive static HTML representation was rejected."));
+            context.RepresentationFailures++;
+            return;
+        }
+        try
+        {
+            var representation = provider.CreateHtmlRepresentation();
+            if (representation == null || ReferenceEquals(representation, source) ||
+                representation.ParentNode != null || representation.OwnerDocument != null ||
+                !HtmlTagCatalog.IsTag(representation.TagName) ||
+                HtmlTagCatalog.IsMetadata(representation.TagName) ||
+                representation.TagName is "html" or "body" or "iframe" or "object" or "embed")
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                    "Static HTML representation must return a new detached built-in HTML subtree."));
+                context.RepresentationFailures++;
+                return;
+            }
+            if (source is HTMLElement { CustomElementExtendsTag: { } extendsTag } &&
+                representation.TagName != extendsTag)
+            {
+                context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                    "Customized built-in HTML representation must retain its original built-in tag."));
+                context.RepresentationFailures++;
+                return;
+            }
+            var failures = context.RepresentationFailures;
+            var safeOutput = new StringBuilder();
+            WriteNode(safeOutput, NativeUiTreeBuilder.Snapshot(representation), context, isRoot,
+                interactionSource: source);
+            if (context.RepresentationFailures == failures) output.Append(safeOutput);
+        }
+        catch (Exception exception)
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(node.Kind,
+                "Static HTML representation failed: " + exception.Message));
+            context.RepresentationFailures++;
+        }
+        finally
+        {
+            context.ActiveRepresentationTypes.Remove(source.GetType());
+        }
+    }
+
     private static void WriteHtmlElement(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool isRoot,
-        bool isSnapshotRoot)
+        bool isSnapshotRoot,
+        Element? interactionSource)
     {
         var tag = host.TagName;
+        if (!HtmlTagCatalog.IsTag(tag))
+        {
+            context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                "Unknown HTML tags require a safe static representation; raw custom tags are not exported."));
+            if (context.ActiveRepresentationTypes.Count > 0) context.RepresentationFailures++;
+            return;
+        }
         switch (tag)
         {
             case "html" when ReferenceEquals(host, context.DocumentHtmlRoot):
@@ -215,14 +288,14 @@ public static class HtmlExporter
                 // 唯一文档根并入生成壳：lang 合并，head 元数据入 head，其余进入 body。
                 var lang = host.GetAttribute("lang");
                 if (!string.IsNullOrWhiteSpace(lang)) context.HtmlLang = lang;
-                foreach (var child in node.Children) WriteNode(output, child, context, isRoot);
+                WriteHtmlChildren(output, node, host, context, isRoot);
                 return;
             }
             case "html" when isSnapshotRoot && !context.Options.IncludeDocument:
             case "head" when isSnapshotRoot && !context.Options.IncludeDocument:
             case "body" when isSnapshotRoot && !context.Options.IncludeDocument:
                 // 片段模式下文档根原样输出。
-                WriteHtmlGeneric(output, node, host, context, isRoot);
+                WriteHtmlGeneric(output, node, host, context, isRoot, interactionSource);
                 return;
             case "html":
                 context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
@@ -241,7 +314,7 @@ public static class HtmlExporter
                         "HTML body element outside the document root was flattened into the document body."));
                 goto case "flatten";
             case "flatten":
-                foreach (var child in node.Children) WriteNode(output, child, context, isRoot);
+                WriteHtmlChildren(output, node, host, context, isRoot);
                 return;
         }
 
@@ -261,14 +334,14 @@ public static class HtmlExporter
                 return;
         }
 
-        WriteHtmlGeneric(output, node, host, context, isRoot);
+        WriteHtmlGeneric(output, node, host, context, isRoot, interactionSource);
     }
 
     /// <summary>按目的把不可见元数据并入单一 head；被禁用的主动内容只留诊断。</summary>
     private static void WriteHtmlMetadata(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool isRoot)
     {
@@ -326,7 +399,7 @@ public static class HtmlExporter
         context.Options.IncludeDocument && !context.SuppressHeadHoist;
 
     /// <summary>校验并渲染安全的 meta；http-equiv、非 UTF-8 charset 一律拒绝并诊断。</summary>
-    private static string? RenderMeta(HtmlElement host, ExportContext context, bool hoist)
+    private static string? RenderMeta(HTMLElement host, ExportContext context, bool hoist)
     {
         if (host.GetAttribute("http-equiv") is { } httpEquiv)
         {
@@ -366,7 +439,7 @@ public static class HtmlExporter
     private static void WriteTemplate(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool hoist)
     {
@@ -378,7 +451,7 @@ public static class HtmlExporter
         context.SuppressHeadHoist = true;
         try
         {
-            foreach (var child in node.Children) WriteNode(target, child, context);
+            WriteHtmlChildren(target, node, host, context, isRoot: false);
         }
         finally
         {
@@ -391,48 +464,61 @@ public static class HtmlExporter
     private static void WriteHtmlGeneric(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
-        bool isRoot)
+        bool isRoot,
+        Element? interactionSource = null)
     {
         var tag = host.TagName;
         var isVoid = HtmlTagCatalog.IsVoid(tag);
         output.Append('<').Append(tag);
         if (context.Options.EnableInteractions) output.Append(" data-square-html=\"true\"");
-        WriteCommonAttributes(output, node, context, isRoot);
+        WriteCommonAttributes(output, node, context, isRoot, interactionSource: interactionSource);
         WriteHtmlAttributes(output, host, context, tag);
         output.Append('>');
         if (tag == "textarea")
         {
-            // 浏览器以元素内容作为 textarea 的值；当前值来自 value 属性（含交互回写）。
+            // 浏览器以元素内容作为 textarea 的值；当前值来自 value 属性（含交互回写），
+            // 缺席时回退到按 ChildNodes 顺序的文本子节点。
             var value = host.GetAttribute("value");
             if (value != null) output.Append(Encode(value));
-            else WriteHtmlChildren(output, node, host, context);
+            else WriteHtmlChildren(output, node, host, context, isRoot);
         }
         else if (!isVoid)
         {
-            WriteHtmlChildren(output, node, host, context);
+            WriteHtmlChildren(output, node, host, context, isRoot, includeHiddenHtmlChild: tag == "details");
         }
         if (!isVoid) output.Append("</").Append(tag).Append('>');
     }
 
-    private static void WriteHtmlChildren(StringBuilder output, NativeUiNode node, HtmlElement host, ExportContext context)
+    /// <summary>
+    /// 按 DOM ChildNodes 顺序输出 HTML 混合内容：Text 节点编码为裸文本，元素按快照匹配输出。
+    /// 快照只包含可见元素，文本直接取自语义子节点；details 的隐藏子元素仍需导出（由交互切换）。
+    /// </summary>
+    private static void WriteHtmlChildren(
+        StringBuilder output,
+        NativeUiNode node,
+        HTMLElement host,
+        ExportContext context,
+        bool isRoot,
+        bool includeHiddenHtmlChild = false)
     {
-        if (host.TagName == "details")
+        var snapshots = node.Children;
+        foreach (var child in host.ChildNodes)
         {
-            foreach (var child in host.Children)
+            if (child is Square.UI.Text text)
             {
-                if (host.IsInternalHtmlProxy(child)) continue;
-                var snapshot = node.Children.FirstOrDefault(item => ReferenceEquals(item.SourceElement, child))
-                    ?? NativeUiTreeBuilder.Snapshot(child);
-                WriteNode(output, snapshot, context, includeHiddenHtmlChild: true);
+                output.Append(Encode(text.Data));
+                continue;
             }
-            return;
-        }
-        foreach (var child in node.Children)
-        {
-            if (host.IsInternalHtmlProxy(child.SourceElement)) continue;
-            WriteNode(output, child, context);
+            if (child is not Element element) continue;
+            var snapshot = snapshots.FirstOrDefault(item => ReferenceEquals(item.SourceElement, element));
+            if (snapshot == null)
+            {
+                if (!includeHiddenHtmlChild) continue;
+                snapshot = NativeUiTreeBuilder.Snapshot(element);
+            }
+            WriteNode(output, snapshot, context, isRoot, includeHiddenHtmlChild: includeHiddenHtmlChild);
         }
     }
 
@@ -441,15 +527,16 @@ public static class HtmlExporter
     /// URL 属性逐项走安全校验，<c>srcset</c> 任一候选不安全则整体省略。id/class/style/title 由
     /// WriteCommonAttributes 输出，不重复。
     /// </summary>
-    private static void WriteHtmlAttributes(StringBuilder output, HtmlElement host, ExportContext context, string tag)
+    private static void WriteHtmlAttributes(StringBuilder output, HTMLElement host, ExportContext context, string tag)
     {
         foreach (var (name, value) in host.GetAttributes())
         {
             if (name is "id" or "class" or "style" or "title") continue;
             if (tag == "textarea" && name == "value") continue;
-            if (name == "data-square-html" && context.Options.EnableInteractions)
+            if (name == "is" || name.StartsWith("data-square-", StringComparison.Ordinal))
             {
-                context.Diagnostics.Add(new HtmlExportDiagnostic(tag, "Rejected reserved HTML interaction attribute."));
+                context.Diagnostics.Add(new HtmlExportDiagnostic(tag,
+                    $"Rejected reserved HTML attribute '{name}'."));
                 continue;
             }
             if (!IsValidAttributeName(name) || name is "srcdoc" || name.StartsWith("on", StringComparison.Ordinal))
@@ -530,7 +617,7 @@ public static class HtmlExporter
     private static void WriteObjectFallback(
         StringBuilder output,
         NativeUiNode node,
-        HtmlElement host,
+        HTMLElement host,
         ExportContext context,
         bool isRoot)
     {
@@ -545,11 +632,7 @@ public static class HtmlExporter
         output.Append("<div");
         WriteCommonAttributes(output, node, context, isRoot);
         output.Append(" data-square-kind=\"object\">");
-        foreach (var child in node.Children)
-        {
-            if (host.IsInternalHtmlProxy(child.SourceElement)) continue;
-            WriteNode(output, child, context);
-        }
+        WriteHtmlChildren(output, node, host, context, isRoot);
         output.Append("</div>");
     }
 
@@ -567,7 +650,11 @@ public static class HtmlExporter
             builder.Append(text.TextContent);
             return;
         }
-        foreach (var child in element.Children) AppendTextContent(child, builder);
+        foreach (var child in element.ChildNodes)
+        {
+            if (child is Square.UI.Text domText) builder.Append(domText.Data);
+            else if (child is Element childElement) AppendTextContent(childElement, builder);
+        }
     }
 
     private static void WriteContainer(
@@ -756,13 +843,14 @@ public static class HtmlExporter
         output.Append("</div>");
     }
 
-    private static void WriteCommonAttributes(StringBuilder output, NativeUiNode node, ExportContext context, bool isRoot, bool hostChoiceInput = false)
+    private static void WriteCommonAttributes(StringBuilder output, NativeUiNode node, ExportContext context,
+        bool isRoot, bool hostChoiceInput = false, Element? interactionSource = null)
     {
         var element = node.SourceElement;
         if (context.Options.EnableInteractions)
         {
-            output.Append(" data-square-id=\"").Append(element.DebugId).Append('"');
-            var eventTypes = element.RegisteredEventTypes;
+            output.Append(" data-square-id=\"").Append((interactionSource ?? element).DebugId).Append('"');
+            var eventTypes = (interactionSource ?? element).RegisteredEventTypes;
             if (eventTypes.Count > 0)
                 output.Append(" data-square-events=\"")
                     .Append(Encode(string.Join(' ', eventTypes.Select(static type => type.ToLowerInvariant()))))
@@ -773,8 +861,20 @@ public static class HtmlExporter
 
         var classes = node.Classes.ToList();
         if (isRoot) classes.Add("square-root");
+        // Only unstyled native buttons receive Square's visible pressed-face baseline; authored
+        // backgrounds and appearance:none keep full control of their active appearance.
+        if ((element is Button { IsEnabled: true } or HTMLElement { TagName: "button", IsDisabled: false }) &&
+            HasAutoAppearance(node.Style) &&
+            !element.Style.IsAuthorSpecified("background") &&
+            !element.Style.IsAuthorSpecified("background-color"))
+            classes.Add("sq-default-button");
 
-        var styles = CompactStyles(MergeStyles(node, hostChoiceInput));
+        var mergedStyles = MergeStyles(node, hostChoiceInput);
+        if (mergedStyles.TryGetValue("animation-name", out var animationName) &&
+            CssStyleReconciler.GetKeyFrames(element, animationName) is { } keyFrames &&
+            context.Styles.RegisterKeyFrames(keyFrames) is { } exportedName)
+            mergedStyles["animation-name"] = exportedName;
+        var styles = CompactStyles(mergedStyles);
         if (styles.Count > 0 && context.Options.UseInlineStyles)
         {
             output.Append(" style=\"");
@@ -784,20 +884,18 @@ public static class HtmlExporter
         }
         else if (styles.Count > 0 && !context.Options.UseInlineStyles)
         {
-            var generatedClass = context.Styles.AddRule(classes, styles);
-            if (generatedClass != null) classes.Add(generatedClass);
+            // 每个元素的求值样式挂独立的生成签名类；绝不能并入共享 author 类选择器，
+            // 否则共享类（如 .comparison-card）会带上最后一个节点的声明，在浏览器里
+            // 后置生成的规则会覆盖各变体类（.comparison-blue 等）的真实配色。
+            classes.Add(context.Styles.GetClass(styles));
         }
 
         if (classes.Count > 0)
             output.Append(" class=\"").Append(Encode(string.Join(' ', classes.Distinct(StringComparer.Ordinal)))).Append('"');
 
-        if (element is UIElement ui)
-        {
-            var title = element is HtmlElement html && html.HasAttribute("title")
-                ? html.GetAttribute("title") : ui.Tooltip;
-            if (!string.IsNullOrWhiteSpace(title))
-                output.Append(" title=\"").Append(Encode(title)).Append('"');
-        }
+        var title = element is HTMLElement html ? html.GetAttribute("title") : (element as UIElement)?.Tooltip;
+        if (!string.IsNullOrWhiteSpace(title))
+            output.Append(" title=\"").Append(Encode(title)).Append('"');
     }
 
     private static void WriteWidgetAppearance(StringBuilder output, NativeUiNode node, ExportContext context)
@@ -820,14 +918,25 @@ public static class HtmlExporter
 
     private static Dictionary<string, string> MergeStyles(NativeUiNode node, bool hostChoiceInput = false)
     {
+        var element = node.SourceElement;
         var styles = new Dictionary<string, string>(node.Style, StringComparer.Ordinal);
         if (hostChoiceInput)
+        {
+            // 选择控件的样式挂在 label 包装上；label 不是原生控件，appearance 无意义。
             styles.Remove("appearance");
-        else if (IsNativeFormWidget(node.SourceElement) &&
-                 styles.TryGetValue("appearance", out var appearance) &&
-                 appearance.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
+        }
+        else if (IsNativeFormWidget(element) && HasAutoAppearance(styles))
+        {
+            // appearance:auto 的表单控件由浏览器 UA 呈现系统外观（包括 3D 边框与 :active 状态）。
+            // Square UA 级默认声明（border/background/font/padding 等）若以 author 级输出，
+            // 会压过浏览器 UA 的 :active 规则并冻结原生外观，因此只输出作者真实声明的属性；
+            // 作者自定义 border/background/font/padding 与 appearance:none 均原样保留。
+            foreach (var property in styles.Keys.ToArray())
+                if (!element.Style.IsAuthorSpecified(property))
+                    styles.Remove(property);
             styles.Remove("appearance");
-        if (node.SourceElement is UIElement ui)
+        }
+        if (element is UIElement ui)
         {
             AddPixels(styles, "width", ui.Width, float.NaN);
             AddPixels(styles, "height", ui.Height, float.NaN);
@@ -847,8 +956,15 @@ public static class HtmlExporter
         return styles;
     }
 
+    /// <summary>Square 控件与 HTML 同名宿主都属于交给浏览器 UA 呈现的表单控件。</summary>
     private static bool IsNativeFormWidget(Element element) =>
-        element is Button or Input or TextArea or Select;
+        element is Button or Input or TextArea or Select ||
+        element is HTMLElement { TagName: "button" or "input" or "textarea" or "select" };
+
+    /// <summary>appearance 缺席与显式 auto 都表示控件沿用浏览器原生外观。</summary>
+    private static bool HasAutoAppearance(IReadOnlyDictionary<string, string> styles) =>
+        !styles.TryGetValue("appearance", out var appearance) ||
+        appearance.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
 
     private static bool TryGetAppearance(NativeUiNode node, out string appearance)
     {
@@ -920,7 +1036,7 @@ public static class HtmlExporter
         var css = new StringBuilder();
         if (options.IncludeBaselineCss) css.Append(BaselineCss);
         if (!string.IsNullOrWhiteSpace(options.AdditionalCss)) css.Append(options.AdditionalCss);
-        if (!options.UseInlineStyles) css.Append(styles.ToCss());
+        css.Append(styles.ToCss(includeClassRules: !options.UseInlineStyles));
         return css.ToString();
     }
 
@@ -964,9 +1080,11 @@ public static class HtmlExporter
         public HtmlExportOptions Options { get; }
         public List<HtmlExportDiagnostic> Diagnostics { get; }
         public GeneratedStyleSheet Styles { get; } = new();
+        public HashSet<Type> ActiveRepresentationTypes { get; } = [];
+        public int RepresentationFailures { get; set; }
 
         /// <summary>文档模式下穿过单一包装找到的唯一 HTML html 根。</summary>
-        public HtmlElement? DocumentHtmlRoot { get; init; }
+        public HTMLElement? DocumentHtmlRoot { get; init; }
         /// <summary>文档根的 body 宿主；其公共属性并入壳层 body 标签。</summary>
         public NativeUiNode? BodyHostNode { get; set; }
         /// <summary>HTML html 根的 lang 属性，优先于 options.Language。</summary>
@@ -985,20 +1103,8 @@ public static class HtmlExporter
     {
         private readonly Dictionary<string, string> _classesBySignature = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IReadOnlyList<KeyValuePair<string, string>>> _rules = new(StringComparer.Ordinal);
-
-        public string? AddRule(IReadOnlyList<string> classes, IReadOnlyList<KeyValuePair<string, string>> styles)
-        {
-            var selector = classes.FirstOrDefault(static name =>
-                !string.Equals(name, "square-root", StringComparison.Ordinal) &&
-                !name.StartsWith("sq-style-", StringComparison.Ordinal));
-            if (selector != null)
-            {
-                MergeRule(SelectorFor(selector), styles);
-                return null;
-            }
-
-            return GetClass(styles);
-        }
+        private readonly Dictionary<string, string> _keyframeNamesByBody = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _keyframeBodies = new(StringComparer.Ordinal);
 
         public string GetClass(IReadOnlyList<KeyValuePair<string, string>> styles)
         {
@@ -1010,14 +1116,72 @@ public static class HtmlExporter
             var suffix = 1;
             while (_rules.ContainsKey(SelectorFor(className))) className = baseName + "-" + suffix++;
             _classesBySignature[signature] = className;
-            MergeRule(SelectorFor(className), styles);
+            // 仅当完整声明集合一致时才去重到同一个签名类；选择器唯一，直接落规则。
+            _rules[SelectorFor(className)] = styles;
             return className;
         }
 
-        public string ToCss()
+        public string? RegisterKeyFrames(KeyFramesRule rule)
         {
-            if (_rules.Count == 0) return "";
+            var body = new StringBuilder();
+            var stops = 0;
+            foreach (var stop in rule.Stops)
+            {
+                var selector = FormatKeyframeSelector(stop.Selector);
+                if (selector == null) continue;
+                var declaration = stop.Declarations.LastOrDefault(static declaration =>
+                    declaration.Property.Equals("width", StringComparison.OrdinalIgnoreCase) ||
+                    declaration.Property.Equals("opacity", StringComparison.OrdinalIgnoreCase));
+                if (declaration == null || declaration.Important) continue;
+                var property = declaration.Property.ToLowerInvariant();
+                var raw = declaration.Value.Trim();
+                var isPixels = raw.EndsWith("px", StringComparison.OrdinalIgnoreCase);
+                if (isPixels) raw = raw[..^2];
+                if (!float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ||
+                    !float.IsFinite(value)) continue;
+                if (property == "width")
+                {
+                    body.Append(selector).Append("{width:")
+                        .Append(Math.Max(0, value).ToString("0.###", CultureInfo.InvariantCulture)).Append("px;}");
+                }
+                else
+                {
+                    body.Append(selector).Append("{opacity:")
+                        .Append(Math.Clamp(value, 0f, 1f).ToString("0.###", CultureInfo.InvariantCulture))
+                        .Append(";}");
+                }
+                stops++;
+            }
+            if (stops < 2) return null;
+            var signature = body.ToString();
+            if (_keyframeNamesByBody.TryGetValue(signature, out var existing)) return existing;
+            var baseName = "sq-kf-" + StableHash(signature);
+            var name = baseName;
+            var suffix = 1;
+            while (_keyframeBodies.ContainsKey(name)) name = baseName + "-" + suffix++;
+            _keyframeNamesByBody[signature] = name;
+            _keyframeBodies[name] = signature;
+            return name;
+        }
+
+        private static string? FormatKeyframeSelector(string value)
+        {
+            var selector = value.Trim();
+            if (selector.Equals("from", StringComparison.OrdinalIgnoreCase)) return "0%";
+            if (selector.Equals("to", StringComparison.OrdinalIgnoreCase)) return "100%";
+            if (!selector.EndsWith('%') ||
+                !float.TryParse(selector[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var percent) ||
+                !float.IsFinite(percent) || percent is < 0 or > 100) return null;
+            return percent.ToString("0.###", CultureInfo.InvariantCulture) + "%";
+        }
+
+        public string ToCss(bool includeClassRules)
+        {
+            if (_rules.Count == 0 && _keyframeBodies.Count == 0) return "";
             var css = new StringBuilder();
+            foreach (var keyframe in _keyframeBodies.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+                css.Append("@keyframes ").Append(keyframe.Key).Append('{').Append(keyframe.Value).Append('}');
+            if (!includeClassRules) return css.ToString();
             foreach (var rule in _rules.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
                 css.Append(rule.Key).Append('{');
@@ -1031,21 +1195,8 @@ public static class HtmlExporter
             return css.ToString();
         }
 
-        /// <summary>author 类名只作为 CSS 标识符进入选择器，杜绝选择器注入。</summary>
+        /// <summary>生成类名在 CSS 选择器中统一编码，避免选择器注入。</summary>
         private static string SelectorFor(string className) => "." + EncodeCssIdentifier(className);
-
-        private void MergeRule(string selector, IReadOnlyList<KeyValuePair<string, string>> styles)
-        {
-            if (_rules.TryGetValue(selector, out var existing))
-            {
-                var merged = existing.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
-                foreach (var pair in styles) merged[pair.Key] = pair.Value;
-                _rules[selector] = merged.OrderBy(static pair => pair.Key, StringComparer.Ordinal).ToArray();
-                return;
-            }
-
-            _rules[selector] = styles;
-        }
 
         private static string StableHash(string value)
         {

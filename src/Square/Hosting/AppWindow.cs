@@ -209,8 +209,29 @@ public sealed class AppWindow : IRenderBackendApplication
     public bool SupportsCloseCancellation { get; private set; }
     /// <summary>全局按键事件。</summary>
     public event Action<int, KeyAction>? GlobalKeyEvent;
-    /// <summary>Inspector 点选元素时触发。</summary>
-    public event Action<int>? InspectorNodeSelected;
+    /// <summary>Inspector 点选元素时触发；参数为发起点选的 owner ID 与元素调试 ID。</summary>
+    public event Action<long, int>? InspectorNodeSelected;
+    /// <summary>Inspector 点选被新 owner 接管或 Escape 取消时触发；参数为被取消的 owner ID。</summary>
+    public event Action<long>? InspectorModeCanceled;
+    /// <summary>文档内容发生检查器关注的变化（结构/属性/文本/样式）时触发。</summary>
+    public event Action<ElementInspectionChangeKind>? InspectionChanged;
+
+    /// <summary>是否存在 InspectionChanged 订阅者；无订阅者时变化源直接返回，不构建快照。</summary>
+    internal bool HasInspectionListeners => InspectionChanged != null;
+
+    /// <summary>由文档变化源通知检查器订阅者；订阅回调不得阻塞调用线程。</summary>
+    internal void NotifyInspectionChanged(ElementInspectionChangeKind kind) =>
+        InspectionChanged?.Invoke(kind);
+
+    /// <summary>框架产生诊断消息（Hot Reload、自定义元素回调失败等）时触发；参数为级别与完整消息文本。</summary>
+    public event Action<System.Diagnostics.TraceEventType, string>? DiagnosticMessage;
+
+    /// <summary>是否存在 DiagnosticMessage 订阅者；无订阅者时诊断源直接返回，不构造消息字符串。</summary>
+    internal bool HasDiagnosticListeners => DiagnosticMessage != null;
+
+    /// <summary>由框架诊断源通知订阅者；订阅回调不得阻塞调用线程。</summary>
+    internal void RaiseDiagnosticMessage(System.Diagnostics.TraceEventType level, string text) =>
+        DiagnosticMessage?.Invoke(level, text);
 
     /// <summary>加载内容根元素到窗口正文。</summary>
     public void Load(Element content)
@@ -393,21 +414,48 @@ public sealed class AppWindow : IRenderBackendApplication
         bool includeTextContent = true) =>
         RequireRuntime().InspectElementAsync(debugId, includeSourcePaths, includeTextContent);
 
-    /// <summary>按调试 ID 检查元素样式。</summary>
-    public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId) =>
-        RequireRuntime().InspectElementStylesAsync(debugId);
+    /// <summary>按调试 ID 检查元素样式；includeStyleText 时附带可编辑的运行时虚拟资源。</summary>
+    public Task<ElementInspectionStyleSnapshot?> InspectElementStylesAsync(int debugId,
+        bool includeStyleText = false, CancellationToken cancellationToken = default) =>
+        RequireRuntime().InspectElementStylesAsync(debugId, includeStyleText, cancellationToken);
 
-    /// <summary>设置 Inspector 临时高亮元素。</summary>
-    public Task<bool> SetInspectorHighlightAsync(int debugId) =>
-        RequireRuntime().SetInspectorHighlightAsync(debugId);
+    /// <summary>捕获当前树的全部运行时样式虚拟资源。</summary>
+    public Task<IReadOnlyList<ElementInspectionStyleText>> CaptureInspectionStyleSheetsAsync(
+        CancellationToken cancellationToken = default) =>
+        RequireRuntime().CaptureInspectionStyleSheetsAsync(cancellationToken);
 
-    /// <summary>清除 Inspector 临时高亮。</summary>
-    public Task ClearInspectorHighlightAsync() =>
-        RequireRuntime().ClearInspectorHighlightAsync();
+    /// <summary>按 ID 查询单个运行时样式虚拟资源。</summary>
+    public Task<ElementInspectionStyleText?> InspectStyleSheetAsync(string styleSheetId,
+        CancellationToken cancellationToken = default) =>
+        RequireRuntime().InspectStyleSheetAsync(styleSheetId, cancellationToken);
 
-    /// <summary>开启或关闭 Inspector 点选模式。</summary>
-    public Task SetInspectorModeAsync(bool enabled) =>
-        RequireRuntime().SetInspectorModeAsync(enabled);
+    /// <summary>原子应用一批运行时样式编辑；任何无效编辑都不产生修改。</summary>
+    public Task<IReadOnlyList<ElementInspectionStyleText>> ApplyInspectionStyleEditsAsync(
+        IReadOnlyList<ElementInspectionStyleTextEdit> edits, CancellationToken cancellationToken = default) =>
+        RequireRuntime().ApplyInspectionStyleEditsAsync(edits, cancellationToken);
+
+    /// <summary>批量读取最终应用样式；propertyNames 为 null 时读取全部属性。</summary>
+    public Task<IReadOnlyList<ElementInspectionComputedStyleSnapshot>> InspectComputedStylesAsync(
+        IReadOnlyList<int> debugIds, IReadOnlyList<string>? propertyNames = null,
+        CancellationToken cancellationToken = default) =>
+        RequireRuntime().InspectComputedStylesAsync(debugIds, propertyNames, cancellationToken);
+
+    /// <summary>设置 Inspector 临时高亮元素；最后发起的 owner 持有窗口 overlay。</summary>
+    public Task<bool> SetInspectorHighlightAsync(int debugId, ElementInspectionHighlightOptions? options = null,
+        long ownerId = 0, CancellationToken cancellationToken = default) =>
+        RequireRuntime().SetInspectorHighlightAsync(debugId, options, ownerId, cancellationToken);
+
+    /// <summary>清除 Inspector 临时高亮；仅影响调用 owner 自己的高亮。</summary>
+    public Task ClearInspectorHighlightAsync(long ownerId = 0, CancellationToken cancellationToken = default) =>
+        RequireRuntime().ClearInspectorHighlightAsync(ownerId, cancellationToken);
+
+    /// <summary>开启或关闭 Inspector 点选模式；最后发起的 owner 持有窗口 overlay。</summary>
+    public Task SetInspectorModeAsync(bool enabled, ElementInspectionHighlightOptions? options = null,
+        long ownerId = 0, CancellationToken cancellationToken = default) =>
+        RequireRuntime().SetInspectorModeAsync(enabled, options, ownerId, cancellationToken);
+
+    /// <summary>释放某个 Inspector 会话的全部 overlay 状态；仅影响调用 owner 自己的状态。</summary>
+    public void ReleaseInspectorSession(long ownerId) => _runtime?.ReleaseInspectorSession(ownerId);
 
     /// <summary>按命中测试检查元素。</summary>
     public Task<ElementInspectionNode?> HitTestInspectionAsync(
@@ -510,7 +558,10 @@ public sealed class AppWindow : IRenderBackendApplication
         _document.Context.Dispatcher = dispatcher;
     }
 
-    internal void RaiseInspectorNodeSelected(int debugId) => InspectorNodeSelected?.Invoke(debugId);
+    internal void RaiseInspectorNodeSelected(long ownerId, int debugId) =>
+        InspectorNodeSelected?.Invoke(ownerId, debugId);
+
+    internal void RaiseInspectorModeCanceled(long ownerId) => InspectorModeCanceled?.Invoke(ownerId);
 
     internal void Attach(IPlatformHost host)
     {

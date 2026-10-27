@@ -1,6 +1,6 @@
 using System.Reflection;
 using Square.Events;
-using Square.UI.Html;
+using Square.Html;
 using Square.Graphics;
 using Square.Hosting;
 using Square.Platform;
@@ -178,8 +178,8 @@ public sealed class DocumentScrollbarTests
         {
             ScrollbarProfile = ScrollbarDeviceProfile.Desktop
         };
-        var article = new Square.UI.Html.HtmlElement("article");
-        var content = new Square.UI.Html.HtmlElement("div");
+        var article = new HTMLArticleElement();
+        var content = new HTMLDivElement();
         content.Style.Set("height", "400px");
         article.Children.Add(content);
         window.Load(article);
@@ -456,36 +456,36 @@ public sealed class DocumentScrollbarTests
     }
 
     private static void CreateGutterFixture(
-        out HtmlElement root, out HtmlElement content, out HtmlElement row,
-        out HtmlElement leafA, out HtmlElement leafB, out HtmlElement extra)
+        out HTMLDivElement root, out HTMLDivElement content, out HTMLDivElement row,
+        out HTMLDivElement leafA, out HTMLDivElement leafB, out HTMLDivElement extra)
     {
         // div 默认 display:block → 根走 CSS 正常流收敛循环；flex 行是外部 Yoga 根，
         // 在父收敛 pass 内嵌套完成自己的 arrange。
-        root = new Square.UI.Html.HtmlElement("div");
+        root = new HTMLDivElement();
         root.Style.Set("overflow-y", "auto");
         root.Style.Set("height", "100px");
-        content = new Square.UI.Html.HtmlElement("div");
+        content = new HTMLDivElement();
         content.Style.Set("height", "400px");
         root.Children.Add(content);
-        row = new Square.UI.Html.HtmlElement("div");
+        row = new HTMLDivElement();
         row.Style.Set("display", "flex");
-        leafA = new Square.UI.Html.HtmlElement("div");
+        leafA = new HTMLDivElement();
         leafA.Style.Set("width", "40px");
         leafA.Style.Set("height", "40px");
-        leafB = new Square.UI.Html.HtmlElement("div");
+        leafB = new HTMLDivElement();
         leafB.Style.Set("width", "40px");
         leafB.Style.Set("height", "40px");
         row.Children.Add(leafA);
         row.Children.Add(leafB);
         root.Children.Add(row);
-        extra = new Square.UI.Html.HtmlElement("div");
+        extra = new HTMLDivElement();
         extra.Style.Set("height", "50px");
         root.Children.Add(extra);
     }
 
     private static void AssertGutterFixture(
-        HtmlElement root, HtmlElement content, HtmlElement row,
-        HtmlElement leafA, HtmlElement leafB, HtmlElement extra,
+        HTMLDivElement root, HTMLDivElement content, HTMLDivElement row,
+        HTMLDivElement leafA, HTMLDivElement leafB, HTMLDivElement extra,
         bool guttered)
     {
         // guttered=true：内容超视口，桌面滚动条保留 15px 垂直 gutter，内容宽 100-15=85；

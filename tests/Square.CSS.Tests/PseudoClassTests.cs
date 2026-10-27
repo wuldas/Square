@@ -367,25 +367,25 @@ public class PseudoClassTests
     public void InheritedFontPropertiesWithSameFinalValuesKeepLayoutClean()
     {
         var sheet = new CssParser(new CssTokenizer(
-            "View { font-family: Segoe UI; font-size: 16px; } Button:hover { background: blue; }").Tokenize()).Parse();
+            "View { font-family: Segoe UI; font-size: 16px; } Text:hover { background: blue; }").Tokenize()).Parse();
         var engine = new CssEngine();
         engine.LoadStyleSheet(sheet);
         var root = new Square.Controls.View();
         var componentRoot = new Square.Controls.View();
-        var button = new Square.Controls.Button();
+        var text = new Square.Controls.Text("title");
         root.Children.Add(componentRoot);
-        componentRoot.Children.Add(button);
+        componentRoot.Children.Add(text);
         engine.ApplyStylesToTree(componentRoot);
         root.ClearLayoutDirty();
         componentRoot.ClearLayoutDirty();
-        button.ClearLayoutDirty();
+        text.ClearLayoutDirty();
 
-        button.SetState(ElementState.Hover, true);
+        text.SetState(ElementState.Hover, true);
         CssStyleReconciler.Flush();
 
-        Assert.Equal("Segoe UI", button.Style.Get("font-family"));
-        Assert.Equal("16px", button.Style.Get("font-size"));
-        Assert.False(button.IsLayoutDirty);
+        Assert.Equal("Segoe UI", text.Style.Get("font-family"));
+        Assert.Equal("16px", text.Style.Get("font-size"));
+        Assert.False(text.IsLayoutDirty);
         Assert.False(componentRoot.IsLayoutDirty);
         Assert.False(root.IsLayoutDirty);
     }

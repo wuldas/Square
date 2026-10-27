@@ -2,8 +2,8 @@ using System.Globalization;
 using System.Buffers;
 using Square.Rendering.Yoga;
 using Square.Graphics;
+using Square.Html;
 using Square.UI;
-using Square.UI.Html;
 using Square.Controls;
 using static Square.Rendering.Yoga.YGConfigAPI;
 using static Square.Rendering.Yoga.YGNodeAPI;
@@ -506,6 +506,27 @@ public sealed partial class LayoutEngine
             return node;
         }
 
+        if (element is HTMLElement { HasDirectTextContent: true, AcceptsDirectTextContent: true } &&
+            UsesCssNormalFlow(element))
+        {
+            // DOM Text only exists in the CSS line engine: the host becomes a measure leaf and
+            // ArrangeCore runs the normal-flow pass at arrange time (see ApplyYogaLayout).
+            // No intrinsic min sizes: block hosts must keep wrapping at the stretched width.
+            // The host is still a regular box of its parent: flex item sizing, border, position
+            // and overflow must match sibling nodes, or row items fall back to their intrinsic
+            // text width instead of honoring flex-grow/flex-basis.
+            YGNodeStyleSetDisplay(node, YGDisplay.Flex);
+            YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
+            ApplyFlexItem(element, node, parentW, parentH, em, rem);
+            ApplyDirectionAndAspectRatio(element, node);
+            ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            ApplyBorder(element, node, parentW, parentH, em, rem);
+            ApplyPosition(element, node, parentW, parentH, em, rem);
+            ApplyOverflow(element, node);
+            YGNodeSetMeasureFunc(node, LeafMeasureCallback);
+            return node;
+        }
+
         if (string.Equals(display, "flex", StringComparison.OrdinalIgnoreCase))
         {
             YGNodeStyleSetDisplay(node, YGDisplay.Flex);
@@ -674,6 +695,15 @@ public sealed partial class LayoutEngine
         };
     }
 
+    /// <summary>
+    /// Whether the element must run the CSS line engine at arrange because it carries DOM Text
+    /// (Yoga cannot see text nodes). Used by the Yoga apply pass and the table engine to
+    /// delegate those hosts to the normal-flow layout.
+    /// </summary>
+    internal bool ArrangesAsCssNormalFlow(Element element) =>
+        element is HTMLElement { HasDirectTextContent: true, AcceptsDirectTextContent: true } &&
+        UsesCssNormalFlow(element);
+
     private void ApplyYogaLayout(Element element, YogaNode yoga, float parentAbsX, float parentAbsY)
     {
         var left = YGNodeLayoutGetLeft(yoga);
@@ -698,6 +728,14 @@ public sealed partial class LayoutEngine
         if (IsTableRoot(ParseDisplayMode(display)))
         {
             new TableLayoutEngine(this).Arrange(element, rect, element.GetReservedScrollbarGutter());
+            UpdateScrollContentSize(element, rect);
+            return;
+        }
+
+        if (ArrangesAsCssNormalFlow(element))
+        {
+            // DOM Text hosts run their CSS line layout here; their children are not Yoga nodes.
+            ArrangeCore(element, rect);
             UpdateScrollContentSize(element, rect);
             return;
         }
@@ -968,7 +1006,7 @@ public sealed partial class LayoutEngine
         var affected = cache.WidthAffectedNodes;
         affected.Clear();
         foreach (var changed in selfChanged)
-            for (Element? current = changed; current != null; current = current.Parent)
+            for (Element? current = changed; current != null; current = current.Parent ?? current.VisualParent)
                 if (!affected.Add(current)) break;
         foreach (var pair in cache.Stamps)
         {
@@ -1139,13 +1177,13 @@ public sealed partial class LayoutEngine
     {
         if (_flexCaches.Count == 0) return;
         var documentRoot = flowRoot;
-        while (documentRoot.Parent is { } parent)
+        while ((documentRoot.Parent ?? documentRoot.VisualParent) is { } parent)
             documentRoot = parent;
         List<Element>? detached = null;
         foreach (var key in _flexCaches.Keys)
         {
             var top = key;
-            while (top.Parent is { } owner)
+            while ((top.Parent ?? top.VisualParent) is { } owner)
                 top = owner;
             if (!ReferenceEquals(top, documentRoot))
                 (detached ??= new List<Element>()).Add(key);
@@ -1159,24 +1197,26 @@ public sealed partial class LayoutEngine
     }
 
     /// <summary>
-    /// 宽度原位更新仅接受纯点数叶子：非替换型、无直接 DOM Text、无子节点、
+    /// 宽度原位更新仅接受纯点数叶子：非替换型、无直接 DOM Text、无语义/视觉子节点、
     /// 无 <see cref="ILayoutPreparingElement"/> 依赖的空 HTML 叶子
-    /// （<see cref="HtmlElement"/> 自定义测量，故按形态判定而非该标志），
+    /// （<see cref="HTMLElement.HasCustomMeasure"/> 恒为 true，故按形态判定而非该标志），
     /// 或无自定义测量的等价纯叶。
     /// </summary>
     internal static bool CanUpdateYogaWidthInPlace(Element element)
     {
         if (element is ILayoutPreparingElement) return false;
-        if (element is HtmlElement host)
+        if (element is HTMLElement host)
         {
             // 替换/表单宿主与按钮具有与内容相关的自绘代理或文本语义，保守重建。
             if (!host.AcceptsDirectTextContent || host.TagName is "button" or "details") return false;
             foreach (var child in host.ChildNodes)
                 if (child is Square.UI.Text) return false;
-            if (host.Children.Count > 0) return false;
+            if (host.Children.Count > 0 || host.VisualSidecars.Count > 0) return false;
             return true;
         }
-        return !element.HasCustomMeasure && element.Children.Count == 0;
+        return !element.HasCustomMeasure &&
+               element.Children.Count == 0 &&
+               element.VisualSidecars.Count == 0;
     }
 
     private static readonly string[] HeightDependentProperties =
@@ -1186,8 +1226,8 @@ public sealed partial class LayoutEngine
     {
         foreach (var element in session.Map.Keys)
         {
-            if (element is ILayoutPreparingElement) return false;
-            if (element is HtmlElement host)
+            if (element is ILayoutPreparingElement || element.VisualSidecars.Count != 0) return false;
+            if (element is HTMLElement host)
             {
                 if (!host.AcceptsDirectTextContent || host.TagName is "button" or "details") return false;
                 foreach (var child in host.ChildNodes)
@@ -2434,6 +2474,9 @@ public sealed partial class LayoutEngine
         element.ClearLayoutDirty();
         foreach (var child in element.Children)
             ClearDirtyRecursive(child);
+        if (element is HTMLElement host)
+            foreach (var sidecar in host.VisualSidecars)
+                ClearDirtyRecursive(sidecar);
     }
 
     private static int CollectVisibleChildren(Element element, Span<Element> destination)
@@ -2449,10 +2492,12 @@ public sealed partial class LayoutEngine
 
     private static (Element[] Array, int Count) RentVisibleChildren(Element element)
     {
-        var total = 0;
-        foreach (var _ in element.Children) total++;
+        Element marker = null!;
+        var hasMarker = element is HTMLElement host && host.TryGetListMarker(out marker);
+        var total = element.Children.Count + (hasMarker ? 1 : 0);
         var array = ArrayPool<Element>.Shared.Rent(Math.Max(1, total));
         var count = 0;
+        if (hasMarker) array[count++] = marker!;
         foreach (var child in element.Children)
         {
             if (child.IsVisible)

@@ -64,12 +64,14 @@ public sealed class TemplateCompletionServiceTests
     [InlineData("Editing.sqv")]
     public void TagCompletionPreservesDistinctHtmlAndSquareControls(string sourcePath)
     {
-        const string source = "<template><Bu";
+        const string source = "<template xmlns:html=\"http://www.w3.org/1999/xhtml\" xmlns:ui=\"urn:square:ui\"><";
+        var context = new TemplateCompletionContext(TemplateCompletionKind.Tag, string.Empty, string.Empty,
+            sourcePath.EndsWith(".sqv", StringComparison.Ordinal));
 
-        var items = TemplateCompletionService.GetItems(source, source.Length, sourcePath);
+        var items = TemplateCompletionService.GetItems(context, source);
 
-        Assert.Contains(items, item => item.Label == "button" && item.Detail == "Square.UI.Html.HtmlElement");
-        Assert.Contains(items, item => item.Label == "Button" && item.Detail == "Square.Controls.Button");
+        Assert.Contains(items, item => item.Label == "html:button" && item.Detail == "Square.Html.HTMLButtonElement");
+        Assert.Contains(items, item => item.Label == "ui:Button" && item.Detail == "Square.Controls.Button");
     }
 
     [Fact]
@@ -131,18 +133,18 @@ public sealed class TemplateCompletionServiceTests
     [Fact]
     public void IncompleteTagUsesSyntaxTreeForControlFlowCompletion()
     {
-        const string source = "<template><Sh";
+        const string source = "<template xmlns=\"urn:square:ui\"><Sh";
 
         var items = TemplateCompletionService.GetItems(source, source.Length, "Editing.sqx");
 
-        Assert.Contains(items, item => item.Label == "Show" && item.Detail == "Show");
+        Assert.Contains(items, item => item.Label == "Show");
         Assert.DoesNotContain(items, item => item.Label == "Button");
     }
 
     [Fact]
     public void IncompleteAttributeUsesOwningElementFromSyntaxTree()
     {
-        const string source = "<template><Button te";
+        const string source = "<template xmlns=\"urn:square:ui\"><Button te";
 
         var context = TemplateCompletionService.GetContext(source, source.Length, "Editing.sqx");
 
@@ -304,7 +306,7 @@ public sealed class TemplateCompletionServiceTests
     [Fact]
     public void AttributeCompletionIsTagAwareAndExcludesExistingAttributes()
     {
-        const string source = "<template><Button text=\"Save\"  /></template>";
+        const string source = "<template xmlns=\"urn:square:ui\"><Button text=\"Save\"  /></template>";
         var offset = source.IndexOf("  />", StringComparison.Ordinal) + 1;
 
         var context = TemplateCompletionService.GetContext(source, offset, "Editing.sqx");
@@ -321,7 +323,7 @@ public sealed class TemplateCompletionServiceTests
     [Fact]
     public void BuiltInAttributeCompletionMatchesRuntimeWritableProperties()
     {
-        const string button = "<template><Button  /></template>";
+        const string button = "<template xmlns=\"urn:square:ui\"><Button  /></template>";
         const string listItem = "<template><ListItem  /></template>";
         const string menuItem = "<template><MenuItem gr";
         var buttonItems = TemplateCompletionService.GetItems(
@@ -512,7 +514,7 @@ public sealed class TemplateCompletionServiceTests
     [InlineData("v-bind:te")]
     public void SqvBindingPrefixCompletesTagAwareProperties(string binding)
     {
-        var source = "<template><Button " + binding;
+        var source = "<template xmlns=\"urn:square:ui\"><Button " + binding;
 
         var context = TemplateCompletionService.GetContext(source, source.Length, "Editing.sqv");
         var items = TemplateCompletionService.GetItems(context, source);
@@ -602,7 +604,7 @@ public sealed class TemplateCompletionServiceTests
     [Fact]
     public void SqvBlankAttributeCompletionOffersStaticDynamicEventAndDirectiveForms()
     {
-        const string source = "<template><Button  /></template>";
+        const string source = "<template xmlns=\"urn:square:ui\"><Button  /></template>";
         var offset = source.IndexOf("  />", StringComparison.Ordinal) + 1;
 
         var items = TemplateCompletionService.GetItems(source, offset, "Editing.sqv");

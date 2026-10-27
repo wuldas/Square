@@ -1,33 +1,60 @@
-using System.Collections.Concurrent;
+using System.Buffers;
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
-using Square.Graphics;
+using System.Threading.Channels;
 using Square.Graphics.Codecs;
 using Square.Hosting;
 
 namespace Square.DevTools;
 
-internal sealed class CdpSession
+/// <summary>
+/// Single CDP connection: serial command/event state model with real element-tree DOM mapping.
+/// Node identity is (native DebugId, Document/Element/Text); frontend and backend IDs are
+/// separate monotonic positive sequences (the first Document is 1/1) that are never reused.
+/// </summary>
+internal sealed partial class CdpSession
 {
+    private const int InitialReceiveBufferSize = 16 * 1024;
+
+
     private readonly WebSocket _socket;
     private readonly AppWindow _window;
     private readonly DevToolsServer _server;
+    // Serializes command and event handling for the session model; always acquired
+    // before _writeGate, never from UI callbacks.
+    private readonly SemaphoreSlim _stateGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private readonly CancellationTokenSource _sessionShutdown = new();
-    private readonly ConcurrentBag<Task> _pendingEvents = [];
-    private readonly object _eventGate = new();
-    private readonly ConcurrentDictionary<int, int> _elementNodeIds = new();
-    private readonly ConcurrentDictionary<int, int> _nodeElementIds = new();
-    private readonly ConcurrentDictionary<int, int> _textNodeIds = new();
-    private int _nextNodeId = 2;
-    private bool _closing;
+    private readonly CancellationTokenSource _sessionShutdown;
+    private readonly Channel<CdpEvent> _events = Channel.CreateBounded<CdpEvent>(new BoundedChannelOptions(256)
+    {
+        SingleReader = true,
+        SingleWriter = false,
+        AllowSynchronousContinuations = false,
+        FullMode = BoundedChannelFullMode.Wait,
+    });
+    private readonly ArrayBufferWriter<byte> _sendBuffer = new(1024);
+    private byte[] _receiveBuffer = new byte[InitialReceiveBufferSize];
+    private int _receiveLength;
+    private Task _eventPumpTask = Task.CompletedTask;
+    private volatile bool _stopping;
 
-    private CdpSession(WebSocket socket, AppWindow window, DevToolsServer server)
+
+    // Domain flags; DOM and CSS jointly own exactly one InspectionChanged subscription.
+    private bool _runtimeEnabled;
+    private bool _inspectionSubscribed;
+
+    // Dirty coalescing: UI callbacks OR change kinds atomically and enqueue one signal;
+    // the pump clears the queued marker before exchanging the flags and taking the snapshot.
+    private int _pendingInspectionKinds;
+    private int _inspectionSignalQueued;
+
+
+    private CdpSession(WebSocket socket, AppWindow window, DevToolsServer server, CancellationToken cancellationToken)
     {
         _socket = socket;
         _window = window;
         _server = server;
+        _sessionShutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     }
 
     public static async Task RunAsync(
@@ -36,47 +63,60 @@ internal sealed class CdpSession
         DevToolsServer server,
         CancellationToken cancellationToken = default)
     {
-        var session = new CdpSession(socket, window, server);
+        var session = new CdpSession(socket, window, server, cancellationToken);
         window.InspectorNodeSelected += session.HandleInspectorNodeSelected;
+        window.InspectorModeCanceled += session.HandleInspectorModeCanceled;
+        session._eventPumpTask = Task.Run(session.RunEventPumpAsync);
+        var closeStatus = WebSocketCloseStatus.NormalClosure;
+        var closeDescription = "closed";
         try
         {
-            await session.RunCoreAsync(cancellationToken);
+            await session.RunCoreAsync(session._sessionShutdown.Token);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (CdpBinaryMessageException)
+        {
+            closeStatus = WebSocketCloseStatus.InvalidMessageType;
+            closeDescription = "Binary frames are not supported on the CDP connection.";
+        }
+        catch (OperationCanceledException) when (session._sessionShutdown.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-            {
-                try
-                {
-                    await socket.CloseAsync(
-                        WebSocketCloseStatus.InternalServerError,
-                        $"CDP session error: {exception.Message}",
-                        CancellationToken.None);
-                }
-                catch { }
-            }
+            closeStatus = WebSocketCloseStatus.InternalServerError;
+            closeDescription = $"CDP session error: {exception.Message}";
         }
         finally
         {
-            lock (session._eventGate)
-            {
-                session._closing = true;
-                session._sessionShutdown.Cancel();
-            }
             window.InspectorNodeSelected -= session.HandleInspectorNodeSelected;
-            try { await Task.WhenAll(session._pendingEvents.ToArray()); }
-            catch { }
-            session._writeGate.Dispose();
-            session._sessionShutdown.Dispose();
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            window.InspectorModeCanceled -= session.HandleInspectorModeCanceled;
+            if (session._inspectionSubscribed)
             {
-                try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None); }
-                catch { }
+                window.InspectionChanged -= session.HandleInspectionChanged;
+                session._inspectionSubscribed = false;
             }
-            socket.Dispose();
+            session._stopping = true;
+            session._sessionShutdown.Cancel();
+            session._logEnabled = false;
+            Interlocked.Exchange(ref session._logSubscription, null)?.Dispose();
+            session._events.Writer.TryComplete();
+            try { await session._eventPumpTask; }
+            catch { }
+            await session.DrainForNodeDelayAsync(cancel: true);
+            // Clears only this owner's native highlight/inspect state; the window handles
+            // owner-thread cleanup itself and never makes a closed window queue work.
+            try
+            {
+                window.ReleaseInspectorSession(session._ownerId);
+            }
+            finally
+            {
+                await session.CloseOutputAsync(closeStatus, closeDescription);
+                session._stateGate.Dispose();
+                session._writeGate.Dispose();
+                session._sessionShutdown.Dispose();
+                socket.Dispose();
+            }
         }
     }
 
@@ -84,66 +124,234 @@ internal sealed class CdpSession
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var message = await ReceiveTextAsync(cancellationToken);
-            if (message == null) return;
-            await DispatchAsync(message, cancellationToken);
+            var frameLength = await ReceiveFrameAsync(cancellationToken);
+            if (frameLength < 0) return;
+            await ProcessFrameAsync(frameLength, cancellationToken);
         }
     }
 
-    private void HandleInspectorNodeSelected(int debugId)
+    /// <summary>
+    /// Receives one complete text frame into the reusable session buffer and returns its
+    /// length, or -1 when the peer closed. The buffer must not be reused until the
+    /// <see cref="JsonDocument"/> parsed from it has been disposed.
+    /// </summary>
+    private async Task<int> ReceiveFrameAsync(CancellationToken cancellationToken)
     {
-        lock (_eventGate)
+        _receiveLength = 0;
+        while (true)
         {
-            if (_closing) return;
-            _pendingEvents.Add(SendInspectorNodeRequestedAsync(debugId));
+            if (_receiveLength == _receiveBuffer.Length)
+                Array.Resize(ref _receiveBuffer, _receiveBuffer.Length * 2);
+            var result = await _socket.ReceiveAsync(_receiveBuffer.AsMemory(_receiveLength), cancellationToken);
+            _receiveLength += result.Count;
+            if (result.MessageType == WebSocketMessageType.Close) return -1;
+            if (result.MessageType == WebSocketMessageType.Binary)
+                throw new CdpBinaryMessageException();
+            if (result.EndOfMessage) return _receiveLength;
         }
     }
 
-    private async Task SendInspectorNodeRequestedAsync(int debugId)
+    private async Task ProcessFrameAsync(int length, CancellationToken cancellationToken)
     {
+        JsonDocument document;
         try
         {
-            await SendEventAsync("Overlay.inspectNodeRequested", writer =>
-            {
-                writer.WriteNumber("backendNodeId", debugId);
-            }, _sessionShutdown.Token);
+            // Parses in place over the receive buffer; the document owns the bytes
+            // until it is disposed at the end of dispatch.
+            document = JsonDocument.Parse(new ReadOnlyMemory<byte>(_receiveBuffer, 0, length));
         }
-        catch (OperationCanceledException) when (_sessionShutdown.IsCancellationRequested)
+        catch (JsonException)
         {
+            await SendErrorAsync(0, -32700, "Invalid JSON.", cancellationToken);
+            return;
+        }
+
+        using (document)
+        {
+            await DispatchAsync(document, cancellationToken);
+        }
+    }
+
+    private void HandleInspectorNodeSelected(long ownerId, int debugId)
+    {
+        // UI-thread callback: only enqueues; a full queue cancels this slow connection
+        // instead of silently dropping DOM identity events. Other owners' selections
+        // belong to their own connections and are ignored here.
+        if (ownerId != _ownerId || _stopping) return;
+        if (_events.Writer.TryWrite(new CdpEvent(CdpEventKind.InspectorNodeSelected, OwnerId: ownerId, DebugId: debugId))) return;
+        CancelSession();
+    }
+
+    private void HandleInspectorModeCanceled(long ownerId)
+    {
+        if (ownerId != _ownerId || _stopping) return;
+        if (_events.Writer.TryWrite(new CdpEvent(CdpEventKind.InspectorModeCanceled, OwnerId: ownerId))) return;
+        CancelSession();
+    }
+
+    private void HandleInspectionChanged(ElementInspectionChangeKind kind)
+    {
+        // UI-thread callback: atomic OR of dirty kinds plus a single in-flight signal.
+        if (_stopping) return;
+        Interlocked.Or(ref _pendingInspectionKinds, (int)kind);
+        if (Interlocked.CompareExchange(ref _inspectionSignalQueued, 1, 0) != 0) return;
+        if (_events.Writer.TryWrite(new CdpEvent(CdpEventKind.InspectionChanged))) return;
+        CancelSession();
+    }
+
+    private void CancelSession()
+    {
+        _stopping = true;
+        try
+        {
+            _sessionShutdown.Cancel();
         }
         catch (ObjectDisposedException)
         {
         }
-        catch (WebSocketException)
+    }
+
+    private async Task RunEventPumpAsync()
+    {
+        try
+        {
+            await foreach (var @event in _events.Reader.ReadAllAsync(_sessionShutdown.Token))
+            {
+                try
+                {
+                    await HandleEventAsync(@event, _sessionShutdown.Token);
+                }
+                catch (WebSocketException)
+                {
+                    // A failed send ends only this connection.
+                    _stopping = true;
+                    _sessionShutdown.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_sessionShutdown.IsCancellationRequested)
+        {
+        }
+        catch (ChannelClosedException)
         {
         }
     }
 
-    private async Task DispatchAsync(string message, CancellationToken cancellationToken)
+    private async Task HandleEventAsync(CdpEvent @event, CancellationToken cancellationToken)
     {
-        using var document = JsonDocument.Parse(message);
+        await _stateGate.WaitAsync(cancellationToken);
+        try
+        {
+            switch (@event.Kind)
+            {
+                case CdpEventKind.InspectionChanged:
+                {
+                    // Reset the queued marker before exchanging the flags so changes that
+                    // arrive while the snapshot is taken can re-enqueue a fresh signal.
+                    Volatile.Write(ref _inspectionSignalQueued, 0);
+                    var kinds = (ElementInspectionChangeKind)Interlocked.Exchange(ref _pendingInspectionKinds, 0);
+                    await SyncDomAsync(kinds, cancellationToken);
+                    await SyncCssAsync(kinds, cancellationToken);
+                    return;
+                }
+                case CdpEventKind.ComputedStyleNotification:
+                {
+                    if (@event.OwnerId != _forNodeDelayTaskEpoch) return;
+                    var notify = _forNodeDelayPending && @event.OwnerId == _forNodeDelayEpoch;
+                    await DrainForNodeDelayAsync(cancel: false);
+                    _forNodeDelayPending = false;
+                    if (notify && _cssEnabled) await SendForNodeUpdateAsync(cancellationToken);
+                    return;
+                }
+                case CdpEventKind.InspectorNodeSelected:
+                {
+                    if (!_overlayEnabled) return;
+                    var key = new NodeKey(@event.DebugId, CdpNodeKind.Element);
+                    var backendNodeId = GetOrCreateBackendId(key);
+                    await SendEventAsync("Overlay.inspectNodeRequested", writer =>
+                    {
+                        writer.WriteNumber("backendNodeId", backendNodeId);
+                    }, cancellationToken);
+                    return;
+                }
+                case CdpEventKind.InspectorModeCanceled:
+                {
+                    if (!_overlayEnabled) return;
+                    await SendEventAsync("Overlay.inspectModeCanceled", static writer => { }, cancellationToken);
+                    return;
+                }
+                case CdpEventKind.LogEntry:
+                    await SendLogEntryAsync(@event.LogEntry, cancellationToken);
+                    return;
+            }
+        }
+        finally
+        {
+            _stateGate.Release();
+        }
+    }
+
+    private async Task DispatchAsync(JsonDocument document, CancellationToken cancellationToken)
+    {
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("id", out var idElement) ||
+            idElement.ValueKind != JsonValueKind.Number ||
             !idElement.TryGetInt32(out var id) ||
             !root.TryGetProperty("method", out var methodElement) ||
-            methodElement.ValueKind != JsonValueKind.String)
+            methodElement.ValueKind != JsonValueKind.String ||
+            (root.TryGetProperty("params", out var envelopeParams) && envelopeParams.ValueKind != JsonValueKind.Object))
         {
             await SendErrorAsync(0, -32600, "Invalid CDP request.", cancellationToken);
             return;
         }
 
         var method = methodElement.GetString() ?? "";
-        var parameters = root.TryGetProperty("params", out var paramsElement)
-            ? paramsElement.Clone()
-            : default;
+        var parameters = root.TryGetProperty("params", out var paramsElement) ? paramsElement : default;
+        await _stateGate.WaitAsync(cancellationToken);
         try
         {
-            await DispatchCommandAsync(id, method, parameters, cancellationToken);
+            try
+            {
+                await DispatchCommandAsync(id, method, parameters, cancellationToken);
+            }
+            catch (CdpRequestException exception)
+            {
+                await SendErrorAsync(id, exception.Code, exception.Message, cancellationToken);
+            }
+            catch (ArgumentException exception) when (exception.Message == "Invalid style edit range.")
+            {
+                // Native range validation for CSS.setStyleTexts carries the CDP code.
+                await SendErrorAsync(id, -32602, exception.Message, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                await SendErrorAsync(id, -32000, exception.Message, cancellationToken);
+            }
         }
-        catch (Exception exception)
+        finally
         {
-            await SendErrorAsync(id, -32000, exception.Message, cancellationToken);
+            _stateGate.Release();
+        }
+    }
+
+    /// <summary>Responds to the peer with an independent one second deadline; aborts on timeout or failure.</summary>
+    private async Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string closeDescription)
+    {
+        if (_socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived)) return;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            await _socket.CloseOutputAsync(closeStatus, closeDescription, timeout.Token);
+        }
+        catch
+        {
+            _socket.Abort();
         }
     }
 
@@ -156,15 +364,35 @@ internal sealed class CdpSession
         switch (method)
         {
             case "Runtime.enable":
+                // Idempotent: the execution context is announced exactly once, on the
+                // disabled -> enabled transition only.
+                if (_runtimeEnabled)
+                {
+                    await SendEmptyResultAsync(id, cancellationToken);
+                    return;
+                }
+                _runtimeEnabled = true;
                 await SendEmptyResultAsync(id, cancellationToken);
                 await SendExecutionContextCreatedAsync(cancellationToken);
                 return;
+            case "Log.enable":
+                await EnableLogAsync(id, cancellationToken);
+                return;
+            case "Log.disable":
+                await DisableLogAsync(id, cancellationToken);
+                return;
+            case "Log.clear":
+                _server.LogCollector?.Clear();
+                await SendEmptyResultAsync(id, cancellationToken);
+                return;
             case "Runtime.disable":
+                _runtimeEnabled = false;
+                await SendEmptyResultAsync(id, cancellationToken);
+                return;
             case "Runtime.releaseObject":
             case "Runtime.releaseObjectGroup":
             case "Runtime.runIfWaitingForDebugger":
             case "Runtime.addBinding":
-            case "DOM.disable":
             case "Page.disable":
             case "Target.setAutoAttach":
             case "Target.setDiscoverTargets":
@@ -172,13 +400,8 @@ internal sealed class CdpSession
             case "Inspector.disable":
             case "Console.enable":
             case "Console.disable":
-            case "Log.enable":
-            case "Log.disable":
             case "Network.enable":
             case "Network.disable":
-            case "CSS.enable":
-            case "CSS.disable":
-            case "Overlay.enable":
             case "Overlay.setShowViewportSizeOnResize":
             case "Overlay.setShowGridOverlays":
             case "Overlay.setShowFlexOverlays":
@@ -187,16 +410,37 @@ internal sealed class CdpSession
             case "Overlay.setShowIsolatedElements":
                 await SendEmptyResultAsync(id, cancellationToken);
                 return;
+            case "DOM.enable":
+            {
+                var transitioned = !_domEnabled;
+                EnableDom();
+                await SendEmptyResultAsync(id, cancellationToken);
+                if (transitioned)
+                    await SendEventAsync("DOM.documentUpdated", static writer => { }, cancellationToken);
+                return;
+            }
+            case "DOM.disable":
+                _domEnabled = false;
+                ResetNodeMaps();
+                MaybeUnsubscribeInspection();
+                await SendEmptyResultAsync(id, cancellationToken);
+                return;
+            case "Overlay.enable":
+                _overlayEnabled = true;
+                await SendEmptyResultAsync(id, cancellationToken);
+                return;
             case "Overlay.disable":
-                await _window.ClearInspectorHighlightAsync();
-                await _window.SetInspectorModeAsync(false);
+                // Hiding and disabling only affect this session's owner state.
+                _overlayEnabled = false;
+                await _window.ClearInspectorHighlightAsync(_ownerId, cancellationToken).WaitAsync(cancellationToken);
+                await _window.SetInspectorModeAsync(false, options: null, _ownerId, cancellationToken).WaitAsync(cancellationToken);
                 await SendEmptyResultAsync(id, cancellationToken);
                 return;
             case "Overlay.highlightNode":
                 await HighlightNodeAsync(id, parameters, cancellationToken);
                 return;
             case "Overlay.hideHighlight":
-                await _window.ClearInspectorHighlightAsync();
+                await _window.ClearInspectorHighlightAsync(_ownerId, cancellationToken).WaitAsync(cancellationToken);
                 await SendEmptyResultAsync(id, cancellationToken);
                 return;
             case "Overlay.highlightRect":
@@ -225,22 +469,17 @@ internal sealed class CdpSession
                     writer.WriteEndObject();
                 }, cancellationToken);
                 return;
-            case "DOM.enable":
-                await SendEmptyResultAsync(id, cancellationToken);
-                await SendEventAsync("DOM.documentUpdated", static writer => { }, cancellationToken);
-                return;
-            case "Page.enable":
-                await SendEmptyResultAsync(id, cancellationToken);
-                return;
             case "DOM.getDocument":
+                await SendDocumentAsync(id, parameters, flattened: false, cancellationToken);
+                return;
             case "DOM.getFlattenedDocument":
-                await SendDocumentAsync(id, cancellationToken);
+                await SendDocumentAsync(id, parameters, flattened: true, cancellationToken);
                 return;
             case "DOM.requestChildNodes":
-                await SendChildNodesAsync(id, parameters, cancellationToken);
+                await RequestChildNodesAsync(id, parameters, cancellationToken);
                 return;
             case "DOM.describeNode":
-                await SendDescribeNodeAsync(id, parameters, cancellationToken);
+                await DescribeNodeAsync(id, parameters, cancellationToken);
                 return;
             case "DOM.getAttributes":
                 await SendAttributesAsync(id, parameters, cancellationToken);
@@ -258,16 +497,39 @@ internal sealed class CdpSession
                 await SendEmptyResultAsync(id, cancellationToken);
                 return;
             case "DOM.pushNodesByBackendIdsToFrontend":
-                await SendResultAsync(id, static writer =>
-                {
-                    writer.WritePropertyName("nodeIds");
-                    writer.WriteStartArray();
-                    writer.WriteEndArray();
-                }, cancellationToken);
+                await PushNodesByBackendIdsAsync(id, parameters, cancellationToken);
                 return;
             case "DOM.resolveNode":
                 await SendResolveNodeAsync(id, parameters, cancellationToken);
                 return;
+            case "CSS.enable":
+            {
+                var transitioned = !_cssEnabled;
+                _cssEnabled = true;
+                EnsureInspectionSubscription();
+                await SendEmptyResultAsync(id, cancellationToken);
+                if (transitioned && _server.AllowChromeStyleEditing)
+                    await AnnounceStyleSheetsAsync(cancellationToken);
+                if (transitioned) await EstablishBatchBaselinesAsync(cancellationToken);
+                return;
+            }
+            case "CSS.disable":
+            {
+                _cssEnabled = false;
+                // A registered pending take is completed before the tracking state dies.
+                await CompletePendingTakeAsync(cancellationToken);
+                CancelForNodeDelay();
+                await DrainForNodeDelayAsync(cancel: true);
+                _trackedForNodeKey = null;
+                _forNodeBaseline = null;
+                _trackedProperties.Clear();
+                _batchBaselines.Clear();
+                _pendingTakeNodeIds.Clear();
+                _announcedStyleSheets.Clear();
+                MaybeUnsubscribeInspection();
+                await SendEmptyResultAsync(id, cancellationToken);
+                return;
+            }
             case "CSS.getComputedStyleForNode":
                 await SendComputedStyleAsync(id, parameters, cancellationToken);
                 return;
@@ -277,21 +539,23 @@ internal sealed class CdpSession
             case "CSS.getAnimatedStylesForNode":
                 await SendAnimatedStylesAsync(id, parameters, cancellationToken);
                 return;
-            case "CSS.trackComputedStyleUpdatesForNode":
-            case "CSS.takeComputedStyleUpdates":
-            case "CSS.trackComputedStyleUpdates":
-                await SendResultAsync(id, writer =>
-                {
-                    if (method == "CSS.takeComputedStyleUpdates")
-                    {
-                        writer.WritePropertyName("nodeIds");
-                        writer.WriteStartArray();
-                        writer.WriteEndArray();
-                    }
-                }, cancellationToken);
-                return;
             case "CSS.getInlineStylesForNode":
                 await SendInlineStylesAsync(id, parameters, cancellationToken);
+                return;
+            case "CSS.setStyleTexts":
+                await SetStyleTextsAsync(id, parameters, cancellationToken);
+                return;
+            case "CSS.getStyleSheetText":
+                await SendStyleSheetTextAsync(id, parameters, cancellationToken);
+                return;
+            case "CSS.trackComputedStyleUpdatesForNode":
+                await TrackComputedStyleUpdatesForNodeAsync(id, parameters, cancellationToken);
+                return;
+            case "CSS.trackComputedStyleUpdates":
+                await TrackComputedStyleUpdatesAsync(id, parameters, cancellationToken);
+                return;
+            case "CSS.takeComputedStyleUpdates":
+                await TakeComputedStyleUpdatesAsync(id, cancellationToken);
                 return;
             case "CSS.getPlatformFontsForNode":
                 await SendResultAsync(id, static writer =>
@@ -308,6 +572,9 @@ internal sealed class CdpSession
                     writer.WriteStartArray();
                     writer.WriteEndArray();
                 }, cancellationToken);
+                return;
+            case "Page.enable":
+                await SendEmptyResultAsync(id, cancellationToken);
                 return;
             case "Page.getFrameTree":
                 await SendFrameTreeAsync(id, cancellationToken);
@@ -335,456 +602,12 @@ internal sealed class CdpSession
                 await SendTargetInfoAsync(id, cancellationToken);
                 return;
             case "Schema.getDomains":
-                await SendResultAsync(id, static writer => writer.WriteStartArray("domains"), cancellationToken, closeArray: true);
+                await SendResultAsync(id, CdpTargetDiscovery.WriteDomains, cancellationToken);
                 return;
             default:
                 await SendErrorAsync(id, -32601, $"Method '{method}' is not supported.", cancellationToken);
                 return;
         }
-    }
-
-    private async Task HighlightNodeAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        if (!_nodeElementIds.TryGetValue(nodeId, out var debugId) ||
-            !await _window.SetInspectorHighlightAsync(debugId))
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-        await SendEmptyResultAsync(id, cancellationToken);
-    }
-
-    private async Task SetInspectModeAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var mode = parameters.ValueKind == JsonValueKind.Object &&
-                   parameters.TryGetProperty("mode", out var modeElement)
-            ? modeElement.GetString()
-            : null;
-        await _window.SetInspectorModeAsync(!string.Equals(mode, "none", StringComparison.OrdinalIgnoreCase));
-        await SendEmptyResultAsync(id, cancellationToken);
-    }
-
-    private async Task SendDocumentAsync(int id, CancellationToken cancellationToken)
-    {
-        var snapshot = await _window.CaptureInspectionSnapshotAsync(includeSourcePaths: false, includeTextContent: true);
-        var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-        document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("root");
-            WriteNode(writer, document, includeChildren: true);
-        }, cancellationToken);
-    }
-
-    private async Task SendChildNodesAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        var snapshot = await _window.CaptureInspectionSnapshotAsync(false, true);
-        var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-        document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        var node = FindNode(document, nodeId);
-        if (node == null)
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        await SendEventAsync("DOM.setChildNodes", writer =>
-        {
-            writer.WriteNumber("parentId", node.NodeId);
-            writer.WritePropertyName("nodes");
-            writer.WriteStartArray();
-            foreach (var child in node.Children) WriteNode(writer, child, includeChildren: false);
-            writer.WriteEndArray();
-        }, cancellationToken);
-        await SendEmptyResultAsync(id, cancellationToken);
-    }
-
-    private async Task SendDescribeNodeAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        var snapshot = await _window.CaptureInspectionSnapshotAsync(false, true);
-        var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-        document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        var node = FindNode(document, nodeId);
-        if (node == null)
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("node");
-            WriteNode(writer, node, includeChildren: true);
-        }, cancellationToken);
-    }
-
-    private async Task SendAttributesAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        var snapshot = await _window.CaptureInspectionSnapshotAsync(false, true);
-        var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-        document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        var node = FindNode(document, nodeId);
-        if (node == null)
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("attributes");
-            writer.WriteStartArray();
-            foreach (var attribute in node.Attributes)
-            {
-                writer.WriteStringValue(attribute.Name);
-                writer.WriteStringValue(attribute.Value);
-            }
-            writer.WriteEndArray();
-        }, cancellationToken);
-    }
-
-    private async Task SendNodeForLocationAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var x = ReadFloat(parameters, "x");
-        var y = ReadFloat(parameters, "y");
-        var hit = await _window.HitTestInspectionAsync(new Point(x, y), false, true);
-        if (hit == null)
-        {
-            await SendResultAsync(id, static writer => { }, cancellationToken);
-            return;
-        }
-
-        var nodeId = GetElementNodeId(hit.Id);
-        await SendResultAsync(id, writer =>
-        {
-            writer.WriteNumber("backendNodeId", hit.Id);
-            writer.WriteNumber("nodeId", nodeId);
-            writer.WriteString("frameId", _server.TargetId);
-        }, cancellationToken);
-    }
-
-    private async Task SendBoxModelAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        if (!_nodeElementIds.TryGetValue(nodeId, out var debugId))
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        var node = await _window.InspectElementAsync(debugId, false, true);
-        if (node == null)
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        if (node.BoxModel == null)
-        {
-            await SendErrorAsync(id, -32000, "Box Model is not available for this node.", cancellationToken);
-            return;
-        }
-
-        await SendResultAsync(id, writer =>
-        {
-            var boxModel = node.BoxModel;
-            writer.WritePropertyName("model");
-            writer.WriteStartObject();
-            writer.WritePropertyName("content");
-            WriteQuad(writer, boxModel.Content);
-            writer.WritePropertyName("padding");
-            WriteQuad(writer, boxModel.Padding);
-            writer.WritePropertyName("border");
-            WriteQuad(writer, boxModel.Border);
-            writer.WritePropertyName("margin");
-            WriteQuad(writer, boxModel.Margin);
-            writer.WriteNumber("width", node.Bounds.Width);
-            writer.WriteNumber("height", node.Bounds.Height);
-            writer.WriteEndObject();
-        }, cancellationToken);
-    }
-
-    private async Task SendOuterHtmlAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        var snapshot = await _window.CaptureInspectionSnapshotAsync(false, true);
-        var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-        document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        var node = FindNode(document, nodeId);
-        if (node == null)
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        var html = new StringBuilder();
-        WriteOuterHtml(html, node);
-        await SendResultAsync(id, writer => writer.WriteString("outerHTML", html.ToString()), cancellationToken);
-    }
-
-    private async Task SendInlineStylesAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var styles = await GetElementStylesAsync(id, parameters, cancellationToken);
-        if (styles == null) return;
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("inlineStyle");
-            WriteInlineStyle(writer, styles.InlineCssText);
-            writer.WritePropertyName("attributesStyle");
-            writer.WriteNullValue();
-        }, cancellationToken);
-    }
-
-    private static void WriteQuad(Utf8JsonWriter writer, Rect bounds)
-    {
-        writer.WriteStartArray();
-        writer.WriteNumberValue(bounds.Left);
-        writer.WriteNumberValue(bounds.Top);
-        writer.WriteNumberValue(bounds.Right);
-        writer.WriteNumberValue(bounds.Top);
-        writer.WriteNumberValue(bounds.Right);
-        writer.WriteNumberValue(bounds.Bottom);
-        writer.WriteNumberValue(bounds.Left);
-        writer.WriteNumberValue(bounds.Bottom);
-        writer.WriteEndArray();
-    }
-
-    private static void WriteOuterHtml(StringBuilder builder, CdpNode node)
-    {
-        if (node.NodeType == 9)
-        {
-            foreach (var child in node.Children) WriteOuterHtml(builder, child);
-            return;
-        }
-        if (node.NodeType == 3)
-        {
-            builder.Append(System.Net.WebUtility.HtmlEncode(node.NodeValue));
-            return;
-        }
-
-        builder.Append('<').Append(node.LocalName.ToLowerInvariant());
-        foreach (var attribute in node.Attributes)
-            builder.Append(' ').Append(attribute.Name).Append("=\"")
-                .Append(System.Net.WebUtility.HtmlEncode(attribute.Value)).Append('\"');
-        builder.Append('>');
-        foreach (var child in node.Children) WriteOuterHtml(builder, child);
-        builder.Append("</").Append(node.LocalName.ToLowerInvariant()).Append('>');
-    }
-
-    private async Task SendResolveNodeAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        if (!_nodeElementIds.ContainsKey(nodeId))
-        {
-            var snapshot = await _window.CaptureInspectionSnapshotAsync(false, true);
-            var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-            document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        }
-
-        if (!_nodeElementIds.ContainsKey(nodeId))
-        {
-            await SendErrorAsync(id, -32000, "Node not found.", cancellationToken);
-            return;
-        }
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("object");
-            writer.WriteStartObject();
-            writer.WriteString("type", "object");
-            writer.WriteString("objectId", $"square-node-{nodeId}");
-            writer.WriteString("description", "Square Element");
-            writer.WriteEndObject();
-        }, cancellationToken);
-    }
-
-    private async Task SendComputedStyleAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var styles = await GetElementStylesAsync(id, parameters, cancellationToken);
-        if (styles == null) return;
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("computedStyle");
-            writer.WriteStartArray();
-            foreach (var pair in styles.Computed)
-            {
-                writer.WriteStartObject();
-                writer.WriteString("name", pair.Key);
-                writer.WriteString("value", pair.Value);
-                writer.WriteEndObject();
-            }
-            writer.WriteEndArray();
-        }, cancellationToken);
-    }
-
-    private async Task SendMatchedStylesAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var styles = await GetElementStylesAsync(id, parameters, cancellationToken);
-        if (styles == null) return;
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("matchedCSSRules");
-            writer.WriteStartArray();
-            foreach (var rule in styles.MatchedRules ?? [])
-            {
-                writer.WriteStartObject();
-                writer.WritePropertyName("rule");
-                WriteMatchedCssRule(writer, rule);
-                writer.WritePropertyName("matchingSelectors");
-                writer.WriteStartArray();
-                writer.WriteNumberValue(0);
-                writer.WriteEndArray();
-                writer.WriteEndObject();
-            }
-            writer.WriteEndArray();
-            writer.WritePropertyName("pseudoElements");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WritePropertyName("inherited");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WritePropertyName("inheritedPseudoElements");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WritePropertyName("cssKeyframesRules");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WritePropertyName("inlineStyle");
-            WriteInlineStyle(writer, styles.InlineCssText);
-        }, cancellationToken);
-    }
-
-    private async Task SendAnimatedStylesAsync(int id, JsonElement parameters, CancellationToken cancellationToken)
-    {
-        var styles = await GetElementStylesAsync(id, parameters, cancellationToken);
-        if (styles == null) return;
-
-        await SendResultAsync(id, writer =>
-        {
-            writer.WritePropertyName("animatedStyles");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WritePropertyName("transitionsStyle");
-            WriteInlineStyle(writer, "");
-            writer.WritePropertyName("inherited");
-            writer.WriteStartArray();
-            writer.WriteEndArray();
-            writer.WritePropertyName("inlineStyle");
-            WriteInlineStyle(writer, styles.InlineCssText);
-        }, cancellationToken);
-    }
-
-    private async Task<ElementInspectionStyleSnapshot?> GetElementStylesAsync(
-        int requestId,
-        JsonElement parameters,
-        CancellationToken cancellationToken)
-    {
-        var nodeId = ReadNodeId(parameters);
-        if (!_nodeElementIds.ContainsKey(nodeId))
-        {
-            var snapshot = await _window.CaptureInspectionSnapshotAsync(false, true);
-            var document = new CdpNode(1, 1, 9, "#document", "", "", 0, "square://application");
-            document.Children.Add(BuildElement(snapshot.Root, document.NodeId));
-        }
-
-        if (!_nodeElementIds.TryGetValue(nodeId, out var debugId))
-        {
-            await SendErrorAsync(requestId, -32000, "Node not found.", cancellationToken);
-            return null;
-        }
-
-        var styles = await _window.InspectElementStylesAsync(debugId);
-        if (styles == null)
-        {
-            await SendErrorAsync(requestId, -32000, "Node styles not found.", cancellationToken);
-            return null;
-        }
-        return styles;
-    }
-
-    private static void WriteMatchedCssRule(Utf8JsonWriter writer, ElementInspectionStyleRule rule)
-    {
-        writer.WriteStartObject();
-        writer.WriteString("styleSheetId", "square-css");
-        writer.WritePropertyName("selectorList");
-        writer.WriteStartObject();
-        writer.WritePropertyName("selectors");
-        writer.WriteStartArray();
-        writer.WriteStringValue(rule.Selector);
-        writer.WriteEndArray();
-        writer.WriteString("text", rule.Selector);
-        writer.WriteEndObject();
-        writer.WriteString("origin", "regular");
-        writer.WritePropertyName("style");
-        WriteDeclarationStyle(writer, "square-css", rule.Declarations);
-        writer.WriteEndObject();
-    }
-
-    private static void WriteDeclarationStyle(
-        Utf8JsonWriter writer,
-        string styleSheetId,
-        IReadOnlyList<ElementInspectionStyleDeclaration> declarations)
-    {
-        writer.WriteStartObject();
-        writer.WriteString("styleSheetId", styleSheetId);
-        writer.WritePropertyName("cssProperties");
-        writer.WriteStartArray();
-        foreach (var declaration in declarations)
-        {
-            writer.WriteStartObject();
-            writer.WriteString("name", declaration.Property);
-            writer.WriteString("value", declaration.Value);
-            writer.WriteBoolean("important", declaration.Important);
-            writer.WriteBoolean("implicit", false);
-            writer.WriteBoolean("parsedOk", true);
-            writer.WriteBoolean("disabled", false);
-            writer.WriteEndObject();
-        }
-        writer.WriteEndArray();
-        writer.WritePropertyName("shorthandEntries");
-        writer.WriteStartArray();
-        writer.WriteEndArray();
-        writer.WriteString("cssText", string.Join(" ", declarations.Select(static declaration =>
-            $"{declaration.Property}: {declaration.Value}{(declaration.Important ? " !important" : "")};")));
-        writer.WriteEndObject();
-    }
-
-    private static void WriteInlineStyle(Utf8JsonWriter writer, string cssText)
-    {
-        writer.WriteStartObject();
-        writer.WriteString("styleSheetId", "square-inline");
-        writer.WritePropertyName("cssProperties");
-        writer.WriteStartArray();
-        foreach (var declaration in cssText.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var separator = declaration.IndexOf(':');
-            if (separator <= 0) continue;
-            var name = declaration[..separator].Trim();
-            var value = declaration[(separator + 1)..].Trim();
-            var important = value.EndsWith("!important", StringComparison.OrdinalIgnoreCase);
-            if (important) value = value[..^10].TrimEnd();
-            writer.WriteStartObject();
-            writer.WriteString("name", name);
-            writer.WriteString("value", value);
-            writer.WriteBoolean("important", important);
-            writer.WriteBoolean("implicit", false);
-            writer.WriteBoolean("parsedOk", true);
-            writer.WriteBoolean("disabled", false);
-            writer.WriteEndObject();
-        }
-        writer.WriteEndArray();
-        writer.WritePropertyName("shorthandEntries");
-        writer.WriteStartArray();
-        writer.WriteEndArray();
-        writer.WriteString("cssText", cssText);
-        writer.WriteEndObject();
     }
 
     private async Task SendResourceTreeAsync(int id, CancellationToken cancellationToken)
@@ -843,8 +666,6 @@ internal sealed class CdpSession
             writer.WriteStartObject();
             writer.WriteNumber("offsetX", 0);
             writer.WriteNumber("offsetY", 0);
-            writer.WriteNumber("pageX", 0);
-            writer.WriteNumber("pageY", 0);
             writer.WriteNumber("clientWidth", size.Width);
             writer.WriteNumber("clientHeight", size.Height);
             writer.WriteNumber("scale", 1);
@@ -861,7 +682,7 @@ internal sealed class CdpSession
 
     private async Task SendScreenshotAsync(int id, CancellationToken cancellationToken)
     {
-        using var bitmap = await _window.CaptureRendererBitmapAsync();
+        using var bitmap = await _window.CaptureRendererBitmapAsync().WaitAsync(cancellationToken);
         using var stream = new MemoryStream();
         BitmapPngEncoder.Save(bitmap, stream);
         var base64 = Convert.ToBase64String(stream.ToArray());
@@ -931,90 +752,20 @@ internal sealed class CdpSession
         writer.WriteEndObject();
     }
 
-    private CdpNode BuildElement(ElementInspectionNode node, int parentId)
+    private void EnsureInspectionSubscription()
     {
-        var nodeId = GetElementNodeId(node.Id);
-        var element = new CdpNode(
-            nodeId,
-            node.Id,
-            1,
-            node.TagName.ToUpperInvariant(),
-            node.TagName,
-            "",
-            parentId,
-            "");
-        if (!string.IsNullOrEmpty(node.ElementId))
-            element.Attributes.Add(new CdpAttribute("id", node.ElementId));
-        if (node.ClassNames is { Count: > 0 })
-            element.Attributes.Add(new CdpAttribute("class", string.Join(' ', node.ClassNames)));
-        if (!string.IsNullOrEmpty(node.ComponentName))
-            element.Attributes.Add(new CdpAttribute("data-square-component", node.ComponentName));
-        foreach (var child in node.Children)
-            element.Children.Add(BuildElement(child, nodeId));
-        if (node.Text != null)
-        {
-            var textId = GetTextNodeId(node.Id);
-            element.Children.Add(new CdpNode(textId, node.Id, 3, "#text", "", node.Text, nodeId, ""));
-        }
-        return element;
+        if (_inspectionSubscribed) return;
+        _window.InspectionChanged += HandleInspectionChanged;
+        _inspectionSubscribed = true;
     }
 
-    private int GetElementNodeId(int debugId)
+    private void MaybeUnsubscribeInspection()
     {
-        if (_elementNodeIds.TryGetValue(debugId, out var nodeId)) return nodeId;
-        nodeId = _nextNodeId++;
-        _elementNodeIds[debugId] = nodeId;
-        _nodeElementIds[nodeId] = debugId;
-        return nodeId;
-    }
-
-    private int GetTextNodeId(int debugId)
-    {
-        if (_textNodeIds.TryGetValue(debugId, out var nodeId)) return nodeId;
-        nodeId = _nextNodeId++;
-        _textNodeIds[debugId] = nodeId;
-        return nodeId;
-    }
-
-    private static CdpNode? FindNode(CdpNode node, int nodeId)
-    {
-        if (node.NodeId == nodeId) return node;
-        foreach (var child in node.Children)
-        {
-            var found = FindNode(child, nodeId);
-            if (found != null) return found;
-        }
-        return null;
-    }
-
-    private static void WriteNode(Utf8JsonWriter writer, CdpNode node, bool includeChildren)
-    {
-        writer.WriteStartObject();
-        writer.WriteNumber("nodeId", node.NodeId);
-        writer.WriteNumber("backendNodeId", node.BackendNodeId);
-        writer.WriteNumber("nodeType", node.NodeType);
-        writer.WriteString("nodeName", node.NodeName);
-        writer.WriteString("localName", node.LocalName);
-        writer.WriteString("nodeValue", node.NodeValue);
-        if (node.ParentId != 0) writer.WriteNumber("parentId", node.ParentId);
-        if (node.DocumentUrl.Length > 0) writer.WriteString("documentURL", node.DocumentUrl);
-        writer.WritePropertyName("attributes");
-        writer.WriteStartArray();
-        foreach (var attribute in node.Attributes)
-        {
-            writer.WriteStringValue(attribute.Name);
-            writer.WriteStringValue(attribute.Value);
-        }
-        writer.WriteEndArray();
-        writer.WriteNumber("childNodeCount", node.Children.Count);
-        if (includeChildren)
-        {
-            writer.WritePropertyName("children");
-            writer.WriteStartArray();
-            foreach (var child in node.Children) WriteNode(writer, child, true);
-            writer.WriteEndArray();
-        }
-        writer.WriteEndObject();
+        if (!_inspectionSubscribed || _domEnabled || _cssEnabled) return;
+        _window.InspectionChanged -= HandleInspectionChanged;
+        _inspectionSubscribed = false;
+        Interlocked.Exchange(ref _pendingInspectionKinds, 0);
+        Volatile.Write(ref _inspectionSignalQueued, 0);
     }
 
     private async Task SendEmptyResultAsync(int id, CancellationToken cancellationToken) =>
@@ -1023,8 +774,7 @@ internal sealed class CdpSession
     private async Task SendResultAsync(
         int id,
         Action<Utf8JsonWriter> writeResult,
-        CancellationToken cancellationToken,
-        bool closeArray = false)
+        CancellationToken cancellationToken)
     {
         await SendJsonAsync(writer =>
         {
@@ -1032,7 +782,6 @@ internal sealed class CdpSession
             writer.WritePropertyName("result");
             writer.WriteStartObject();
             writeResult(writer);
-            if (closeArray) writer.WriteEndArray();
             writer.WriteEndObject();
         }, cancellationToken);
     }
@@ -1064,20 +813,26 @@ internal sealed class CdpSession
 
     private async Task SendJsonAsync(Action<Utf8JsonWriter> write, CancellationToken cancellationToken)
     {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
-        {
-            writer.WriteStartObject();
-            write(writer);
-            writer.WriteEndObject();
-            writer.Flush();
-        }
-
-        var payload = stream.ToArray();
         await _writeGate.WaitAsync(cancellationToken);
         try
         {
-            await _socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken);
+            _sendBuffer.Clear();
+            using (var writer = new Utf8JsonWriter(_sendBuffer))
+            {
+                writer.WriteStartObject();
+                write(writer);
+                writer.WriteEndObject();
+                writer.Flush();
+            }
+            // Publication updates the node maps during serialization. Establish tracked
+            // baselines before the peer can react to the new node's response or event.
+            if (_publishedBatchBaselinesPending)
+            {
+                await EstablishBatchBaselinesAsync(cancellationToken);
+                _publishedBatchBaselinesPending = false;
+            }
+
+            await _socket.SendAsync(_sendBuffer.WrittenMemory, WebSocketMessageType.Text, true, cancellationToken);
         }
         finally
         {
@@ -1085,64 +840,28 @@ internal sealed class CdpSession
         }
     }
 
-    private async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    private enum CdpEventKind
     {
-        var buffer = new byte[16 * 1024];
-        using var stream = new MemoryStream();
-        while (true)
-        {
-            var result = await _socket.ReceiveAsync(buffer, cancellationToken);
-            if (result.MessageType == WebSocketMessageType.Close)
-                return null;
-            if (result.MessageType != WebSocketMessageType.Text)
-                throw new InvalidOperationException("Only text CDP WebSocket messages are supported.");
-            stream.Write(buffer, 0, result.Count);
-            if (result.EndOfMessage) break;
-        }
-        return Encoding.UTF8.GetString(stream.ToArray());
+        InspectionChanged,
+        InspectorNodeSelected,
+        InspectorModeCanceled,
+        ComputedStyleNotification,
+        LogEntry,
     }
 
-    private int ReadNodeId(JsonElement parameters)
+    private readonly record struct CdpEvent(
+        CdpEventKind Kind,
+        long OwnerId = 0,
+        int DebugId = 0,
+        DevToolsLogEntry LogEntry = default);
+
+    /// <summary>Carries an explicit CDP error code for a parameter-level request failure.</summary>
+    private sealed class CdpRequestException(int code, string message) : Exception(message)
     {
-        if (parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("nodeId", out var nodeId) && nodeId.TryGetInt32(out var result))
-            return result;
-        if (parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("backendNodeId", out var backendNodeId) && backendNodeId.TryGetInt32(out result))
-        {
-            if (_elementNodeIds.TryGetValue(result, out var nodeIdFromDebugId))
-                return nodeIdFromDebugId;
-            return result;
-        }
-        throw new InvalidOperationException("'nodeId' or 'backendNodeId' is required.");
+        public int Code { get; } = code;
     }
 
-    private static float ReadFloat(JsonElement parameters, string name)
+    private sealed class CdpBinaryMessageException : Exception
     {
-        if (parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty(name, out var value) && value.TryGetSingle(out var result))
-            return result;
-        throw new InvalidOperationException($"'{name}' must be a number.");
     }
-
-    private sealed class CdpNode(
-        int nodeId,
-        int backendNodeId,
-        int nodeType,
-        string nodeName,
-        string localName,
-        string nodeValue,
-        int parentId,
-        string documentUrl)
-    {
-        public int NodeId { get; } = nodeId;
-        public int BackendNodeId { get; } = backendNodeId;
-        public int NodeType { get; } = nodeType;
-        public string NodeName { get; } = nodeName;
-        public string LocalName { get; } = localName;
-        public string NodeValue { get; } = nodeValue;
-        public int ParentId { get; } = parentId;
-        public string DocumentUrl { get; } = documentUrl;
-        public List<CdpAttribute> Attributes { get; } = [];
-        public List<CdpNode> Children { get; } = [];
-    }
-
-    private sealed record CdpAttribute(string Name, string Value);
 }

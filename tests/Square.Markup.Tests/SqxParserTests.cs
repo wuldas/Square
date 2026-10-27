@@ -11,7 +11,7 @@ public class SqxParserTests
     [Fact]
     public void ParsesSlotsWhileLegacyRouterTagsRemainOrdinaryElements()
     {
-        const string source = "<template><Router initialPath=\"/\"><Route path=\"/\" component={Shell}><Route path=\":id\" component={Page} /></Route></Router><Slot name=\"header\" /><Outlet /></template>";
+        const string source = "<template xmlns=\"urn:square:ui\"><Router initialPath=\"/\"><Route path=\"/\" component={Shell}><Route path=\":id\" component={Page} /></Route></Router><Slot name=\"header\" /><Outlet /></template>";
 
         var document = new SqxParser().Parse(source, "Composition.sqx");
 
