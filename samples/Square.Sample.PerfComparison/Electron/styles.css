@@ -1,0 +1,70 @@
+html, body { margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; color: #1e293b; background: #f3f6fb; }
+.perf-page { width: 100%; box-sizing: border-box; padding: 8px; }
+.perf-header { padding: 4px 8px; background: #e8f1ff; border: 2px solid #2563eb; border-radius: 8px; }
+.perf-header h1 { font-size: 20px; margin: 0 0 4px; }
+.perf-header p { margin: 0; }
+.perf-section { margin-top: 5px; padding: 5px; background: white; border: 1px solid #94a3b8; border-radius: 6px; }
+.perf-section h2 { font-size: 16px; margin: 0 0 3px; }
+
+.perf-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+
+.box {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: 0 5px 4px 0;
+}
+
+/* Group 1: transform-only, three nested layers, one single-function
+   transform animation per layer (translate -> rotate -> scale, origin center). */
+.perf-shift { animation: perf-shift 6s linear infinite; }
+.perf-spin { display: block; width: 30px; height: 30px; animation: perf-spin 6s linear infinite; }
+.perf-scale {
+  width: 18px; height: 18px;
+  position: relative; left: 6px; top: 6px;
+  background-color: #ef4444;
+  animation: perf-scale 6s linear infinite;
+}
+
+/* Group 2: opacity-only. */
+.perf-fade {
+  background-color: #3b82f6;
+  animation: perf-fade 6s linear infinite;
+}
+
+/* Group 3: width-only; re-wraps the flex lines every frame. */
+.perf-wobble {
+  background-color: #f59e0b;
+  animation: perf-wobble 6s linear infinite;
+}
+
+@keyframes perf-shift {
+  from { transform: translateX(0px); }
+  50%  { transform: translateX(36px); }
+  to   { transform: translateX(0px); }
+}
+@keyframes perf-spin {
+  from { transform: rotate(0deg); }
+  50%  { transform: rotate(180deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes perf-scale {
+  from { transform: scale(0.6); }
+  50%  { transform: scale(1.4); }
+  to   { transform: scale(0.6); }
+}
+@keyframes perf-fade {
+  from { opacity: 0; }
+  50%  { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes perf-wobble {
+  from { width: 8px; }
+  50%  { width: 30px; }
+  to   { width: 8px; }
+}

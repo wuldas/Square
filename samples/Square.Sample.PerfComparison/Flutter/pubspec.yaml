@@ -1,0 +1,20 @@
+name: square_flutter_perf
+description: >-
+  Flutter Windows counterpart of the 720-box animation performance comparison
+  (Square / Avalonia / Electron / Flutter): three groups of 240 boxes, 6s linear
+  loops, measured with engine FrameTiming and process CPU/memory sampling.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+# Deliberately no pub.dev dependencies: everything comes from the Flutter SDK
+# so the benchmark resolves offline from a portable SDK cache.
+dependencies:
+  flutter:
+    sdk: flutter
+
+
+flutter:
+  uses-material-design: false

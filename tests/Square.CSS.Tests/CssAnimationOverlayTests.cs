@@ -63,6 +63,104 @@ public class CssAnimationOverlayTests
         Assert.Equal("-0", text.Style.Get("width"));
     }
 
+    [Theory]
+    [InlineData(float.MaxValue)]
+    [InlineData(float.MinValue)]
+    [InlineData(float.Epsilon)]
+    [InlineData(-float.Epsilon)]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void NumericAnimationPreservesExtremeAndSpecialNumberRoundTrips(float value)
+    {
+        var text = new Square.Controls.Text();
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var expected = float.Parse(value.ToString("0.###", culture), culture);
+
+        text.Style.SetAnimatedNumeric("width", new(value, "", ""));
+
+        Assert.True(text.Style.TryGetEffectiveAnimatedNumeric("width", out var animated));
+        Assert.Equal(BitConverter.SingleToInt32Bits(expected), BitConverter.SingleToInt32Bits(animated.Value));
+    }
+
+    [Fact]
+    public void InlineAnimationNameChangeStopsAndRestartsTheScopedAnimation()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes grow { from { width: 8px; } to { width: 30px; } }
+            Text { width: 20px; animation: grow 1s linear infinite; }
+            """).Tokenize()).Parse());
+        var text = new Square.Controls.Text();
+        using var scope = CssStyleReconciler.ApplyOwnedScope(engine, text);
+        CssStyleReconciler.Flush(text);
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.25f));
+        Assert.Equal("13.5", text.Style.Get("width"));
+
+        text.Style.Set("animation-name", "none");
+        CssStyleReconciler.Flush(text);
+
+        Assert.False(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("20px", text.Style.Get("width"));
+
+        text.Style.RemoveProperty("animation-name");
+        CssStyleReconciler.Flush(text);
+
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("19", text.Style.Get("width"));
+    }
+
+    [Fact]
+    public void InlineAnimationDurationChangeReplacesTheRunningTiming()
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes grow { from { width: 8px; } to { width: 30px; } }
+            Text { width: 20px; animation: grow 1s linear infinite; }
+            """).Tokenize()).Parse());
+        var text = new Square.Controls.Text();
+        using var scope = CssStyleReconciler.ApplyOwnedScope(engine, text);
+        CssStyleReconciler.Flush(text);
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.25f));
+
+        text.Style.Set("animation-duration", "2s");
+        CssStyleReconciler.Flush(text);
+
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("13.5", text.Style.Get("width"));
+        Assert.True(CssStyleReconciler.TickAnimations(text, 0.5f));
+        Assert.Equal("19", text.Style.Get("width"));
+    }
+
+    [Theory]
+    [InlineData("0s", "13.5", "19")]
+    [InlineData("-0.5s", "24.5", "8")]
+    public void ReattachingSameAnimationPreservesProgress(string delay, string expectedBefore, string expectedAfter)
+    {
+        var engine = new CssEngine();
+        engine.LoadStyleSheet(new CssParser(new CssTokenizer("""
+            @keyframes grow { from { width: 8px; } to { width: 30px; } }
+            Text { animation: grow 1s linear infinite; }
+            """).Tokenize()).Parse());
+        var text = new Square.Controls.Text();
+        text.Style.Set("animation-delay", delay);
+        engine.ApplyStyles(text);
+        var manager = new CssAnimationManager(engine);
+        manager.Attach(text);
+        manager.Tick(0.25f);
+        Assert.Equal(expectedBefore, text.Style.Get("width"));
+
+        // A state-style replay must repaint the same frame before advancing again.
+        text.SetState(ElementState.Hover, true);
+        engine.ApplyStyles(text);
+        manager.Attach(text);
+
+        Assert.Equal(expectedBefore, text.Style.Get("width"));
+        manager.Tick(0.25f);
+        Assert.Equal(expectedAfter, text.Style.Get("width"));
+        manager.Clear();
+    }
+
     [Fact]
     public void ManagerCancelsAlreadyCompletedTimelineBeforeRetiringIt()
     {

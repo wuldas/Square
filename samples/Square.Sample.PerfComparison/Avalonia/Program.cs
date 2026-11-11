@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -10,15 +13,30 @@ using Avalonia.Themes.Fluent;
 namespace Square.Sample.PerfComparison.Avalonia;
 
 // Standalone Avalonia desktop counterpart of the 720-box animation workload in
-// samples/Square.Sample.PerfComparison (native Square page + standalone Chrome HTML).
+// samples/Square.Sample.PerfComparison (Square, Avalonia, Electron and Flutter).
 // This is NOT the Square HtmlExporter/WebServer path: it is a plain Avalonia window
 // driven by TopLevel.RequestAnimationFrame (render-loop hook; no DispatcherTimer or
 // other manually render-forcing timer).
 internal static class Program
 {
+    private static BenchmarkOptions? _options;
+
+    internal static BenchmarkOptions Options => _options
+        ?? throw new InvalidOperationException("Benchmark options were not parsed before startup.");
+
     [STAThread]
     public static int Main(string[] args)
     {
+        // Shared cross-target benchmark CLI: --seconds 30 --warmup 2 --output C:\abs\result.json
+        // (--flag value or --flag=value). Invalid usage exits 2 without opening a window.
+        var options = BenchmarkOptions.Parse(args);
+        if (options is null)
+        {
+            Console.Error.WriteLine("Usage: Avalonia --seconds 30 --warmup 2 --output C:\\abs\\result.json");
+            return 2;
+        }
+
+        _options = options;
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 
@@ -26,6 +44,59 @@ internal static class Program
         .Configure<App>()
         .UsePlatformDetect()
         .LogToTrace();
+}
+
+// --seconds / --warmup / --output following the shared benchmark contract:
+// 2 s warmup, 30 s measured window by default.
+internal sealed record BenchmarkOptions(double Seconds, double WarmupSeconds, string? Output)
+{
+    public static BenchmarkOptions? Parse(IReadOnlyList<string>? args)
+    {
+        double seconds = 30.0;
+        double warmupSeconds = 2.0;
+        string? output = null;
+
+        for (var i = 0; args is not null && i < args.Count; i++)
+        {
+            string name;
+            string value;
+            var argument = args[i];
+            var separator = argument.IndexOf('=');
+            if (argument.StartsWith("--", StringComparison.Ordinal) && separator > 2)
+            {
+                name = argument[..separator];
+                value = argument[(separator + 1)..];
+            }
+            else
+            {
+                if (i + 1 >= args.Count) return null;
+                name = argument;
+                value = args[++i];
+            }
+
+            switch (name)
+            {
+                case "--seconds":
+                    if (!TryFinite(value, out seconds) || seconds <= 0) return null;
+                    break;
+                case "--warmup":
+                    if (!TryFinite(value, out warmupSeconds) || warmupSeconds < 0) return null;
+                    break;
+                case "--output":
+                    if (value.Length == 0) return null;
+                    output = value;
+                    break;
+                default:
+                    return null;
+            }
+        }
+
+        return new BenchmarkOptions(seconds, warmupSeconds, output);
+    }
+
+    private static bool TryFinite(string value, out double parsed) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed)
+        && double.IsFinite(parsed);
 }
 
 internal sealed class App : Application
@@ -36,42 +107,14 @@ internal sealed class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new BenchmarkWindow(ParseSeconds(desktop.Args));
+            desktop.MainWindow = new BenchmarkWindow(Program.Options);
         }
 
         base.OnFrameworkInitializationCompleted();
     }
-
-    // Supports "--seconds 30" and "--seconds=30"; defaults to 30.
-    private static double ParseSeconds(IReadOnlyList<string>? args)
-    {
-        const double defaultSeconds = 30.0;
-        for (int i = 0; args is not null && i < args.Count; i++)
-        {
-            string? value = null;
-            if (args[i] == "--seconds" && i + 1 < args.Count)
-            {
-                value = args[i + 1];
-            }
-            else if (args[i].StartsWith("--seconds=", StringComparison.Ordinal))
-            {
-                value = args[i]["--seconds=".Length..];
-            }
-
-            if (value is not null
-                && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
-                && double.IsFinite(parsed)
-                && parsed > 0)
-            {
-                return parsed;
-            }
-        }
-
-        return defaultSeconds;
-    }
 }
 
-// One 900x1300 client window holding the shared workload, matching CssAnimationPerfPage.sqv:
+// One 900x1240-client window holding the shared workload, matching CssAnimationPerfPage.sqv:
 //   group 1 (red #ef4444):   transform-only; 240 boxes, each three nested 30x30 layers
 //                            animating translate 0->36->0, rotate 0->180->360deg and
 //                            scale 0.6->1.4->0.6 around each layer's center
@@ -82,17 +125,20 @@ internal sealed class App : Application
 //   group 3 (amber #f59e0b): width-only; 240 boxes, width 8->30->8, re-packing the
 //                            wrap rows every frame (layout heavy).
 // All loops are 6s linear (triangle wave X->peak->X; rotation wraps 360->0 seamlessly),
-// boxes are 30x30 with margin 0 5px 5px 0 in flex-wrap style wrap rows.
-// The measured window starts 1s after the window opens, then
-// runs for --seconds (default 30). CPU uses Process.TotalProcessorTime deltas, so
-// cpuOneCorePercent is the fraction of ONE logical core. fps/frames count
-// TopLevel.RequestAnimationFrame callbacks per wall time. The callback updates
-// the scene, but Avalonia 11 exposes no public physical-present counter; this
-// measures callback FPS rather than scanout telemetry.
+// boxes are 30x30 with margin 0 5px 4px 0 in flex-wrap style wrap rows.
+// The window opens at outer origin (100,100); after --warmup seconds (default 2) of
+// animated warmup the measured window runs for --seconds (default 30). CPU uses
+// Process.TotalProcessorTime deltas over the measured window only, so cpuOneCorePercent
+// is the fraction of ONE logical core. Memory is PrivateMemorySize64 (private commit)
+// plus WorkingSet64 (working set) of this process sampled at 1 Hz; GPU VRAM is not
+// included. frames/fps count TopLevel.RequestAnimationFrame callbacks per wall time:
+// the callback updates the scene, but Avalonia 11 exposes no public physical-present
+// counter, so fpsDefinition labels this callback FPS rather than scanout telemetry.
+// The compact result JSON (shared cross-target contract, unrounded numbers) always
+// goes to stdout; --output additionally writes it to a file.
 internal sealed class BenchmarkWindow : Window
 {
     private const double LoopSeconds = 6.0;
-    private const double WarmupSeconds = 1.0;
     private const int BoxesPerGroup = 240;
 
     private const double ClientWidth = 900.0;
@@ -122,7 +168,9 @@ internal sealed class BenchmarkWindow : Window
 
     private readonly Process _process = Process.GetCurrentProcess();
     private readonly Stopwatch _clock = new();
+    private readonly BenchmarkOptions _options;
     private readonly double _measureSeconds;
+    private readonly double _warmupSeconds;
 
     private readonly TranslateTransform[] _shifts = new TranslateTransform[BoxesPerGroup];
     private readonly RotateTransform[] _spins = new RotateTransform[BoxesPerGroup];
@@ -132,6 +180,7 @@ internal sealed class BenchmarkWindow : Window
 
     private TimeSpan _measureStart;
     private TimeSpan _cpuStart;
+    private DateTime _startedUtc;
     private long _frames;
     private bool _measuring;
     private bool _finished;
@@ -139,12 +188,13 @@ internal sealed class BenchmarkWindow : Window
     private int _memorySamples;
     private TimeSpan _lastMemorySample;
 
-    public BenchmarkWindow(double measureSeconds)
+    public BenchmarkWindow(BenchmarkOptions options)
     {
-        _measureSeconds = measureSeconds;
+        _options = options;
+        _measureSeconds = options.Seconds;
+        _warmupSeconds = options.WarmupSeconds;
         Title = "Avalonia Perf Comparison";
-        // Win32Host creates its native window at (100, 100); pin the same outer
-        // origin so all three targets start at one screen position.
+        // Pin the outer window origin so all three targets start at (100,100) on screen.
         WindowStartupLocation = WindowStartupLocation.Manual;
         Position = new PixelPoint(100, 100);
         ClientSize = new Size(ClientWidth, ClientHeight);
@@ -236,7 +286,7 @@ internal sealed class BenchmarkWindow : Window
         var heading = new StackPanel();
         heading.Children.Add(new TextBlock
         {
-            Text = "CSS 动画性能测试",
+            Text = "CSS 动画性能对比",
             FontSize = 20,
             FontWeight = FontWeight.Bold,
             Foreground = TextBrush,
@@ -244,7 +294,7 @@ internal sealed class BenchmarkWindow : Window
         });
         heading.Children.Add(new TextBlock
         {
-            Text = "MDN CSS 动画性能对照：Square / Avalonia / 原生 Chrome，各组 240 方块，6 秒循环；测量 30 秒 CPU 与 FPS。",
+            Text = "240 方块 × 3 组 · 6 秒循环 · 目标 60 FPS",
             Foreground = TextBrush,
             TextWrapping = TextWrapping.Wrap
         });
@@ -298,11 +348,12 @@ internal sealed class BenchmarkWindow : Window
         if (!_measuring)
         {
             Animate(now);
-            if (now.TotalSeconds >= WarmupSeconds)
+            if (now.TotalSeconds >= _warmupSeconds)
             {
                 _measuring = true;
                 _measureStart = now;
                 _cpuStart = _process.TotalProcessorTime;
+                _startedUtc = DateTime.UtcNow;
                 _frames = 0;
                 SampleMemory(now);
             }
@@ -366,9 +417,42 @@ internal sealed class BenchmarkWindow : Window
         double cpuSeconds = (_process.TotalProcessorTime - _cpuStart).TotalSeconds;
         double cpuOneCorePercent = measured > 0 ? cpuSeconds / measured * 100.0 : 0.0;
         double fps = measured > 0 ? _frames / measured : 0.0;
-
-        Console.WriteLine(FormattableString.Invariant($"Avalonia seconds={measured:R} cpuSeconds={cpuSeconds:R} cpuOneCorePercent={cpuOneCorePercent:R} fps={fps:R} frames={_frames} client={ClientSize.Width:0}x{ClientSize.Height:0} privateAvgMiB={_privateSum / (double)_memorySamples / 1048576:F1} privatePeakMiB={_privatePeak / 1048576.0:F1} workingAvgMiB={_workingSum / (double)_memorySamples / 1048576:F1} workingPeakMiB={_workingPeak / 1048576.0:F1} samples={_memorySamples}"));
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("target", $"Avalonia {(RuntimeFeature.IsDynamicCodeSupported ? "JIT" : "NativeAOT")}");
+            writer.WriteNumber("seconds", measured);
+            writer.WriteNumber("frames", _frames);
+            writer.WriteNumber("fps", fps);
+            writer.WriteString("fpsDefinition", "TopLevel.RequestAnimationFrame callback count over the measured wall window; Avalonia 11.3 exposes no public presented-frame/scanout counter, so this is callback FPS, not present telemetry");
+            writer.WriteNumber("cpuSeconds", cpuSeconds);
+            writer.WriteNumber("cpuOneCorePercent", cpuOneCorePercent);
+            writer.WriteNumber("privateAvgMiB", _privateSum / (double)_memorySamples / 1048576.0);
+            writer.WriteNumber("privatePeakMiB", _privatePeak / 1048576.0);
+            writer.WriteNumber("workingAvgMiB", _workingSum / (double)_memorySamples / 1048576.0);
+            writer.WriteNumber("workingPeakMiB", _workingPeak / 1048576.0);
+            writer.WriteNumber("samples", _memorySamples);
+            writer.WriteString("memoryDefinition", "PrivateMemorySize64 (private commit) + WorkingSet64 (working set) of the Avalonia process sampled at 1 Hz; GPU VRAM is not included");
+            writer.WriteNumber("clientWidth", ClientSize.Width);
+            writer.WriteNumber("clientHeight", ClientSize.Height);
+            writer.WriteNumber("warmupSeconds", _warmupSeconds);
+            writer.WriteNumber("targetFps", 60.0);
+            writer.WriteString("startedUtc", _startedUtc.ToString("o", CultureInfo.InvariantCulture));
+            writer.WriteEndObject();
+        }
+        var json = Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+        Console.WriteLine(json);
         Console.Out.Flush();
+
+        if (_options.Output is { Length: > 0 } outputPath)
+        {
+            var fullPath = Path.GetFullPath(outputPath);
+            var directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllText(fullPath, json);
+        }
+
         Close();
     }
 }

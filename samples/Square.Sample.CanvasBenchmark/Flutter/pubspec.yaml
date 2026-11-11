@@ -1,0 +1,11 @@
+name: square_canvas_flutter
+description: Shared Canvas2D workload benchmark for Flutter Windows CustomPainter.
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: ^3.13.5
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  uses-material-design: false

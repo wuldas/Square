@@ -678,7 +678,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     internal bool IsCssDisplayed()
     {
         for (Element? current = this; current != null; current = current.Parent ?? current.VisualParent)
-            if (string.Equals(current.Style.Get("display")?.Trim(), "none", StringComparison.OrdinalIgnoreCase))
+            if (current.Style.IsDisplayNone)
                 return false;
         return true;
     }
@@ -1434,7 +1434,6 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         _scrollbarMetricsValid = false;
         return ref _scrollStyleSnapshot;
     }
-
     /// <summary>
     /// 按类型与可选 class 查询第一个匹配后代（Square 强类型查询；接近 <c>querySelector</c>）。
     /// </summary>

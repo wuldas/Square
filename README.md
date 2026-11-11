@@ -154,6 +154,63 @@ dotnet run --project samples/Square.Sample.RichText/Square.Sample.RichText.cspro
 dotnet test Square.slnx
 ```
 
+## 布局动画性能对比
+
+[对比示例](samples/Square.Sample.PerfComparison)包含 Square Software / Direct2D（JIT 与 NativeAOT）、Avalonia（JIT 与 NativeAOT）、Electron 和 Flutter。各目标使用 900×1240 客户区、3 组各 240 个方块，分别运行 transform、opacity、width 动画，6 秒线性循环，目标更新频率为 60 FPS。width 组改变真实宽度并触发行重排，不用缩放代替布局。
+
+### 复现
+
+需要 Windows x64、PowerShell 7、.NET 10 SDK、Node.js/npm、Flutter Windows 桌面 SDK，以及 Visual Studio C++ / Windows SDK 工具链（用于 NativeAOT 和 Flutter）。将 `flutter` 加入 PATH，或通过 `-FlutterCommand` 指定 `flutter.bat` 的完整路径。
+
+```powershell
+pwsh -NoProfile -File samples/Square.Sample.PerfComparison/Run-Comparison.ps1 `
+  -Seconds 30 -WarmupSeconds 5
+```
+
+脚本先构建所有 Release 发布物，再按固定顺序逐个运行；上述命令每个目标预热 5 秒、测量 30 秒，目标之间间隔 2 秒。测量期间不构建、不挂接 DevTools。Square Direct2D 必须使用硬件设备；Square 使用 Auto 脏区渲染，各框架原生的布局与合成优化保持启用。Flutter 按绝对 60 Hz 截止点驱动动画，避免原生时钟高于 60 Hz 时增加负载；实际产出帧率仍由下面的计数定义决定。
+
+默认将逐目标 JSON、stdout/stderr 和汇总 `results.json` 写入 `artifacts/perf-comparison-时间戳/`。可通过 `-OutputDirectory` 指定目录，`-Seconds` / `-WarmupSeconds` 调整时长，已有发布物时可用 `-SkipBuild`。发布目录由脚本管理，重新构建时会清空对应的 .NET 输出目录，避免旧文件虚增体积。
+
+Avalonia 的 JIT / NativeAOT 构建共用同一界面、动画和采样逻辑。NativeAOT 按 [Avalonia 11.x 的要求](https://github.com/AvaloniaUI/avalonia-docs/blob/main/docs/deployment/native-aot.md)设置 `BuiltInComInteropSupport=false`，不启用基于内建 COM 互操作的辅助功能路径。
+
+### 统计口径
+
+- **CPU**：测量区间的进程 CPU 时间 / 实际经过秒数 × 100%；100% 表示占满一个逻辑处理器，不是任务管理器的整机百分比。Electron 汇总浏览器、渲染、GPU 和 utility 等所属进程；进程在两次采样之间退出时，最后一次观察之后的 CPU 时间可能漏计。JSON 另存整机折算值和每帧 CPU 毫秒数。
+- **内存**：约每秒采样一次，分别记录私有提交内存（Private Bytes）和驻留工作集（Working Set）的均值、观察到的峰值，单位为 MiB；不含独立 GPU 显存。Electron 为多进程合计，工作集可能重复计入共享页。
+- **FPS**：实际帧计数 / 实际测量秒数，不写死为 60。Square 计渲染提交，Avalonia / Electron 计动画帧回调，Flutter 计区间内栅格完成的引擎 `FrameTiming`。这些都不是显示器物理扫描输出计数；原始 JSON 的 `fpsDefinition` 保留各目标的具体定义，不应据此比较细微的呈现帧率差异。
+- **发布体积**：未压缩、可运行的 Windows x64 发布目录总大小，包含运行时、动态库和资源，排除 `.pdb` / `.dbg` 调试符号；不是仅比较 EXE。JIT 目标均为 self-contained；Square 的两个后端共用同一份对应发布物。JSON 同时保留入口 EXE 字节数。
+
+### 本机实测（2026-10-19）
+
+Square 基于 `08da487`。Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 个逻辑处理器）；NVIDIA GeForce GTX 1660 SUPER，2560×1440 / 60 Hz。使用 .NET SDK 10.0.303、Avalonia 11.3.12、Electron 44.7.2、Flutter 3.47.7 stable。全部为重新构建的 Release / Windows x64 发布物，单轮串行运行，预热 5 秒，请求测量 30 秒；计算采用 JSON 中记录的实际区间。
+
+**历史同步配置：此表保留 2026-10-19 的原始测量。** 当时 Win32 传入 `VSync=true`，Direct2D 保留 `RETAIN_CONTENTS`、不启用 `IMMEDIATELY`；Software 当时只有约 60 Hz 的主机调度，GDI 提交没有等待 DWM，不能由参数或约 60 FPS 推断软件呈现已同步。此表不代表下述 Software 呈现修复后的成绩，也不能与此前关闭 GPU VSync 的快照视为相同条件。
+
+| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
+|---|---:|---:|---:|---:|---:|
+| Square Software · JIT | 44.23% | 60.01 | 58.68 | 107.98 | 99.93 |
+| Square Direct2D · JIT | 22.17% | 60.01 | 111.41 | 147.51 | 99.93 |
+| Square Software · NativeAOT | 48.14% | 60.01 | 51.48 | 80.58 | 9.40 |
+| Square Direct2D · NativeAOT | 26.48% | 60.01 | 100.78 | 106.72 | 9.40 |
+| Avalonia · JIT | 26.81% | 59.97 | 124.29 | 149.10 | 102.67 |
+| Avalonia · NativeAOT | 29.20% | 59.97 | 115.45 | 115.26 | 34.88 |
+| Electron · packaged | 93.67% | 59.97 | 267.35 | 416.74 | 366.89 |
+| Flutter · Release | 37.13% | 59.83 | 176.47 | 125.95 | 23.37 |
+
+[原始汇总数据](samples/Square.Sample.PerfComparison/results.json)包含实际时长、帧数、内存峰值、CPU 每帧成本、发布字节数、运行环境和逐目标 FPS 定义。比较 CPU 时应同时看实测 FPS。单轮结果受后台负载、执行顺序、JIT 和温度影响，不代表统计上成立的跨框架排名。
+
+## Canvas 综合性能测试
+
+Canvas 默认只运行**一个综合场景、一个固定档位**，覆盖填充与透明度、矢量重用与变化、描边、文字、图片、变换、裁剪、渐变和分组图层。普通六方比较每目标三轮，共 **18 次 control 进程**；显式加入远程 Square 三后端对照时共 27 次。不会默认展开旧的 29 场景或负载梯度，也不在主性能采集中初始化桌面捕获。
+
+运行入口为 [Canvas 性能样例](samples/Square.Sample.CanvasBenchmark/README.md)中的默认命令；旧细分场景仅作为显式专项诊断使用。报告继续输出 CPU、实际生产事件 FPS、平均私有内存、平均工作集和完整发布体积，保留每次原始记录及三轮范围。综合场景是固定混合工作量，适合快速观察整体变化；需要定位单项回退时再运行专项。它不表示所有框架的原生渐变、描边和 AA 都逐像素等价，FPS 也不是物理显示扫描计数。
+
+本次代码基于 `origin/main` 固定提交 `ef6409d634349ebafadc29afcf9eeb4dcee0bfed`，再移植 Canvas 功能与性能改进；共享 UI、CSS、布局、DOM 遍历、编译器和内置 Yoga 沿用主线实现。布局性能窗口标题包含真实后端与运行模式，例如 `Square CSS animation benchmark-direct2d-aot`、`Square CSS animation benchmark-software-jit`。
+
+Windows Software 另补软件呈现同步：共享 DIB 与 bitmap 在 GDI 完成访问后才交回 CPU，脏区合为一次拷贝，每个实际提交最多等待一次 DWM；空更新和 `WM_PAINT` 不增加合成等待，原 60 Hz 定时器推进保持不变。这是 GDI 交接与 DWM 合成节拍等待，不将其称为硬件原子翻页或物理扫描无撕裂保证，详见[软件呈现修复说明](artifacts/main-canvas-integration-20261111/software-sync/README.md)。[本轮主线对齐短测](artifacts/main-canvas-integration-20261111/reports/MAIN-CANVAS-PRE-SOFTWARE-SYNC.md)保留 27 次综合与 20 次布局对照，明确属于这项软件同步修复前的阶段；修复后的 Software CLR/AOT 验证另存，不覆盖旧数据。
+
+2026-11-11 的完整远程 / 本地对照在[复测总览](artifacts/readme-canvas-remote-local-20261111/README.md)、[布局报告](artifacts/readme-canvas-remote-local-20261111/reports/ui.html)和 [Canvas 报告](artifacts/readme-canvas-remote-local-20261111/reports/canvas.html)。其中本地数据来自**本次主线对齐前**的 dirty 源码快照，原 39 次布局与 783 次 Canvas 记录完整保留，不能当作当前集成源码的新成绩。上方 2026-10-19 表格同样是原主线历史测量。
+
 ## Android Experimental
 
 Android 首期使用 .NET 10 for Android、单 Activity 和单 `SquareView`，通过 `ApplicationSession` 由 Activity/Looper/Choreographer 驱动。默认路径为 Software BGRA bitmap 到 Android `ARGB_8888` bitmap；也可通过 Activity extra 选择 `AndroidCanvas`、`AndroidSkia` 或 `Vulkan` 直绘路径。Android 不引入 MAUI、原生 View/Compose 控件树或桌面窗口操作。

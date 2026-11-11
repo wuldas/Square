@@ -38,6 +38,11 @@ public sealed class RealVulkanGpuConformanceTests
         host.Show();
 
         using var context = host.CreateRenderContext();
+        var info = Assert.IsAssignableFrom<IVulkanRenderContextInfo>(context);
+        Assert.False(string.IsNullOrWhiteSpace(info.DeviceInfo.Name));
+        Assert.NotEqual(0u, info.DeviceInfo.ApiVersion);
+        Assert.Equal(1u, info.ColorSampleCount);
+        Assert.True(info.ReadbackEnabled);
         Assert.False(context.SupportsPartialRendering);
         var source = Assert.IsAssignableFrom<IRenderBitmapSource>(context);
         Assert.True(source.IsCaptureAvailable);

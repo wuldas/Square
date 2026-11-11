@@ -118,6 +118,14 @@ internal static partial class Win32Api
         ref int pvAttribute,
         int cbAttribute);
 
+    // HRESULT, not a Win32 last-error result. This is compositor backpressure, not a GDI page flip.
+    [LibraryImport("dwmapi.dll", EntryPoint = "DwmFlush")]
+    public static partial int DwmFlush();
+
+    [return: MarshalAs(UnmanagedType.Bool)]
+    [LibraryImport("gdi32.dll", EntryPoint = "GdiFlush")]
+    public static partial bool GdiFlush();
+
     [LibraryImport("user32.dll", SetLastError = true, EntryPoint = "CreateWindowExW",
         StringMarshalling = StringMarshalling.Utf16)]
     public static partial IntPtr CreateWindowEx(

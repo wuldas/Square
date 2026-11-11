@@ -1,0 +1,16 @@
+{
+  "name": "square-electron-perf",
+  "productName": "square-electron-perf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "720-box CSS animation benchmark Electron app for the Square perf comparison (Electron target).",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-packager . square-electron-perf --platform=win32 --arch=x64 --out=dist --overwrite --ignore=\"^/node_modules\""
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.7.2"
+  }
+}

@@ -1,0 +1,14 @@
+name: square_canvas_v11
+description: Canvas v11 fixed logical trace producer for Flutter Windows.
+publish_to: none
+version: 11.0.0+1
+environment:
+  sdk: ^3.13.5
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: 3.0.7
+dev_dependencies:
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: false

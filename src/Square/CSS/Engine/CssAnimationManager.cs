@@ -26,16 +26,17 @@ public sealed class CssAnimationManager
         // Preserve progress: a click only changes state pseudo-classes, and re-applying the
         // scope must not rewind an infinite animation to its first frame (extra full frames
         // and a visible jump on every interaction).
-        var elapsed = new Dictionary<Element, float>();
+        var previous = new Dictionary<Element, CssAnimationTimeline>();
         foreach (var timeline in _timelines)
         {
-            if (!timeline.IsComplete && timeline.Target is { } target)
-                elapsed[target] = Math.Max(elapsed.TryGetValue(target, out var previous) ? previous : 0f, timeline.Elapsed);
+            if (!timeline.IsComplete)
+                previous[timeline.Target] = timeline;
         }
         Clear();
         Collect(root);
         foreach (var timeline in _timelines)
-            timeline.Start(timeline.Target != null && elapsed.TryGetValue(timeline.Target, out var resume) ? resume : 0f);
+            timeline.Start(previous.TryGetValue(timeline.Target, out var old) && timeline.CanResumeFrom(old)
+                ? old.Elapsed : 0f);
     }
 
     /// <summary>推进所有未完成动画的时间线；重复应用样式不会重置进度。</summary>

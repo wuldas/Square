@@ -24,6 +24,11 @@ internal sealed unsafe class Direct2DRenderContext :
     internal const int MaxGlyphCacheEntries = 4096;
     internal const long MaxImageCacheBytes = 64 * 1024 * 1024;
     internal const int MaxImageCacheEntries = 256;
+    internal const int MaxPathCacheEntries = 16384;
+    internal const int MaxPathCacheCommands = 64 * 1024;
+    internal const int MaxGradientCacheEntries = 256;
+    internal const int MaxGradientCacheStops = 4096;
+    internal const int MaxPooledLayers = 16;
     private const int BitmapUploadBufferBytes = 256 * 1024;
     /// <summary>物理像素对齐判定容差：仅接受不会产生可见部分覆盖边缘的矩形。</summary>
     private const float LeafAlignmentEpsilon = 0.01f;
@@ -33,14 +38,28 @@ internal sealed unsafe class Direct2DRenderContext :
     private readonly bool _vsync;
     private readonly Action? _requestRender;
     private readonly SystemGlyphRasterizer _glyphRasterizer = new(cacheGlyphs: false);
+    private readonly Direct2DTextPreparationCache _textPreparationCache = new();
     private readonly Dictionary<Bitmap, CachedBitmap> _imageCache = [];
     private readonly LinkedList<Bitmap> _imageLru = [];
     private readonly Dictionary<GlyphCacheKey, CachedGlyph> _glyphCache = [];
     private readonly LinkedList<GlyphCacheKey> _glyphLru = [];
+    private readonly Dictionary<Path, CachedPath> _pathCache = [];
+    private readonly LinkedList<Path> _pathLru = [];
+    private readonly Dictionary<Brush, CachedGradient> _gradientCache = [];
+    private readonly LinkedList<Brush> _gradientLru = [];
+    private readonly Stack<IComObject<ID2D1Layer>> _layerPool = [];
+    private int _pathCacheCommands;
+    private int _gradientCacheStops;
+    private int _pathGeometryCreationCount;
+    private int _gradientBrushCreationCount;
+    private int _layerCreationCount;
     private readonly Stack<Matrix3x2> _transformStack = [];
     private readonly Stack<NativeState> _nativeStateStack = [];
     private IComObject<ID2D1HwndRenderTarget>? _target;
     private IComObject<ID2D1SolidColorBrush>? _solidBrush;
+    // Borrowed typed RCWs; only the IComObject owners release native references.
+    private ID2D1HwndRenderTarget? _targetNative;
+    private ID2D1SolidColorBrush? _solidBrushNative;
     private BrushColor? _solidBrushColor;
     private bool _needsFullRedraw;
     private bool _frameFullyCleared;
@@ -83,26 +102,37 @@ internal sealed unsafe class Direct2DRenderContext :
     internal long GlyphCacheBytes => _glyphCacheBytes;
     internal int ImageBitmapCreationCount => _imageBitmapCreationCount;
     internal int BitmapUploadBufferLength => _bitmapUploadBuffer?.Length ?? 0;
+    internal int PathCacheCount => _pathCache.Count;
+    internal int PathCacheCommands => _pathCacheCommands;
+    internal int GradientCacheCount => _gradientCache.Count;
+    internal int GradientCacheStops => _gradientCacheStops;
+    internal int LayerPoolCount => _layerPool.Count;
+    internal int PathGeometryCreationCount => _pathGeometryCreationCount;
+    internal int GradientBrushCreationCount => _gradientBrushCreationCount;
+    internal int LayerCreationCount => _layerCreationCount;
+    internal int TextPreparationCacheCount => _textPreparationCache.Count;
+    internal long TextPreparationBuildCount => _textPreparationCache.BuildCount;
+    internal long TextPreparationHitCount => _textPreparationCache.HitCount;
 
     public void PushTransform(Matrix3x2 matrix)
     {
         EnsureDrawing();
         _transformStack.Push(_currentTransform);
         _currentTransform = matrix * _currentTransform;
-        _target!.Object.SetTransform(ToMatrix(_currentTransform));
+        _targetNative!.SetTransform(ToMatrix(_currentTransform));
     }
 
     public void PopTransform()
     {
         EnsureDrawing();
         _currentTransform = _transformStack.Count > 0 ? _transformStack.Pop() : Matrix3x2.Identity;
-        _target!.Object.SetTransform(ToMatrix(_currentTransform));
+        _targetNative!.SetTransform(ToMatrix(_currentTransform));
     }
 
     public void PushClip(Rect rect)
     {
         EnsureDrawing();
-        _target!.Object.PushAxisAlignedClip(ToRect(rect), D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_ALIASED);
+        _targetNative!.PushAxisAlignedClip(ToRect(rect), D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_ALIASED);
         _nativeStateStack.Push(new NativeState(NativeStateKind.RectangleClip));
     }
 
@@ -118,8 +148,8 @@ internal sealed unsafe class Direct2DRenderContext :
         IComObject<ID2D1Layer>? layer = null;
         try
         {
-            var contentBounds = GetGeometryBounds(mask.Object);
-            layer = CreateLayer(GetLayerSize(contentBounds));
+            var contentBounds = mask.Bounds;
+            layer = RentLayer(GetLayerSize(contentBounds));
             var parameters = new D2D1_LAYER_PARAMETERS
             {
                 contentBounds = ToRect(contentBounds),
@@ -130,12 +160,12 @@ internal sealed unsafe class Direct2DRenderContext :
                 opacityBrush = IntPtr.Zero,
                 layerOptions = D2D1_LAYER_OPTIONS.D2D1_LAYER_OPTIONS_NONE
             };
-            _target!.Object.PushLayer(in parameters, layer.Object);
-            _nativeStateStack.Push(new NativeState(NativeStateKind.GeometryClip, layer, mask));
+            _targetNative!.PushLayer(in parameters, layer.Object);
+            _nativeStateStack.Push(new NativeState(NativeStateKind.GeometryClip, layer, mask, this));
         }
         catch
         {
-            layer?.Dispose();
+            if (layer != null) ReturnLayer(layer);
             mask.Dispose();
             throw;
         }
@@ -150,9 +180,9 @@ internal sealed unsafe class Direct2DRenderContext :
             throw new InvalidOperationException("PopClip cannot pop an active opacity layer.");
         _nativeStateStack.Pop();
         if (state.Kind == NativeStateKind.GeometryClip)
-            _target!.Object.PopLayer();
+            _targetNative!.PopLayer();
         else
-            _target!.Object.PopAxisAlignedClip();
+            _targetNative!.PopAxisAlignedClip();
         state.Dispose();
     }
 
@@ -161,11 +191,11 @@ internal sealed unsafe class Direct2DRenderContext :
         EnsureDrawing();
         if (brush is SolidColorBrush solid)
         {
-            _target!.Object.FillRectangle(ToRect(rect), GetSharedSolidBrush(solid.Color));
+            _targetNative!.FillRectangle(ToRect(rect), GetSharedSolidBrush(solid.Color));
             return;
         }
         using var nativeBrush = CreateBrush(brush);
-        _target!.Object.FillRectangle(ToRect(rect), nativeBrush.Object);
+        _targetNative!.FillRectangle(ToRect(rect), nativeBrush.Object);
     }
 
     /// <summary>
@@ -184,7 +214,7 @@ internal sealed unsafe class Direct2DRenderContext :
             color.G / 255f,
             color.B / 255f,
             color.A / 255f * normalized));
-        _target.Object.FillRectangle(ToRect(rect), brush);
+        _targetNative!.FillRectangle(ToRect(rect), brush);
         return true;
     }
 
@@ -215,7 +245,7 @@ internal sealed unsafe class Direct2DRenderContext :
         EnsureDrawing();
         using var nativeBrush = CreateBrush(pen.Brush);
         using var stroke = CreateStrokeStyle(pen.StrokeStyle);
-        _target!.Object.DrawRectangle(ToRect(rect), nativeBrush.Object, Math.Max(0, pen.Width), stroke?.Object!);
+        _targetNative!.DrawRectangle(ToRect(rect), nativeBrush.Object, Math.Max(0, pen.Width), stroke?.Object!);
     }
 
     public void FillPath(Path path, Brush brush)
@@ -223,7 +253,7 @@ internal sealed unsafe class Direct2DRenderContext :
         EnsureDrawing();
         using var geometry = CreatePath(path);
         using var nativeBrush = CreateBrush(brush);
-        _target!.Object.FillGeometry(geometry.Object, nativeBrush.Object, null!);
+        _targetNative!.FillGeometry(geometry.Object, nativeBrush.Object, null!);
     }
 
     public void DrawPath(Path path, Pen pen)
@@ -232,7 +262,7 @@ internal sealed unsafe class Direct2DRenderContext :
         using var geometry = CreatePath(path);
         using var nativeBrush = CreateBrush(pen.Brush);
         using var stroke = CreateStrokeStyle(pen.StrokeStyle);
-        _target!.Object.DrawGeometry(
+        _targetNative!.DrawGeometry(
             geometry.Object, nativeBrush.Object, Math.Max(0, pen.Width), stroke?.Object!);
     }
 
@@ -243,21 +273,21 @@ internal sealed unsafe class Direct2DRenderContext :
         switch (geometry)
         {
             case RectGeometry rect:
-                _target!.Object.FillRectangle(ToRect(rect.Rect), nativeBrush.Object);
+                _targetNative!.FillRectangle(ToRect(rect.Rect), nativeBrush.Object);
                 return;
             case RoundedRectGeometry rounded when rounded.IsUniform:
-                _target!.Object.FillRoundedRectangle(ToRoundedRect(rounded), nativeBrush.Object);
+                _targetNative!.FillRoundedRectangle(ToRoundedRect(rounded), nativeBrush.Object);
                 return;
             case EllipseGeometry ellipse:
-                _target!.Object.FillEllipse(ToEllipse(ellipse), nativeBrush.Object);
+                _targetNative!.FillEllipse(ToEllipse(ellipse), nativeBrush.Object);
                 return;
             case RoundedRectGeometry rounded:
-                using (var path = CreatePath(rounded.ToPath()))
-                    _target!.Object.FillGeometry(path.Object, nativeBrush.Object, null!);
+                using (var path = CreateUncachedPath(rounded.ToPath()))
+                    _targetNative!.FillGeometry(path.Object, nativeBrush.Object, null!);
                 return;
             case Path path:
                 using (var nativePath = CreatePath(path))
-                    _target!.Object.FillGeometry(nativePath.Object, nativeBrush.Object, null!);
+                    _targetNative!.FillGeometry(nativePath.Object, nativeBrush.Object, null!);
                 return;
             default:
                 throw new NotSupportedException(
@@ -274,22 +304,22 @@ internal sealed unsafe class Direct2DRenderContext :
         switch (geometry)
         {
             case RectGeometry rect:
-                _target!.Object.DrawRectangle(ToRect(rect.Rect), nativeBrush.Object, width, stroke?.Object!);
+                _targetNative!.DrawRectangle(ToRect(rect.Rect), nativeBrush.Object, width, stroke?.Object!);
                 return;
             case RoundedRectGeometry rounded when rounded.IsUniform:
-                _target!.Object.DrawRoundedRectangle(
+                _targetNative!.DrawRoundedRectangle(
                     ToRoundedRect(rounded), nativeBrush.Object, width, stroke?.Object!);
                 return;
             case EllipseGeometry ellipse:
-                _target!.Object.DrawEllipse(ToEllipse(ellipse), nativeBrush.Object, width, stroke?.Object!);
+                _targetNative!.DrawEllipse(ToEllipse(ellipse), nativeBrush.Object, width, stroke?.Object!);
                 return;
             case RoundedRectGeometry rounded:
-                using (var path = CreatePath(rounded.ToPath()))
-                    _target!.Object.DrawGeometry(path.Object, nativeBrush.Object, width, stroke?.Object!);
+                using (var path = CreateUncachedPath(rounded.ToPath()))
+                    _targetNative!.DrawGeometry(path.Object, nativeBrush.Object, width, stroke?.Object!);
                 return;
             case Path path:
                 using (var nativePath = CreatePath(path))
-                    _target!.Object.DrawGeometry(nativePath.Object, nativeBrush.Object, width, stroke?.Object!);
+                    _targetNative!.DrawGeometry(nativePath.Object, nativeBrush.Object, width, stroke?.Object!);
                 return;
             default:
                 throw new NotSupportedException(
@@ -303,19 +333,20 @@ internal sealed unsafe class Direct2DRenderContext :
         if (string.IsNullOrEmpty(text.Text)) return;
         using var nativeBrush = CreateBrush(brush);
         if (ReferenceEquals(TextLayoutProviderContext.Current, DirectWriteTextLayoutProvider.Shared) &&
-            DirectWriteTextLayoutProvider.Shared.TryDraw(text, _target!.Object, origin, nativeBrush.Object))
+            DirectWriteTextLayoutProvider.Shared.TryDraw(text, _targetNative!, origin, nativeBrush.Object))
         {
             foreach (var rect in text.GetDecorationRects(origin))
-                _target.Object.FillRectangle(ToRect(rect), nativeBrush.Object);
+                _targetNative!.FillRectangle(ToRect(rect), nativeBrush.Object);
             return;
         }
-        var lines = TextWrapping.Wrap(text.Text, text.MaxSize.Width, (offset, rune) =>
+        var prepared = _textPreparationCache.Get(text);
+        var lines = prepared?.Lines ?? TextWrapping.Wrap(text.Text, text.MaxSize.Width, (offset, rune) =>
             TextLayout.MeasureRuneAdvance(rune, text.Font), text.WrappingOptions);
-        var lineHeight = TextMetrics.GetLineHeight(text.Font, text.LineHeight);
-        var baselineOffset = TextMetrics.GetBaselineOffset(text.Font, lineHeight);
+        var lineHeight = prepared?.LineHeight ?? TextMetrics.GetLineHeight(text.Font, text.LineHeight);
+        var baselineOffset = prepared?.BaselineOffset ?? TextMetrics.GetBaselineOffset(text.Font, lineHeight);
 
-        var antialiasMode = _target!.Object.GetAntialiasMode();
-        _target.Object.SetAntialiasMode(D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_ALIASED);
+        var antialiasMode = _targetNative!.GetAntialiasMode();
+        _targetNative!.SetAntialiasMode(D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_ALIASED);
         try
         {
             for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
@@ -324,7 +355,7 @@ internal sealed unsafe class Direct2DRenderContext :
                 var indent = text.GetLineIndent(lineIndex);
                 var x = origin.X + indent + GetTextAlignmentOffset(text, line.Width + indent);
                 var baseline = origin.Y + lineIndex * lineHeight + baselineOffset;
-                foreach (var visualRune in text.EnumerateVisualRunes(line))
+                foreach (var visualRune in prepared?.GetVisualRunes(lineIndex) ?? text.EnumerateVisualRunes(line))
                 {
                     var rune = visualRune.Glyph;
                     var glyph = GetOrCreateGlyph(text.Font, rune.IsBmp ? (char)rune.Value : '\ufffd');
@@ -340,7 +371,7 @@ internal sealed unsafe class Direct2DRenderContext :
                                 glyphX + glyph.OffsetX + glyph.Width,
                                 glyphBaseline + glyph.OffsetY + glyph.Height);
                             var source = new D2D_RECT_F(0, 0, glyph.Width, glyph.Height);
-                            _target.Object.FillOpacityMask(
+                            _targetNative!.FillOpacityMask(
                                 glyph.Bitmap!.Object,
                                 nativeBrush.Object,
                                 D2D1_OPACITY_MASK_CONTENT.D2D1_OPACITY_MASK_CONTENT_TEXT_NATURAL,
@@ -358,11 +389,11 @@ internal sealed unsafe class Direct2DRenderContext :
         }
         finally
         {
-            _target.Object.SetAntialiasMode(antialiasMode);
+            _targetNative!.SetAntialiasMode(antialiasMode);
         }
 
         foreach (var rect in text.GetDecorationRects(origin))
-            _target!.Object.FillRectangle(ToRect(rect), nativeBrush.Object);
+            _targetNative!.FillRectangle(ToRect(rect), nativeBrush.Object);
     }
 
     public void DrawImage(Image image, Rect dest, Rect? source = null)
@@ -388,7 +419,7 @@ internal sealed unsafe class Direct2DRenderContext :
     public void PushLayer(Rect bounds, float opacity)
     {
         EnsureDrawing();
-        var layer = CreateLayer(GetLayerSize(bounds));
+        var layer = RentLayer(GetLayerSize(bounds));
         var parameters = new D2D1_LAYER_PARAMETERS
         {
             contentBounds = ToRect(bounds),
@@ -401,12 +432,12 @@ internal sealed unsafe class Direct2DRenderContext :
         };
         try
         {
-            _target!.Object.PushLayer(in parameters, layer.Object);
-            _nativeStateStack.Push(new NativeState(NativeStateKind.OpacityLayer, layer));
+            _targetNative!.PushLayer(in parameters, layer.Object);
+            _nativeStateStack.Push(new NativeState(NativeStateKind.OpacityLayer, layer, owner: this));
         }
         catch
         {
-            layer.Dispose();
+            ReturnLayer(layer);
             throw;
         }
     }
@@ -419,7 +450,7 @@ internal sealed unsafe class Direct2DRenderContext :
         if (state.Kind != NativeStateKind.OpacityLayer)
             throw new InvalidOperationException("PopLayer cannot pop an active clip.");
         _nativeStateStack.Pop();
-        _target!.Object.PopLayer();
+        _targetNative!.PopLayer();
         state.Dispose();
     }
 
@@ -429,7 +460,7 @@ internal sealed unsafe class Direct2DRenderContext :
         if (_nativeStateStack.Count > 0)
             throw new InvalidOperationException(
                 "Full-frame Clear must be called before pushing Direct2D clips or layers.");
-        _target!.Object.Clear(ToColor(color));
+        _targetNative!.Clear(ToColor(color));
         _frameFullyCleared = true;
     }
 
@@ -437,7 +468,7 @@ internal sealed unsafe class Direct2DRenderContext :
     {
         EnsureDrawing();
         using var brush = CreateSolidBrush(color);
-        _target!.Object.FillRectangle(ToRect(rect), brush.Object);
+        _targetNative!.FillRectangle(ToRect(rect), brush.Object);
     }
 
     public void Flush()
@@ -447,7 +478,7 @@ internal sealed unsafe class Direct2DRenderContext :
         if (_nativeStateStack.Any(static state =>
                 state.Kind is NativeStateKind.GeometryClip or NativeStateKind.OpacityLayer))
             return;
-        var result = _target.Object.Flush(IntPtr.Zero, IntPtr.Zero);
+        var result = _targetNative!.Flush(IntPtr.Zero, IntPtr.Zero);
         HandleDrawResult(result, "Failed to flush Direct2D drawing commands.");
     }
 
@@ -458,7 +489,7 @@ internal sealed unsafe class Direct2DRenderContext :
         ThrowIfDisposed();
         if (dirtyRects is { Count: 0 }) return;
         if (!_drawing || _target == null) return;
-        var result = _target!.Object.EndDraw(IntPtr.Zero, IntPtr.Zero);
+        var result = _targetNative!.EndDraw(IntPtr.Zero, IntPtr.Zero);
         _drawing = false;
         HandleDrawResult(result, "Failed to present the Direct2D frame.");
         if (_target != null)
@@ -480,9 +511,11 @@ internal sealed unsafe class Direct2DRenderContext :
         _canvasSize = canvasSize;
         _dpiScale = NormalizeDpiScale(dpiScale);
         ResetStacks();
+        _textPreparationCache.Clear();
+        ClearLayerPool();
+        _solidBrushColor = null;
         _needsFullRedraw = true;
         _frameFullyCleared = false;
-        _solidBrushColor = null;
         if (dpiChanged)
         {
             _glyphRasterizer.Clear();
@@ -494,8 +527,8 @@ internal sealed unsafe class Direct2DRenderContext :
             return;
         }
 
-        _target.Object.SetDpi(96f * _dpiScale);
-        var result = _target.Object.Resize(GetPhysicalSize());
+        _targetNative!.SetDpi(96f * _dpiScale);
+        var result = _targetNative!.Resize(GetPhysicalSize());
         HandleDrawResult(result, "Failed to resize the Direct2D HWND render target.");
     }
 
@@ -505,7 +538,7 @@ internal sealed unsafe class Direct2DRenderContext :
         _disposed = true;
         if (_drawing && _target != null)
         {
-            _target.Object.EndDraw(IntPtr.Zero, IntPtr.Zero);
+            _targetNative!.EndDraw(IntPtr.Zero, IntPtr.Zero);
             _drawing = false;
         }
         ReleaseDeviceResources();
@@ -520,8 +553,8 @@ internal sealed unsafe class Direct2DRenderContext :
         if (_target == null) CreateTarget();
         if (_drawing) return;
         PruneDisposedImages();
-        _target!.Object.BeginDraw();
-        _target.Object.SetTransform(ToMatrix(_currentTransform));
+        _targetNative!.BeginDraw();
+        _targetNative!.SetTransform(ToMatrix(_currentTransform));
         _drawing = true;
         _frameFullyCleared = false;
     }
@@ -553,8 +586,9 @@ internal sealed unsafe class Direct2DRenderContext :
                                  : D2D1_PRESENT_OPTIONS.D2D1_PRESENT_OPTIONS_IMMEDIATELY)
         };
         _target = _factory.CreateHwndRenderTarget(windowProperties, targetProperties);
-        _target.Object.SetAntialiasMode(D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        _target.Object.SetTransform(ToMatrix(_currentTransform));
+        _targetNative = _target.Object;
+        _targetNative!.SetAntialiasMode(D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        _targetNative!.SetTransform(ToMatrix(_currentTransform));
         _needsFullRedraw = true;
         _frameFullyCleared = false;
     }
@@ -566,37 +600,75 @@ internal sealed unsafe class Direct2DRenderContext :
             case SolidColorBrush solid:
                 return CreateSolidBrush(solid.Color);
             case LinearGradientBrush linear:
-            {
-                if (linear.Stops.Length == 0)
-                    return CreateSolidBrush(Color.Transparent);
-                using var stops = CreateGradientStops(linear.Stops, linear.SpreadMethod);
-                var properties = new D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES
-                {
-                    startPoint = ToPoint(linear.Start),
-                    endPoint = ToPoint(linear.End)
-                };
-                var native = _target!.CreateLinearGradientBrush(properties, stops, null);
-                return new NativeBrush(native, native.Object);
-            }
+                return GetGradientBrush(linear, linear.Stops,
+                    new GradientState(false, linear.Start, linear.End, 0, linear.SpreadMethod));
             case RadialGradientBrush radial:
-            {
-                if (radial.Stops.Length == 0)
-                    return CreateSolidBrush(Color.Transparent);
-                using var stops = CreateGradientStops(radial.Stops, radial.SpreadMethod);
-                var properties = new D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES
-                {
-                    center = ToPoint(radial.Center),
-                    gradientOriginOffset = new D2D_POINT_2F(0, 0),
-                    radiusX = Math.Max(0.001f, radial.Radius),
-                    radiusY = Math.Max(0.001f, radial.Radius)
-                };
-                var native = _target!.CreateRadialGradientBrush(properties, stops, null);
-                return new NativeBrush(native, native.Object);
-            }
+                return GetGradientBrush(radial, radial.Stops,
+                    new GradientState(true, radial.Center, default, radial.Radius, radial.SpreadMethod));
             default:
                 throw new NotSupportedException(
                     $"Direct2D rendering does not support brush type '{brush.GetType().Name}'.");
         }
+    }
+
+    private NativeBrush GetGradientBrush(Brush brush, GradientStop[] stops, GradientState state)
+    {
+        if (stops.Length == 0) return CreateSolidBrush(Color.Transparent);
+        if (_gradientCache.TryGetValue(brush, out var cached))
+        {
+            if (cached.State == state && cached.Matches(stops))
+            {
+                _gradientLru.Remove(cached.Node);
+                _gradientLru.AddFirst(cached.Node);
+                return new NativeBrush(null, cached.Brush.Object);
+            }
+            RemoveCachedGradient(cached);
+        }
+
+        using var nativeStops = CreateGradientStops(stops, state.Spread);
+        NativeBrush nativeBrush;
+        if (state.Radial)
+        {
+            var properties = new D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES
+            {
+                center = ToPoint(state.Start),
+                gradientOriginOffset = new D2D_POINT_2F(0, 0),
+                radiusX = Math.Max(0.001f, state.Radius),
+                radiusY = Math.Max(0.001f, state.Radius)
+            };
+            var native = _target!.CreateRadialGradientBrush(properties, nativeStops, null);
+            nativeBrush = new NativeBrush(native, native.Object);
+        }
+        else
+        {
+            var properties = new D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES
+            {
+                startPoint = ToPoint(state.Start),
+                endPoint = ToPoint(state.End)
+            };
+            var native = _target!.CreateLinearGradientBrush(properties, nativeStops, null);
+            nativeBrush = new NativeBrush(native, native.Object);
+        }
+        _gradientBrushCreationCount++;
+        if (stops.Length > MaxGradientCacheStops) return nativeBrush;
+        var snapshot = new GradientStopState[stops.Length];
+        for (var i = 0; i < stops.Length; i++)
+            snapshot[i] = new GradientStopState(stops[i].Offset, stops[i].Color);
+        var node = _gradientLru.AddFirst(brush);
+        cached = new CachedGradient(state, snapshot, nativeBrush, node);
+        _gradientCache.Add(brush, cached);
+        _gradientCacheStops += snapshot.Length;
+        while (_gradientCache.Count > MaxGradientCacheEntries || _gradientCacheStops > MaxGradientCacheStops)
+            RemoveCachedGradient(_gradientCache[_gradientLru.Last!.Value]);
+        return new NativeBrush(null, nativeBrush.Object);
+    }
+
+    private void RemoveCachedGradient(CachedGradient cached)
+    {
+        _gradientCache.Remove(cached.Node.Value);
+        _gradientLru.Remove(cached.Node);
+        _gradientCacheStops -= cached.Stops.Length;
+        cached.Brush.Dispose();
     }
 
     private NativeBrush CreateSolidBrush(Color color)
@@ -610,16 +682,17 @@ internal sealed unsafe class Direct2DRenderContext :
         if (_solidBrush == null)
         {
             _solidBrush = _target!.CreateSolidColorBrush(ToNativeColor(color), null);
+            _solidBrushNative = _solidBrush.Object;
             _solidBrushColor = color;
-            return _solidBrush.Object;
+            return _solidBrushNative!;
         }
         if (_solidBrushColor != color)
         {
             var nativeColor = ToNativeColor(color);
-            _solidBrush.Object.SetColor(in nativeColor);
+            _solidBrushNative!.SetColor(in nativeColor);
             _solidBrushColor = color;
         }
-        return _solidBrush.Object;
+        return _solidBrushNative!;
     }
 
     private IComObject<ID2D1GradientStopCollection> CreateGradientStops(
@@ -668,14 +741,35 @@ internal sealed unsafe class Direct2DRenderContext :
                 : D2D1_DASH_STYLE.D2D1_DASH_STYLE_SOLID,
             dashOffset = style.DashOffset
         };
-        return _factory.CreateStrokeStyle(properties, dashes);
+        return _factory.CreateStrokeStyle(properties, dashes.Length == 0 ? null : dashes);
+    }
+
+    private IComObject<ID2D1Layer> RentLayer(Size size)
+    {
+        // ID2D1Layer automatically grows as needed; only inactive layers are reusable.
+        // https://learn.microsoft.com/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-createlayer(constd2d1_size_f_id2d1layer)
+        return _layerPool.TryPop(out var layer) ? layer : CreateLayer(size);
+    }
+
+    private void ReturnLayer(IComObject<ID2D1Layer> layer)
+    {
+        if (!_disposed && _target != null && _layerPool.Count < MaxPooledLayers)
+            _layerPool.Push(layer);
+        else
+            layer.Dispose();
+    }
+
+    private void ClearLayerPool()
+    {
+        while (_layerPool.TryPop(out var layer)) layer.Dispose();
     }
 
     private IComObject<ID2D1Layer> CreateLayer(Size size)
     {
         var desiredSize = new D2D_SIZE_F(Math.Max(1, size.Width), Math.Max(1, size.Height));
-        var result = _target!.Object.CreateLayer((IntPtr)(&desiredSize), out var layer);
+        var result = _targetNative!.CreateLayer((IntPtr)(&desiredSize), out var layer);
         result.ThrowOnError();
+        _layerCreationCount++;
         return new ComObject<ID2D1Layer>(layer);
     }
 
@@ -685,7 +779,7 @@ internal sealed unsafe class Direct2DRenderContext :
         {
             RectGeometry rect => CreateRectangleGeometry(rect.Rect),
             RoundedRectGeometry rounded when rounded.IsUniform => CreateRoundedRectangleGeometry(rounded),
-            RoundedRectGeometry rounded => CreatePath(rounded.ToPath()),
+            RoundedRectGeometry rounded => CreateUncachedPath(rounded.ToPath()),
             EllipseGeometry ellipse => CreateEllipseGeometry(ellipse),
             Path path => CreatePath(path),
             _ => throw new NotSupportedException(
@@ -713,7 +807,41 @@ internal sealed unsafe class Direct2DRenderContext :
 
     private NativeGeometry CreatePath(Path path)
     {
+        var count = path.Commands.Count;
+        if (_pathCache.TryGetValue(path, out var cached))
+        {
+            if (cached.Matches(path.Commands))
+            {
+                _pathLru.Remove(cached.Node);
+                _pathLru.AddFirst(cached.Node);
+                return cached.Geometry.Retain();
+            }
+            RemoveCachedPath(cached);
+        }
+
+        var geometry = CreateUncachedPath(path);
+        if (count > MaxPathCacheCommands) return geometry;
+        var node = _pathLru.AddFirst(path);
+        cached = new CachedPath(geometry, path.Commands.ToArray(), node);
+        _pathCache.Add(path, cached);
+        _pathCacheCommands += count;
+        while (_pathCache.Count > MaxPathCacheEntries || _pathCacheCommands > MaxPathCacheCommands)
+            RemoveCachedPath(_pathCache[_pathLru.Last!.Value]);
+        return geometry.Retain();
+    }
+
+    private void RemoveCachedPath(CachedPath cached)
+    {
+        _pathCache.Remove(cached.Node.Value);
+        _pathLru.Remove(cached.Node);
+        _pathCacheCommands -= cached.CommandCount;
+        cached.Geometry.Dispose();
+    }
+
+    private NativeGeometry CreateUncachedPath(Path path)
+    {
         var geometry = _factory.CreatePathGeometry();
+        _pathGeometryCreationCount++;
         try
         {
             using var sink = geometry.Open<ID2D1GeometrySink>();
@@ -958,14 +1086,16 @@ internal sealed unsafe class Direct2DRenderContext :
     private void FinishPendingDraw()
     {
         if (!_drawing || _target == null) return;
-        var result = _target.Object.EndDraw(IntPtr.Zero, IntPtr.Zero);
+        var result = _targetNative!.EndDraw(IntPtr.Zero, IntPtr.Zero);
         _drawing = false;
         HandleDrawResult(result, "Failed to finish Direct2D drawing before resize.");
     }
 
     private void HandleDrawResult(HRESULT result, string message)
     {
-        if (result == Constants.D2DERR_RECREATE_TARGET)
+        if (result.IsSuccess) return;
+        // D2DERR_RECREATE_TARGET; avoid DirectN.Constants' unrelated static allocations.
+        if (result.UValue == 0x8899000Cu)
         {
             _needsFullRedraw = true;
             _frameFullyCleared = false;
@@ -989,17 +1119,29 @@ internal sealed unsafe class Direct2DRenderContext :
     private void ReleaseDeviceResources()
     {
         ResetStacks();
+        _textPreparationCache.Clear();
+        foreach (var path in _pathCache.Values) path.Geometry.Dispose();
+        _pathCache.Clear();
+        _pathLru.Clear();
+        _pathCacheCommands = 0;
+        foreach (var gradient in _gradientCache.Values) gradient.Brush.Dispose();
+        _gradientCache.Clear();
+        _gradientLru.Clear();
+        _gradientCacheStops = 0;
+        ClearLayerPool();
         foreach (var bitmap in _imageCache.Values)
             bitmap.Dispose();
         _imageCache.Clear();
         _imageLru.Clear();
         _imageCacheBytes = 0;
         ClearGlyphCache();
+        _solidBrushNative = null;
         _solidBrush?.Dispose();
         _solidBrush = null;
         _solidBrushColor = null;
         _needsFullRedraw = true;
         _frameFullyCleared = false;
+        _targetNative = null;
         _target?.Dispose();
         _target = null;
         _drawing = false;
@@ -1167,7 +1309,7 @@ internal sealed unsafe class Direct2DRenderContext :
         => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private static readonly D2D_MATRIX_3X2_F IdentityMatrix = ToMatrix(Matrix3x2.Identity);
-    private Rect GetGeometryBounds(ID2D1Geometry geometry)
+    private static Rect GetGeometryBounds(ID2D1Geometry geometry)
     {
         geometry.GetBounds(IntPtr.Zero, out var bounds).ThrowOnError();
         return new Rect(bounds.left, bounds.top, Math.Max(0, bounds.right - bounds.left),
@@ -1204,14 +1346,19 @@ internal sealed unsafe class Direct2DRenderContext :
     private readonly struct NativeState(
         NativeStateKind kind,
         IComObject<ID2D1Layer>? layer = null,
-        NativeGeometry? geometry = null) : IDisposable
+        NativeGeometry? geometry = null,
+        Direct2DRenderContext? owner = null) : IDisposable
     {
         public NativeStateKind Kind { get; } = kind;
 
         public void Dispose()
         {
             geometry?.Dispose();
-            layer?.Dispose();
+            if (layer != null)
+            {
+                if (owner != null) owner.ReturnLayer(layer);
+                else layer.Dispose();
+            }
         }
     }
 
@@ -1223,7 +1370,7 @@ internal sealed unsafe class Direct2DRenderContext :
         char Character,
         int FontGeneration);
 
-    /// <summary>共享纯色画笔当前的浮点颜色；透明度叶子填充会写入组透明度浮点值。</summary>
+    /// <summary>纯色画刷的完整浮点颜色；叶子透明度保留原始浮点alpha。</summary>
     private readonly record struct BrushColor(float R, float G, float B, float A);
 
     private sealed class CachedBitmap(
@@ -1262,7 +1409,47 @@ internal sealed unsafe class Direct2DRenderContext :
         public void Dispose() => Bitmap?.Dispose();
     }
 
-    private sealed class NativeBrush(IComObject? owner, ID2D1Brush value) : IDisposable
+    private sealed record CachedPath(
+        NativeGeometry Geometry,
+        PathCommand[] Commands,
+        LinkedListNode<Path> Node)
+    {
+        public int CommandCount => Commands.Length;
+        public bool Matches(IReadOnlyList<PathCommand> commands)
+        {
+            if (Commands.Length != commands.Count) return false;
+            for (var i = 0; i < Commands.Length; i++)
+                if (!Equals(Commands[i], commands[i])) return false;
+            return true;
+        }
+    }
+
+    private readonly record struct GradientState(
+        bool Radial, Point Start, Point End, float Radius, GradientSpreadMethod Spread);
+
+    private readonly record struct GradientStopState(float Offset, Color Color);
+
+    private sealed class CachedGradient(
+        GradientState state,
+        GradientStopState[] stops,
+        NativeBrush brush,
+        LinkedListNode<Brush> node)
+    {
+        public GradientState State { get; } = state;
+        public GradientStopState[] Stops { get; } = stops;
+        public NativeBrush Brush { get; } = brush;
+        public LinkedListNode<Brush> Node { get; } = node;
+
+        public bool Matches(GradientStop[] values)
+        {
+            if (Stops.Length != values.Length) return false;
+            for (var i = 0; i < values.Length; i++)
+                if (Stops[i] != new GradientStopState(values[i].Offset, values[i].Color)) return false;
+            return true;
+        }
+    }
+
+    private readonly struct NativeBrush(IComObject? owner, ID2D1Brush value) : IDisposable
     {
         public ID2D1Brush Object { get; } = value;
         public void Dispose() => owner?.Dispose();
@@ -1270,7 +1457,28 @@ internal sealed unsafe class Direct2DRenderContext :
 
     private sealed class NativeGeometry(IComObject owner, ID2D1Geometry value) : IDisposable
     {
+        // Single render thread. The cache and every outstanding clip own separate leases.
+        private int _references = 1;
+        private Rect? _bounds;
         public ID2D1Geometry Object { get; } = value;
-        public void Dispose() => owner.Dispose();
+        public Rect Bounds
+        {
+            get
+            {
+                if (_bounds is { } bounds) return bounds;
+                var result = GetGeometryBounds(Object);
+                _bounds = result;
+                return result;
+            }
+        }
+        public NativeGeometry Retain()
+        {
+            _references++;
+            return this;
+        }
+        public void Dispose()
+        {
+            if (--_references == 0) owner.Dispose();
+        }
     }
 }

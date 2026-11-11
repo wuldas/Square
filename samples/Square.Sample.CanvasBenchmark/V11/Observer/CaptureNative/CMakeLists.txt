@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.24)
+project(CanvasObserverCapture LANGUAGES CXX)
+add_library(CanvasObserverCapture SHARED DesktopDuplication.cpp)
+target_compile_features(CanvasObserverCapture PRIVATE cxx_std_17)
+target_compile_definitions(CanvasObserverCapture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(CanvasObserverCapture PRIVATE d3d11 dxgi)
+if(MSVC)
+  target_compile_options(CanvasObserverCapture PRIVATE /W4 /WX /EHsc)
+endif()
+set_target_properties(CanvasObserverCapture PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../bin/$<CONFIG>/net10.0")

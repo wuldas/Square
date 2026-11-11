@@ -1,8 +1,8 @@
 <template xmlns="http://www.w3.org/1999/xhtml">
   <article class="perf-page">
     <header class="perf-header">
-      <h1>CSS 动画性能测试</h1>
-      <p>MDN CSS 动画性能对照：Square / Avalonia / 原生 Chrome，各组 240 方块，6 秒循环；测量 30 秒 CPU 与 FPS。</p>
+      <h1>CSS 动画性能对比</h1>
+      <p>240 方块 × 3 组 · 6 秒循环 · 目标 60 FPS</p>
     </header>
 
     <section class="perf-section">
@@ -29,7 +29,7 @@
   </article>
 </template>
 <script lang="csharp">
-  // Keep the workload identical to the native Avalonia and standalone Chrome cases.
+  // Keep the workload identical across Square, Avalonia, Electron and Flutter.
   public static readonly int[] Boxes = new int[240];
 </script>
 <style>

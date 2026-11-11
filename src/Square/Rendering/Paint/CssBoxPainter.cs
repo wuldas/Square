@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Square.CSS.Properties;
 using Square.Controls;
@@ -27,6 +28,25 @@ internal static class CssBoxPainter
     private static readonly string[] AuthorOutlineProperties =
         ["outline", "outline-width", "outline-color", "outline-style", "outline-offset"];
 
+    // border 盒声明判定用的属性名集合与四边属性名缓存，避免每帧插值构造字符串/数组。
+    private static readonly string[] BorderDeclarationProperties =
+    [
+        "border", "border-width", "border-color", "border-style",
+        "border-top", "border-top-width", "border-top-color", "border-top-style",
+        "border-right", "border-right-width", "border-right-color", "border-right-style",
+        "border-bottom", "border-bottom-width", "border-bottom-color", "border-bottom-style",
+        "border-left", "border-left-width", "border-left-color", "border-left-style"
+    ];
+
+    private static readonly string[] BorderSideShorthands =
+        ["border-top", "border-right", "border-bottom", "border-left"];
+    private static readonly string[] BorderSideWidthProperties =
+        ["border-top-width", "border-right-width", "border-bottom-width", "border-left-width"];
+    private static readonly string[] BorderSideColorProperties =
+        ["border-top-color", "border-right-color", "border-bottom-color", "border-left-color"];
+    private static readonly string[] BorderSideStyleProperties =
+        ["border-top-style", "border-right-style", "border-bottom-style", "border-left-style"];
+
     internal enum BorderStyle
     {
         None,
@@ -47,15 +67,20 @@ internal static class CssBoxPainter
         }
 
         var geometry = element.Geometry;
+        // HTML button proxies and author-specified appearance keep their CSS box painting.
+        if (element is Button button && button.VisualParent is not HTMLElement &&
+            !button.Style.IsAuthorSpecified("appearance") && UsesDefaultButtonWidgetPaint(button))
+        {
+            PaintButtonWidget(context, button, geometry);
+            return;
+        }
         var roundedGeometry = TryGetRoundedGeometry(element, geometry, out var rounded) ? rounded : null;
-        var declarations = element.Style.GetAll();
-        if (declarations.ContainsKey("box-shadow") &&
-            BoxShadow.TryParseList(element.Style.Get("box-shadow"), out var shadows))
+        if (BoxShadow.TryParseList(element.Style.Get("box-shadow"), out var shadows))
             BoxShadowRendering.Draw(context, geometry, roundedGeometry, shadows);
 
         // View already paints colors understood by its styled-background helper.
         if (!ViewPaintsBackground(element) &&
-            TryGetBackgroundColor(element, declarations, out var background) && background.A > 0)
+            TryGetBackgroundColor(element, out var background) && background.A > 0)
         {
             var brush = new SolidColorBrush(background);
             if (roundedGeometry != null)
@@ -74,6 +99,8 @@ internal static class CssBoxPainter
     public static void PaintAfterContent(IRenderContext context, Element element)
     {
         if (element is IPopupElement { IsLayoutOverlay: true }) return;
+        if (element is Button button && button.VisualParent is not HTMLElement &&
+            !button.Style.IsAuthorSpecified("appearance") && UsesDefaultButtonWidgetPaint(button)) return;
         // A text-form sidecar paints no chrome of its own: the HTML host box owns the single
         // frame, and the sidecar renders only editor content, caret and scrollbar.
         if (IsHtmlFormSidecar(element)) return;
@@ -109,7 +136,7 @@ internal static class CssBoxPainter
         if (tableMetadata?.UseCollapsedBorderFragments == true)
             PaintCollapsedBorderFragments(context, tableMetadata.CollapsedBorderFragments);
         else
-            PaintBorder(context, element, element.Style.GetAll());
+            PaintBorder(context, element);
     }
 
     public static void PaintAfterChildren(IRenderContext context, Element element)
@@ -142,7 +169,7 @@ internal static class CssBoxPainter
         }
         if (TablePaintMetadataStore.TryGetActive(element, out var tableMetadata) && tableMetadata.SuppressCssBox)
             return;
-        PaintOutline(context, element, element.Style.GetAll());
+        PaintOutline(context, element);
     }
 
     private static bool UsesDefaultWidgetFocusBorder(UIElement element)
@@ -153,17 +180,29 @@ internal static class CssBoxPainter
             !HasAuthorOutlineStyle(element);
     }
 
-    private static bool HasAuthorBoxStyle(Element element) =>
-        AuthorBoxProperties.Any(element.Style.IsAuthorSpecified);
+    private static bool HasAuthorBoxStyle(Element element)
+    {
+        foreach (var property in AuthorBoxProperties)
+            if (element.Style.IsAuthorSpecified(property)) return true;
+        return false;
+    }
 
     internal static bool UsesDefaultButtonWidgetPaint(Button button) =>
         ControlDrawing.UsesWidgetAppearance(button) && !HasAuthorBoxStyle(button);
 
-    private static bool HasAuthorBorderStyle(Element element) =>
-        AuthorBorderProperties.Any(element.Style.IsAuthorSpecified);
+    private static bool HasAuthorBorderStyle(Element element)
+    {
+        foreach (var property in AuthorBorderProperties)
+            if (element.Style.IsAuthorSpecified(property)) return true;
+        return false;
+    }
 
-    private static bool HasAuthorOutlineStyle(Element element) =>
-        AuthorOutlineProperties.Any(element.Style.IsAuthorSpecified);
+    private static bool HasAuthorOutlineStyle(Element element)
+    {
+        foreach (var property in AuthorOutlineProperties)
+            if (element.Style.IsAuthorSpecified(property)) return true;
+        return false;
+    }
 
     /// <summary>HTML textarea/select host whose widget frame is painted on its border box.</summary>
     private static bool IsHtmlFormHost(Element element) =>
@@ -210,6 +249,41 @@ internal static class CssBoxPainter
         }
     }
 
+    private static void PaintButtonWidget(IRenderContext context, Button button, Rect geometry)
+    {
+        var (fill, border) = !button.IsEnabled
+            ? (Color.FromRgb(238, 238, 238), Color.FromRgb(208, 208, 208))
+            : button.HasState(ElementState.Active)
+                ? (Color.FromRgb(245, 245, 245), Color.FromRgb(141, 141, 141))
+                : button.HasState(ElementState.Hover)
+                    ? (Color.FromRgb(229, 229, 229), Color.FromRgb(79, 79, 79))
+                    : (Color.FromRgb(239, 239, 239), Color.FromRgb(118, 118, 118));
+        if (button.Properties.HasValue(nameof(Button.Background)))
+            fill = button.Background;
+        var left = MathF.Ceiling(geometry.X);
+        var top = MathF.Ceiling(geometry.Y);
+        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
+        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        if (right < left || bottom < top) return;
+
+        var fillBrush = new SolidColorBrush(fill);
+        context.FillRect(new Rect(left + 1, top + 1,
+            Math.Max(0, right - left - 1), Math.Max(0, bottom - top - 1)), fillBrush);
+
+        var borderBrush = new SolidColorBrush(border);
+        context.FillRect(new Rect(left + 2, top, Math.Max(0, right - left - 3), 1), borderBrush);
+        context.FillRect(new Rect(left + 2, bottom, Math.Max(0, right - left - 3), 1), borderBrush);
+        context.FillRect(new Rect(left, top + 2, 1, Math.Max(0, bottom - top - 3)), borderBrush);
+        context.FillRect(new Rect(right, top + 2, 1, Math.Max(0, bottom - top - 3)), borderBrush);
+
+        var weakBorderBrush = new SolidColorBrush(WithAlpha(border, 32));
+        var shoulderBorderBrush = new SolidColorBrush(WithAlpha(border, 192));
+        var innerCornerBrush = new SolidColorBrush(WithAlpha(border, 106));
+        PaintButtonCorners(context, left, top, right, bottom, weakBorderBrush, 0, 0);
+        PaintButtonCorners(context, left, top, right, bottom, shoulderBorderBrush, 1, 0);
+        PaintButtonCorners(context, left, top, right, bottom, shoulderBorderBrush, 0, 1);
+        PaintButtonCorners(context, left, top, right, bottom, innerCornerBrush, 1, 1);
+    }
 
     private static void PaintButtonCorners(
         IRenderContext context, float left, float top, float right, float bottom,
@@ -344,12 +418,9 @@ internal static class CssBoxPainter
                 context.FillRect(fragment.Bounds, new SolidColorBrush(fragment.Color));
     }
 
-    internal static void PaintBorder(IRenderContext context, Element element) =>
-        PaintBorder(context, element, element.Style.GetAll());
-
-    private static void PaintBorder(IRenderContext context, Element element, IReadOnlyDictionary<string, string> declarations)
+    internal static void PaintBorder(IRenderContext context, Element element)
     {
-        if (!TryGetBorderEdges(element, declarations, out var edges)) return;
+        if (!TryGetBorderEdges(element, out var edges)) return;
 
         var box = element.Geometry;
         var top = GetPaintWidth(edges[0], box.Height);
@@ -416,9 +487,9 @@ internal static class CssBoxPainter
         return true;
     }
 
-    private static void PaintOutline(IRenderContext context, Element element, IReadOnlyDictionary<string, string> declarations)
+    private static void PaintOutline(IRenderContext context, Element element)
     {
-        if (!TryGetOutline(element, declarations, out var outline) || outline.Style != BorderStyle.Solid ||
+        if (!TryGetOutline(element, out var outline) || outline.Style != BorderStyle.Solid ||
             outline.Width <= 0 || outline.Color.A == 0) return;
 
         var box = element.Geometry;
@@ -456,16 +527,11 @@ internal static class CssBoxPainter
         Math.Max(0, radius.X + expansion),
         Math.Max(0, radius.Y + expansion));
 
-    private static bool TryGetBackgroundColor(
-        Element element,
-        IReadOnlyDictionary<string, string> declarations,
-        out Color color)
+    private static bool TryGetBackgroundColor(Element element, out Color color)
     {
         color = default;
-        if (declarations.ContainsKey("background-color") &&
-            TryParseColor(element.Style.Get("background-color"), element, out color)) return true;
-        return declarations.ContainsKey("background") &&
-            TryParseColor(element.Style.Get("background"), element, out color);
+        if (TryParseColor(element.Style.Get("background-color"), element, out color)) return true;
+        return TryParseColor(element.Style.Get("background"), element, out color);
     }
 
     private static bool ViewPaintsBackground(Element element)
@@ -476,21 +542,18 @@ internal static class CssBoxPainter
         return Color.TryParse(value, out _);
     }
 
-    internal static bool TryGetBorderEdges(
-        Element element,
-        IReadOnlyDictionary<string, string> declarations,
-        out BorderEdge[] edges)
+    internal static bool TryGetBorderEdges(Element element, out BorderEdge[] edges)
     {
+        // border 系均为非继承属性：解析值非空即代表存在声明（含 UA、initial/inherit/unset、var 回退）。
         var style = element.Style;
-        var borderProperties = new[]
-        {
-            "border", "border-width", "border-color", "border-style",
-            "border-top", "border-top-width", "border-top-color", "border-top-style",
-            "border-right", "border-right-width", "border-right-color", "border-right-style",
-            "border-bottom", "border-bottom-width", "border-bottom-color", "border-bottom-style",
-            "border-left", "border-left-width", "border-left-color", "border-left-style"
-        };
-        if (!borderProperties.Any(declarations.ContainsKey))
+        var hasBorderDeclaration = false;
+        foreach (var property in BorderDeclarationProperties)
+            if (style.Get(property) != null)
+            {
+                hasBorderDeclaration = true;
+                break;
+            }
+        if (!hasBorderDeclaration)
         {
             edges = [];
             return false;
@@ -499,8 +562,8 @@ internal static class CssBoxPainter
         var currentColor = TryParseColor(style.Get("color"), element, out var parsedColor)
             ? parsedColor
             : Color.Black;
-        var hasGlobalWidth = declarations.ContainsKey("border-width");
-        var hasGlobalStyleDeclaration = declarations.ContainsKey("border") || declarations.ContainsKey("border-style");
+        var hasGlobalWidth = style.Get("border-width") != null;
+        var hasGlobalStyleDeclaration = style.Get("border") != null || style.Get("border-style") != null;
         var defaultStyle = hasGlobalWidth && !hasGlobalStyleDeclaration ? BorderStyle.Solid : BorderStyle.None;
         edges =
         [
@@ -519,33 +582,31 @@ internal static class CssBoxPainter
         if (TryParseStyles(style.Get("border-style"), out var styles))
             for (var i = 0; i < edges.Length; i++) edges[i] = edges[i] with { Style = styles[i] };
 
-        var names = new[] { "top", "right", "bottom", "left" };
-        for (var i = 0; i < names.Length; i++)
+        for (var i = 0; i < BorderSideShorthands.Length; i++)
         {
-            var prefix = $"border-{names[i]}";
-            var hasEdgeDeclaration = declarations.ContainsKey(prefix) || declarations.ContainsKey($"{prefix}-width") ||
-                declarations.ContainsKey($"{prefix}-color") || declarations.ContainsKey($"{prefix}-style");
-            var hasEdgeStyleDeclaration = declarations.ContainsKey(prefix) || declarations.ContainsKey($"{prefix}-style");
-            if ((hasGlobalWidth || declarations.ContainsKey($"{prefix}-width")) &&
+            var shorthand = style.Get(BorderSideShorthands[i]);
+            var width = style.Get(BorderSideWidthProperties[i]);
+            var color = style.Get(BorderSideColorProperties[i]);
+            var edgeStyle = style.Get(BorderSideStyleProperties[i]);
+            var hasEdgeDeclaration = shorthand != null || width != null || color != null || edgeStyle != null;
+            var hasEdgeStyleDeclaration = shorthand != null || edgeStyle != null;
+            if ((hasGlobalWidth || width != null) &&
                 !hasGlobalStyleDeclaration && hasEdgeDeclaration && !hasEdgeStyleDeclaration)
                 edges[i] = edges[i] with { Style = BorderStyle.Solid };
-            if (TryParseBorderShorthand(style.Get(prefix), element, out var edge)) edges[i] = edge;
-            if (TryParseLength(style.Get($"{prefix}-width"), out var width)) edges[i] = edges[i] with { Width = width };
-            if (TryParseColor(style.Get($"{prefix}-color"), element, out var color)) edges[i] = edges[i] with { Color = color };
-            if (TryParseStyle(style.Get($"{prefix}-style"), out var edgeStyle)) edges[i] = edges[i] with { Style = edgeStyle };
+            if (TryParseBorderShorthand(shorthand, element, out var edge)) edges[i] = edge;
+            if (TryParseLength(width, out var parsedWidth)) edges[i] = edges[i] with { Width = parsedWidth };
+            if (TryParseColor(color, element, out var parsedEdgeColor)) edges[i] = edges[i] with { Color = parsedEdgeColor };
+            if (TryParseStyle(edgeStyle, out var parsedStyle)) edges[i] = edges[i] with { Style = parsedStyle };
         }
 
         return true;
     }
 
-    private static bool TryGetOutline(
-        Element element,
-        IReadOnlyDictionary<string, string> declarations,
-        out BorderEdge outline)
+    private static bool TryGetOutline(Element element, out BorderEdge outline)
     {
         var style = element.Style;
-        if (!declarations.ContainsKey("outline") && !declarations.ContainsKey("outline-width") &&
-            !declarations.ContainsKey("outline-color") && !declarations.ContainsKey("outline-style"))
+        if (style.Get("outline") == null && style.Get("outline-width") == null &&
+            style.Get("outline-color") == null && style.Get("outline-style") == null)
         {
             outline = default;
             return false;
@@ -715,9 +776,10 @@ internal static class CssBoxPainter
             ? Math.Clamp(edge.Width, 0, Math.Max(0, maximum))
             : 0;
 
-    private static bool TryGetRoundedGeometry(Element element, Rect box, out RoundedRectGeometry geometry)
+    private static bool TryGetRoundedGeometry(
+        Element element, Rect box, [NotNullWhen(true)] out RoundedRectGeometry? geometry)
     {
-        if (!CssBorderRadiusParser.TryResolve(element.Style.GetAll(), element.Style.Get, box, out geometry))
+        if (!CssBorderRadiusParser.TryResolve(element.Style, box, out geometry))
             return false;
         return geometry.TopLeft.X > 0 || geometry.TopLeft.Y > 0 ||
             geometry.TopRight.X > 0 || geometry.TopRight.Y > 0 ||

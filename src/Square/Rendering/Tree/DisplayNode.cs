@@ -1,10 +1,10 @@
-using Square.CSS.Properties;
 using Square.Graphics;
 using Square.UI;
 using System.Numerics;
 using System.Globalization;
 using Square.Rendering.Commands;
 using Square.Rendering.Paint;
+using Square.CSS.Properties;
 
 namespace Square.Rendering.Tree;
 

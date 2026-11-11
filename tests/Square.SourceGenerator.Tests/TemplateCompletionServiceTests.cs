@@ -47,6 +47,32 @@ public sealed class TemplateCompletionServiceTests
         Assert.DoesNotContain(items, item => item.Label == "Button");
     }
 
+    [Fact]
+    public void CssTypeSelectorDeduplicatesCaseAliasesAndFiltersByPrefix()
+    {
+        const string source = "<template><View /></template><style>But</style>";
+        var offset = source.IndexOf("</style>", StringComparison.Ordinal);
+
+        var items = TemplateCompletionService.GetItems(source, offset, "Editing.sqx");
+
+        var selector = Assert.Single(items);
+        Assert.Equal("button", selector.InsertText, ignoreCase: true);
+    }
+
+    [Theory]
+    [InlineData("Editing.sqx")]
+    [InlineData("Editing.sqv")]
+    public void TagCompletionPreservesDistinctHtmlAndSquareControls(string sourcePath)
+    {
+        const string source = "<template xmlns:html=\"http://www.w3.org/1999/xhtml\" xmlns:ui=\"urn:square:ui\"><";
+        var context = new TemplateCompletionContext(TemplateCompletionKind.Tag, string.Empty, string.Empty,
+            sourcePath.EndsWith(".sqv", StringComparison.Ordinal));
+
+        var items = TemplateCompletionService.GetItems(context, source);
+
+        Assert.Contains(items, item => item.Label == "html:button" && item.Detail == "Square.Html.HTMLButtonElement");
+        Assert.Contains(items, item => item.Label == "ui:Button" && item.Detail == "Square.Controls.Button");
+    }
 
     [Fact]
     public void CssSelectorInsideMediaRuleIsNotTreatedAsAProperty()

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Square/Square.csproj" />
+    <ProjectReference Include="../../../src/Square.Images/Square.Images.csproj" />
+    <ProjectReference Include="../../../src/Square.Platform.Win32/Square.Platform.Win32.csproj" />
+    <ProjectReference Include="../../../src/Square.Backends.Direct2D/Square.Backends.Direct2D.csproj" />
+    <ProjectReference Include="../../../src/Square.Backends.Vulkan/Square.Backends.Vulkan.csproj" />
+  </ItemGroup>
+</Project>

@@ -455,7 +455,7 @@ public sealed class LanguageServerCompletionTests
         }));
         var completion = await session.ReadResponseAsync();
 
-        Assert.Contains("\"label\":\"markdown:MarkdownViewer\"", completion, StringComparison.Ordinal);
+        Assert.True(completion.Contains("\"label\":\"markdown:MarkdownViewer\"", StringComparison.Ordinal), completion);
 
         const string propertySource = "<template xmlns:markdown=\"urn:square:markdown\"><markdown:MarkdownViewer Co";
         await session.SendAsync(JsonSerializer.Serialize(new
@@ -547,6 +547,7 @@ public sealed class LanguageServerCompletionTests
         }));
 
         var definition = await session.ReadResponseAsync();
+        Assert.True(!definition.Contains("\"error\"", StringComparison.Ordinal), definition);
         using var document = JsonDocument.Parse(definition);
         var link = Assert.Single(document.RootElement.GetProperty("result").EnumerateArray());
 

@@ -4,6 +4,7 @@ using Square.CSS.Tokenizer;
 using Square.Controls;
 using Square.Graphics;
 using Square.Rendering;
+using Square.Rendering.Paint;
 using Square.UI;
 using Xunit;
 
@@ -415,11 +416,77 @@ public sealed class AppearanceCssTests
     }
 
     [Fact]
+    public void AppearanceAutoPaintsChromiumRoundedButtonCornersOnSoftwareRenderer()
+    {
+        var engine = new CssEngine();
+        var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+        engine.ApplyStyles(button);
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(90, 36)
+        });
+        context.Clear(Color.FromRgb(255, 0, 0));
+        var tree = new DisplayTree();
+        tree.BuildFrom(button);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var corner = bitmap.GetPixel(2, 2);
+        var shoulder = bitmap.GetPixel(3, 2);
+        var interior = bitmap.GetPixel(20, 16);
+        var topBorder = bitmap.GetPixel(20, 2);
+        var topInner = bitmap.GetPixel(20, 3);
+        var bottomInner = bitmap.GetPixel(20, 28);
+        var bottomBorder = bitmap.GetPixel(20, 29);
+        var leftBorder = bitmap.GetPixel(2, 16);
+        var leftInner = bitmap.GetPixel(3, 16);
+        var rightInner = bitmap.GetPixel(80, 16);
+        var rightBorder = bitmap.GetPixel(81, 16);
+
+        Assert.True(interior[2] > 200 && interior[1] > 200 && interior[0] > 200,
+            "appearance:auto should fill the button interior from Chrome ButtonFace");
+        Assert.True(shoulder[2] < 200 && shoulder[1] < 200 && shoulder[0] < 200,
+            "appearance:auto should use Chromium's 1px button corner shoulder");
+        Assert.True(topBorder[2] < 180 && topBorder[1] < 180 && topBorder[0] < 180,
+            "appearance:auto should align the top border to the outer pixel row");
+        Assert.True(topInner[2] > 200 && topInner[1] > 200 && topInner[0] > 200,
+            "appearance:auto should keep the inner top row at ButtonFace");
+        Assert.True(bottomInner[2] > 200 && bottomInner[1] > 200 && bottomInner[0] > 200,
+            "appearance:auto should keep the inner bottom row at ButtonFace");
+        Assert.True(bottomBorder[2] < 180 && bottomBorder[1] < 180 && bottomBorder[0] < 180,
+            "appearance:auto should align the bottom border to the outer pixel row");
+        Assert.True(leftBorder[2] < 180 && leftBorder[1] < 180 && leftBorder[0] < 180,
+            "appearance:auto should align the left border to the outer pixel column");
+        Assert.True(leftInner[2] > 200 && leftInner[1] > 200 && leftInner[0] > 200,
+            "appearance:auto should keep the inner left column at ButtonFace");
+        Assert.True(rightInner[2] > 200 && rightInner[1] > 200 && rightInner[0] > 200,
+            "appearance:auto should keep the inner right column at ButtonFace");
+        Assert.True(rightBorder[2] < 180 && rightBorder[1] < 180 && rightBorder[0] < 180,
+            "appearance:auto should align the right border to the outer pixel column");
+        for (var y = 0; y < 5; y++)
+        for (var x = 0; x < 5; x++)
+        {
+            var topLeft = bitmap.GetPixel(2 + x, 2 + y);
+            Assert.True(topLeft.SequenceEqual(bitmap.GetPixel(81 - x, 2 + y)),
+                $"appearance:auto top corners differ at ({x}, {y})");
+            Assert.True(topLeft.SequenceEqual(bitmap.GetPixel(2 + x, 29 - y)),
+                $"appearance:auto left corners differ at ({x}, {y})");
+            Assert.True(topLeft.SequenceEqual(bitmap.GetPixel(81 - x, 29 - y)),
+                $"appearance:auto diagonal corners differ at ({x}, {y})");
+        }
+        Assert.InRange(corner[2], 200, 254);
+        Assert.InRange(corner[1], 1, 80);
+        Assert.InRange(corner[0], 1, 80);
+    }
+
+    [Fact]
     public void AppearanceAutoButtonReversesBevelWhilePressed()
     {
         static (byte Top, byte Bottom, byte Center) Capture(bool pressed)
         {
             var button = new Button("Save") { Geometry = new Rect(2, 2, 80, 28) };
+            button.Style.Set("appearance", "auto");
             if (pressed) button.SetState(ElementState.Active, true);
             new CssEngine().ApplyStyles(button);
             using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
@@ -1181,5 +1248,69 @@ public sealed class AppearanceCssTests
 
         Assert.False(foundFluentHover, "Select popup hover must not paint Fluent #e6f2fc");
         Assert.True(foundSelectedGray, "selected option should use Chrome list-box #cecece");
+    }
+
+    [Fact]
+    public void BorderSideColorResolvedFromVariablePaintsResolvedEdge()
+    {
+        var view = new View { Geometry = new Rect(4, 4, 40, 20) };
+        view.Style.Set("--edge", "#FF0000");
+        view.Style.Set("border", "4px solid #000000");
+        view.Style.Set("border-top-color", "var(--edge)");
+
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(48, 28)
+        });
+        context.Clear(Color.White);
+        var tree = new DisplayTree();
+        tree.BuildFrom(view);
+        tree.Render(context);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var topEdge = bitmap.GetPixel(20, 6);
+        var leftEdge = bitmap.GetPixel(6, 14);
+        Assert.Equal(255, topEdge[2]);
+        Assert.Equal(0, topEdge[1]);
+        Assert.Equal(0, topEdge[0]);
+        Assert.Equal(0, leftEdge[2]);
+        Assert.Equal(0, leftEdge[1]);
+        Assert.Equal(0, leftEdge[0]);
+    }
+
+    [Fact]
+    public void StyleChangesDuringPaintAffectBorderAndOutlineInTheSameFrame()
+    {
+        var view = new PaintStyleChangingView { Geometry = new Rect(4, 4, 40, 20) };
+        using var context = new RenderBackendFactory().CreateContext(new RenderContextCreateInfo
+        {
+            CanvasSize = new Size(48, 28)
+        });
+        context.Clear(Color.White);
+
+        CssBoxPainter.PaintBeforeContent(context, view);
+        view.Paint(context);
+        CssBoxPainter.PaintAfterContent(context, view);
+        CssBoxPainter.PaintAfterChildren(context, view);
+
+        using var bitmap = ((IRenderBitmapSource)context).CaptureBitmap();
+        var border = bitmap.GetPixel(6, 14);
+        Assert.Equal(0, border[2]);
+        Assert.Equal(0, border[1]);
+        Assert.Equal(255, border[0]);
+        var outline = bitmap.GetPixel(3, 14);
+        Assert.Equal(0, outline[2]);
+        Assert.Equal(255, outline[1]);
+        Assert.Equal(0, outline[0]);
+    }
+
+    private sealed class PaintStyleChangingView : View
+    {
+        public override void Paint(IRenderContext context)
+        {
+            Style.Set("border", "4px solid #0000FF");
+            Style.Set("outline", "2px solid #00FF00");
+            base.Paint(context);
+        }
     }
 }

@@ -114,11 +114,14 @@ public sealed class ChildNodeCollection : IList<Node>
     /// <summary>复制到数组。</summary>
     public void CopyTo(Node[] array, int arrayIndex) => _list.CopyTo(array, arrayIndex);
 
-    /// <summary>返回子节点枚举器。</summary>
-    public IEnumerator<Node> GetEnumerator() => _list.GetEnumerator();
+    /// <summary>返回子节点枚举器（结构体枚举器，foreach 不分配）。</summary>
+    public List<Node>.Enumerator GetEnumerator() => _list.GetEnumerator();
 
     /// <inheritdoc />
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _list.GetEnumerator();
+    IEnumerator<Node> IEnumerable<Node>.GetEnumerator() => GetEnumerator();
+
+    /// <inheritdoc />
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
     private void ValidateNewChild(Node item)
     {

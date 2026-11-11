@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No remote content: everything is packaged, so the CSP is locked to 'self'. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+<title>CSS 动画性能对比 — Electron（720 方块）</title>
+<!--
+  Electron counterpart of samples/Square.Sample.PerfComparison/Square/CssAnimationPerfPage.sqv,
+  carried over from the standalone Chrome page (same 720-box DOM/CSS):
+  three DISTINCT groups of 240 boxes, each group animating one property class in a
+  6s linear infinite loop with identical stops:
+    group 1  transform-only  .perf-shift > .perf-spin > .perf-scale (three nested
+             layers, one single-function transform each: translate / rotate / scale),
+             red #ef4444
+    group 2  opacity-only    .perf-fade, blue #3b82f6
+    group 3  width-only      .perf-wobble, amber #f59e0b
+  Layout: .perf-grid { display:flex; flex-wrap:wrap } with children 30px x 30px,
+  margin 0 5px 4px 0. The width group re-packs its wrapped lines every frame (the
+  intended layout stress, matching Square's flex-wrap rows); all 720 boxes are visible
+  in the 900x1240 client at outer origin 100,100 without scrolling.
+  The measurement is driven by main.js over the sandboxed perfBench bridge:
+  ready (client geometry) -> measure (warmup over, 1 Hz CPU/memory sampling starts)
+  -> done (rAF frames/seconds). See renderer.js for the rAF counting rules.
+-->
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<article class="perf-page">
+  <header class="perf-header">
+    <h1>CSS 动画性能对比</h1>
+    <p>240 方块 × 3 组 · 6 秒循环 · 目标 60 FPS</p>
+  </header>
+  <section class="perf-section" id="group-1" aria-labelledby="group-1-heading">
+    <h2 id="group-1-heading">transform：不触发布局（推荐）</h2>
+    <div class="perf-grid" data-kind="transform" aria-hidden="true"></div>
+  </section>
+  <section class="perf-section" id="group-2" aria-labelledby="group-2-heading">
+    <h2 id="group-2-heading">opacity：只触发合成与重绘</h2>
+    <div class="perf-grid" data-kind="opacity" aria-hidden="true"></div>
+  </section>
+  <section class="perf-section" id="group-3" aria-labelledby="group-3-heading">
+    <h2 id="group-3-heading">width：每帧触发布局（最贵）</h2>
+    <div class="perf-grid" data-kind="width" aria-hidden="true"></div>
+  </section>
+</article>
+<script src="renderer.js"></script>
+</body>
+</html>

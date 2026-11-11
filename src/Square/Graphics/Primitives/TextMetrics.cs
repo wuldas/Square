@@ -28,6 +28,8 @@ public interface ITextMetricsProvider
 public static class TextMetrics
 {
     private static ITextMetricsProvider? _provider;
+    internal static bool UsesStandardProvider => TextLayoutProviderContext.Current is null &&
+        ReferenceEquals(_provider, Square.Text.Glyph.SystemTextMeasurementRegistration.MetricsProvider);
 
     /// <summary>注册度量提供器。</summary>
     public static void RegisterProvider(ITextMetricsProvider provider)

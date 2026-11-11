@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Square.Sample.PerfComparison</RootNamespace>
     <IsPackable>false</IsPackable>
+    <PublishAot Condition="'$(SquarePerfPublishAot)' == 'true'">true</PublishAot>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(IncludeVulkan)' == 'true'">
+    <DefineConstants>$(DefineConstants);SQUARE_PERF_VULKAN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../../src/Square/Square.csproj" />
@@ -11,6 +15,7 @@
     <ProjectReference Include="../../../src/Square.Platform.X11/Square.Platform.X11.csproj" Condition="'$(SquareTargetPlatform)' == 'X11'" />
     <ProjectReference Include="../../../src/Square.Platform.MacOS/Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
     <ProjectReference Include="../../../src/Square.Backends.Direct2D/Square.Backends.Direct2D.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32'" />
+    <ProjectReference Include="../../../src/Square.Backends.Vulkan/Square.Backends.Vulkan.csproj" Condition="'$(SquareTargetPlatform)' == 'Win32' and '$(IncludeVulkan)' == 'true'" />
     <ProjectReference Include="../../../src/Square.Compiler/Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>
   <ItemGroup>

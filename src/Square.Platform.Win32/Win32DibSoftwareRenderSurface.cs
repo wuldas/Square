@@ -6,6 +6,7 @@ namespace Square.Platform.Win32;
 internal sealed unsafe class Win32DibSoftwareRenderSurface : ISoftwareRenderSurface
 {
     private readonly Func<IntPtr> _windowHandle;
+    private readonly Action? _presentCompleted;
     private IntPtr _memoryDc;
     private IntPtr _bitmap;
     private IntPtr _previousBitmap;
@@ -16,8 +17,14 @@ internal sealed unsafe class Win32DibSoftwareRenderSurface : ISoftwareRenderSurf
     private bool _disposed;
 
     public Win32DibSoftwareRenderSurface(Func<IntPtr> windowHandle, int width, int height)
+        : this(windowHandle, width, height, null)
+    {
+    }
+
+    public Win32DibSoftwareRenderSurface(Func<IntPtr> windowHandle, int width, int height, Action? presentCompleted)
     {
         _windowHandle = windowHandle;
+        _presentCompleted = presentCompleted;
         Resize(width, height);
     }
 
@@ -76,6 +83,7 @@ internal sealed unsafe class Win32DibSoftwareRenderSurface : ISoftwareRenderSurf
                 memoryDc, 0, 0, width, height,
                 _memoryDc, 0, 0, _width, _height,
                 Win32Api.SRCCOPY);
+            Win32Api.GdiFlush(); // Finish the GDI copy before exposing the new shared bits to the CPU.
         }
 
         ReleaseResources();
@@ -94,14 +102,21 @@ internal sealed unsafe class Win32DibSoftwareRenderSurface : ISoftwareRenderSurf
         var hwnd = _windowHandle();
         if (hwnd == IntPtr.Zero) return;
         var destinationDc = Win32Api.GetDC(hwnd);
+        var submitted = false;
         try
         {
-            if (destinationDc != IntPtr.Zero) Blit(destinationDc, dirtyRects);
+            if (destinationDc != IntPtr.Zero) submitted = Blit(destinationDc, dirtyRects);
         }
         finally
         {
-            if (destinationDc != IntPtr.Zero) Win32Api.ReleaseDC(hwnd, destinationDc);
+            if (destinationDc != IntPtr.Zero)
+            {
+                // Finish queued source reads before the CPU can modify this DIB again.
+                submitted &= Win32Api.GdiFlush();
+                Win32Api.ReleaseDC(hwnd, destinationDc);
+            }
         }
+        if (submitted) _presentCompleted?.Invoke();
     }
 
     internal void Repaint(IntPtr destinationDc, Win32Api.RECT rect)
@@ -115,26 +130,37 @@ internal sealed unsafe class Win32DibSoftwareRenderSurface : ISoftwareRenderSurf
         Win32Api.BitBlt(
             destinationDc, left, top, right - left, bottom - top,
             _memoryDc, left, top, Win32Api.SRCCOPY);
+        Win32Api.GdiFlush(); // WM_PAINT releases GDI ownership but never waits for composition.
     }
 
-    private void Blit(IntPtr destinationDc, IReadOnlyList<Rect>? dirtyRects)
+    private bool Blit(IntPtr destinationDc, IReadOnlyList<Rect>? dirtyRects)
     {
-        if (dirtyRects == null)
+        var left = 0;
+        var top = 0;
+        var right = _width;
+        var bottom = _height;
+        if (dirtyRects != null)
         {
-            Win32Api.BitBlt(destinationDc, 0, 0, _width, _height, _memoryDc, 0, 0, Win32Api.SRCCOPY);
-            return;
+            left = _width;
+            top = _height;
+            right = bottom = 0;
+            foreach (var rect in dirtyRects)
+            {
+                var x0 = Math.Clamp((int)MathF.Floor(rect.Left), 0, _width);
+                var y0 = Math.Clamp((int)MathF.Floor(rect.Top), 0, _height);
+                var x1 = Math.Clamp((int)MathF.Ceiling(rect.Right), x0, _width);
+                var y1 = Math.Clamp((int)MathF.Ceiling(rect.Bottom), y0, _height);
+                if (x1 <= x0 || y1 <= y0) continue;
+                left = Math.Min(left, x0);
+                top = Math.Min(top, y0);
+                right = Math.Max(right, x1);
+                bottom = Math.Max(bottom, y1);
+            }
         }
-        foreach (var rect in dirtyRects)
-        {
-            var left = Math.Clamp((int)MathF.Floor(rect.Left), 0, _width);
-            var top = Math.Clamp((int)MathF.Floor(rect.Top), 0, _height);
-            var right = Math.Clamp((int)MathF.Ceiling(rect.Right), left, _width);
-            var bottom = Math.Clamp((int)MathF.Ceiling(rect.Bottom), top, _height);
-            if (right <= left || bottom <= top) continue;
-            Win32Api.BitBlt(
-                destinationDc, left, top, right - left, bottom - top,
-                _memoryDc, left, top, Win32Api.SRCCOPY);
-        }
+        if (right <= left || bottom <= top) return false;
+        // One retained-buffer update avoids exposing separate application blits for one frame.
+        return Win32Api.BitBlt(destinationDc, left, top, right - left, bottom - top,
+            _memoryDc, left, top, Win32Api.SRCCOPY);
     }
 
     private void ReleaseResources()

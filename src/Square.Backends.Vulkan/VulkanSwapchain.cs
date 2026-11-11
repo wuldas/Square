@@ -12,10 +12,12 @@ namespace Square.Backends.Vulkan;
 internal sealed unsafe class VulkanSwapchain : IDisposable
 {
     private readonly VulkanDevice _device;
-    private readonly SurfaceKHR _surface;
+    private SurfaceKHR _surface;
     private KhrSwapchain _khrSwapchain = null!;
 
     public SwapchainKHR Swapchain { get; private set; }
+    /// <summary>True when a usable swapchain exists; false while the surface is lost or minimised.</summary>
+    public bool IsAvailable => !_surfaceUnavailable && Swapchain.Handle != 0;
     public Format ImageFormat { get; private set; }
     public ColorSpaceKHR ImageColorSpace { get; private set; }
     public Extent2D Extent { get; private set; }
@@ -28,9 +30,9 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     public bool SupportsReadback { get; }
     public bool UsesBgraFormat { get; private set; }
 
-    private Silk.NET.Vulkan.Image _multisampleImage;
-    private DeviceMemory _multisampleImageMemory;
-    private VulkanImageView _multisampleImageView;
+    private Silk.NET.Vulkan.Image[] _multisampleImages = [];
+    private DeviceMemory[] _multisampleImageMemories = [];
+    private VulkanImageView[] _multisampleImageViews = [];
 
     private Semaphore[] _imageAvailableSemaphores = [];
     private Semaphore[] _renderFinishedSemaphores = [];
@@ -42,8 +44,18 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     private bool _recreateAfterPresent;
     private SampleCountFlags _renderPassSampleCount;
     private bool _disposed;
+    private bool _surfaceUnavailable;
 
     private const int MaxFramesInFlight = 2;
+    public int FrameCount => MaxFramesInFlight;
+    public int CurrentFrameIndex => _currentFrame;
+    public ulong Generation { get; private set; }
+
+    public Fence GetInFlightFence(int index)
+    {
+        if ((uint)index >= MaxFramesInFlight) throw new ArgumentOutOfRangeException(nameof(index));
+        return _inFlightFences[index];
+    }
 
     public VulkanSwapchain(VulkanDevice device, SurfaceKHR surface, uint width, uint height, bool vsync, bool enableReadback)
     {
@@ -61,128 +73,176 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         ImageFormat = surfaceFormat.Format;
         ImageColorSpace = surfaceFormat.ColorSpace;
         UsesBgraFormat = ImageFormat is Format.B8G8R8A8Unorm or Format.B8G8R8A8Srgb;
-        CreateRenderPass();
-        _renderPassSampleCount = _device.ColorSampleCount;
-        Recreate(width, height);
-        CreateSyncObjects();
+        try
+        {
+            CreateRenderPass();
+            _renderPassSampleCount = _device.ColorSampleCount;
+            CreateSyncObjects();
+            Recreate(width, height);
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Retires presentation before replacing its surface; Recreate builds new images afterwards.</summary>
+    internal void RecoverSurface()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _surfaceUnavailable = true;
+        VulkanDevice.ThrowIfFailed(_device.Api.DeviceWaitIdle(_device.Device), "vkDeviceWaitIdle(surface recovery)");
+        DestroySwapchainImageResources();
+        if (Swapchain.Handle != 0)
+        {
+            _khrSwapchain.DestroySwapchain(_device.Device, Swapchain, null);
+            Swapchain = default;
+        }
+        // VUID-vkDestroySurfaceKHR-surface-01266 requires all associated swapchains
+        // to be destroyed first. If creation fails, the old surface remains owned.
+        _surface = _device.RecreateSurface();
     }
 
     public void Recreate(uint width, uint height)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         _requestedWidth = width;
         _requestedHeight = height;
+        if (width == 0 || height == 0)
+        {
+            _surfaceUnavailable = true;
+            return;
+        }
         var api = _device.Api;
         var physicalDevice = _device.PhysicalDevice;
-
-        _device.KhrSurface.GetPhysicalDeviceSurfaceCapabilities(physicalDevice, _surface, out var caps);
-
-        Extent2D newExtent;
-        if (caps.CurrentExtent.Width != uint.MaxValue)
-            newExtent = caps.CurrentExtent;
-        else
-            newExtent = new Extent2D(
-                Math.Clamp(width, caps.MinImageExtent.Width, caps.MaxImageExtent.Width),
-                Math.Clamp(height, caps.MinImageExtent.Height, caps.MaxImageExtent.Height));
-
-        // A minimized window reports a 0x0 surface extent; Vulkan forbids 0-extent
-        // swapchains, so keep the previous swapchain (and Extent) until a valid size
-        // arrives. Leaving Extent at its last valid value avoids 0-extent render passes.
-        if (newExtent.Width < 1 || newExtent.Height < 1)
+        var capsResult = _device.KhrSurface.GetPhysicalDeviceSurfaceCapabilities(physicalDevice, _surface, out var caps);
+        if (capsResult == VulkanResult.ErrorSurfaceLostKhr)
+        {
+            RecoverSurface();
+            capsResult = _device.KhrSurface.GetPhysicalDeviceSurfaceCapabilities(physicalDevice, _surface, out caps);
+        }
+        if (capsResult == VulkanResult.ErrorSurfaceLostKhr)
+        {
+            // Pause and let EnsureFrame retry at a bounded rate while presentation
+            // remains unavailable; the previous swapchain has already been retired.
+            _surfaceUnavailable = true;
             return;
+        }
+        VulkanDevice.ThrowIfFailed(capsResult, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
 
+        var newExtent = caps.CurrentExtent.Width != uint.MaxValue
+            ? caps.CurrentExtent
+            : new Extent2D(Math.Clamp(width, caps.MinImageExtent.Width, caps.MaxImageExtent.Width),
+                Math.Clamp(height, caps.MinImageExtent.Height, caps.MaxImageExtent.Height));
+        if (newExtent.Width < 1 || newExtent.Height < 1)
+        {
+            _surfaceUnavailable = true;
+            return;
+        }
         var useExtraImage = Environment.GetEnvironmentVariable("SQUARE_VULKAN_EXTRA_SWAPCHAIN_IMAGE") is "1" or "true";
         var imageCount = caps.MinImageCount + (useExtraImage ? 1u : 0u);
-        if (caps.MaxImageCount > 0 && imageCount > caps.MaxImageCount)
-            imageCount = caps.MaxImageCount;
-
-        var presentMode = SelectPresentMode(physicalDevice);
+        if (caps.MaxImageCount > 0 && imageCount > caps.MaxImageCount) imageCount = caps.MaxImageCount;
         var requiredUsage = ImageUsageFlags.ColorAttachmentBit |
             (SupportsReadback ? ImageUsageFlags.TransferSrcBit : 0);
         if ((caps.SupportedUsageFlags & requiredUsage) != requiredUsage)
             throw new VulkanException(SupportsReadback
                 ? "The Vulkan surface must support color attachment and transfer-source swapchain images."
                 : "The Vulkan surface must support color attachment swapchain images.");
-        var compositeAlpha = SelectCompositeAlpha(caps.SupportedCompositeAlpha);
 
-        var createInfo = new SwapchainCreateInfoKHR(StructureType.SwapchainCreateInfoKhr)
-        {
-            Surface = _surface,
-            MinImageCount = imageCount,
-            ImageFormat = ImageFormat,
-            ImageColorSpace = ImageColorSpace,
-            ImageExtent = newExtent,
-            ImageArrayLayers = 1,
-            // TransferSrcBit is required so the frame can be copied to a readback buffer
-            // for GPU-accurate screenshots (see VulkanReadbackBuffer).
-            ImageUsage = requiredUsage,
-            PreTransform = caps.CurrentTransform,
-            CompositeAlpha = compositeAlpha,
-            PresentMode = presentMode,
-            Clipped = true,
-            OldSwapchain = Swapchain
-        };
-
-        VulkanResult result;
-        SwapchainKHR swapchain;
-        if (_device.GraphicsQueueFamily == _device.PresentQueueFamily)
-        {
-            createInfo.ImageSharingMode = SharingMode.Exclusive;
-            result = _khrSwapchain.CreateSwapchain(_device.Device, in createInfo, null, out swapchain);
-        }
-        else
-        {
-            var queueFamilies = stackalloc uint[2];
-            queueFamilies[0] = _device.GraphicsQueueFamily;
-            queueFamilies[1] = _device.PresentQueueFamily;
-            createInfo.ImageSharingMode = SharingMode.Concurrent;
-            createInfo.QueueFamilyIndexCount = 2;
-            createInfo.PQueueFamilyIndices = queueFamilies;
-            result = _khrSwapchain.CreateSwapchain(_device.Device, in createInfo, null, out swapchain);
-        }
-        VulkanDevice.ThrowIfFailed(result, "vkCreateSwapchainKHR");
-
+        // Frame-slot semaphores/fences remain stable; only image-owned resources are replaced.
+        _surfaceUnavailable = true;
         VulkanDevice.ThrowIfFailed(api.DeviceWaitIdle(_device.Device), "vkDeviceWaitIdle");
-        DestroyFramebuffers();
-        DestroyMultisampleResources();
-        DestroyImageViews();
-        if (_renderPassSampleCount != _device.ColorSampleCount)
+        var oldSwapchain = Swapchain;
+        DestroySwapchainImageResources();
+        Swapchain = default;
+        try
         {
-            if (RenderPass.Handle != 0) api.DestroyRenderPass(_device.Device, RenderPass, null);
-            RenderPass = default;
-            CreateRenderPass();
-            _renderPassSampleCount = _device.ColorSampleCount;
-        }
-        if (Swapchain.Handle != 0 && Swapchain.Handle != swapchain.Handle)
-            _khrSwapchain.DestroySwapchain(_device.Device, Swapchain, null);
-
-        Swapchain = swapchain;
-        Extent = newExtent;
-
-        uint count = 0;
-        VulkanDevice.ThrowIfFailed(_khrSwapchain.GetSwapchainImages(_device.Device, Swapchain, ref count, null), "vkGetSwapchainImagesKHR");
-        var images = new Silk.NET.Vulkan.Image[count];
-        fixed (Silk.NET.Vulkan.Image* pImages = images)
-            VulkanDevice.ThrowIfFailed(_khrSwapchain.GetSwapchainImages(_device.Device, Swapchain, ref count, pImages), "vkGetSwapchainImagesKHR");
-        ImageCount = count;
-        Images = images;
-
-        ImageViews = new VulkanImageView[count];
-        for (var i = 0; i < count; i++)
-        {
-            var viewInfo = new ImageViewCreateInfo(StructureType.ImageViewCreateInfo)
+            var createInfo = new SwapchainCreateInfoKHR(StructureType.SwapchainCreateInfoKhr)
             {
-                Image = images[i],
-                ViewType = ImageViewType.Type2D,
-                Format = ImageFormat,
-                SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1)
+                Surface = _surface,
+                MinImageCount = imageCount,
+                ImageFormat = ImageFormat,
+                ImageColorSpace = ImageColorSpace,
+                ImageExtent = newExtent,
+                ImageArrayLayers = 1,
+                ImageUsage = requiredUsage,
+                PreTransform = caps.CurrentTransform,
+                CompositeAlpha = SelectCompositeAlpha(caps.SupportedCompositeAlpha),
+                PresentMode = SelectPresentMode(physicalDevice),
+                Clipped = true,
+                OldSwapchain = oldSwapchain
             };
-            result = api.CreateImageView(_device.Device, in viewInfo, null, out var view);
-            VulkanDevice.ThrowIfFailed(result, "vkCreateImageView");
-            ImageViews[i] = view;
+            VulkanResult result;
+            SwapchainKHR swapchain;
+            if (_device.GraphicsQueueFamily == _device.PresentQueueFamily)
+            {
+                createInfo.ImageSharingMode = SharingMode.Exclusive;
+                result = _khrSwapchain.CreateSwapchain(_device.Device, in createInfo, null, out swapchain);
+            }
+            else
+            {
+                var queueFamilies = stackalloc uint[2];
+                queueFamilies[0] = _device.GraphicsQueueFamily;
+                queueFamilies[1] = _device.PresentQueueFamily;
+                createInfo.ImageSharingMode = SharingMode.Concurrent;
+                createInfo.QueueFamilyIndexCount = 2;
+                createInfo.PQueueFamilyIndices = queueFamilies;
+                result = _khrSwapchain.CreateSwapchain(_device.Device, in createInfo, null, out swapchain);
+            }
+            VulkanDevice.ThrowIfFailed(result, "vkCreateSwapchainKHR");
+            Swapchain = swapchain;
+            Extent = newExtent;
+            if (RenderPass.Handle == 0 || _renderPassSampleCount != _device.ColorSampleCount)
+            {
+                if (RenderPass.Handle != 0) api.DestroyRenderPass(_device.Device, RenderPass, null);
+                RenderPass = default;
+                CreateRenderPass();
+                _renderPassSampleCount = _device.ColorSampleCount;
+            }
+            uint count = 0;
+            VulkanDevice.ThrowIfFailed(_khrSwapchain.GetSwapchainImages(_device.Device, Swapchain, ref count, null), "vkGetSwapchainImagesKHR");
+            var images = new Silk.NET.Vulkan.Image[count];
+            fixed (Silk.NET.Vulkan.Image* pImages = images)
+                VulkanDevice.ThrowIfFailed(_khrSwapchain.GetSwapchainImages(_device.Device, Swapchain, ref count, pImages), "vkGetSwapchainImagesKHR");
+            if (count == 0) throw new VulkanException("The Vulkan swapchain has no images.");
+            if (count != images.Length) Array.Resize(ref images, checked((int)count));
+            ImageCount = count;
+            Images = images;
+            ImageViews = new VulkanImageView[count];
+            for (var i = 0; i < count; i++)
+            {
+                var viewInfo = new ImageViewCreateInfo(StructureType.ImageViewCreateInfo)
+                {
+                    Image = images[i],
+                    ViewType = ImageViewType.Type2D,
+                    Format = ImageFormat,
+                    SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1)
+                };
+                VulkanDevice.ThrowIfFailed(api.CreateImageView(_device.Device, in viewInfo, null, out var view), "vkCreateImageView");
+                ImageViews[i] = view;
+            }
+            CreateMultisampleResources();
+            CreateRenderFinishedSemaphores();
+            CreateFramebuffers();
+            _currentImageIndex = 0;
+            _recreateAfterPresent = false;
+            _surfaceUnavailable = false;
+            Generation++;
         }
-
-        CreateMultisampleResources();
-        CreateFramebuffers();
+        catch
+        {
+            // Creating with oldSwapchain retires it, so failed replacement cannot reuse old images.
+            DestroySwapchainImageResources();
+            if (Swapchain.Handle != 0) _khrSwapchain.DestroySwapchain(_device.Device, Swapchain, null);
+            Swapchain = default;
+            Extent = default;
+            throw;
+        }
+        finally
+        {
+            if (oldSwapchain.Handle != 0) _khrSwapchain.DestroySwapchain(_device.Device, oldSwapchain, null);
+        }
     }
 
     private SurfaceFormatKHR SelectFormat(PhysicalDevice physicalDevice)
@@ -244,13 +304,13 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         fixed (PresentModeKHR* pModes = modes)
             _device.KhrSurface.GetPhysicalDeviceSurfacePresentModes(physicalDevice, _surface, ref count, pModes);
 
+        var selected = PresentModeKHR.FifoKhr;
         if (!VSync)
         {
-            if (modes.Contains(PresentModeKHR.MailboxKhr)) return PresentModeKHR.MailboxKhr;
-            if (modes.Contains(PresentModeKHR.ImmediateKhr)) return PresentModeKHR.ImmediateKhr;
+            if (modes.Contains(PresentModeKHR.MailboxKhr)) selected = PresentModeKHR.MailboxKhr;
+            else if (modes.Contains(PresentModeKHR.ImmediateKhr)) selected = PresentModeKHR.ImmediateKhr;
         }
-        return PresentModeKHR.FifoKhr;
-    }
+        return selected;    }
 
     private void CreateRenderPass()
     {
@@ -295,7 +355,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             PResolveAttachments = &resolveRef
         };
 
-        var dependency = new SubpassDependency
+        var dependencies = stackalloc SubpassDependency[2];
+        dependencies[0] = new SubpassDependency
         {
             SrcSubpass = Vk.SubpassExternal,
             DstSubpass = 0,
@@ -303,6 +364,15 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             SrcAccessMask = 0,
             DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
             DstAccessMask = AccessFlags.ColorAttachmentWriteBit
+        };
+        dependencies[1] = new SubpassDependency
+        {
+            SrcSubpass = 0,
+            DstSubpass = Vk.SubpassExternal,
+            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+            SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
+            DstStageMask = PipelineStageFlags.FragmentShaderBit,
+            DstAccessMask = AccessFlags.ShaderReadBit
         };
 
         var attachments = stackalloc AttachmentDescription[2];
@@ -316,8 +386,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
                 PAttachments = pAttachments,
                 SubpassCount = 1,
                 PSubpasses = &subpass,
-                DependencyCount = 1,
-                PDependencies = &dependency
+                DependencyCount = 2,
+                PDependencies = dependencies
             };
 
             var result = _device.Api.CreateRenderPass(_device.Device, in renderPassInfo, null, out var renderPass);
@@ -346,7 +416,8 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             ColorAttachmentCount = 1,
             PColorAttachments = &colorRef
         };
-        var dependency = new SubpassDependency
+        var dependencies = stackalloc SubpassDependency[2];
+        dependencies[0] = new SubpassDependency
         {
             SrcSubpass = Vk.SubpassExternal,
             DstSubpass = 0,
@@ -354,14 +425,23 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
             DstAccessMask = AccessFlags.ColorAttachmentWriteBit
         };
+        dependencies[1] = new SubpassDependency
+        {
+            SrcSubpass = 0,
+            DstSubpass = Vk.SubpassExternal,
+            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+            SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
+            DstStageMask = PipelineStageFlags.FragmentShaderBit,
+            DstAccessMask = AccessFlags.ShaderReadBit
+        };
         var renderPassInfo = new RenderPassCreateInfo(StructureType.RenderPassCreateInfo)
         {
             AttachmentCount = 1,
             PAttachments = &colorAttachment,
             SubpassCount = 1,
             PSubpasses = &subpass,
-            DependencyCount = 1,
-            PDependencies = &dependency
+            DependencyCount = 2,
+            PDependencies = dependencies
         };
         var result = _device.Api.CreateRenderPass(_device.Device, in renderPassInfo, null, out var renderPass);
         VulkanDevice.ThrowIfFailed(result, "vkCreateRenderPass");
@@ -385,25 +465,29 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
             SharingMode = SharingMode.Exclusive,
             InitialLayout = ImageLayout.Undefined
         };
-        VulkanDevice.ThrowIfFailed(_device.Api.CreateImage(_device.Device, in imageInfo, null, out _multisampleImage), "vkCreateImage");
-
-        _device.Api.GetImageMemoryRequirements(_device.Device, _multisampleImage, out var requirements);
-        var allocation = new MemoryAllocateInfo(StructureType.MemoryAllocateInfo)
+        _multisampleImages = new Silk.NET.Vulkan.Image[ImageCount];
+        _multisampleImageMemories = new DeviceMemory[ImageCount];
+        _multisampleImageViews = new VulkanImageView[ImageCount];
+        for (var index = 0; index < ImageCount; index++)
         {
-            AllocationSize = requirements.Size,
-            MemoryTypeIndex = FindMemoryType(requirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-        };
-        VulkanDevice.ThrowIfFailed(_device.Api.AllocateMemory(_device.Device, in allocation, null, out _multisampleImageMemory), "vkAllocateMemory");
-        VulkanDevice.ThrowIfFailed(_device.Api.BindImageMemory(_device.Device, _multisampleImage, _multisampleImageMemory, 0), "vkBindImageMemory");
-
-        var viewInfo = new ImageViewCreateInfo(StructureType.ImageViewCreateInfo)
-        {
-            Image = _multisampleImage,
-            ViewType = ImageViewType.Type2D,
-            Format = ImageFormat,
-            SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1)
-        };
-        VulkanDevice.ThrowIfFailed(_device.Api.CreateImageView(_device.Device, in viewInfo, null, out _multisampleImageView), "vkCreateImageView");
+            VulkanDevice.ThrowIfFailed(_device.Api.CreateImage(_device.Device, in imageInfo, null, out _multisampleImages[index]), "vkCreateImage");
+            _device.Api.GetImageMemoryRequirements(_device.Device, _multisampleImages[index], out var requirements);
+            var allocation = new MemoryAllocateInfo(StructureType.MemoryAllocateInfo)
+            {
+                AllocationSize = requirements.Size,
+                MemoryTypeIndex = FindMemoryType(requirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+            };
+            VulkanDevice.ThrowIfFailed(_device.Api.AllocateMemory(_device.Device, in allocation, null, out _multisampleImageMemories[index]), "vkAllocateMemory");
+            VulkanDevice.ThrowIfFailed(_device.Api.BindImageMemory(_device.Device, _multisampleImages[index], _multisampleImageMemories[index], 0), "vkBindImageMemory");
+            var viewInfo = new ImageViewCreateInfo(StructureType.ImageViewCreateInfo)
+            {
+                Image = _multisampleImages[index],
+                ViewType = ImageViewType.Type2D,
+                Format = ImageFormat,
+                SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1)
+            };
+            VulkanDevice.ThrowIfFailed(_device.Api.CreateImageView(_device.Device, in viewInfo, null, out _multisampleImageViews[index]), "vkCreateImageView");
+        }
     }
 
     private void CreateFramebuffers()
@@ -418,7 +502,7 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
                 attachments[0] = ImageViews[i];
             else
             {
-                attachments[0] = _multisampleImageView;
+                attachments[0] = _multisampleImageViews[i];
                 attachments[1] = ImageViews[i];
                 attachmentCount = 2;
             }
@@ -452,20 +536,25 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         throw new VulkanException("No suitable memory type found.");
     }
 
+    private void CreateRenderFinishedSemaphores()
+    {
+        _renderFinishedSemaphores = new Semaphore[ImageCount];
+        var info = new SemaphoreCreateInfo(StructureType.SemaphoreCreateInfo);
+        for (var index = 0; index < ImageCount; index++)
+            VulkanDevice.ThrowIfFailed(_device.Api.CreateSemaphore(_device.Device, in info, null,
+                out _renderFinishedSemaphores[index]), "vkCreateSemaphore(render finished)");
+    }
+
     private void CreateSyncObjects()
     {
         var api = _device.Api;
         _imageAvailableSemaphores = new Semaphore[MaxFramesInFlight];
-        _renderFinishedSemaphores = new Semaphore[MaxFramesInFlight];
         _inFlightFences = new Fence[MaxFramesInFlight];
-
         var semInfo = new SemaphoreCreateInfo(StructureType.SemaphoreCreateInfo);
         var fenceInfo = new FenceCreateInfo(StructureType.FenceCreateInfo) { Flags = FenceCreateFlags.SignaledBit };
-
         for (var i = 0; i < MaxFramesInFlight; i++)
         {
             VulkanDevice.ThrowIfFailed(api.CreateSemaphore(_device.Device, in semInfo, null, out _imageAvailableSemaphores[i]), "vkCreateSemaphore");
-            VulkanDevice.ThrowIfFailed(api.CreateSemaphore(_device.Device, in semInfo, null, out _renderFinishedSemaphores[i]), "vkCreateSemaphore");
             VulkanDevice.ThrowIfFailed(api.CreateFence(_device.Device, in fenceInfo, null, out _inFlightFences[i]), "vkCreateFence");
         }
     }
@@ -479,10 +568,12 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     /// </summary>
     public bool AcquireNextImage()
     {
-        // A 0x0 extent means the window is minimized; there is no presentable image and the
-        // swapchain cannot be recreated. Bail before touching the in-flight fence.
-        if (Extent.Width < 1 || Extent.Height < 1)
-            return false;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_surfaceUnavailable || Swapchain.Handle == 0)
+        {
+            Recreate(_requestedWidth, _requestedHeight);
+            if (_surfaceUnavailable || Swapchain.Handle == 0) return false;
+        }
 
         var api = _device.Api;
         var fence = _inFlightFences[_currentFrame];
@@ -498,10 +589,11 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         {
             uint imageIndex;
             var result = _khrSwapchain.AcquireNextImage(_device.Device, Swapchain, ulong.MaxValue, semaphore, default, &imageIndex);
-            if (result == VulkanResult.ErrorOutOfDateKhr)
+            if (result is VulkanResult.ErrorOutOfDateKhr or VulkanResult.ErrorSurfaceLostKhr)
             {
+                if (result == VulkanResult.ErrorSurfaceLostKhr) RecoverSurface();
                 Recreate(_requestedWidth, _requestedHeight);
-                if (Extent.Width < 1 || Extent.Height < 1)
+                if (_surfaceUnavailable || Swapchain.Handle == 0)
                     return false;
                 continue;
             }
@@ -517,14 +609,15 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
     }
 
     public Semaphore CurrentImageAvailableSemaphore => _imageAvailableSemaphores[_currentFrame];
-    public Semaphore CurrentRenderFinishedSemaphore => _renderFinishedSemaphores[_currentFrame];
+    // Reacquiring this image orders reuse after the previous presentation wait consumed its semaphore.
+    public Semaphore CurrentRenderFinishedSemaphore => _renderFinishedSemaphores[_currentImageIndex];
     public Fence CurrentInFlightFence => _inFlightFences[_currentFrame];
     public Framebuffer CurrentFramebuffer => Framebuffers[_currentImageIndex];
     public Silk.NET.Vulkan.Image CurrentImage => Images[_currentImageIndex];
 
     public void Present()
     {
-        var semaphore = _renderFinishedSemaphores[_currentFrame];
+        var semaphore = _renderFinishedSemaphores[_currentImageIndex];
         var swapchain = Swapchain;
         var imageIndex = _currentImageIndex;
 
@@ -538,12 +631,16 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         };
 
         var result = _khrSwapchain.QueuePresent(_device.PresentQueue, in presentInfo);
-        if (result == VulkanResult.ErrorOutOfDateKhr || result == VulkanResult.SuboptimalKhr)
+        if (result == VulkanResult.ErrorSurfaceLostKhr)
+        {
+            RecoverSurface();
+            _recreateAfterPresent = true;
+        }
+        else if (result == VulkanResult.ErrorOutOfDateKhr || result == VulkanResult.SuboptimalKhr)
             _recreateAfterPresent = true;
         else
             VulkanDevice.ThrowIfFailed(result, "vkQueuePresentKHR");
 
-        VulkanDevice.ThrowIfFailed(_device.Api.QueueWaitIdle(_device.PresentQueue), "vkQueueWaitIdle");
         if (_recreateAfterPresent)
         {
             _recreateAfterPresent = false;
@@ -569,15 +666,27 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
 
     private void DestroyMultisampleResources()
     {
-        if (_multisampleImageView.Handle != 0)
-            _device.Api.DestroyImageView(_device.Device, _multisampleImageView, null);
-        if (_multisampleImage.Handle != 0)
-            _device.Api.DestroyImage(_device.Device, _multisampleImage, null);
-        if (_multisampleImageMemory.Handle != 0)
-            _device.Api.FreeMemory(_device.Device, _multisampleImageMemory, null);
-        _multisampleImageView = default;
-        _multisampleImage = default;
-        _multisampleImageMemory = default;
+        foreach (var view in _multisampleImageViews)
+            if (view.Handle != 0) _device.Api.DestroyImageView(_device.Device, view, null);
+        foreach (var image in _multisampleImages)
+            if (image.Handle != 0) _device.Api.DestroyImage(_device.Device, image, null);
+        foreach (var memory in _multisampleImageMemories)
+            if (memory.Handle != 0) _device.Api.FreeMemory(_device.Device, memory, null);
+        _multisampleImageViews = [];
+        _multisampleImages = [];
+        _multisampleImageMemories = [];
+    }
+
+    private void DestroySwapchainImageResources()
+    {
+        DestroyFramebuffers();
+        DestroyMultisampleResources();
+        DestroyImageViews();
+        foreach (var semaphore in _renderFinishedSemaphores)
+            if (semaphore.Handle != 0) _device.Api.DestroySemaphore(_device.Device, semaphore, null);
+        _renderFinishedSemaphores = [];
+        Images = [];
+        ImageCount = 0;
     }
 
     public void Dispose()
@@ -589,13 +698,13 @@ internal sealed unsafe class VulkanSwapchain : IDisposable
         api.DeviceWaitIdle(_device.Device);
 
         foreach (var sem in _imageAvailableSemaphores) if (sem.Handle != 0) api.DestroySemaphore(_device.Device, sem, null);
-        foreach (var sem in _renderFinishedSemaphores) if (sem.Handle != 0) api.DestroySemaphore(_device.Device, sem, null);
         foreach (var fence in _inFlightFences) if (fence.Handle != 0) api.DestroyFence(_device.Device, fence, null);
-
-        DestroyFramebuffers();
-        DestroyMultisampleResources();
-        DestroyImageViews();
+        _imageAvailableSemaphores = [];
+        _inFlightFences = [];
+        DestroySwapchainImageResources();
         if (RenderPass.Handle != 0) api.DestroyRenderPass(_device.Device, RenderPass, null);
         if (Swapchain.Handle != 0) _khrSwapchain.DestroySwapchain(_device.Device, Swapchain, null);
+        RenderPass = default;
+        Swapchain = default;
     }
 }

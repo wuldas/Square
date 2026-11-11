@@ -32,17 +32,38 @@ internal sealed unsafe class VulkanDevice : IDisposable
     public SampleCountFlags ColorSampleCount { get; private set; } = SampleCountFlags.Count1Bit;
     private SampleCountFlags _supportedColorSampleCounts;
 
+    // Retained so a lost platform surface can be recreated for the same window.
+    private readonly INativeRenderTarget _nativeTarget;
+
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
     private bool _disposed;
 
     public VulkanDevice(INativeRenderTarget nativeTarget, bool enableValidation = false)
     {
+        _nativeTarget = nativeTarget;
         Api = VulkanApi.Create();
         CreateInstance(enableValidation);
         Surface = VulkanSurface.Create(this, nativeTarget);
         CreateDevice();
         CreateCommandPool();
+    }
+
+    /// <summary>
+    /// Rebuilds a lost platform surface for the retained native window. The caller must
+    /// first retire every swapchain created for the old surface (VUID-surface-01266).
+    /// Create the replacement before releasing the old surface so a failed creation
+    /// leaves the existing surface handle owned and available for a later retry.
+    /// </summary>
+    public SurfaceKHR RecreateSurface()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Device.Handle != 0) ThrowIfFailed(Api.DeviceWaitIdle(Device), "vkDeviceWaitIdle(surface)");
+        var previous = Surface;
+        Surface = VulkanSurface.Create(this, _nativeTarget);
+        if (previous.Handle != 0 && previous.Handle != Surface.Handle)
+            VulkanSurface.Destroy(this, previous);
+        return Surface;
     }
 
     private void CreateInstance(bool enableValidation)

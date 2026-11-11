@@ -35,6 +35,11 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
     private bool _skipPointerCapture;
     private IntPtr _frameTimer;
     private double _nextFrameTimestamp;
+    // Private diagnostics, read by an explicitly rooted external validation harness only.
+    private long _softwareDwmFlushCount;
+    private long _softwareDwmFlushTicks;
+    private long _softwareDwmFlushLastTicks;
+    internal int _softwareDwmFlushHResult;
 
     private static readonly double FramePeriodTicks = Stopwatch.Frequency / 60d;
     private const int WheelDeltaUnit = 120;
@@ -305,15 +310,14 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         {
             var width = Math.Max(1, (int)MathF.Ceiling(_clientSize.Width * _dpiScale));
             var height = Math.Max(1, (int)MathF.Ceiling(_clientSize.Height * _dpiScale));
-            _softwareSurface = new Win32DibSoftwareRenderSurface(() => _hwnd, width, height);
+            _softwareSurface = new Win32DibSoftwareRenderSurface(() => _hwnd, width, height, CompleteSoftwarePresent);
         }
         _renderContext = factory.CreateContext(new RenderContextCreateInfo
         {
             CanvasSize = _clientSize,
             DpiScale = _dpiScale,
-            // DWM composites modern HWNDs at display refresh; the host already paces frames.
-            // A second synchronous present wait can miss deadlines and stall submissions.
-            VSync = !OperatingSystem.IsWindowsVersionAtLeast(6, 2),
+            // The frame timer limits submissions; native presentation still needs VSync to avoid tearing.
+            VSync = true,
             SoftwareSurface = _softwareSurface,
             PresentFrame = _softwareSurface == null ? PresentFrame : null,
             NativeTarget = new Win32RenderTarget(_hwnd, Win32Api.GetModuleHandle(null)),
@@ -323,59 +327,58 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
     }
 
     private void PresentFrame(Bitmap bitmap, IReadOnlyList<Rect>? dirtyRects)
+        => PresentFrameCore(bitmap, dirtyRects, waitForComposition: true);
+
+    private void PresentFrameCore(Bitmap bitmap, IReadOnlyList<Rect>? dirtyRects, bool waitForComposition)
     {
-        if (_hwnd == IntPtr.Zero) return;
+        if (_hwnd == IntPtr.Zero || dirtyRects is { Count: 0 }) return;
         _lastFrame = bitmap;
         var dibReady = EnsurePresentResources(bitmap);
-
-        if (dibReady)
-        {
-            CopyFrameToPresentDib(bitmap, dirtyRects);
-            var destinationDc = Win32Api.GetDC(_hwnd);
-            try
-            {
-                if (destinationDc != IntPtr.Zero)
-                    BlitPresentDib(destinationDc, dirtyRects);
-            }
-            finally
-            {
-                if (destinationDc != IntPtr.Zero) Win32Api.ReleaseDC(_hwnd, destinationDc);
-            }
-            return;
-        }
-
-        var dc = Win32Api.GetDC(_hwnd);
+        if (dibReady) CopyFrameToPresentDib(bitmap, dirtyRects);
+        var destinationDc = Win32Api.GetDC(_hwnd);
+        var submitted = false;
         try
         {
-            if (dirtyRects == null)
+            if (destinationDc != IntPtr.Zero)
             {
-                // Full window
-                Win32Api.StretchDIBits(
-                    dc,
-                    0, 0, (int)_physicalClientSize.Width, (int)_physicalClientSize.Height,
-                    0, 0, bitmap.Width, bitmap.Height,
-                    _presentPixelsHandle.AddrOfPinnedObject(), ref _presentInfo,
-                    Win32Api.DIB_RGB_COLORS, Win32Api.SRCCOPY);
-                return;
+                if (dibReady) submitted = BlitPresentDib(destinationDc, dirtyRects);
+                else
+                {
+                    // Preserve the top-down StretchDIBits full-buffer fallback.
+                    submitted = Win32Api.StretchDIBits(
+                        destinationDc,
+                        0, 0, (int)_physicalClientSize.Width, (int)_physicalClientSize.Height,
+                        0, 0, bitmap.Width, bitmap.Height,
+                        _presentPixelsHandle.AddrOfPinnedObject(), ref _presentInfo,
+                        Win32Api.DIB_RGB_COLORS, Win32Api.SRCCOPY) > 0;
+                }
             }
-
-            // The software buffer is already updated only inside dirtyRects. Blit the
-            // complete retained buffer here: sub-rectangle StretchDIBits calls with a
-            // top-down DIB use source coordinates inconsistently across Windows GDI
-            // paths and can copy an unrelated (usually blank) row range over the dirty
-            // destination. That made focused controls disappear even though the
-            // retained buffer contained the correctly replayed background and siblings.
-            Win32Api.StretchDIBits(
-                dc,
-                0, 0, (int)_physicalClientSize.Width, (int)_physicalClientSize.Height,
-                0, 0, bitmap.Width, bitmap.Height,
-                _presentPixelsHandle.AddrOfPinnedObject(), ref _presentInfo,
-                Win32Api.DIB_RGB_COLORS, Win32Api.SRCCOPY);
         }
         finally
         {
-            if (dc != IntPtr.Zero) Win32Api.ReleaseDC(_hwnd, dc);
+            if (destinationDc != IntPtr.Zero)
+            {
+                // Both cached DIB and pinned bitmap memory return to CPU ownership here.
+                submitted &= Win32Api.GdiFlush();
+                Win32Api.ReleaseDC(_hwnd, destinationDc);
+            }
         }
+        if (submitted && waitForComposition) CompleteSoftwarePresent();
+    }
+
+    private void CompleteSoftwarePresent()
+    {
+        if (!string.Equals(_renderBackend, "Software", StringComparison.OrdinalIgnoreCase) ||
+            _hwnd == IntPtr.Zero || _state == AppWindowState.Minimized || !Win32Api.IsWindowVisible(_hwnd)) return;
+        // Best-effort DWM backpressure after GDI completion; this is not an atomic GDI page flip.
+        // Keep the existing advance-before-Tick deadline; do not add another whole-frame timer delay.
+        var started = Stopwatch.GetTimestamp();
+        var result = Win32Api.DwmFlush();
+        _softwareDwmFlushLastTicks = Stopwatch.GetTimestamp() - started;
+        _softwareDwmFlushTicks += _softwareDwmFlushLastTicks;
+        _softwareDwmFlushHResult = result;
+        _softwareDwmFlushCount++;
+        // Any failure falls back to the existing timer. Never retry/spin on a failed compositor call.
     }
 
     private bool EnsurePresentResources(Bitmap bitmap)
@@ -494,24 +497,29 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         }
     }
 
-    private void BlitPresentDib(IntPtr destinationDc, IReadOnlyList<Rect>? dirtyRects)
+    private bool BlitPresentDib(IntPtr destinationDc, IReadOnlyList<Rect>? dirtyRects)
     {
-        if (dirtyRects == null)
+        var left = 0;
+        var top = 0;
+        var right = _presentWidth;
+        var bottom = _presentHeight;
+        if (dirtyRects != null)
         {
-            Win32Api.BitBlt(
-                destinationDc, 0, 0, _presentWidth, _presentHeight,
-                _presentMemoryDc, 0, 0, Win32Api.SRCCOPY);
-            return;
+            left = _presentWidth;
+            top = _presentHeight;
+            right = bottom = 0;
+            foreach (var dirtyRect in dirtyRects)
+            {
+                if (!TryClipPresentRect(dirtyRect, out var x, out var y, out var width, out var height)) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x + width);
+                bottom = Math.Max(bottom, y + height);
+            }
         }
-
-        foreach (var dirtyRect in dirtyRects)
-        {
-            if (!TryClipPresentRect(dirtyRect, out var left, out var top, out var width, out var height))
-                continue;
-            Win32Api.BitBlt(
-                destinationDc, left, top, width, height,
-                _presentMemoryDc, left, top, Win32Api.SRCCOPY);
-        }
+        if (right <= left || bottom <= top) return false;
+        return Win32Api.BitBlt(destinationDc, left, top, right - left, bottom - top,
+            _presentMemoryDc, left, top, Win32Api.SRCCOPY);
     }
 
     private bool TryClipPresentRect(Rect rect, out int left, out int top, out int width, out int height)
@@ -773,7 +781,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
                     }
                     else if (host._lastFrame != null)
                     {
-                        host.PresentFrame(host._lastFrame, null);
+                        host.PresentFrameCore(host._lastFrame, null, waitForComposition: false);
                     }
                     else
                     {

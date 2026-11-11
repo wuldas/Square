@@ -9,6 +9,7 @@ namespace Square.CSS.Engine;
 public sealed class CssAnimationTimeline
 {
     private readonly Element _visual;
+    private readonly KeyFramesRule _keyFrames;
     private readonly List<AnimationTrack> _tracks;
     private readonly float _duration;
     private readonly float _delay;
@@ -30,6 +31,7 @@ public sealed class CssAnimationTimeline
     internal CssAnimationTimeline(Element Element, KeyFramesRule keyFrames, float duration, Func<float, float> easing, float delay = 0, float iterationCount = 1, string direction = "normal")
     {
         _visual = Element;
+        _keyFrames = keyFrames;
         _duration = Math.Max(0.0001f, duration);
         _delay = delay;
         _iterationCount = Math.Max(0, iterationCount);
@@ -42,7 +44,13 @@ public sealed class CssAnimationTimeline
     public bool IsComplete => _iterationCount != int.MaxValue && _elapsed >= Math.Max(0, _delay) + _duration * _iterationCount;
 
     /// <summary>动画目标元素；样式作用域重新应用时用它恢复进度。</summary>
-    internal Element? Target => _visual;
+    internal Element Target => _visual;
+
+    internal bool CanResumeFrom(CssAnimationTimeline previous) =>
+        ReferenceEquals(_keyFrames, previous._keyFrames) &&
+        _duration == previous._duration && _delay == previous._delay &&
+        _iterationCount == previous._iterationCount && _direction == previous._direction &&
+        _easing == previous._easing;
 
     /// <summary>启动动画时间线，应用起始帧。</summary>
     public void Start() => Start(0f);
@@ -83,7 +91,7 @@ public sealed class CssAnimationTimeline
             ? _elapsed + Math.Max(0, deltaSeconds)
             : Math.Min(total, _elapsed + Math.Max(0, deltaSeconds));
         if (_elapsed >= activeStart)
-            Apply(_easing(GetDirectedProgress(_elapsed - activeStart + Math.Max(0, -_delay))));
+            Apply(_easing(GetDirectedProgress(_elapsed - activeStart)));
         if (IsComplete)
         {
             _running = false;

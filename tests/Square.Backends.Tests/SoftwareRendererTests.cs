@@ -665,7 +665,7 @@ public class SoftwareRendererTests
     public void SolidLeafOpacityMatchesGroupOnTranslucentAndTransparentDestinations()
     {
         // 左半预置 dstA=128 的半透明目标，右半保持 dstA=0：
-        // dstA=0 直接写 (B,G,R,alpha)，dstA=128 走一般截断混合——两者都必须与 PushLayer 组逐字节一致。
+        // dstA=0 直接写 (B,G,R,alpha)，dstA=128 按未量化 alpha 归一化 RGB，最终 alpha 舍入——两者都必须与 PushLayer 组逐字节一致。
         AssertSolidLeafMatchesGroup(
             32, 20, Color.Transparent,
             new Rect(4, 4, 24, 12), Color.FromRgba(255, 40, 40, 255), 0.5f,
@@ -676,8 +676,8 @@ public class SoftwareRendererTests
             {
                 // dstA=0 区域：直接写原色，a' = Round(255×0.5) = 128。
                 Assert.Equal([40, 40, 255, 128], fast.GetPixel(24, 10).ToArray());
-                // dstA=128 区域：outA = 128 + 128×127/255 = 191。
-                Assert.Equal(191, fast.GetPixel(8, 10)[3]);
+                // dstA=128 区域：outA = Round(128 + 128×127/255) = Round(191.749...) = 192。
+                Assert.Equal(192, fast.GetPixel(8, 10)[3]);
             });
     }
 
@@ -1248,6 +1248,113 @@ public class SoftwareRendererTests
         }
     }
 
+    [Fact]
+    public void CanvasAnimationFrameWaitsForHostDeadline()
+    {
+        using var context = CreateContext(64, 48);
+        var canvas = new Canvas
+        {
+            Geometry = new Rect(0, 0, 64, 48),
+            DrawContent = (ctx, bounds) => ctx.FillRect(bounds, new SolidColorBrush(Color.Red))
+        };
+        var tree = new DisplayTree();
+        tree.BuildFrom(canvas);
+        tree.Render(context);
+        tree.CommitPresentedFrame();
+        var calls = 0;
+        Action<IRenderContext, Rect> draw = null!;
+        draw = (ctx, bounds) =>
+        {
+            calls++;
+            ctx.FillRect(bounds, new SolidColorBrush(Color.Blue));
+            canvas.RequestAnimationFrame(draw, fps: 20);
+        };
+
+        canvas.RequestAnimationFrame(draw, fps: 20);
+        tree.UpdateDirty();
+        tree.Render(context);
+
+        Assert.Equal(0, calls);
+        Assert.Equal(new byte[] { 0, 0, 255, 255 }, context.GetBitmap().GetPixel(10, 10).ToArray());
+
+        ((Square.Events.IFrameScheduledElement)canvas).OnFrameDue();
+        tree.UpdateDirty();
+        tree.Render(context);
+        tree.CommitPresentedFrame();
+
+        Assert.Equal(1, calls);
+        Assert.Equal(new byte[] { 255, 0, 0, 255 }, context.GetBitmap().GetPixel(10, 10).ToArray());
+
+        tree.UpdateDirty();
+        tree.Render(context);
+
+        Assert.Equal(1, calls);
+        Assert.Equal(new byte[] { 255, 0, 0, 255 }, context.GetBitmap().GetPixel(10, 10).ToArray());
+    }
+
+    [Fact]
+    public void ButtonHoverAndActiveStatesProvideDefaultVisualFeedback()
+    {
+        var button = new Button("Press") { Geometry = new Rect(2, 2, 100, 40) };
+        var engine = new CssEngine();
+        engine.ApplyStyles(button);
+
+        var normalContext = CreateContext(110, 50);
+        Render(button, normalContext);
+        var normal = normalContext.GetBitmap().GetPixel(8, 8);
+
+        button.SetState(ElementState.Hover, true);
+        engine.ApplyStyles(button);
+        var hoverContext = CreateContext(110, 50);
+        Render(button, hoverContext);
+        var hover = hoverContext.GetBitmap().GetPixel(8, 8);
+
+        button.SetState(ElementState.Active, true);
+        engine.ApplyStyles(button);
+        var activeContext = CreateContext(110, 50);
+        Render(button, activeContext);
+        var active = activeContext.GetBitmap().GetPixel(8, 8);
+
+        AssertPixel(normal, 239);
+        AssertPixel(hover, 229);
+        AssertPixel(active, 245);
+
+        static void AssertPixel(ReadOnlySpan<byte> pixel, byte expected)
+        {
+            Assert.Equal(expected, pixel[0]);
+            Assert.Equal(expected, pixel[1]);
+            Assert.Equal(expected, pixel[2]);
+            Assert.Equal(255, pixel[3]);
+        }
+    }
+
+    [Fact]
+    public void HtmlInputButtonSidecarPreservesHostBackgroundAndBorder()
+    {
+        var host = new Square.Html.HTMLInputElement { Type = "button", Value = "" };
+        host.Style.Set("appearance", "auto");
+        host.Style.Set("background-color", "#123456");
+        host.Style.Set("border", "2px solid #654321");
+        host.Style.Set("padding", "0");
+        new CssEngine().ApplyStyles(host);
+        host.Measure(new Size(100, 40));
+        host.Arrange(new Rect(4, 4, 100, 40));
+        var sidecar = Assert.IsType<Button>(Assert.Single(host.VisualSidecars));
+        Assert.Same(host, sidecar.VisualParent);
+        Assert.Equal("auto", sidecar.Style.Get("appearance"));
+
+        using var context = CreateContext(112, 52);
+        context.Clear(Color.White);
+        Render(host, context);
+
+        var bitmap = context.GetBitmap();
+        var x = (int)sidecar.Geometry.X;
+        var y = (int)sidecar.Geometry.Y;
+        // Check the proxy's would-be native border and face as well as the host border.
+        Assert.Equal(new byte[] { 0x56, 0x34, 0x12, 255 }, bitmap.GetPixel(x, y + 3).ToArray());
+        Assert.Equal(new byte[] { 0x56, 0x34, 0x12, 255 }, bitmap.GetPixel(x + 3, y + 3).ToArray());
+        Assert.Equal(new byte[] { 0x21, 0x43, 0x65, 255 }, bitmap.GetPixel(4, 20).ToArray());
+    }
 
     [Fact]
     public void AppearanceNoneDisablesButtonNativeHoverChrome()
@@ -3578,8 +3685,8 @@ public class SoftwareRendererTests
 
         var bmp = ctx.GetBitmap();
         var idx = bmp.Stride + 4;
-        Assert.Equal(255, bmp.Pixels[idx + 3]);
-        Assert.Equal(255, bmp.Pixels[idx + 2]);
+        // Straight BGRA: alpha-128 red over opaque black contributes R=128, A=255.
+        Assert.Equal(new byte[] { 0, 0, 128, 255 }, bmp.Pixels.AsSpan(idx, 4).ToArray());
     }
 
     [Fact]
