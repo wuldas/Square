@@ -63,6 +63,38 @@ jobs:
         run: |
           # The runner image uses mirror+file with an HTTP-first mirror; use direct HTTPS.
           sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+          # Fall back only for this APT step when the runner resolver cannot resolve the archive.
+          # Response contract: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/
+          if ! timeout 10s getent ahostsv4 archive.ubuntu.com; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \
+              --header 'accept: application/dns-json' \
+              'https://cloudflare-dns.com/dns-query?name=archive.ubuntu.com&type=A' \
+              --output "$RUNNER_TEMP/ubuntu-archive-dns.json"
+            python3 - "$RUNNER_TEMP/ubuntu-archive-dns.json" <<'PY' > "$RUNNER_TEMP/ubuntu-archive-hosts"
+          import datetime, ipaddress, json, sys
+          host = "archive.ubuntu.com"
+          with open(sys.argv[1], encoding="utf-8") as response_file:
+              response = json.load(response_file)
+          questions = response.get("Question", [])
+          if response.get("Status") != 0 or response.get("TC") is True:
+              raise SystemExit("Ubuntu archive DNS lookup failed or was truncated")
+          if len(questions) != 1 or questions[0].get("type") != 1 or questions[0].get("name", "").lower().rstrip(".") != host:
+              raise SystemExit("Ubuntu archive DNS question does not match")
+          answers = [answer for answer in response.get("Answer", []) if answer.get("type") == 1]
+          if any(answer.get("name", "").lower().rstrip(".") != host for answer in answers):
+              raise SystemExit("Ubuntu archive DNS answer owner does not match")
+          addresses = {ipaddress.ip_address(answer["data"]) for answer in answers}
+          if not addresses or any(address.version != 4 or not address.is_global or address.is_multicast for address in addresses):
+              raise SystemExit("Ubuntu archive DNS response has no valid public unicast IPv4 addresses")
+          print("Archive DNS fallback UTC", datetime.datetime.now(datetime.timezone.utc).isoformat(), "TTLs", [answer.get("TTL") for answer in answers], file=sys.stderr)
+          for address in sorted(addresses):
+              print(address, host, "# square-ci-ubuntu-archive-dns")
+          PY
+            trap 'sudo sed -i "/# square-ci-ubuntu-archive-dns$/d" /etc/hosts' EXIT
+            sudo tee -a /etc/hosts < "$RUNNER_TEMP/ubuntu-archive-hosts"
+            timeout 10s getent ahostsv4 archive.ubuntu.com
+            timeout 10s sudo -u _apt getent ahostsv4 archive.ubuntu.com
+          fi
           if ! sudo apt-get update || ! sudo apt-get install -y clang zlib1g-dev libx11-6 libxrandr2 xvfb fonts-noto-cjk; then
             resolvectl status || true
             timeout 10s getent ahosts archive.ubuntu.com || true
