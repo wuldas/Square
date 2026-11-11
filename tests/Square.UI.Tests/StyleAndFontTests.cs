@@ -20,7 +20,9 @@ public class StyleAndFontTests
     {
         Assert.Same(property, StyleAccessor.NormalizePropertyName(property));
 
-        _ = StyleAccessor.NormalizePropertyName(property);
+        // Warm the full call path before measuring steady-state allocations.
+        for (var i = 0; i < 10_000; i++)
+            _ = StyleAccessor.NormalizePropertyName(property);
         var before = GC.GetAllocatedBytesForCurrentThread();
         var totalLength = 0;
         for (var i = 0; i < 10_000; i++)

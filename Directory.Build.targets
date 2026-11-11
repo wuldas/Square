@@ -5,11 +5,17 @@
 
   <Import Project="$(MSBuildThisFileDirectory)src\Square.Compiler\buildTransitive\Square.Compiler.targets" />
 
-  <!-- SDK 10.0.3xx resolves ILCompiler/ILLink/apphost 10.0.11, which are flagged by
-       GHSA-p3jp-9v83-76w9. Pin the patched 10.0.14 runtime packs for repository builds
-       (including NativeAOT samples) instead of suppressing the NuGet audit warning. -->
+  <!-- Keep the selected runtime, ILCompiler, ILLink and apphost on the same patched version.
+       Override the SDK's latest patch (which may be newer), but retain its default
+       framework-dependent runtime baseline and targeting-pack version. -->
   <Target Name="PinPatchedNet10RuntimePacks" BeforeTargets="ProcessFrameworkReferences" Condition="'$(TargetFramework)' == 'net10.0'">
     <ItemGroup>
+      <KnownFrameworkReference Update="Microsoft.NETCore.App" Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'">
+        <LatestRuntimeFrameworkVersion>10.0.14</LatestRuntimeFrameworkVersion>
+      </KnownFrameworkReference>
+      <KnownRuntimePack Update="Microsoft.NETCore.App" Condition="'%(KnownRuntimePack.TargetFramework)' == 'net10.0'">
+        <LatestRuntimeFrameworkVersion>10.0.14</LatestRuntimeFrameworkVersion>
+      </KnownRuntimePack>
       <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler" Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net10.0'">
         <ILCompilerPackVersion>10.0.14</ILCompilerPackVersion>
       </KnownILCompilerPack>

@@ -85,7 +85,7 @@ public sealed class SoftwarePresentConformanceTests
         context.Dispose(); context.Dispose();
         host.Dispose(); host.Dispose();
 #else
-        throw new PlatformNotSupportedException();
+        throw new PlatformNotSupportedException($"Software-present conformance for {surface} requires a Win32 build.");
 #endif
     }
 
