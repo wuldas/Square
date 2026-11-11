@@ -6,7 +6,13 @@ Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌
 
 > 项目仍处于早期开发阶段，API 与模板语法可能调整。目前主要验证 Windows / Win32 与 Linux / X11 桌面宿主。
 
-## 0.3.0 Canvas 与软件呈现
+## 0.3.1 主线维护补丁
+
+0.3.1 从 `main` 发布，更新构建工具链与 CI 测试会话，框架与模板仍为22个统一版本包；没有新增 Canvas 或生产语言服务器功能。详情与发布门禁见 [0.3.1 发布说明](docs/releases/0.3.1.md)。
+
+下列功能说明与2026-11-11基准保留为0.3.0记录，不是0.3.1新增测量；已知Software桌面截图0/2 limited边界仍有效。
+
+### 0.3.0 Canvas 与软件呈现
 
 - 对齐主线 UI、CSS、布局、编译器与内置 Yoga，独立合入 Canvas 路径、渐变、文字准备缓存、图层、Software alpha/SIMD 与 Vulkan 帧资源改进。
 - Canvas 默认一个综合场景、一个固定档位、control-only；六目标各三轮共18个进程，显式主线对照为27个。旧29场景仅显式扩展运行。
@@ -84,10 +90,10 @@ new DesktopApplication(window).Run();
 
 ## 创建独立应用
 
-使用 [`Wuldas.Square.Templates` 0.3.0](https://www.nuget.org/packages/Wuldas.Square.Templates/0.3.0) 创建应用。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
+使用 [`Wuldas.Square.Templates` 0.3.1](https://www.nuget.org/packages/Wuldas.Square.Templates/0.3.1) 创建应用。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
 
 ```bash
-dotnet new install Wuldas.Square.Templates@0.3.0
+dotnet new install Wuldas.Square.Templates@0.3.1
 dotnet new square -n MyApp
 dotnet run --project MyApp
 ```
@@ -306,7 +312,7 @@ dotnet publish samples/Square.Sample.Vue/Square.Sample.Vue.csproj \
 
 Square 适合框架设计验证、实验和贡献开发，暂不建议用于生产项目。
 
-首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。当前版本为 `0.3.0`，包含 22 个框架及模板包；源码默认版本与发布标签保持一致。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
+首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。当前版本为 `0.3.1`，包含 22 个框架及模板包；源码默认版本与发布标签保持一致。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
 
 贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告。
 
@@ -326,19 +332,19 @@ Wuldas.Square.*
 先在 GitHub Actions 手动运行 **Publish NuGet**，输入版本号。这只构建、验证并上传工作流产物，不向 NuGet.org 发布。本地也可以验证（需要 .NET 10、Android workload 与 JDK 17）：
 
 ```powershell
-pwsh -File tools/Pack-Release.ps1 -Version 0.3.0 -OutputDirectory artifacts/packages
+pwsh -File tools/Pack-Release.ps1 -Version 0.3.1 -OutputDirectory artifacts/packages
 ```
 
 输出目录必须为空。脚本打包全部 22 个框架及模板包，检查内部依赖闭环和版本一致性，并让模板中的包引用使用发布版本；不会修改模板源码。正式发布前应确认该提交的 CI 和 Android 工作流通过，并确认账号有权使用所有目标包 ID。
 
-推送 `v` 开头的版本标签会正式发布。`v0.1.0` 已存在，不要重建或移动；以下以 `0.3.0` 演示发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
+推送 `v` 开头的版本标签会正式发布。`v0.1.0` 与 `v0.3.0` 已存在，不要重建或移动；以下以 `0.3.1` 演示发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
 
 ```bash
-git tag -a v0.3.0 -m "Release Wuldas.Square 0.3.0"
-git push origin v0.3.0
+git tag -a v0.3.1 -m "Release Wuldas.Square 0.3.1"
+git push origin v0.3.1
 ```
 
-标签去掉 `v` 后成为统一包版本，也支持 `v0.3.0-preview.1`。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。
+标签去掉 `v` 后成为统一包版本，也支持 `v0.3.1-preview.1`。正式发布要求标签指向 `main` 已有提交，且标签版本与 `Directory.Build.props` 的 `Version` 一致（包括 preview 版本），再通过原有构建、包校验与发布流程。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。
 
 
 ## License
