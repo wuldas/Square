@@ -10,9 +10,11 @@ namespace Square.LanguageServer.Tests;
 /// </summary>
 internal sealed class LanguageServerSession : IDisposable
 {
+    private const int MaximumErrorCharacters = 16_384;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     private readonly Process _process;
+    private readonly StringBuilder _standardError = new();
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly List<JsonDocument> _notifications = new();
@@ -26,6 +28,16 @@ internal sealed class LanguageServerSession : IDisposable
         _process = process;
         _input = process.StandardInput.BaseStream;
         _output = process.StandardOutput.BaseStream;
+        process.ErrorDataReceived += (_, message) =>
+        {
+            if (message.Data == null) return;
+            lock (_standardError)
+            {
+                var remaining = MaximumErrorCharacters - _standardError.Length;
+                if (remaining > 0) _standardError.AppendLine(message.Data[..Math.Min(message.Data.Length, remaining)]);
+            }
+        };
+        process.BeginErrorReadLine();
     }
 
     public Process Process => _process;
@@ -40,7 +52,6 @@ internal sealed class LanguageServerSession : IDisposable
         {
             StartInfo = new ProcessStartInfo("dotnet")
             {
-                Arguments = "run --no-restore --project \"" + project + "\" --no-launch-profile",
                 WorkingDirectory = Path.GetDirectoryName(project)!,
                 UseShellExecute = false,
                 RedirectStandardInput = true,
@@ -49,6 +60,7 @@ internal sealed class LanguageServerSession : IDisposable
                 CreateNoWindow = true
             }
         };
+        process.StartInfo.ArgumentList.Add(typeof(LanguageServerHost).Assembly.Location);
         Assert.True(process.Start());
         return new LanguageServerSession(process);
     }
@@ -255,8 +267,18 @@ internal sealed class LanguageServerSession : IDisposable
     private async Task<int> ReadByteAsync()
     {
         var buffer = new byte[1];
-        var read = await _output.ReadAsync(buffer, 0, 1).WaitAsync(Timeout);
-        return read == 0 ? -1 : buffer[0];
+        try
+        {
+            var read = await _output.ReadAsync(buffer, 0, 1).WaitAsync(Timeout);
+            return read == 0 ? -1 : buffer[0];
+        }
+        catch (TimeoutException exception)
+        {
+            lock (_standardError)
+                throw new TimeoutException(
+                    $"Timed out waiting for LSP output (process {_process.Id}, last request {_lastRequestId}, received frames {_received.Count}, cached response ids [{string.Join(", ", _responses.Keys)}]). Standard error: {_standardError}",
+                    exception);
+        }
     }
 
     private async Task ReadExactlyAsync(byte[] buffer)
