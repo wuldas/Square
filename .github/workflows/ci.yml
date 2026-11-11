@@ -61,10 +61,17 @@ jobs:
       - name: Install Linux test and NativeAOT dependencies
         if: runner.os == 'Linux'
         run: |
-          # Avoid the Azure mirror DNS failures while retaining Ubuntu package signature checks.
-          sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g' /etc/apt/apt-mirrors.txt
-          sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev libx11-6 libxrandr2 xvfb fonts-noto-cjk
+          # The runner image uses mirror+file with an HTTP-first mirror; use direct HTTPS.
+          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+          if ! sudo apt-get update || ! sudo apt-get install -y clang zlib1g-dev libx11-6 libxrandr2 xvfb fonts-noto-cjk; then
+            resolvectl status || true
+            timeout 10s getent ahosts archive.ubuntu.com || true
+            timeout 10s getent ahostsv4 archive.ubuntu.com || true
+            timeout 10s sudo -u _apt getent ahosts archive.ubuntu.com || true
+            timeout 10s sudo -u _apt getent ahostsv4 archive.ubuntu.com || true
+            curl -4 --head --fail --silent --show-error --connect-timeout 10 --max-time 15 https://archive.ubuntu.com/ubuntu/dists/noble/InRelease || true
+            exit 1
+          fi
 
       - name: Test
         run: dotnet test Square.slnx --configuration Release --no-build --no-restore -p:SquareTargetPlatform=${{ matrix.platform }} --filter "${{ matrix.test-filter }}&Category!=Performance"
