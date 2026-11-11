@@ -14,6 +14,7 @@ internal sealed unsafe class VulkanTextureAtlas : IDisposable
 {
     private readonly VulkanDevice _device;
     private readonly VulkanPipeline _pipeline;
+    private readonly Dictionary<VulkanPipeline, DescriptorSet> _descriptorSets = [];
 
     public static readonly int AtlasWidth = ResolveAtlasSize();
     public static readonly int AtlasHeight = AtlasWidth;
@@ -22,7 +23,6 @@ internal sealed unsafe class VulkanTextureAtlas : IDisposable
     private DeviceMemory _imageMemory;
     private VulkanImageView _imageView;
     private Sampler _sampler;
-    private DescriptorPool _descriptorPool;
     private Buffer _stagingBuffer;
     private DeviceMemory _stagingMemory;
     private void* _stagingMapped;
@@ -274,45 +274,19 @@ internal sealed unsafe class VulkanTextureAtlas : IDisposable
         VulkanDevice.ThrowIfFailed(_device.Api.CreateSampler(_device.Device, in samplerInfo, null, out _sampler), "vkCreateSampler");
     }
 
+    public DescriptorSet GetDescriptorSet(VulkanPipeline pipeline)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_descriptorSets.TryGetValue(pipeline, out var descriptor))
+        {
+            descriptor = pipeline.CreateTextureDescriptor(_imageView, _sampler);
+            _descriptorSets.Add(pipeline, descriptor);
+        }
+        return descriptor;
+    }
+
     private void CreateDescriptorSet()
-    {
-        var api = _device.Api;
-
-        var poolSize = new DescriptorPoolSize(DescriptorType.CombinedImageSampler, 1);
-        var poolInfo = new DescriptorPoolCreateInfo(StructureType.DescriptorPoolCreateInfo)
-        {
-            MaxSets = 1,
-            PoolSizeCount = 1,
-            PPoolSizes = &poolSize
-        };
-        VulkanDevice.ThrowIfFailed(api.CreateDescriptorPool(_device.Device, in poolInfo, null, out _descriptorPool), "vkCreateDescriptorPool");
-
-        var layout = _pipeline.DescriptorSetLayout;
-        var allocInfo = new DescriptorSetAllocateInfo(StructureType.DescriptorSetAllocateInfo)
-        {
-            DescriptorPool = _descriptorPool,
-            DescriptorSetCount = 1,
-            PSetLayouts = &layout
-        };
-        VulkanDevice.ThrowIfFailed(api.AllocateDescriptorSets(_device.Device, in allocInfo, out var descriptorSet), "vkAllocateDescriptorSets");
-        DescriptorSet = descriptorSet;
-
-        UpdateDescriptorSet();
-    }
-
-    private void UpdateDescriptorSet()
-    {
-        var imageInfo = new DescriptorImageInfo(_sampler, _imageView, ImageLayout.ShaderReadOnlyOptimal);
-        var write = new WriteDescriptorSet(StructureType.WriteDescriptorSet)
-        {
-            DstSet = DescriptorSet,
-            DstBinding = 0,
-            DescriptorCount = 1,
-            DescriptorType = DescriptorType.CombinedImageSampler,
-            PImageInfo = &imageInfo
-        };
-        _device.Api.UpdateDescriptorSets(_device.Device, 1, in write, 0, null);
-    }
+        => DescriptorSet = GetDescriptorSet(_pipeline);
 
     private unsafe void UploadTexture()
     {
@@ -497,7 +471,9 @@ internal sealed unsafe class VulkanTextureAtlas : IDisposable
         var api = _device.Api;
         if (waitForDevice && _device.Device.Handle != 0) api.DeviceWaitIdle(_device.Device);
         DestroyStagingBuffer();
-        if (_descriptorPool.Handle != 0) api.DestroyDescriptorPool(_device.Device, _descriptorPool, null);
+        foreach (var pair in _descriptorSets) pair.Key.ReleaseTextureDescriptor(pair.Value);
+        _descriptorSets.Clear();
+        DescriptorSet = default;
         if (_sampler.Handle != 0) api.DestroySampler(_device.Device, _sampler, null);
         if (_imageView.Handle != 0) api.DestroyImageView(_device.Device, _imageView, null);
         if (_image.Handle != 0) api.DestroyImage(_device.Device, _image, null);

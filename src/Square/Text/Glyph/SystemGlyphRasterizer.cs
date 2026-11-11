@@ -391,7 +391,7 @@ public sealed partial class SystemGlyphRasterizer
 internal static class SystemTextMeasurementRegistration
 {
     private static readonly SystemGlyphRasterizer Rasterizer = SystemGlyphRasterizer.Shared;
-    private static readonly ITextMetricsProvider MetricsProvider = new SystemTextMetricsProvider(Rasterizer);
+    internal static readonly ITextMetricsProvider MetricsProvider = new SystemTextMetricsProvider(Rasterizer);
     private static readonly object Sync = new();
 
 #pragma warning disable CA2255 // Square.Text installs the optional font metrics provider for Square.Graphics.
@@ -403,7 +403,7 @@ internal static class SystemTextMeasurementRegistration
     }
 #pragma warning restore CA2255
 
-    private static float? MeasureAdvance(Rune rune, Font font)
+    internal static float? MeasureAdvance(Rune rune, Font font)
     {
         if (!rune.IsBmp || !Rasterizer.IsAvailable) return null;
         var family = SystemGlyphRasterizer.ResolveGenericFontFamily(font.Family);

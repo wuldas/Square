@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AllowUnsafeBlocks>true</AllowUnsafeBlocks><TargetFramework>net10.0</TargetFramework><IsPackable>false</IsPackable><AssemblyName>CanvasBench.SquareV11</AssemblyName></PropertyGroup>
+  <PropertyGroup><EngineRoot Condition="'$(EngineRoot)' == ''">$(MSBuildThisFileDirectory)../../../../</EngineRoot></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(EngineRoot)/src/Square/Square.csproj" />
+    <ProjectReference Include="$(EngineRoot)/src/Square.Images/Square.Images.csproj" />
+    <ProjectReference Include="$(EngineRoot)/src/Square.Platform.Win32/Square.Platform.Win32.csproj" />
+    <ProjectReference Include="$(EngineRoot)/src/Square.Backends.Direct2D/Square.Backends.Direct2D.csproj" />
+    <ProjectReference Include="$(EngineRoot)/src/Square.Backends.Vulkan/Square.Backends.Vulkan.csproj" />
+  </ItemGroup>
+</Project>

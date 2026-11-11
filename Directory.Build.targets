@@ -5,6 +5,23 @@
 
   <Import Project="$(MSBuildThisFileDirectory)src\Square.Compiler\buildTransitive\Square.Compiler.targets" />
 
+  <!-- SDK 10.0.3xx resolves ILCompiler/ILLink/apphost 10.0.11, which are flagged by
+       GHSA-p3jp-9v83-76w9. Pin the patched 10.0.14 runtime packs for repository builds
+       (including NativeAOT samples) instead of suppressing the NuGet audit warning. -->
+  <Target Name="PinPatchedNet10RuntimePacks" BeforeTargets="ProcessFrameworkReferences" Condition="'$(TargetFramework)' == 'net10.0'">
+    <ItemGroup>
+      <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler" Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net10.0'">
+        <ILCompilerPackVersion>10.0.14</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+      <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" Condition="'%(KnownILLinkPack.TargetFramework)' == 'net10.0'">
+        <ILLinkPackVersion>10.0.14</ILLinkPackVersion>
+      </KnownILLinkPack>
+      <KnownAppHostPack Update="Microsoft.NETCore.App" Condition="'%(KnownAppHostPack.TargetFramework)' == 'net10.0'">
+        <AppHostPackVersion>10.0.14</AppHostPackVersion>
+      </KnownAppHostPack>
+    </ItemGroup>
+  </Target>
+
   <Target Name="ValidateSquareTargetPlatform" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(SquareUnsupportedPlatform)' != ''" Text="$(SquareUnsupportedPlatform)" />
     <Error Condition="'$(SquareTargetPlatform)' != 'Win32' and '$(SquareTargetPlatform)' != 'X11' and '$(SquareTargetPlatform)' != 'MacOS' and '$(SquareTargetPlatform)' != 'Android'"

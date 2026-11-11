@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -38,6 +39,8 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     private Matrix3x2 _currentTransform;
     private float _currentOpacity = 1f;
     private readonly SystemGlyphRasterizer _glyphRasterizer = SystemGlyphRasterizer.Shared;
+    private readonly SoftwareCoverageCache _coverageCache = new();
+    private SoftwareCoverageBuilder? _coverageRecorder;
 
     public Size CanvasSize => _canvasSize;
     public float DpiScale => _dpiScale;
@@ -46,6 +49,13 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     internal int LayerBufferAllocationCount => _layerBufferPool.AllocationCount;
     internal int LayerBufferReuseCount => _layerBufferPool.ReuseCount;
     internal int RoundedRectStrokeFastPathCount { get; private set; }
+    internal int PolygonScanlineFillCount { get; private set; }
+    internal int CoverageCacheCount => _coverageCache.Count;
+    internal int CoverageProbationCount => _coverageCache.ProbationCount;
+    internal long CoverageProbationBytes => _coverageCache.ProbationBytes;
+    internal long CoverageCacheBytes => _coverageCache.Bytes;
+    internal long CoverageBuildCount => _coverageCache.BuildCount;
+    internal long CoverageHitCount => _coverageCache.HitCount;
 
     internal RenderContext(Bitmap bitmap, float dpiScale, PresentFrameHandler? presentFrame = null)
         : this(
@@ -105,6 +115,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         if (!Matrix3x2.Invert(_currentTransform, out var inverse)) { PushClip(Rect.Empty); return; }
         Rect bounds;
         Func<float, float, bool> contains;
+        PolygonClipScanline? polygonScanline = null;
         switch (geometry)
         {
             case RoundedRectGeometry rounded:
@@ -122,12 +133,23 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                     .Select(point => new Point((float)point.x, (float)point.y))
                     .ToArray();
                 bounds = GetBounds(points, _currentTransform);
-                contains = (x, y) => ContainsPolygon(points, TransformPoint(inverse, x, y));
+                if (inverse.M12 == 0)
+                {
+                    // Logical Y is constant across a device row. Reuse the original float
+                    // intersections; sorting only changes the order of even/odd toggles.
+                    var scanline = new PolygonClipScanline(points);
+                    polygonScanline = scanline;
+                    contains = (x, y) => scanline.Contains(TransformPoint(inverse, x, y));
+                }
+                else
+                {
+                    contains = (x, y) => ContainsPolygon(points, TransformPoint(inverse, x, y));
+                }
                 break;
             default:
                 throw new NotSupportedException($"Software rendering does not support geometry clip type '{geometry.GetType().Name}'.");
         }
-        PushClipRegion(bounds, contains, isRect: false);
+        PushClipRegion(bounds, contains, isRect: false, polygonScanline, inverse);
         UpdateClipCache();
     }
     public void PopClip() { if (_clipStack.Count > 0) _clipStack.Pop(); UpdateClipCache(); }
@@ -518,11 +540,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                     row[offset + 3] = 255;
                     continue;
                 }
-                var outputAlpha = (byte)(alpha + destinationAlpha * inverseAlpha / 255);
-                row[offset] = (byte)((srcBlue + row[offset] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-                row[offset + 1] = (byte)((srcGreen + row[offset + 1] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-                row[offset + 2] = (byte)((srcRed + row[offset + 2] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-                row[offset + 3] = outputAlpha;
+                BlendStraightBitmapPixel(row, offset, blue, green, red, alpha);
             }
         }
         return true;
@@ -640,18 +658,64 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     public void FillPath(PathGeometry path, Brush brush)
     {
-        if (brush is not SolidColorBrush sc) return;
-        var points = FlattenPath(path, _currentTransform);
-        if (points.Count < 3) return;
-        FillPolygon(points, sc.Color);
+        if (brush is not SolidColorBrush sc || sc.Color.A == 0) return;
+        var state = GetCoverageState(0, fill: true);
+        if (_coverageCache.TryGet(path, in state, out var cached))
+        {
+            ReplayCoverage(cached, sc.Color);
+            return;
+        }
+        var recorder = _coverageCache.ShouldRecord(path, in state) ? new SoftwareCoverageBuilder() : null;
+        _coverageRecorder = recorder;
+        try
+        {
+            var points = FlattenPath(path, _currentTransform);
+            if (points.Count >= 3) FillPolygon(points, sc.Color, IsLineContour(path));
+        }
+        finally { _coverageRecorder = null; }
+        if (recorder?.Finish() is { } mask) _coverageCache.Add(path, in state, mask);
     }
 
     public void DrawPath(PathGeometry path, Pen pen)
     {
         var color = (pen.Brush as SolidColorBrush)?.Color ?? Color.Black;
-        var points = FlattenPath(path, _currentTransform);
+        var width = pen.Width * GetStrokeTransformScale();
+        if (color.A == 0 || width <= 0) return;
+        var state = GetCoverageState(width, fill: false);
+        if (_coverageCache.TryGet(path, in state, out var cached))
+        {
+            ReplayCoverage(cached, color);
+            return;
+        }
+        var recorder = _coverageCache.ShouldRecord(path, in state) ? new SoftwareCoverageBuilder() : null;
+        _coverageRecorder = recorder;
+        try { DrawPathCore(path, width, color); }
+        finally { _coverageRecorder = null; }
+        if (recorder?.Finish() is { } mask) _coverageCache.Add(path, in state, mask);
+    }
+
+    private void DrawPathCore(PathGeometry path, float width, Color color)
+    {
+        if (path.Commands.Count == 2 && path.Commands[0] is MoveToCmd && path.Commands[1] is LineToCmd)
+        {
+            var linePoints = FlattenPath(path, _currentTransform);
+            DrawLine(linePoints[0].x, linePoints[0].y, linePoints[1].x, linePoints[1].y, width, color);
+            return;
+        }
+        var figureStarts = new List<int>();
+        var points = FlattenPath(path, _currentTransform, figureStarts);
         if (points.Count < 2) return;
-        DrawPolyline(points, pen.Width * GetStrokeTransformScale(), color);
+        DrawPolyline(points, width, color, figureStarts);
+    }
+
+    private SoftwareCoverageState GetCoverageState(float width, bool fill) =>
+        new(_currentTransform, width, fill, _bitmapWidth, _bitmapHeight, _hasClip,
+            _hasClip ? _clipStack.Peek().Bounds : Rect.Empty);
+
+    private void ReplayCoverage(SoftwareCoverageMask mask, Color color)
+    {
+        foreach (var pixel in mask.Pixels)
+            BlendPixelCoverage(pixel.X, pixel.Y, color, pixel.Covered, CoverageSampleCount);
     }
 
     public void DrawText(TextLayout text, Point origin, Brush brush)
@@ -762,6 +826,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         _canvasSize = canvasSize;
         _dpiScale = dpiScale;
         _transformStack.Clear();
+        _coverageCache.Clear();
         ReleaseLayers(restoreBackground: true);
         _currentOpacity = 1f;
         _clipStack.Clear();
@@ -823,6 +888,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     public void Dispose()
     {
+        _coverageCache.Clear();
         _clipStack.Clear();
         _transformStack.Clear();
         ReleaseLayers(restoreBackground: false);
@@ -966,14 +1032,11 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         if (alpha == 0) return;
         var idx = x * 4;
         var row = _surface.GetRowSpan(y);
-        var pr = (byte)(red * alpha / 255);
-        var pg = (byte)(green * alpha / 255);
-        var pb = (byte)(blue * alpha / 255);
         if (alpha == 255)
         {
-            row[idx] = pb;
-            row[idx + 1] = pg;
-            row[idx + 2] = pr;
+            row[idx] = blue;
+            row[idx + 1] = green;
+            row[idx + 2] = red;
             row[idx + 3] = 255;
         }
         else
@@ -989,6 +1052,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             }
             var outA = (byte)(alpha + (dstA * inverseAlpha / 255));
             if (outA == 0) return;
+            var pr = (byte)(red * alpha / 255);
+            var pg = (byte)(green * alpha / 255);
+            var pb = (byte)(blue * alpha / 255);
             row[idx] = (byte)((pb * 255 + row[idx] * dstA * inverseAlpha / 255) / outA);
             row[idx + 1] = (byte)((pg * 255 + row[idx + 1] * dstA * inverseAlpha / 255) / outA);
             row[idx + 2] = (byte)((pr * 255 + row[idx + 2] * dstA * inverseAlpha / 255) / outA);
@@ -997,6 +1063,39 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     }
 
     private static void BlendSolidRow(Span<byte> row, byte blue, byte green, byte red, byte alpha)
+    {
+        var offset = 0;
+        if (Vector.IsHardwareAccelerated && row.Length >= Vector<byte>.Count)
+        {
+            var alphaMask = new Vector<uint>(AlphaMask);
+            var source = Vector.AsVectorByte(new Vector<uint>((uint)(blue | green << 8 | red << 16) | AlphaMask));
+            Vector.Widen(source, out var sourceLow, out var sourceHigh);
+            var sourceAlpha = new Vector<ushort>(alpha);
+            var inverseAlpha = new Vector<ushort>((ushort)(255 - alpha));
+            var rounding = new Vector<ushort>(127);
+            sourceLow = sourceLow * sourceAlpha + rounding;
+            sourceHigh = sourceHigh * sourceAlpha + rounding;
+            for (; offset <= row.Length - Vector<byte>.Count; offset += Vector<byte>.Count)
+            {
+                var destination = new Vector<byte>(row.Slice(offset, Vector<byte>.Count));
+                if (!Vector.EqualsAll(Vector.AsVectorUInt32(destination) & alphaMask, alphaMask))
+                {
+                    BlendSolidRowScalar(row.Slice(offset, Vector<byte>.Count), blue, green, red, alpha);
+                    continue;
+                }
+                Vector.Widen(destination, out var low, out var high);
+                low = low * inverseAlpha + sourceLow;
+                high = high * inverseAlpha + sourceHigh;
+                // Exact floor(n/255) for 0 <= n <= 65152, without ushort overflow.
+                low = (low + Vector<ushort>.One + (low >> 8)) >> 8;
+                high = (high + Vector<ushort>.One + (high >> 8)) >> 8;
+                Vector.Narrow(low, high).CopyTo(row.Slice(offset, Vector<byte>.Count));
+            }
+        }
+        BlendSolidRowScalar(row[offset..], blue, green, red, alpha);
+    }
+
+    private static void BlendSolidRowScalar(Span<byte> row, byte blue, byte green, byte red, byte alpha)
     {
         var inverseAlpha = 255 - alpha;
         var offset = 0;
@@ -1037,10 +1136,12 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         return rect;
     }
 
-    private void PushClipRegion(Rect bounds, Func<float, float, bool>? contains, bool isRect)
+    private void PushClipRegion(Rect bounds, Func<float, float, bool>? contains, bool isRect,
+        PolygonClipScanline? polygonScanline = null, Matrix3x2 inverse = default)
     {
         if (_clipStack.Count > 0)
         {
+            polygonScanline = null;
             var parent = _clipStack.Peek();
             bounds = Rect.Intersect(parent.Bounds, bounds);
             if (!parent.IsRect || !isRect)
@@ -1051,7 +1152,11 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 isRect = false;
             }
         }
-        _clipStack.Push(new ClipRegion(bounds, contains, isRect));
+        _clipStack.Push(new ClipRegion(bounds, contains, isRect)
+        {
+            PolygonScanline = polygonScanline,
+            PolygonInverse = inverse
+        });
     }
 
     private bool IsPointVisible(float x, float y)
@@ -1068,7 +1173,85 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     }
 
     private void BlendBrush(Rect bounds, Brush brush, Matrix3x2 inverse)
-        => FillBrushShape(bounds, brush, inverse, static _ => true);
+    {
+        if (brush is not LinearGradientBrush linear || inverse.M12 != 0 ||
+            linear.Start.X != linear.End.X || !float.IsFinite(linear.Start.X))
+        {
+            FillBrushShape(bounds, brush, inverse, static _ => true);
+            return;
+        }
+
+        var clipped = ClipRect(bounds);
+        var x0 = Math.Max(0, (int)MathF.Floor(clipped.Left));
+        var y0 = Math.Max(0, (int)MathF.Floor(clipped.Top));
+        var x1 = Math.Min(_bitmapWidth, (int)MathF.Ceiling(clipped.Right));
+        var y1 = Math.Min(_bitmapHeight, (int)MathF.Ceiling(clipped.Bottom));
+        if (x0 >= x1 || y0 >= y1) return;
+        var singleClip = _clipStack.Count == 1 && _layerStack.Count == 0 ? _clipStack.Peek() : null;
+        for (var y = y0; y < y1; y++)
+        {
+            var first = TransformPoint(inverse, x0 + 0.5f, y + 0.5f);
+            var last = TransformPoint(inverse, x1 - 0.5f, y + 0.5f);
+            // The original dot product still includes (logicalX - Start.X) * 0.
+            // Preserve its NaN behavior for non-finite transformed coordinates.
+            if (!float.IsFinite(first.X - linear.Start.X) || !float.IsFinite(last.X - linear.Start.X))
+            {
+                for (var x = x0; x < x1; x++)
+                    BlendPixel(x, y, SampleBrush(brush, TransformPoint(inverse, x + 0.5f, y + 0.5f)));
+                continue;
+            }
+            var color = SampleBrush(brush, first);
+            if (singleClip?.PolygonScanline is { } scanline)
+            {
+                if (y + .5f < singleClip.Bounds.Top || y + .5f >= singleClip.Bounds.Bottom) continue;
+                var visibleStart = x0;
+                var visibleEnd = x1;
+                while (visibleStart < visibleEnd && visibleStart + .5f < singleClip.Bounds.Left) visibleStart++;
+                while (visibleEnd > visibleStart && visibleEnd - 1 + .5f >= singleClip.Bounds.Right) visibleEnd--;
+                if (scanline.TryGetSpans(y, visibleStart, visibleEnd, singleClip.PolygonInverse, out var spans))
+                {
+                    foreach (var span in spans) BlendGradientSpan(y, span.Start, span.End, color);
+                    continue;
+                }
+            }
+            for (var x = x0; x < x1; x++)
+                BlendPixel(x, y, color);
+        }
+    }
+
+    private void BlendGradientSpan(int y, int start, int end, Color color)
+    {
+        color = ApplyOpacity(color);
+        var alpha = color.A;
+        if (alpha == 0) return;
+        var row = _surface.GetRowSpan(y);
+        if (alpha == 255)
+        {
+            FillPackedBgra(MemoryMarshal.Cast<byte, uint>(row.Slice(start * 4, (end - start) * 4)), PackBgra(color));
+            return;
+        }
+
+        var inverseAlpha = 255 - alpha;
+        var blueProduct = color.B * alpha + 127;
+        var greenProduct = color.G * alpha + 127;
+        var redProduct = color.R * alpha + 127;
+        for (var x = start; x < end; x++)
+        {
+            var offset = x * 4;
+            if (row[offset + 3] == 255)
+            {
+                // Same rounded arithmetic as BlendPixelCore's opaque destination path.
+                row[offset] = (byte)((blueProduct + row[offset] * inverseAlpha) / 255);
+                row[offset + 1] = (byte)((greenProduct + row[offset + 1] * inverseAlpha) / 255);
+                row[offset + 2] = (byte)((redProduct + row[offset + 2] * inverseAlpha) / 255);
+            }
+            else
+            {
+                // Keep the premultiplication/truncation rules for transparent targets.
+                BlendPixelCore(x, y, color.R, color.G, color.B, alpha);
+            }
+        }
+    }
 
     private void FillBrushShape(Rect bounds, Brush brush, Matrix3x2 inverse, Func<Point, bool> contains)
     {
@@ -1194,6 +1377,90 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         return inside;
     }
 
+    private sealed class PolygonClipScanline(Point[] points)
+    {
+        private readonly float[] _intersections = new float[points.Length];
+        private readonly (int Start, int End)[] _spans = new (int, int)[points.Length / 2];
+        private float _y = float.NaN;
+        private int _count;
+
+        private void PrepareRow(float y)
+        {
+            if (y == _y) return;
+            _y = y;
+            _count = 0;
+            for (int i = 0, j = points.Length - 1; i < points.Length; j = i++)
+            {
+                var a = points[i];
+                var b = points[j];
+                if ((a.Y > y) == (b.Y > y)) continue;
+                var intersection = (b.X - a.X) * (y - a.Y) / (b.Y - a.Y) + a.X;
+                // NaN comparisons never toggle the original predicate.
+                if (!float.IsNaN(intersection)) _intersections[_count++] = intersection;
+            }
+            Array.Sort(_intersections, 0, _count);
+        }
+
+        public bool Contains(Point point)
+        {
+            if (float.IsNaN(point.X) || float.IsNaN(point.Y)) return false;
+            PrepareRow(point.Y);
+            var lower = 0;
+            var upper = _count;
+            while (lower < upper)
+            {
+                var middle = lower + (upper - lower) / 2;
+                if (_intersections[middle] <= point.X) lower = middle + 1;
+                else upper = middle;
+            }
+            return ((_count - lower) & 1) != 0;
+        }
+
+        public bool TryGetSpans(int y, int x0, int x1, Matrix3x2 inverse,
+            out ReadOnlySpan<(int Start, int End)> spans)
+        {
+            spans = default;
+            if (inverse.M12 != 0 || inverse.M21 != 0 || inverse.M11 == 0 ||
+                !float.IsFinite(inverse.M11) || !float.IsFinite(inverse.M22) ||
+                !float.IsFinite(inverse.M31) || !float.IsFinite(inverse.M32)) return false;
+            var first = TransformPoint(inverse, x0 + .5f, y + .5f);
+            var last = TransformPoint(inverse, x1 - .5f, y + .5f);
+            if (!float.IsFinite(first.X) || !float.IsFinite(last.X) || !float.IsFinite(first.Y)) return false;
+            PrepareRow(first.Y);
+            if ((_count & 1) != 0) return false;
+            var spanCount = 0;
+            var ascending = inverse.M11 > 0;
+            for (var i = 0; i < _count; i += 2)
+            {
+                var left = _intersections[i];
+                var right = _intersections[i + 1];
+                if (!float.IsFinite(left) || !float.IsFinite(right)) return false;
+                // Locate transitions using the original float transform, rather than
+                // inverting/rounding the crossings and changing half-open boundaries.
+                var start = FindBoundary(x0, x1, y, ascending ? left : right, inverse, ascending);
+                var end = FindBoundary(x0, x1, y, ascending ? right : left, inverse, ascending);
+                if (start >= end) continue;
+                if (!ContainsPolygon(points, TransformPoint(inverse, start + .5f, y + .5f)) ||
+                    !ContainsPolygon(points, TransformPoint(inverse, end - 1 + .5f, y + .5f))) return false;
+                _spans[spanCount++] = (start, end);
+            }
+            spans = _spans.AsSpan(0, spanCount);
+            return true;
+        }
+
+        private static int FindBoundary(int lower, int upper, int y, float crossing, Matrix3x2 inverse, bool ascending)
+        {
+            while (lower < upper)
+            {
+                var middle = lower + (upper - lower) / 2;
+                var logicalX = TransformPoint(inverse, middle + .5f, y + .5f).X;
+                if (ascending ? logicalX >= crossing : logicalX < crossing) upper = middle;
+                else lower = middle + 1;
+            }
+            return lower;
+        }
+    }
+
     private static Rect GetBounds(IReadOnlyList<Point> points, Matrix3x2 transform)
     {
         if (points.Count == 0) return Rect.Empty;
@@ -1221,6 +1488,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     private sealed record ClipRegion(Rect Bounds, Func<float, float, bool>? Contains, bool IsRect)
     {
+        public PolygonClipScanline? PolygonScanline { get; init; }
+        public Matrix3x2 PolygonInverse { get; init; }
+
         public bool ContainsPoint(float x, float y) =>
             x >= Bounds.Left && x < Bounds.Right && y >= Bounds.Top && y < Bounds.Bottom &&
             (IsRect || Contains?.Invoke(x, y) == true);
@@ -1803,6 +2073,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     private void BlendPixelCoverage(int x, int y, Color color, int coveredSamples, int sampleCount)
     {
         if (coveredSamples <= 0) return;
+        _coverageRecorder?.Record(x, y, coveredSamples);
         if ((uint)x >= (uint)_bitmapWidth || (uint)y >= (uint)_bitmapHeight) return;
         if (!IsPointVisible(x + 0.5f, y + 0.5f)) return;
         var alpha = sampleCount == CoverageSampleCount
@@ -1854,20 +2125,230 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         return _byteCoverageAlphaLookup[coverage];
     }
 
-    private void DrawPolyline(List<(double x, double y)> points, float width, Color color)
+    private void DrawPolyline(List<(double x, double y)> points, float width, Color color, List<int> figureStarts)
     {
-        for (int i = 0; i < points.Count - 1; i++)
-            DrawLine(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, width, color);
+        if (width <= 0 || color.A == 0) return;
+        if (points.Count == 2 && !figureStarts.Contains(1))
+        {
+            DrawLine(points[0].x, points[0].y, points[1].x, points[1].y, width, color);
+            return;
+        }
+
+        var segments = new List<StrokeSegment>(points.Count - 1);
+        var minX = _bitmapWidth;
+        var minY = _bitmapHeight;
+        var maxX = -1;
+        var maxY = -1;
+        var nextFigure = 0;
+        var onlySegmentIndex = -1;
+        var onlySegmentEnd = -1;
+        for (var i = 0; i < points.Count - 1; i++)
+        {
+            while (nextFigure < figureStarts.Count && figureStarts[nextFigure] < i + 1) nextFigure++;
+            if (nextFigure < figureStarts.Count && figureStarts[nextFigure] == i + 1) continue;
+            var startIndex = i;
+            var endIndex = i + 1;
+            var figureEnd = nextFigure < figureStarts.Count ? figureStarts[nextFigure] : points.Count;
+            // Exact, same-direction collinear vertices carry no stroke geometry. Merge
+            // them before the old minimum-length rules so subdivision stays invariant.
+            while (endIndex + 1 < figureEnd &&
+                IsRedundantStrokeVertex(points[startIndex], points[endIndex], points[endIndex + 1])) endIndex++;
+            i = endIndex - 1;
+            if (!TryPrepareStrokeSegment(points[startIndex], points[endIndex], width, out var segment)) continue;
+            segments.Add(segment);
+            onlySegmentIndex = startIndex;
+            onlySegmentEnd = endIndex;
+            minX = Math.Min(minX, segment.MinX);
+            minY = Math.Min(minY, segment.MinY);
+            maxX = Math.Max(maxX, segment.MaxX);
+            maxY = Math.Max(maxY, segment.MaxY);
+        }
+        if (segments.Count == 0) return;
+        if (segments.Count == 1)
+        {
+            var start = points[onlySegmentIndex];
+            var end = points[onlySegmentEnd];
+            DrawLine(start.x, start.y, end.x, end.y, width, color);
+            return;
+        }
+
+        // A mask stores the identity of all 4x4 samples, not just a coverage count.
+        // Tile it so a large/sparse path never rents a full-canvas coverage buffer.
+        const int maxTilePixels = 64 * 1024;
+        var tileWidth = Math.Min(maxX - minX + 1, maxTilePixels);
+        var tileHeight = Math.Min(maxY - minY + 1, maxTilePixels / tileWidth);
+        var buffer = ArrayPool<ushort>.Shared.Rent(tileWidth * tileHeight);
+        try
+        {
+            for (var top = minY; top <= maxY; top += tileHeight)
+            for (var left = minX; left <= maxX; left += tileWidth)
+            {
+                var w = Math.Min(tileWidth, maxX - left + 1);
+                var h = Math.Min(tileHeight, maxY - top + 1);
+                var mask = buffer.AsSpan(0, w * h);
+                mask.Clear();
+                foreach (var segment in segments)
+                    UnionStrokeSegment(segment, left, top, w, h, mask);
+                for (var y = 0; y < h; y++)
+                for (var x = 0; x < w; x++)
+                {
+                    var samples = mask[y * w + x];
+                    if (samples != 0)
+                        BlendPixelCoverage(left + x, top + y, color, BitOperations.PopCount((uint)samples), CoverageSampleCount);
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<ushort>.Shared.Return(buffer);
+        }
+    }
+
+    private static bool IsRedundantStrokeVertex((double x, double y) a, (double x, double y) b, (double x, double y) c)
+    {
+        var dx = b.x - a.x;
+        var dy = b.y - a.y;
+        var nextDx = c.x - b.x;
+        var nextDy = c.y - b.y;
+        return double.IsFinite(dx) && double.IsFinite(dy) && double.IsFinite(nextDx) && double.IsFinite(nextDy) &&
+            dx * nextDy == dy * nextDx && dx * nextDx + dy * nextDy >= 0;
+    }
+
+    private readonly record struct StrokeSegment(
+        int MinX, int MinY, int MaxX, int MaxY, Rect? AxisRect,
+        float StartX, float StartY, float Dx, float Dy, float InverseLengthSquared, float RadiusSquared);
+
+    private bool TryPrepareStrokeSegment((double x, double y) start, (double x, double y) end, float width, out StrokeSegment segment)
+    {
+        segment = default;
+        var dx = (float)(end.x - start.x);
+        var dy = (float)(end.y - start.y);
+        var lengthSquared = dx * dx + dy * dy;
+        if (lengthSquared < 0.0001 || width <= 0) return false;
+        Rect? axisRect = null;
+        if (Math.Abs(dx) < .01)
+            axisRect = new Rect((float)start.x - width / 2f, (float)Math.Min(start.y, end.y), width, Math.Max(1, Math.Abs(dy)));
+        else if (Math.Abs(dy) < .01)
+            axisRect = new Rect((float)Math.Min(start.x, end.x), (float)start.y - width / 2f, Math.Max(1, Math.Abs(dx)), width);
+        var radius = MathF.Max(.5f, width / 2f);
+        int minX, minY, maxX, maxY;
+        if (axisRect is { } rect)
+        {
+            minX = (int)MathF.Floor(rect.Left);
+            minY = (int)MathF.Floor(rect.Top);
+            maxX = (int)MathF.Ceiling(rect.Right);
+            maxY = (int)MathF.Ceiling(rect.Bottom);
+        }
+        else
+        {
+            minX = (int)Math.Floor(Math.Min(start.x, end.x) - radius - 1);
+            minY = (int)Math.Floor(Math.Min(start.y, end.y) - radius - 1);
+            maxX = (int)Math.Ceiling(Math.Max(start.x, end.x) + radius + 1);
+            maxY = (int)Math.Ceiling(Math.Max(start.y, end.y) + radius + 1);
+        }
+        minX = Math.Max(0, minX);
+        minY = Math.Max(0, minY);
+        maxX = Math.Min(_bitmapWidth - 1, maxX);
+        maxY = Math.Min(_bitmapHeight - 1, maxY);
+        if (_hasClip)
+        {
+            minX = Math.Max(minX, (int)MathF.Floor(_clipLeft));
+            minY = Math.Max(minY, (int)MathF.Floor(_clipTop));
+            maxX = Math.Min(maxX, (int)MathF.Ceiling(_clipRight) - 1);
+            maxY = Math.Min(maxY, (int)MathF.Ceiling(_clipBottom) - 1);
+        }
+        if (minX > maxX || minY > maxY) return false;
+        segment = new StrokeSegment(minX, minY, maxX, maxY, axisRect,
+            (float)start.x, (float)start.y, dx, dy, 1f / lengthSquared, radius * radius);
+        return true;
+    }
+
+    private static void UnionStrokeSegment(StrokeSegment segment, int left, int top, int width, int height, Span<ushort> mask)
+    {
+        var minX = Math.Max(segment.MinX, left);
+        var minY = Math.Max(segment.MinY, top);
+        var maxX = Math.Min(segment.MaxX, left + width - 1);
+        var maxY = Math.Min(segment.MaxY, top + height - 1);
+        if (minX > maxX || minY > maxY) return;
+        if (segment.AxisRect is { } rect)
+        {
+            for (var y = minY; y <= maxY; y++)
+            for (var x = minX; x <= maxX; x++)
+            {
+                var index = (y - top) * width + x - left;
+                var samples = mask[index];
+                for (var sy = 0; sy < CoverageSampleGrid; sy++)
+                for (var sx = 0; sx < CoverageSampleGrid; sx++)
+                {
+                    var px = x + (sx + .5f) / CoverageSampleGrid;
+                    var py = y + (sy + .5f) / CoverageSampleGrid;
+                    if (px >= rect.Left && px < rect.Right && py >= rect.Top && py < rect.Bottom)
+                        samples |= (ushort)(1 << (sy * CoverageSampleGrid + sx));
+                }
+                mask[index] = samples;
+            }
+            return;
+        }
+
+        // Match DrawLine's Vector4 arithmetic and incremental sample-X sequence.
+        // In particular, restarting with x-StartX at a tile boundary changes rounding.
+        var offsets = new Vector4(.125f, .375f, .625f, .875f);
+        var lineDx = new Vector4(segment.Dx);
+        var lineDy = new Vector4(segment.Dy);
+        var inverseLength = new Vector4(segment.InverseLengthSquared);
+        var firstX = new Vector4(segment.MinX - segment.StartX) + offsets;
+        for (var skippedX = segment.MinX; skippedX < minX; skippedX++)
+        {
+            var next = firstX + Vector4.One;
+            if (next == firstX) break;
+            firstX = next;
+        }
+        for (var y = minY; y <= maxY; y++)
+        {
+            var sampleX = firstX;
+            for (var x = minX; x <= maxX; x++)
+            {
+                var index = (y - top) * width + x - left;
+                var samples = mask[index];
+                if (samples != ushort.MaxValue)
+                {
+                    for (var sy = 0; sy < CoverageSampleGrid; sy++)
+                    {
+                        var sampleY = new Vector4(y + (sy + .5f) / CoverageSampleGrid - segment.StartY);
+                        var t = Vector4.Clamp((sampleX * lineDx + sampleY * lineDy) * inverseLength, Vector4.Zero, Vector4.One);
+                        var distanceX = sampleX - t * lineDx;
+                        var distanceY = sampleY - t * lineDy;
+                        var distanceSquared = distanceX * distanceX + distanceY * distanceY;
+                        var bit = sy * CoverageSampleGrid;
+                        if (distanceSquared.X <= segment.RadiusSquared) samples |= (ushort)(1 << bit);
+                        if (distanceSquared.Y <= segment.RadiusSquared) samples |= (ushort)(2 << bit);
+                        if (distanceSquared.Z <= segment.RadiusSquared) samples |= (ushort)(4 << bit);
+                        if (distanceSquared.W <= segment.RadiusSquared) samples |= (ushort)(8 << bit);
+                    }
+                    mask[index] = samples;
+                }
+                sampleX += Vector4.One;
+            }
+        }
     }
 
     // ── 多边形填充（扫描线） ──
 
-    private void FillPolygon(List<(double x, double y)> points, Color color)
+    private static bool IsLineContour(PathGeometry path)
     {
-        FillPolygonPoints(points, color);
+        if (path.Commands.Count < 3 || path.Commands[0] is not MoveToCmd) return false;
+        for (var index = 1; index < path.Commands.Count; index++)
+            if (path.Commands[index] is not LineToCmd &&
+                (index != path.Commands.Count - 1 || path.Commands[index] is not CloseCmd)) return false;
+        return true;
     }
 
-    private void FillPolygonPoints(List<(double x, double y)> points, Color color)
+    private void FillPolygon(List<(double x, double y)> points, Color color, bool scanline)
+    {
+        FillPolygonPoints(points, color, scanline);
+    }
+
+    private void FillPolygonPoints(List<(double x, double y)> points, Color color, bool scanline)
     {
         if (points.Count < 3) return;
         var minY = (int)Math.Floor(points.Min(p => p.y));
@@ -1886,6 +2367,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             maxY = Math.Min(maxY, (int)MathF.Ceiling(_clipBottom) - 1);
         }
         if (minX > maxX || minY > maxY) return;
+        if (scanline && TryFillPolygonScanlines(points, color, minX, minY, maxX, maxY)) return;
 
         for (var y = minY; y <= maxY; y++)
         {
@@ -1900,6 +2382,78 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 BlendPixelCoverage(x, y, color, covered, CoverageSampleCount);
             }
         }
+    }
+
+    private bool TryFillPolygonScanlines(List<(double x, double y)> points, Color color, int minX, int minY, int maxX, int maxY)
+    {
+        foreach (var point in points)
+            if (!double.IsFinite(point.x) || !double.IsFinite(point.y)) return false;
+        var width = maxX - minX + 1;
+        double[]? rentedCrossings = null;
+        byte[]? rentedCoverage = null;
+        Span<double> crossings = points.Count <= 64 ? stackalloc double[points.Count]
+            : (rentedCrossings = ArrayPool<double>.Shared.Rent(points.Count)).AsSpan(0, points.Count);
+        Span<byte> coverage = width <= 256 ? stackalloc byte[width]
+            : (rentedCoverage = ArrayPool<byte>.Shared.Rent(width)).AsSpan(0, width);
+        try
+        {
+            PolygonScanlineFillCount++;
+            for (var y = minY; y <= maxY; y++)
+            {
+                coverage.Clear();
+                for (var sy = 0; sy < CoverageSampleGrid; sy++)
+                {
+                    var sampleY = y + (sy + 0.5) / CoverageSampleGrid;
+                    var count = 0;
+                    for (int i = 0, j = points.Count - 1; i < points.Count; j = i++)
+                    {
+                        var (xi, yi) = points[i];
+                        var (xj, yj) = points[j];
+                        if ((yi > sampleY) == (yj > sampleY)) continue;
+                        // Keep IsPointInPolygon's exact arithmetic and half-open edge test.
+                        crossings[count++] = (xj - xi) * (sampleY - yi) / (yj - yi) + xi;
+                    }
+                    crossings[..count].Sort();
+                    for (var pair = 0; pair < count; pair += 2)
+                    {
+                        var start = FindPolygonSampleBoundary(crossings[pair], minX, width * CoverageSampleGrid);
+                        var end = FindPolygonSampleBoundary(crossings[pair + 1], minX, width * CoverageSampleGrid);
+                        // Each span covers the very same horizontal sample indices [start,end).
+                        while (start < end && (start & (CoverageSampleGrid - 1)) != 0)
+                            coverage[start++ / CoverageSampleGrid]++;
+                        while (start + CoverageSampleGrid <= end)
+                        {
+                            coverage[start / CoverageSampleGrid] += CoverageSampleGrid;
+                            start += CoverageSampleGrid;
+                        }
+                        while (start < end) coverage[start++ / CoverageSampleGrid]++;
+                    }
+                }
+                // Preserve original row-major blending/recording and independent source-over calls.
+                for (var x = 0; x < width; x++)
+                    if (coverage[x] != 0) BlendPixelCoverage(minX + x, y, color, coverage[x], CoverageSampleCount);
+            }
+            return true;
+        }
+        finally
+        {
+            if (rentedCrossings is not null) ArrayPool<double>.Shared.Return(rentedCrossings);
+            if (rentedCoverage is not null) ArrayPool<byte>.Shared.Return(rentedCoverage);
+        }
+    }
+
+    private static int FindPolygonSampleBoundary(double crossing, int minX, int sampleCount)
+    {
+        var lower = 0;
+        var upper = sampleCount;
+        while (lower < upper)
+        {
+            var middle = lower + (upper - lower) / 2;
+            var sampleX = minX + middle / CoverageSampleGrid + (middle % CoverageSampleGrid + 0.5) / CoverageSampleGrid;
+            if (sampleX >= crossing) upper = middle;
+            else lower = middle + 1;
+        }
+        return lower;
     }
 
     private static bool IsPointInPolygon(List<(double x, double y)> points, double x, double y)
@@ -1918,7 +2472,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
 
     // ── 路径展开 ──
 
-    private static List<(double x, double y)> FlattenPath(PathGeometry path, Matrix3x2 transform)
+    private static List<(double x, double y)> FlattenPath(PathGeometry path, Matrix3x2 transform, List<int>? figureStarts = null)
     {
         var points = new List<(double x, double y)>();
         double curX = 0, curY = 0;
@@ -1927,6 +2481,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             switch (cmd)
             {
                 case MoveToCmd m:
+                    figureStarts?.Add(points.Count);
                     curX = m.Point.X; curY = m.Point.Y;
                     points.Add((curX, curY));
                     break;
@@ -1948,7 +2503,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                     break;
                 case CloseCmd:
                     if (points.Count > 0)
-                        points.Add(points[0]);
+                        points.Add(points[figureStarts is { Count: > 0 } ? figureStarts[^1] : 0]);
                     break;
             }
         }
@@ -2017,13 +2572,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 }
                 else
                 {
-                    var da = dstSpan[di + 3];
-                    var outA = (byte)(sa + da * (255 - sa) / 255);
-                    if (outA == 0) continue;
-                    dstSpan[di] = (byte)((sb * 255 + dstSpan[di] * da * (255 - sa) / 255) / outA);
-                    dstSpan[di + 1] = (byte)((sg * 255 + dstSpan[di + 1] * da * (255 - sa) / 255) / outA);
-                    dstSpan[di + 2] = (byte)((sr * 255 + dstSpan[di + 2] * da * (255 - sa) / 255) / outA);
-                    dstSpan[di + 3] = outA;
+                    BlendStraightBitmapPixel(dstSpan, di, sb, sg, sr, sa);
                 }
             }
         }
@@ -2105,15 +2654,38 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 continue;
             }
 
-            var da = dstSpan[i + 3];
-            var inverseAlpha = 255 - sa;
-            var outA = (byte)(sa + da * inverseAlpha / 255);
-            if (outA == 0) continue;
-            dstSpan[i] = (byte)((sb * 255 + dstSpan[i] * da * inverseAlpha / 255) / outA);
-            dstSpan[i + 1] = (byte)((sg * 255 + dstSpan[i + 1] * da * inverseAlpha / 255) / outA);
-            dstSpan[i + 2] = (byte)((sr * 255 + dstSpan[i + 2] * da * inverseAlpha / 255) / outA);
-            dstSpan[i + 3] = outA;
+            BlendStraightBitmapPixel(dstSpan, i, sb, sg, sr, sa);
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void BlendStraightBitmapPixel(Span<byte> destination, int offset, byte blue, byte green, byte red, byte sourceAlpha)
+    {
+        var destinationAlpha = destination[offset + 3];
+        var inverseAlpha = 255 - sourceAlpha;
+        if (destinationAlpha == 0)
+        {
+            destination[offset] = blue;
+            destination[offset + 1] = green;
+            destination[offset + 2] = red;
+            destination[offset + 3] = sourceAlpha;
+            return;
+        }
+        if (destinationAlpha == 255)
+        {
+            // Keep the existing opaque-root truncation exactly.
+            destination[offset] = (byte)((blue * sourceAlpha + destination[offset] * inverseAlpha) / 255);
+            destination[offset + 1] = (byte)((green * sourceAlpha + destination[offset + 1] * inverseAlpha) / 255);
+            destination[offset + 2] = (byte)((red * sourceAlpha + destination[offset + 2] * inverseAlpha) / 255);
+            return;
+        }
+        var alphaNumerator = sourceAlpha * 255 + destinationAlpha * inverseAlpha;
+        if (alphaNumerator == 0) return;
+        // Straight BGRA: normalize by the unquantized alpha, not the final stored byte.
+        destination[offset] = (byte)((blue * sourceAlpha * 255 + destination[offset] * destinationAlpha * inverseAlpha) / alphaNumerator);
+        destination[offset + 1] = (byte)((green * sourceAlpha * 255 + destination[offset + 1] * destinationAlpha * inverseAlpha) / alphaNumerator);
+        destination[offset + 2] = (byte)((red * sourceAlpha * 255 + destination[offset + 2] * destinationAlpha * inverseAlpha) / alphaNumerator);
+        destination[offset + 3] = (byte)((alphaNumerator + 127) / 255);
     }
 
     private static void CompositeLayerRow(Span<byte> layer, Span<byte> background, float opacity)
@@ -2123,15 +2695,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             var sourceAlpha = (byte)Math.Clamp((int)MathF.Round(layer[i + 3] * opacity), 0, 255);
             if (sourceAlpha == 0) continue;
 
-            var destinationAlpha = background[i + 3];
-            var inverseAlpha = 255 - sourceAlpha;
-            var outputAlpha = (byte)(sourceAlpha + destinationAlpha * inverseAlpha / 255);
-            if (outputAlpha == 0) continue;
-
-            background[i] = (byte)((layer[i] * sourceAlpha + background[i] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-            background[i + 1] = (byte)((layer[i + 1] * sourceAlpha + background[i + 1] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-            background[i + 2] = (byte)((layer[i + 2] * sourceAlpha + background[i + 2] * destinationAlpha * inverseAlpha / 255) / outputAlpha);
-            background[i + 3] = outputAlpha;
+            BlendStraightBitmapPixel(background, i, layer[i], layer[i + 1], layer[i + 2], sourceAlpha);
         }
     }
 

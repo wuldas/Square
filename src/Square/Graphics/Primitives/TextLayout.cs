@@ -37,6 +37,8 @@ public sealed class TextLayout
     /// <summary>默认行高倍数（1.2）。</summary>
     public const float DefaultLineHeight = 1.2f;
     private static Func<Rune, Font, float?>? _advanceProvider;
+    internal static bool UsesStandardAdvanceProvider =>
+        _advanceProvider == Square.Text.Glyph.SystemTextMeasurementRegistration.MeasureAdvance;
 
     /// <summary>文本内容。</summary>
     public string Text { get; set; } = "";

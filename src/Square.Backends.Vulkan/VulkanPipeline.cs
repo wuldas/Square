@@ -1,6 +1,7 @@
 using System.Numerics;
 using Silk.NET.Vulkan;
 using Square.Rendering.Tessellation;
+using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace Square.Backends.Vulkan;
 
@@ -18,6 +19,12 @@ internal sealed unsafe class VulkanPipeline : IDisposable
     public PipelineLayout PipelineLayout { get; private set; }
     public DescriptorSetLayout DescriptorSetLayout { get; private set; }
     public Matrix4x4 CurrentProjection { get; set; } = Matrix4x4.Identity;
+    public Extent2D FramebufferExtent => _swapchain.Extent;
+    private readonly Dictionary<ulong, TextureDescriptor> _textures = [];
+    private Buffer _gradientBuffer;
+    private DeviceMemory _gradientMemory;
+    private void* _gradientMapped;
+    private int _gradientCapacity;
 
     private bool _disposed;
 
@@ -31,9 +38,18 @@ internal sealed unsafe class VulkanPipeline : IDisposable
     {
         _device = device;
         _swapchain = swapchain;
-        CreateDescriptorSetLayout();
-        CreatePipelineLayout();
-        CreateGraphicsPipeline();
+        try
+        {
+            CreateDescriptorSetLayout();
+            CreatePipelineLayout();
+            CreateGraphicsPipeline();
+            EnsureGradientCapacity(1);
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
     public void UpdateProjection(float width, float height)
@@ -48,18 +64,21 @@ internal sealed unsafe class VulkanPipeline : IDisposable
 
     private void CreateDescriptorSetLayout()
     {
-        var binding = new DescriptorSetLayoutBinding
+        var bindings = stackalloc DescriptorSetLayoutBinding[2];
+        bindings[0] = new DescriptorSetLayoutBinding
         {
-            Binding = 0,
-            DescriptorType = DescriptorType.CombinedImageSampler,
-            DescriptorCount = 1,
-            StageFlags = ShaderStageFlags.FragmentBit
+            Binding = 0, DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1, StageFlags = ShaderStageFlags.FragmentBit
         };
-
+        bindings[1] = new DescriptorSetLayoutBinding
+        {
+            Binding = 1, DescriptorType = DescriptorType.StorageBuffer,
+            DescriptorCount = 1, StageFlags = ShaderStageFlags.FragmentBit
+        };
         var layoutInfo = new DescriptorSetLayoutCreateInfo(StructureType.DescriptorSetLayoutCreateInfo)
         {
-            BindingCount = 1,
-            PBindings = &binding
+            BindingCount = 2,
+            PBindings = bindings
         };
 
         var result = _device.Api.CreateDescriptorSetLayout(_device.Device, in layoutInfo, null, out var layout);
@@ -69,20 +88,16 @@ internal sealed unsafe class VulkanPipeline : IDisposable
 
     private void CreatePipelineLayout()
     {
-        var pushConstantRange = new PushConstantRange
-        {
-            StageFlags = ShaderStageFlags.VertexBit,
-            Offset = 0,
-            Size = 64 // mat4
-        };
-
+        var ranges = stackalloc PushConstantRange[2];
+        ranges[0] = new PushConstantRange { StageFlags = ShaderStageFlags.VertexBit, Offset = 0, Size = 64 };
+        ranges[1] = new PushConstantRange { StageFlags = ShaderStageFlags.FragmentBit, Offset = 64, Size = 48 };
         var layout = DescriptorSetLayout;
         var layoutInfo = new PipelineLayoutCreateInfo(StructureType.PipelineLayoutCreateInfo)
         {
             SetLayoutCount = 1,
             PSetLayouts = &layout,
-            PushConstantRangeCount = 1,
-            PPushConstantRanges = &pushConstantRange
+            PushConstantRangeCount = 2,
+            PPushConstantRanges = ranges
         };
 
         var result = _device.Api.CreatePipelineLayout(_device.Device, in layoutInfo, null, out var pipelineLayout);
@@ -223,6 +238,117 @@ internal sealed unsafe class VulkanPipeline : IDisposable
         api.DestroyShaderModule(_device.Device, fragModule, null);
     }
 
+    public DescriptorSet CreateTextureDescriptor(ImageView imageView, Sampler sampler)
+    {
+        var sizes = stackalloc DescriptorPoolSize[2];
+        sizes[0] = new DescriptorPoolSize(DescriptorType.CombinedImageSampler, 1);
+        sizes[1] = new DescriptorPoolSize(DescriptorType.StorageBuffer, 1);
+        var poolInfo = new DescriptorPoolCreateInfo(StructureType.DescriptorPoolCreateInfo)
+        {
+            MaxSets = 1, PoolSizeCount = 2, PPoolSizes = sizes
+        };
+        VulkanDevice.ThrowIfFailed(_device.Api.CreateDescriptorPool(_device.Device, in poolInfo, null, out var pool), "vkCreateDescriptorPool");
+        DescriptorSet set = default;
+        try
+        {
+            var layout = DescriptorSetLayout;
+            var allocate = new DescriptorSetAllocateInfo(StructureType.DescriptorSetAllocateInfo)
+            {
+                DescriptorPool = pool, DescriptorSetCount = 1, PSetLayouts = &layout
+            };
+            VulkanDevice.ThrowIfFailed(_device.Api.AllocateDescriptorSets(_device.Device, in allocate, out set), "vkAllocateDescriptorSets");
+            _textures.Add(set.Handle, new TextureDescriptor(pool, new DescriptorImageInfo(sampler, imageView, ImageLayout.ShaderReadOnlyOptimal)));
+            UpdateTextureDescriptor(set);
+            return set;
+        }
+        catch
+        {
+            _textures.Remove(set.Handle);
+            _device.Api.DestroyDescriptorPool(_device.Device, pool, null);
+            throw;
+        }
+    }
+
+    public void ReleaseTextureDescriptor(DescriptorSet set)
+    {
+        if (_textures.Remove(set.Handle, out var texture))
+            _device.Api.DestroyDescriptorPool(_device.Device, texture.Pool, null);
+    }
+
+    private void UpdateTextureDescriptor(DescriptorSet set)
+    {
+        var image = _textures[set.Handle].Image;
+        var buffer = new DescriptorBufferInfo(_gradientBuffer, 0, checked((ulong)_gradientCapacity * (ulong)sizeof(VulkanGradientStop)));
+        var writes = stackalloc WriteDescriptorSet[2];
+        writes[0] = new WriteDescriptorSet(StructureType.WriteDescriptorSet)
+        {
+            DstSet = set, DstBinding = 0, DescriptorCount = 1,
+            DescriptorType = DescriptorType.CombinedImageSampler, PImageInfo = &image
+        };
+        writes[1] = new WriteDescriptorSet(StructureType.WriteDescriptorSet)
+        {
+            DstSet = set, DstBinding = 1, DescriptorCount = 1,
+            DescriptorType = DescriptorType.StorageBuffer, PBufferInfo = &buffer
+        };
+        _device.Api.UpdateDescriptorSets(_device.Device, 2, writes, 0, null);
+    }
+
+    /// <summary>Caller has finished the previous frame; descriptors may be rewritten before recording draws.</summary>
+    public void UploadGradientStops(ReadOnlySpan<VulkanGradientStop> stops)
+    {
+        EnsureGradientCapacity(Math.Max(1, stops.Length));
+        if (stops.IsEmpty) new Span<VulkanGradientStop>(_gradientMapped, 1).Clear();
+        else stops.CopyTo(new Span<VulkanGradientStop>(_gradientMapped, stops.Length));
+    }
+
+    private void EnsureGradientCapacity(int count)
+    {
+        if (count <= _gradientCapacity) return;
+        var capacity = Math.Max(count, Math.Max(16, checked(_gradientCapacity * 2)));
+        var size = checked((ulong)capacity * (ulong)sizeof(VulkanGradientStop));
+        Buffer buffer = default;
+        DeviceMemory memory = default;
+        void* mapped = null;
+        try
+        {
+            var info = new BufferCreateInfo(StructureType.BufferCreateInfo)
+            {
+                Size = size, Usage = BufferUsageFlags.StorageBufferBit, SharingMode = SharingMode.Exclusive
+            };
+            VulkanDevice.ThrowIfFailed(_device.Api.CreateBuffer(_device.Device, in info, null, out buffer), "vkCreateBuffer(stops)");
+            _device.Api.GetBufferMemoryRequirements(_device.Device, buffer, out var requirements);
+            _device.Api.GetPhysicalDeviceMemoryProperties(_device.PhysicalDevice, out var types);
+            var type = uint.MaxValue;
+            var flags = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+            for (uint i = 0; i < types.MemoryTypeCount; i++)
+                if ((requirements.MemoryTypeBits & (1u << (int)i)) != 0 && (types.MemoryTypes[(int)i].PropertyFlags & flags) == flags) { type = i; break; }
+            if (type == uint.MaxValue) throw new VulkanException("No host-visible coherent memory for gradient stops.");
+            var allocation = new MemoryAllocateInfo(StructureType.MemoryAllocateInfo) { AllocationSize = requirements.Size, MemoryTypeIndex = type };
+            VulkanDevice.ThrowIfFailed(_device.Api.AllocateMemory(_device.Device, in allocation, null, out memory), "vkAllocateMemory(stops)");
+            VulkanDevice.ThrowIfFailed(_device.Api.BindBufferMemory(_device.Device, buffer, memory, 0), "vkBindBufferMemory(stops)");
+            void* pointer;
+            VulkanDevice.ThrowIfFailed(_device.Api.MapMemory(_device.Device, memory, 0, size, 0, &pointer), "vkMapMemory(stops)");
+            mapped = pointer;
+        }
+        catch
+        {
+            if (mapped != null) _device.Api.UnmapMemory(_device.Device, memory);
+            if (buffer.Handle != 0) _device.Api.DestroyBuffer(_device.Device, buffer, null);
+            if (memory.Handle != 0) _device.Api.FreeMemory(_device.Device, memory, null);
+            throw;
+        }
+        var oldBuffer = _gradientBuffer;
+        var oldMemory = _gradientMemory;
+        var oldMapped = _gradientMapped;
+        _gradientBuffer = buffer; _gradientMemory = memory; _gradientMapped = mapped; _gradientCapacity = capacity;
+        foreach (var handle in _textures.Keys) UpdateTextureDescriptor(new DescriptorSet(handle));
+        if (oldMapped != null) _device.Api.UnmapMemory(_device.Device, oldMemory);
+        if (oldBuffer.Handle != 0) _device.Api.DestroyBuffer(_device.Device, oldBuffer, null);
+        if (oldMemory.Handle != 0) _device.Api.FreeMemory(_device.Device, oldMemory, null);
+    }
+
+    private sealed record TextureDescriptor(DescriptorPool Pool, DescriptorImageInfo Image);
+
     public void RecreateGraphicsPipeline()
     {
         VulkanDevice.ThrowIfFailed(_device.Api.DeviceWaitIdle(_device.Device), "vkDeviceWaitIdle");
@@ -254,6 +380,12 @@ internal sealed unsafe class VulkanPipeline : IDisposable
         if (_disposed) return;
         _disposed = true;
         var api = _device.Api;
+        foreach (var texture in _textures.Values) api.DestroyDescriptorPool(_device.Device, texture.Pool, null);
+        _textures.Clear();
+        if (_gradientMapped != null) api.UnmapMemory(_device.Device, _gradientMemory);
+        if (_gradientBuffer.Handle != 0) api.DestroyBuffer(_device.Device, _gradientBuffer, null);
+        if (_gradientMemory.Handle != 0) api.FreeMemory(_device.Device, _gradientMemory, null);
+        _gradientBuffer = default; _gradientMemory = default; _gradientMapped = null; _gradientCapacity = 0;
         if (Pipeline.Handle != 0) api.DestroyPipeline(_device.Device, Pipeline, null);
         if (PipelineLayout.Handle != 0) api.DestroyPipelineLayout(_device.Device, PipelineLayout, null);
         if (DescriptorSetLayout.Handle != 0) api.DestroyDescriptorSetLayout(_device.Device, DescriptorSetLayout, null);

@@ -155,14 +155,15 @@ internal sealed unsafe class VulkanReadbackBuffer : IDisposable
     }
 
     /// <summary>Read the most recently copied frame into a BGRA <see cref="Bitmap"/>.</summary>
-    public Bitmap CaptureBitmap()
+    public Bitmap CaptureBitmap(bool waitForDevice = true)
     {
         if (_buffer.Handle == 0 || !_hasContent)
             throw new VulkanException("No GPU frame is available for capture yet.");
 
-        // The copy is recorded in the frame's command buffer; wait for the device so the
-        // buffer contents reflect the last presented frame before mapping.
-        VulkanDevice.ThrowIfFailed(_device.Api.DeviceWaitIdle(_device.Device), "vkDeviceWaitIdle");
+        // Standalone callers drain the device; frame owners may already have waited
+        // the exact rendering fence protecting this independent readback buffer.
+        if (waitForDevice)
+            VulkanDevice.ThrowIfFailed(_device.Api.DeviceWaitIdle(_device.Device), "vkDeviceWaitIdle");
 
         var size = (int)(_width * _height * 4);
         var bitmap = new Bitmap((int)_width, (int)_height);

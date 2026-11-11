@@ -30,6 +30,9 @@ internal static class VisibleHwndCapture
         {
             if (!BitBlt(memory, 0, 0, width, height, screen, origin.X, origin.Y, 0x40CC0020))
                 throw new InvalidOperationException("Visible HWND screen copy failed");
+            // Complete GDI writes to the capture DIB before reading its shared bits directly.
+            if (!GdiFlush())
+                throw new InvalidOperationException("Visible HWND GDI batch contained a failed operation");
             var result = new Bitmap(width, height);
             Marshal.Copy(bits, result.Pixels, 0, result.Pixels.Length);
             for (var i = 3; i < result.Pixels.Length; i += 4) result.Pixels[i] = 255;
@@ -65,5 +68,8 @@ internal static class VisibleHwndCapture
     [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr value);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr value);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GdiFlush();
     [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr dc, int x, int y, int width, int height, IntPtr source, int sourceX, int sourceY, uint operation);
 }

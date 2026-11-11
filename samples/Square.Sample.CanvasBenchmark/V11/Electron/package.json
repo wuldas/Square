@@ -1,0 +1,7 @@
+{
+  "name": "square-canvas-v11-electron",
+  "version": "11.0.0",
+  "private": true,
+  "main": "main.js",
+  "description": "Canvas v11 fixed-trace Electron producer; uses the existing sibling Electron runtime and no npm dependencies"
+}

@@ -9,6 +9,10 @@ using System.Runtime.InteropServices;
 #if PLATFORM_WIN32
 using Square.Backends.Direct2D;
 #endif
+#if PLATFORM_WIN32 && SQUARE_PERF_VULKAN
+using Square.Backends;
+using Square.Backends.Vulkan;
+#endif
 using Square.Hosting;
 using Square.Sample.PerfComparison;
 
@@ -38,7 +42,8 @@ var (outerWidth, outerHeight) = Win32WindowMetrics.ForClient(900, 1240);
 #else
 var (outerWidth, outerHeight) = (900, 1240);
 #endif
-var window = new AppWindow("Square CSS animation benchmark", outerWidth, outerHeight);
+var runtimeMode = RuntimeFeature.IsDynamicCodeSupported ? "jit" : "aot";
+var window = new AppWindow($"Square CSS animation benchmark-{backend.ToLowerInvariant()}-{runtimeMode}", outerWidth, outerHeight);
 window.RenderingMode = RenderMode.Auto;
 if (backend.Equals("Direct2D", StringComparison.OrdinalIgnoreCase))
 {
@@ -49,6 +54,15 @@ if (backend.Equals("Direct2D", StringComparison.OrdinalIgnoreCase))
     throw new PlatformNotSupportedException("The Direct2D window backend requires Windows.");
 #endif
 }
+#if PLATFORM_WIN32 && SQUARE_PERF_VULKAN
+else if (backend.Equals("Vulkan", StringComparison.OrdinalIgnoreCase))
+{
+    Environment.SetEnvironmentVariable("SQUARE_VULKAN_VALIDATION", "0");
+    Square.Graphics.RenderBackendRegistry.Register(new RenderBackendFactory());
+    Square.Graphics.RenderBackendRegistry.Register(new VulkanBackendFactory());
+    window.RenderBackend = "Vulkan";
+}
+#endif
 else if (!backend.Equals("Software", StringComparison.OrdinalIgnoreCase))
     throw new ArgumentException($"Unsupported Square backend: {backend}");
 window.Load(new CssAnimationPerfPage());

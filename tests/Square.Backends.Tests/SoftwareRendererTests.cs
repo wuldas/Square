@@ -665,7 +665,7 @@ public class SoftwareRendererTests
     public void SolidLeafOpacityMatchesGroupOnTranslucentAndTransparentDestinations()
     {
         // 左半预置 dstA=128 的半透明目标，右半保持 dstA=0：
-        // dstA=0 直接写 (B,G,R,alpha)，dstA=128 走一般截断混合——两者都必须与 PushLayer 组逐字节一致。
+        // dstA=0 直接写 (B,G,R,alpha)，dstA=128 按未量化 alpha 归一化 RGB，最终 alpha 舍入——两者都必须与 PushLayer 组逐字节一致。
         AssertSolidLeafMatchesGroup(
             32, 20, Color.Transparent,
             new Rect(4, 4, 24, 12), Color.FromRgba(255, 40, 40, 255), 0.5f,
@@ -676,8 +676,8 @@ public class SoftwareRendererTests
             {
                 // dstA=0 区域：直接写原色，a' = Round(255×0.5) = 128。
                 Assert.Equal([40, 40, 255, 128], fast.GetPixel(24, 10).ToArray());
-                // dstA=128 区域：outA = 128 + 128×127/255 = 191。
-                Assert.Equal(191, fast.GetPixel(8, 10)[3]);
+                // dstA=128 区域：outA = Round(128 + 128×127/255) = Round(191.749...) = 192。
+                Assert.Equal(192, fast.GetPixel(8, 10)[3]);
             });
     }
 
@@ -3685,8 +3685,8 @@ public class SoftwareRendererTests
 
         var bmp = ctx.GetBitmap();
         var idx = bmp.Stride + 4;
-        Assert.Equal(255, bmp.Pixels[idx + 3]);
-        Assert.Equal(255, bmp.Pixels[idx + 2]);
+        // Straight BGRA: alpha-128 red over opaque black contributes R=128, A=255.
+        Assert.Equal(new byte[] { 0, 0, 128, 255 }, bmp.Pixels.AsSpan(idx, 4).ToArray());
     }
 
     [Fact]

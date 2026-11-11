@@ -1,0 +1,7 @@
+.sdk/
+.pub-cache/
+.tmp/
+.dart_tool/
+build/
+.flutter-plugins-dependencies
+*.log
