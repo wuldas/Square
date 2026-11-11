@@ -9,7 +9,7 @@ on:
       version:
         description: 'Package version for build-only verification (does not publish)'
         required: true
-        default: '0.2.0'
+        default: '0.3.0'
         type: string
 
 permissions:

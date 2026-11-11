@@ -1,0 +1,101 @@
+{
+  "plannedRuns": 18,
+  "finishedRuns": 18,
+  "validRuns": 18,
+  "observationQualifiedRuns": 0,
+  "byObservationMode": {
+    "observed": {
+      "planned": 0,
+      "finished": 0,
+      "valid": 0,
+      "observationQualified": 0
+    },
+    "control": {
+      "planned": 18,
+      "finished": 18,
+      "valid": 18,
+      "observationQualified": 0
+    }
+  },
+  "hashesUnchanged": true,
+  "changedInputs": [],
+  "allMeasurementsValid": true,
+  "requestedRounds": 3,
+  "metricCompleteness": [
+    {
+      "traceId": "comprehensive-default",
+      "target": "square-software",
+      "requestedN": 3,
+      "metricN": {
+        "CPU": 3,
+        "FPS": 3,
+        "avgPrivate": 3,
+        "avgWS": 3
+      },
+      "complete": true
+    },
+    {
+      "traceId": "comprehensive-default",
+      "target": "square-direct2d",
+      "requestedN": 3,
+      "metricN": {
+        "CPU": 3,
+        "FPS": 3,
+        "avgPrivate": 3,
+        "avgWS": 3
+      },
+      "complete": true
+    },
+    {
+      "traceId": "comprehensive-default",
+      "target": "square-vulkan",
+      "requestedN": 3,
+      "metricN": {
+        "CPU": 3,
+        "FPS": 3,
+        "avgPrivate": 3,
+        "avgWS": 3
+      },
+      "complete": true
+    },
+    {
+      "traceId": "comprehensive-default",
+      "target": "electron",
+      "requestedN": 3,
+      "metricN": {
+        "CPU": 3,
+        "FPS": 3,
+        "avgPrivate": 3,
+        "avgWS": 3
+      },
+      "complete": true
+    },
+    {
+      "traceId": "comprehensive-default",
+      "target": "flutter",
+      "requestedN": 3,
+      "metricN": {
+        "CPU": 3,
+        "FPS": 3,
+        "avgPrivate": 3,
+        "avgWS": 3
+      },
+      "complete": true
+    },
+    {
+      "traceId": "comprehensive-default",
+      "target": "avalonia",
+      "requestedN": 3,
+      "metricN": {
+        "CPU": 3,
+        "FPS": 3,
+        "avgPrivate": 3,
+        "avgWS": 3
+      },
+      "complete": true
+    }
+  ],
+  "coreMetricsComplete": true,
+  "complete": true,
+  "publishNote": "FDD/no full runtime may have PublishMiB=N/A; not a core measurement completeness failure"
+}

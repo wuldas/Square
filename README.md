@@ -6,15 +6,14 @@ Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌
 
 > 项目仍处于早期开发阶段，API 与模板语法可能调整。目前主要验证 Windows / Win32 与 Linux / X11 桌面宿主。
 
-## 0.2.0 性能优化
+## 0.3.0 Canvas 与软件呈现
 
-- 优化分词缓存热路径：按需剪枝、二分前驱查询、复用跨行状态，已缓存读取保持零托管分配。
-- 优化大文本回跳：固定检查点预算内保留全局恢复点与目标附近密集点，减少跨区跳转和编辑失效后的重新分词。
-- 继续降低布局、CSS 动画、绘制与局部失效路径的 CPU 和分配开销，完善性能对比与回归测试。
+- 对齐主线 UI、CSS、布局、编译器与内置 Yoga，独立合入 Canvas 路径、渐变、文字准备缓存、图层、Software alpha/SIMD 与 Vulkan 帧资源改进。
+- Canvas 默认一个综合场景、一个固定档位、control-only；六目标各三轮共18个进程，显式主线对照为27个。旧29场景仅显式扩展运行。
+- Win32 Software 补齐 GDI 访问完成交接与 best-effort DWM 合成节拍等待；原生桌面截图门槛仍为0/2通过，不声明物理扫描无撕裂或透明窗口完整呈现保证。
+- 布局窗口标题显示实际 backend 与 jit/aot；保留同口径 CPU、生产事件 FPS、平均内存和完整发布体积。本轮布局与Canvas实测见[测量记录](docs/benchmarks/2026-11-11.md)。
 
-百万行混合 C# 文本测试中，相比前阶段优化版，回跳至第 8,192 行的真实 TextMate 分词从 **1,727.7 ms 降至 434.2 ms**，重扫行数由 8,192 降至 2,048；已缓存读取保持零托管分配。这是指定轨迹的分词缓存测量，不是整帧或任意访问模式的保证。环境、采样及复现方法见[完整性能报告](tools/Square.TokenizationBench/CHECKPOINT-RESULTS.md)。
-
-版本改动与平台边界见 [0.2.0 发布说明](docs/releases/0.2.0.md)。
+版本改动、升级与支持边界见 [0.3.0 发布说明](docs/releases/0.3.0.md)；布局与分词的早期改动保留在 [0.2.0 历史发布说明](docs/releases/0.2.0.md)。
 
 ## 截图
 
@@ -85,10 +84,10 @@ new DesktopApplication(window).Run();
 
 ## 创建独立应用
 
-[`Wuldas.Square.Templates` 0.2.0](https://www.nuget.org/packages/Wuldas.Square.Templates/0.2.0) 已发布到 NuGet.org。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
+使用 [`Wuldas.Square.Templates` 0.3.0](https://www.nuget.org/packages/Wuldas.Square.Templates/0.3.0) 创建应用。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
 
 ```bash
-dotnet new install Wuldas.Square.Templates@0.2.0
+dotnet new install Wuldas.Square.Templates@0.3.0
 dotnet new square -n MyApp
 dotnet run --project MyApp
 ```
@@ -180,7 +179,24 @@ Avalonia 的 JIT / NativeAOT 构建共用同一界面、动画和采样逻辑。
 - **FPS**：实际帧计数 / 实际测量秒数，不写死为 60。Square 计渲染提交，Avalonia / Electron 计动画帧回调，Flutter 计区间内栅格完成的引擎 `FrameTiming`。这些都不是显示器物理扫描输出计数；原始 JSON 的 `fpsDefinition` 保留各目标的具体定义，不应据此比较细微的呈现帧率差异。
 - **发布体积**：未压缩、可运行的 Windows x64 发布目录总大小，包含运行时、动态库和资源，排除 `.pdb` / `.dbg` 调试符号；不是仅比较 EXE。JIT 目标均为 self-contained；Square 的两个后端共用同一份对应发布物。JSON 同时保留入口 EXE 字节数。
 
-### 本机实测（2026-10-19）
+### 0.3.0 本轮测量
+
+工作负载、环境与口径见[本轮测量记录](docs/benchmarks/2026-11-11.md)。每目标预热5秒、测量30秒，单轮、固定顺序串行：
+
+| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
+|---|---:|---:|---:|---:|---:|
+| Square Software · JIT | 39.07% | 59.91 | 58.94 | 108.89 | 100.31 |
+| Square Direct2D · JIT | 21.68% | 60.00 | 108.07 | 144.15 | 100.31 |
+| Square Software · NativeAOT | 45.02% | 60.00 | 54.69 | 83.53 | 9.55 |
+| Square Direct2D · NativeAOT | 31.97% | 60.00 | 103.98 | 108.42 | 9.55 |
+| Avalonia · JIT | 26.70% | 59.97 | 125.08 | 149.03 | 102.86 |
+| Avalonia · NativeAOT | 30.40% | 59.97 | 114.56 | 113.45 | 34.64 |
+| Electron · packaged | 101.26% | 59.93 | 267.10 | 419.03 | 366.90 |
+| Flutter · Release | 33.93% | 53.35 | 176.28 | 126.03 | 23.37 |
+
+Flutter 首次测量 FPS 明显偏低，按同一协议补测一次，表中为中位并保留两次样本（48.16 / 58.53）；其余目标为单轮。完整范围与限制见测量记录，原始数据见[results.json](samples/Square.Sample.PerfComparison/results.json)。
+
+### 历史本机实测（2026-10-19，非0.3.0成绩）
 
 Square 基于 `08da487`。Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 个逻辑处理器）；NVIDIA GeForce GTX 1660 SUPER，2560×1440 / 60 Hz。使用 .NET SDK 10.0.303、Avalonia 11.3.12、Electron 44.7.2、Flutter 3.47.7 stable。全部为重新构建的 Release / Windows x64 发布物，单轮串行运行，预热 5 秒，请求测量 30 秒；计算采用 JSON 中记录的实际区间。
 
@@ -197,7 +213,7 @@ Square 基于 `08da487`。Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 
 | Electron · packaged | 93.67% | 59.97 | 267.35 | 416.74 | 366.89 |
 | Flutter · Release | 37.13% | 59.83 | 176.47 | 125.95 | 23.37 |
 
-[原始汇总数据](samples/Square.Sample.PerfComparison/results.json)包含实际时长、帧数、内存峰值、CPU 每帧成本、发布字节数、运行环境和逐目标 FPS 定义。比较 CPU 时应同时看实测 FPS。单轮结果受后台负载、执行顺序、JIT 和温度影响，不代表统计上成立的跨框架排名。
+此表仅保留2026-10-19的历史观测；当前 [results.json](samples/Square.Sample.PerfComparison/results.json)已更新为0.3.0本轮汇总，不是此历史表的原始记录。比较 CPU 时应同时看实测 FPS。单轮结果受后台负载、执行顺序、JIT 和温度影响，不代表统计上成立的跨框架排名。
 
 ## Canvas 综合性能测试
 
@@ -205,11 +221,24 @@ Canvas 默认只运行**一个综合场景、一个固定档位**，覆盖填充
 
 运行入口为 [Canvas 性能样例](samples/Square.Sample.CanvasBenchmark/README.md)中的默认命令；旧细分场景仅作为显式专项诊断使用。报告继续输出 CPU、实际生产事件 FPS、平均私有内存、平均工作集和完整发布体积，保留每次原始记录及三轮范围。综合场景是固定混合工作量，适合快速观察整体变化；需要定位单项回退时再运行专项。它不表示所有框架的原生渐变、描边和 AA 都逐像素等价，FPS 也不是物理显示扫描计数。
 
+本轮六列（六目标各三轮，共18个control进程）：
+
+| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
+|---|---:|---:|---:|---:|---:|
+| Square Software | 42.90% | 60.00 | 41.64 | 92.53 | 104.95 |
+| Square Direct2D | 35.68% | 60.02 | 110.57 | 120.66 | 104.95 |
+| Square Vulkan | 39.00% | 60.05 | 184.64 | 176.20 | 104.95 |
+| Electron | 57.97% | 60.00 | 161.04 | 318.28 | 367.02 |
+| Flutter | 45.82% | 61.57 | 172.61 | 109.70 | 23.22 |
+| Avalonia | 60.25% | 59.99 | 115.76 | 141.79 | 102.36 |
+
+CPU 三轮范围：42.14–45.10 / 34.98–38.05 / 38.88–40.17 / 48.16–63.97 / 42.88–48.08 / 57.79–60.31。完整口径、范围与原始数据见[本轮测量记录](docs/benchmarks/2026-11-11.md)及[Canvas summary](samples/Square.Sample.CanvasBenchmark/results/2026-11-11/summary.json)。Software 现含每帧一次 best-effort DWM 等待。
+
 本次代码基于 `origin/main` 固定提交 `ef6409d634349ebafadc29afcf9eeb4dcee0bfed`，再移植 Canvas 功能与性能改进；共享 UI、CSS、布局、DOM 遍历、编译器和内置 Yoga 沿用主线实现。布局性能窗口标题包含真实后端与运行模式，例如 `Square CSS animation benchmark-direct2d-aot`、`Square CSS animation benchmark-software-jit`。
 
-Windows Software 另补软件呈现同步：共享 DIB 与 bitmap 在 GDI 完成访问后才交回 CPU，脏区合为一次拷贝，每个实际提交最多等待一次 DWM；空更新和 `WM_PAINT` 不增加合成等待，原 60 Hz 定时器推进保持不变。这是 GDI 交接与 DWM 合成节拍等待，不将其称为硬件原子翻页或物理扫描无撕裂保证，详见[软件呈现修复说明](artifacts/main-canvas-integration-20261111/software-sync/README.md)。[本轮主线对齐短测](artifacts/main-canvas-integration-20261111/reports/MAIN-CANVAS-PRE-SOFTWARE-SYNC.md)保留 27 次综合与 20 次布局对照，明确属于这项软件同步修复前的阶段；修复后的 Software CLR/AOT 验证另存，不覆盖旧数据。
+Windows Software 另补软件呈现同步：共享 DIB 与 bitmap 在 GDI 完成访问后才交回 CPU，脏区合为一次拷贝，每个实际提交最多等待一次 DWM；空更新和 `WM_PAINT` 不增加合成等待，原 60 Hz 定时器推进保持不变。这是 GDI 交接与 DWM 合成节拍等待，不将其称为硬件原子翻页或物理扫描无撕裂保证，详见 [0.3.0 发布说明](docs/releases/0.3.0.md)与[本轮测量记录](docs/benchmarks/2026-11-11.md)。同步修复前的27次综合与20次布局对照属于历史阶段，不能替代上方修复后的本轮数据。
 
-2026-11-11 的完整远程 / 本地对照在[复测总览](artifacts/readme-canvas-remote-local-20261111/README.md)、[布局报告](artifacts/readme-canvas-remote-local-20261111/reports/ui.html)和 [Canvas 报告](artifacts/readme-canvas-remote-local-20261111/reports/canvas.html)。其中本地数据来自**本次主线对齐前**的 dirty 源码快照，原 39 次布局与 783 次 Canvas 记录完整保留，不能当作当前集成源码的新成绩。上方 2026-10-19 表格同样是原主线历史测量。
+此前主线对齐前 dirty 源码快照的39次布局与783次Canvas对照保留为历史记录，不是当前集成源码的新成绩；上方2026-10-19表格同样属于历史。当前源码、同步配置与采样边界以[本轮测量记录](docs/benchmarks/2026-11-11.md)和 [0.3.0 发布说明](docs/releases/0.3.0.md)为准。
 
 ## Android Experimental
 
@@ -277,7 +306,7 @@ dotnet publish samples/Square.Sample.Vue/Square.Sample.Vue.csproj \
 
 Square 适合框架设计验证、实验和贡献开发，暂不建议用于生产项目。
 
-首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。当前版本为 `0.2.0`，包含 22 个框架及模板包；源码默认版本与发布标签保持一致。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
+首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。当前版本为 `0.3.0`，包含 22 个框架及模板包；源码默认版本与发布标签保持一致。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
 
 贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告。
 
@@ -297,19 +326,19 @@ Wuldas.Square.*
 先在 GitHub Actions 手动运行 **Publish NuGet**，输入版本号。这只构建、验证并上传工作流产物，不向 NuGet.org 发布。本地也可以验证（需要 .NET 10、Android workload 与 JDK 17）：
 
 ```powershell
-pwsh -File tools/Pack-Release.ps1 -Version 0.2.0 -OutputDirectory artifacts/packages
+pwsh -File tools/Pack-Release.ps1 -Version 0.3.0 -OutputDirectory artifacts/packages
 ```
 
 输出目录必须为空。脚本打包全部 22 个框架及模板包，检查内部依赖闭环和版本一致性，并让模板中的包引用使用发布版本；不会修改模板源码。正式发布前应确认该提交的 CI 和 Android 工作流通过，并确认账号有权使用所有目标包 ID。
 
-推送 `v` 开头的版本标签会正式发布。`v0.1.0` 已存在，不要重建或移动；以下以 `0.2.0` 演示发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
+推送 `v` 开头的版本标签会正式发布。`v0.1.0` 已存在，不要重建或移动；以下以 `0.3.0` 演示发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
 
 ```bash
-git tag -a v0.2.0 -m "Release Wuldas.Square 0.2.0"
-git push origin v0.2.0
+git tag -a v0.3.0 -m "Release Wuldas.Square 0.3.0"
+git push origin v0.3.0
 ```
 
-标签去掉 `v` 后成为统一包版本，也支持 `v0.2.0-preview.1`。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。
+标签去掉 `v` 后成为统一包版本，也支持 `v0.3.0-preview.1`。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。
 
 
 ## License
