@@ -49,7 +49,7 @@ public static class CssCompletionService
         "grid-template-columns", "grid-template-rows", "height", "inset", "justify-content", "left", "letter-spacing",
         "line-height", "list-style", "list-style-image", "list-style-position", "list-style-type", "margin",
         "margin-bottom", "margin-left", "margin-right", "margin-top", "max-height", "max-width", "min-height",
-        "min-width", "opacity", "orphans", "outline", "outline-color", "outline-offset", "outline-style",
+        "min-width", "object-fit", "opacity", "orphans", "outline", "outline-color", "outline-offset", "outline-style",
         "outline-width", "overflow", "overflow-x", "overflow-y", "padding", "padding-bottom", "padding-left",
         "padding-right", "padding-top", "page-break-after", "page-break-before", "page-break-inside", "position",
         "quotes", "right", "row-gap", "selection-background", "selection-background-color", "selection-color",
@@ -113,6 +113,7 @@ public static class CssCompletionService
             ["max-width"] = ["none", "0", "100%"],
             ["min-height"] = ["0", "100%"],
             ["min-width"] = ["0", "100%"],
+            ["object-fit"] = ["fill", "contain", "cover", "none", "scale-down"],
             ["opacity"] = ["0", "0.5", "1"],
             ["outline-style"] = BorderStyles(),
             ["overflow"] = OverflowValues(),
@@ -140,7 +141,7 @@ public static class CssCompletionService
 
     private static readonly string[] PseudoClasses =
     {
-        "hover", "focus", "focus-visible", "active", "disabled", "checked", "open", "empty",
+        "hover", "focus", "focus-visible", "active", "disabled", "checked", "indeterminate", "open", "empty",
         "first-child", "last-child", "only-child", "root", "nth-child()", "not()"
     };
 

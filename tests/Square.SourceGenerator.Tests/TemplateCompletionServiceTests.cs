@@ -35,6 +35,29 @@ public sealed class TemplateCompletionServiceTests
         Assert.DoesNotContain(items, item => item.Label == "column");
     }
 
+    [Theory]
+    [InlineData("Editing.sqx")]
+    [InlineData("Editing.sqv")]
+    public void CssObjectFitCompletesPropertyAndValues(string sourcePath)
+    {
+        const string propertySource = "<template><Image /></template><style>.photo { object-f }</style>";
+        var propertyOffset = propertySource.IndexOf("object-f", StringComparison.Ordinal) + "object-f".Length;
+        var properties = TemplateCompletionService.GetItems(propertySource, propertyOffset, sourcePath);
+        Assert.Contains(properties, item => item.Label == "object-fit" && item.InsertText == "object-fit");
+
+        const string valueSource = "<template><Image /></template><style>.photo { object-fit:  }</style>";
+        var valueOffset = valueSource.IndexOf(" }", StringComparison.Ordinal);
+        var values = TemplateCompletionService.GetItems(valueSource, valueOffset, sourcePath);
+        foreach (var value in new[] { "fill", "contain", "cover", "none", "scale-down", "initial", "inherit", "unset" })
+            Assert.Contains(values, item => item.Label == value && item.InsertText == value);
+        Assert.DoesNotContain(values, item => item.Label == "auto");
+
+        const string prefixSource = "<template><Image /></template><style>.photo { object-fit: sc }</style>";
+        var prefixOffset = prefixSource.IndexOf("sc }", StringComparison.Ordinal) + "sc".Length;
+        var filtered = TemplateCompletionService.GetItems(prefixSource, prefixOffset, sourcePath);
+        Assert.Equal("scale-down", Assert.Single(filtered).Label);
+    }
+
     [Fact]
     public void CssSelectorCompletesTemplateClassAndBuiltInControl()
     {
@@ -188,6 +211,7 @@ public sealed class TemplateCompletionServiceTests
         var items = TemplateCompletionService.GetItems(source, source.Length, "Editing.sqx");
 
         Assert.Contains(items, item => item.Label == "onClick");
+        Assert.Contains(items, item => item.Label == "onLoaded");
         Assert.DoesNotContain(items, item => item.Label == "click");
     }
 
@@ -199,6 +223,7 @@ public sealed class TemplateCompletionServiceTests
         var items = TemplateCompletionService.GetItems(source, source.Length, "Editing.sqv");
 
         Assert.Contains(items, item => item.Label == "click");
+        Assert.Contains(items, item => item.Label == "loaded");
         Assert.DoesNotContain(items, item => item.Label == "onClick");
     }
 

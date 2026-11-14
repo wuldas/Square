@@ -35,6 +35,7 @@ public sealed class VirtualTree : ScrollViewer, ILayoutPreparingElement
         AddEventListener(StandardEvents.Click, OnItemClick);
         AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
         {
+            if (e.DefaultPrevented || e.Target is Element target && FindItemAncestor(target)?.IsHeaderInteraction(target) == true) return;
             if (!HandleKey(e.KeyCode)) return;
             e.PreventDefault();
         });
@@ -273,6 +274,7 @@ public sealed class VirtualTree : ScrollViewer, ILayoutPreparingElement
             _visibleEntries.Count, VerticalOffset, viewportHeight, itemHeight, OverscanCount);
         if (!force && range == _realizedRange) return;
 
+        var previousRows = _realizedIndexes.Keys.ToArray();
         _realizing = true;
         try
         {
@@ -287,10 +289,16 @@ public sealed class VirtualTree : ScrollViewer, ILayoutPreparingElement
                 {
                     var entry = _visibleEntries[index];
                     var row = _itemTemplate(entry.Item, entry.Depth);
+                    if (row.IsGeneratedSubtreeDiscarded)
+                        throw new InvalidOperationException("The item template returned a permanently discarded TreeItem.");
                     row.HasVirtualItems = entry.HasChildren;
                     row.IsExpanded = _expandedKeys.Contains(entry.Key);
                     row.IsSelected = Equals(_selectedKey, entry.Key);
-                    row.Style.SetCascaded("height", $"{itemHeight}px", int.MinValue);
+                    row.SetFixedRowHeight(itemHeight);
+                    var height = itemHeight.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px";
+                    row.Style.Set("height", height);
+                    row.Style.Set("min-height", height);
+                    row.Style.Set("max-height", height);
                     row.Style.SetCascaded("margin-left", $"{entry.Depth * IndentSize}px", int.MinValue);
                     row.Style.SetCascaded("flex-shrink", "0", int.MinValue);
                     _realizedIndexes[row] = index;
@@ -303,20 +311,30 @@ public sealed class VirtualTree : ScrollViewer, ILayoutPreparingElement
         finally
         {
             _realizing = false;
+            // A detached row can still be reused by this realization. Only rows that were
+            // actually retired release their bindings and generated header resources.
+            foreach (var row in previousRows)
+                if (!_realizedIndexes.ContainsKey(row)) row.DiscardGeneratedSubtree();
         }
     }
 
     private void OnItemClick(Event e)
     {
         if (!IsEnabled || e.Target is not Element target) return;
+        var item = FindItemAncestor(target);
+        if (item == null || item.IsHeaderInteraction(target)) return;
+        var index = _realizedIndexes[item];
+        SelectIndex(index);
+        if (_visibleEntries[index].HasChildren) ToggleIndex(index);
+        Focus();
+    }
+
+    private TreeItem? FindItemAncestor(Element target)
+    {
         for (Element? current = target; current != null && current != this; current = current.Parent)
-        {
-            if (current is not TreeItem item || !_realizedIndexes.TryGetValue(item, out var index)) continue;
-            SelectIndex(index);
-            if (_visibleEntries[index].HasChildren) ToggleIndex(index);
-            Focus();
-            return;
-        }
+            if (current is TreeItem item && _realizedIndexes.ContainsKey(item))
+                return item;
+        return null;
     }
 
     private bool SelectAndReveal(int index)

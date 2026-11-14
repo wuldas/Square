@@ -42,6 +42,7 @@ public static class ControlRegistration
             ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Input", static () => new Input());
             ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TextArea", static () => new TextArea());
             ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "CheckBox", static () => new CheckBox());
+            ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "TriStateCheckBox", static () => new TriStateCheckBox());
             ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Radio", static () => new Radio());
             ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Select", static () => new Select());
             ElementRegistry.Register(ElementRegistry.SquareNamespaceUri, "Image", static () => new Controls.Image());

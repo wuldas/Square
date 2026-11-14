@@ -224,7 +224,7 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 |---:|---|---|---|
 | 4 | [CSS Basic User Interface](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Basic_user_interface) | appearance、cursor、outline、resize、user-select、caret | 🟡 **部分支持**：🟢 `appearance: auto/none`（UA 对齐 Chrome `html.css` 浅色表单控件子集，Software/Skia/Vulkan 盒绘制消费计算样式）、cursor 子集、`user-select: text/none`、`caret-color`、`outline` 纯色 solid 子集（UA `:focus-visible` 用 `1px solid Highlight`）、`outline-offset` 像素偏移；⚪ 无 `outline: auto`、resize。 |
 | 27 | [CSS 片段](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Fragmentation) | page/column/region 分段和 break 控制 | ⚪ **未支持**。 |
-| 31 | [Images](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Images) | CSS 渐变、replaced element、object-fit、sprite | 🟡 **框架 Image 控件部分支持**：内在尺寸和等比缩放；⚪ 无 CSS gradient、object-fit/object-position 和 CSS image values。 |
+| 31 | [Images](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Images) | CSS 渐变、replaced element、object-fit、sprite | 🟡 **框架 Image 控件部分支持**：内在尺寸和 `object-fit: fill / contain / cover / none / scale-down`；⚪ 无 CSS gradient、object-position 和 CSS image values。 |
 | 55 | [CSS 影子部件](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Shadow_parts) | Shadow DOM `::part()`、exportparts 和受控主题 | ⚪ **未支持 Shadow DOM/parts**。 |
 
 ---
@@ -263,7 +263,8 @@ Feature ID 的唯一来源是 `tests/Square.CSS.Tests/Css21ConformanceFixtures.c
 | `:focus-visible` | 🟡 | 基于 `ElementState.FocusVisible`；键盘/程序焦点匹配，鼠标点击获得的焦点不匹配。 |
 | `:active` | 🟢 | 基于 `ElementState.Active`。 |
 | `:disabled` | 🟢 | 基于 `ElementState.Disabled`。 |
-| `:checked` | 🟢 | 基于 `ElementState.Checked`。 |
+| `:checked` | 🟢 | 基于 `ElementState.Checked`；TriStateCheckBox 仅在 IsChecked=true 时匹配。 |
+| `:indeterminate` | 🟢 TriStateCheckBox | 基于 `ElementState.Indeterminate`，IsChecked=null 时匹配；不会同时匹配 `:checked`。 |
 | `:open` | 🟢 | 基于 `ElementState.Open`。 |
 | `:empty` | 🟢 | 检查 ChildNodes；生成伪元素不计入。 |
 | `:first-child`、`:last-child`、`:only-child` | 🟢 | 生成伪元素不参与索引。 |
@@ -536,7 +537,8 @@ Button {
 |---|---|---|
 | `Image` 控件内在尺寸 | 🟢 | 使用图片原始尺寸并按可用空间等比缩小。 |
 | CSS width/height/aspect-ratio 约束 Image | 🟡 | 使用通用布局子集。 |
-| `object-fit`、`object-position` | ⚪ | 未实现。 |
+| `object-fit` | 🟢 Image | 支持 `fill`（默认）、`contain`、`cover`、`none`、`scale-down`；位图、动画帧和矢量图按内容盒居中绘制并裁剪，动态变化仅使绘制失效，不改变内在测量。 |
+| `object-position` | ⚪ | 未实现；Image 当前固定居中。 |
 | CSS gradients / image-set / cross-fade | ⚪ | 未实现。 |
 | SVG `fill`、`stroke`、`stroke-width` | 🟡 | Live SVG 元素支持有限颜色和数值。 |
 | SVG `opacity`、`fill-opacity`、`stroke-opacity` | 🟢 SVG 子集 | 普通 UI 元素 opacity 不受支持。 |

@@ -109,7 +109,7 @@ public static Signal<string> Activity { get; } =
 
 - `Publish(value)` 更新状态并通知订阅者。
 - 新值与当前值相等时默认不通知，并返回 `false`。
-- `Publish(value, force: true)` 可强制通知。
+- `Publish(value, force: true)` 可强制通知。重复的按钮通知或相同方法组委托值可使用此参数，无需仅为触发通知而改用递增版本号。
 - `Update(update)` 在锁内原子计算新值，在锁外通知订阅者。
 - 发布使用订阅快照，回调可以安全取消自己的订阅。
 
@@ -143,19 +143,16 @@ protected override void OnDetachedCore()
 
 ## 6. 前后台线程通信
 
-应用使用 `DesktopApplication` 时，Dispatcher 队列在平台消息循环的 Tick 中自动排空。应用只需将自己的 Signal 初始化指向 `app.Dispatcher`：
+应用使用 `DesktopApplication` 时，Dispatcher 队列由宿主驱动排空。应用将自己的 Signal 订阅指向窗口 Dispatcher：
 
 ```csharp
-var app = new DesktopApplication(new Main(), new PlatformHostCreateInfo
-{
-    Title = "Square Framework",
-    Width = 900,
-    Height = 980
-});
-
-SampleSignals.Initialize(app.Dispatcher);
-app.Run();
+var window = new AppWindow("Square Framework", 900, 980);
+window.Load(new Main());
+SampleSignals.Initialize(window.Dispatcher);
+new DesktopApplication(window).Run();
 ```
+
+Square 使用自有 `Dispatcher`，宿主不安装 UI `SynchronizationContext`。直接从后台回写 UI 时，可用 `await window.Dispatcher.InvokeAsync(() => Status.Value = "完成");`；发布 Signal 时则在 `Subscribe` 传入该 Dispatcher。
 
 `DesktopApplication` 在每个 Tick 内执行 `Dispatcher.Run()` 排空队列并按需触发渲染。后台任务只负责发布：
 

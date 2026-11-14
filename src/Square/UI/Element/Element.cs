@@ -1767,7 +1767,12 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     {
         IsLoaded = true;
         OnLoadedCore();
-        foreach (var child in Children) ((IComponentLifecycle)child).OnLoaded();
+        foreach (var child in Children.ToArray())
+        {
+            if (ReferenceEquals(child.Parent, this) && !child.IsLoaded)
+                ((IComponentLifecycle)child).OnLoaded();
+        }
+        DispatchEvent(StandardEvents.CreateLoaded());
     }
 
     void IComponentLifecycle.OnUnloaded()

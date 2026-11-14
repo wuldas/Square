@@ -57,14 +57,16 @@ internal static class SqvValidator
                 element.Position,
                 "SQV0007");
 
-        var bindings = new Dictionary<string, SqxAttribute>(StringComparer.OrdinalIgnoreCase);
+        var bindings = new Dictionary<(string Target, bool IsStaticClass), SqxAttribute>();
         foreach (var attribute in element.Attributes)
         {
             if (!string.IsNullOrWhiteSpace(attribute.ArgumentExpression))
                 ValidateExpression(attribute.ArgumentExpression, attribute.Position);
 
             var target = NormalizeTarget(attribute.Name);
-            if (bindings.TryGetValue(target, out var existing))
+            // Only class permits separate static and dynamic bindings; each slot still rejects duplicates.
+            var key = (target.ToLowerInvariant(), attribute.Name.Equals("class", StringComparison.OrdinalIgnoreCase) && !attribute.IsExpression);
+            if (bindings.TryGetValue(key, out var existing))
             {
                 if (!IsModelEventPair(existing, attribute))
                     throw new SqxParseException(
@@ -74,7 +76,7 @@ internal static class SqvValidator
             }
             else
             {
-                bindings.Add(target, attribute);
+                bindings.Add(key, attribute);
             }
 
             if (attribute.IsExpression)

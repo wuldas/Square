@@ -146,7 +146,7 @@ internal static class CssBoxPainter
             ScrollbarPainter.Paint(context, element);
         if (element is Button button && UsesDefaultButtonWidgetPaint(button) &&
             !HasAuthorOutlineStyle(button)) return;
-        if (element is CheckBox checkBox && ControlDrawing.UsesWidgetAppearance(checkBox)) return;
+        if (element is CheckBox or TriStateCheckBox && ControlDrawing.UsesWidgetAppearance(element)) return;
         if (element is Radio radio && ControlDrawing.UsesWidgetAppearance(radio)) return;
         if (element is Input input && UsesDefaultWidgetFocusBorder(input))
         {

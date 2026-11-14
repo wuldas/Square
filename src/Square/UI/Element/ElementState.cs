@@ -4,7 +4,7 @@ namespace Square.UI;
 /// 元素交互/伪类状态位（Square 扩展，供 CSS 如 <c>:hover</c>/<c>:focus</c> 匹配）。
 /// </summary>
 [Flags]
-public enum ElementState : byte
+public enum ElementState : ushort
 {
     /// <summary>无状态。</summary>
     None = 0,
@@ -23,7 +23,9 @@ public enum ElementState : byte
     /// <summary>弹出内容已打开（:open）。</summary>
     Open = 64,
     /// <summary>键盘可见焦点（:focus-visible）。</summary>
-    FocusVisible = 128
+    FocusVisible = 128,
+    /// <summary>半选（:indeterminate）。</summary>
+    Indeterminate = 256
 }
 
 /// <summary><see cref="ElementState"/> 扩展方法。</summary>

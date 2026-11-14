@@ -41,6 +41,8 @@ public static class StandardEvents
     public const string SelectionChange = "selectionchange";
     /// <summary>输入过程中的值变化。</summary>
     public const string Input = "input";
+    /// <summary>元素及其子树加载完成（Square 生命周期事件，不冒泡）。</summary>
+    public const string Loaded = "loaded";
     /// <summary>请求动画帧（Square 扩展，非标准 DOM）。</summary>
     public const string RequestFrame = "requestframe";
 
@@ -63,6 +65,7 @@ public static class StandardEvents
         [Change] = Bubbling(),
         [SelectionChange] = Bubbling(),
         [Input] = Bubbling(),
+        [Loaded] = None(),
         [RequestFrame] = Bubbling(),
     };
 
@@ -131,6 +134,8 @@ public static class StandardEvents
     public static Event CreateSelectionChange() => Create(SelectionChange);
     /// <summary>创建 input 事件。</summary>
     public static Event CreateInput() => Create(Input);
+    /// <summary>创建元素子树加载完成事件（不冒泡）。</summary>
+    public static Event CreateLoaded() => Create(Loaded);
     /// <summary>创建 focus 事件（不冒泡）。</summary>
     public static Event CreateFocus() => Create(Focus);
     /// <summary>创建 blur 事件（不冒泡）。</summary>

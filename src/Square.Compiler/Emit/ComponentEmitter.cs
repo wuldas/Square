@@ -190,7 +190,7 @@ namespace Square.Compiler.Emit
                 {
                     var htmlContext = IsHtmlParent(parentName);
                     // 纯缩进空白只保留在 pre/textarea 祖先内；其余纯空白忽略。
-                    if (!_preserveWhitespace && string.IsNullOrWhiteSpace(text.Text)) continue;
+                    if (!_preserveWhitespace && NormalizeText(text.Text).Length == 0) continue;
                     var textName = EmitText(text.Text, indent, htmlContext);
                     _sb.AppendLine(indent + parentName +
                         (htmlContext ? ".ChildNodes.Add(" : ".Children.Add(") + textName + ");");
@@ -275,14 +275,26 @@ namespace Square.Compiler.Emit
 
             // Initialize properties before events, then let v-model write back before user handlers.
             // Property hooks may emit events, so model listeners must not exist during initialization.
+            var staticClass = element.Attributes.FirstOrDefault(attribute =>
+                attribute.Name.Equals("class", StringComparison.OrdinalIgnoreCase) && !attribute.IsExpression);
+            var hasDynamicClass = element.Attributes.Any(attribute =>
+                attribute.Name.Equals("class", StringComparison.OrdinalIgnoreCase) && attribute.IsExpression);
             foreach (var attribute in element.Attributes.Where(attribute => !IsEventAttribute(attribute)))
-                EmitAttribute(variableName, attribute, indent, localNames);
+            {
+                if (attribute == staticClass && hasDynamicClass) continue;
+                EmitAttribute(variableName, attribute, indent, localNames,
+                    staticClass == null ? null : staticClass.RawValue ?? "");
+            }
             foreach (var attribute in element.Attributes.Where(attribute => attribute.IsModelEvent))
                 EmitAttribute(variableName, attribute, indent, localNames);
             foreach (var attribute in element.Attributes.Where(attribute => IsEventAttribute(attribute) && !attribute.IsModelEvent))
                 EmitAttribute(variableName, attribute, indent, localNames);
 
-            if (usesSlots)
+            if (usesSlots && descriptor.TypeName == "Square.Controls.TreeItem")
+            {
+                EmitTreeItemContent(element, variableName, indent, localNames);
+            }
+            else if (usesSlots)
             {
                 EmitComponentSlots(element, variableName, indent, localNames);
             }
@@ -304,7 +316,10 @@ namespace Square.Compiler.Emit
             attribute.Name == "__sqv_on_object" ||
             attribute.IsExpression && attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase);
 
-        private void EmitAttribute(string variableName, SqxAttribute attribute, string indent, IReadOnlyList<string> localNames)
+        private void EmitAttribute(string variableName, SqxAttribute attribute, string indent, IReadOnlyList<string> localNames) =>
+            EmitAttribute(variableName, attribute, indent, localNames, null);
+
+        private void EmitAttribute(string variableName, SqxAttribute attribute, string indent, IReadOnlyList<string> localNames, string staticClasses)
         {
             var isHtml = IsHtmlVariable(variableName);
             if (attribute.Name == "ref" || attribute.Name == "slot" && !isHtml) return;
@@ -341,7 +356,17 @@ namespace Square.Compiler.Emit
                 return;
             }
 
-            if (attribute.Name == "class" && !attribute.IsExpression)
+            if (attribute.Name.Equals("class", StringComparison.OrdinalIgnoreCase) && attribute.IsExpression && staticClasses != null)
+            {
+                var start = MappingStart();
+                EmitSourceMappedLine(indent, attribute.Line,
+                    variableName + ".RegisterGeneratedResource(SqvObjectBinding.BindClass(" + variableName +
+                    ", \"" + Escape(staticClasses) + "\", " + attribute.RawValue + "));");
+                MapSource(TemplateGeneratedSourceKind.PropertyBinding, start, AttributeSourceRange(attribute));
+                return;
+            }
+
+            if (attribute.Name.Equals("class", StringComparison.OrdinalIgnoreCase) && !attribute.IsExpression)
             {
                 foreach (var className in Split(attribute.RawValue, ' '))
                     if (!string.IsNullOrWhiteSpace(className))
@@ -414,12 +439,13 @@ namespace Square.Compiler.Emit
                 _sb.AppendLine(indent + variableName + ".SetProperty(\"" + propName + "\", \"" + Escape(rawValue) + "\");");
         }
 
-        private bool EmitTextContent(SqxElement element, string variableName, string indent, IReadOnlyList<string> localNames)
+        private bool EmitTextContent(SqxElement element, string variableName, string indent, IReadOnlyList<string> localNames,
+            IReadOnlyList<SqxNode> nodes = null)
         {
             if (!ResolveDescriptor(element).IsTextContentElement) return false;
             if (FindAttr(element, "text") != null) return true;
 
-            var content = element.Children.Where(node => !IsWrapperExpression(node)).ToList();
+            var content = (nodes ?? element.Children).Where(node => !IsWrapperExpression(node)).ToList();
             if (content.Count == 0) return true;
             if (content.All(node => node is SqxText))
             {
@@ -457,10 +483,34 @@ namespace Square.Compiler.Emit
             return false;
         }
 
-        private void EmitComponentSlots(SqxElement element, string variableName, string indent, IReadOnlyList<string> localNames)
+        private void EmitTreeItemContent(SqxElement element, string variableName, string indent, IReadOnlyList<string> localNames)
+        {
+            var slots = new List<SqxNode>();
+            var content = new List<SqxNode>();
+            foreach (var child in element.Children)
+            {
+                var childElement = child as SqxElement;
+                var slot = childElement == null ? null : FindAttr(childElement, "slot");
+                if (slot != null && (slot.IsExpression || !string.IsNullOrEmpty(slot.RawValue)))
+                    slots.Add(child);
+                else if (childElement != null && IsTemplateFragment(childElement))
+                    content.AddRange(childElement.Children);
+                else
+                    content.Add(child);
+            }
+
+            EmitComponentSlots(element, variableName, indent, localNames, slots);
+            // Tree items keep their hierarchy as direct children; only named content is projected.
+            EmitTextContent(element, variableName, indent, localNames,
+                content.Where(node => node is SqxText or SqxExpression).ToList());
+            EmitNodes(content.Where(node => node is not (SqxText or SqxExpression)).ToList(), indent, variableName, localNames);
+        }
+
+        private void EmitComponentSlots(SqxElement element, string variableName, string indent, IReadOnlyList<string> localNames,
+            IReadOnlyList<SqxNode> children = null)
         {
             var groups = new List<SlotGroup>();
-            foreach (var child in element.Children)
+            foreach (var child in children ?? element.Children)
             {
                 if (IsWrapperExpression(child)) continue;
                 var slotName = "";
@@ -861,8 +911,8 @@ namespace Square.Compiler.Emit
 
         private static string NormalizeText(string value)
         {
-            if (string.IsNullOrWhiteSpace(value)) return "";
-            return value.Trim();
+            if (string.IsNullOrEmpty(value)) return "";
+            return value.Trim(' ', '\t', '\r', '\n', '\f');
         }
 
         internal void EmitOptionalFactory(List<SqxNode> nodes, string indent, IReadOnlyList<string> localNames)

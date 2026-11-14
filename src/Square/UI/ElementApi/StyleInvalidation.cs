@@ -20,7 +20,7 @@ internal static class StyleInvalidation
                 "border-bottom-right-radius" or "border-bottom-left-radius" or "caret-color" or "outline" or
                 "outline-color" or "outline-style" or "outline-width" or "outline-offset" or
                 "text-decoration" or "text-decoration-color" or "text-decoration-line" or "text-decoration-style" or
-                "selection-background" or "selection-color" or "scrollbar-color" => ElementInvalidation.Paint,
+                "selection-background" or "selection-color" or "scrollbar-color" or "object-fit" => ElementInvalidation.Paint,
 
             "animation-name" or "animation-duration" or "animation-delay" or "animation-iteration-count" or
                 "animation-direction" or "animation-timing-function" => ElementInvalidation.Style,

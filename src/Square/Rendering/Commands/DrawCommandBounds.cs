@@ -29,10 +29,10 @@ internal static class DrawCommandBounds
                     currentTransform = transforms.Count > 0 ? transforms.Pop() : Matrix3x2.Identity;
                     continue;
                 case PushClipCommand push:
-                    PushClip(clips, push.Rect);
+                    PushClip(clips, TransformBounds(push.Rect, currentTransform));
                     continue;
                 case PushGeometryClipCommand push:
-                    PushClip(clips, GetGeometryBounds(push.Geometry));
+                    PushClip(clips, TransformBounds(GetGeometryBounds(push.Geometry), currentTransform));
                     continue;
                 case PopClipCommand:
                     if (clips.Count > 0) clips.Pop();

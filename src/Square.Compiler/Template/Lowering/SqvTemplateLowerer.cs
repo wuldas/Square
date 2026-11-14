@@ -14,6 +14,7 @@ internal static class SqvTemplateLowerer
     private static readonly HashSet<string> LoopAttributes = new(
         new[] { "v-for", ":key", "v-bind:key" },
         StringComparer.Ordinal);
+    private static readonly char[] TemplateWhitespace = { ' ', '\t', '\r', '\n', '\f' };
 
     public static TemplateIrDocument Lower(SqvTemplateSyntax syntax) =>
         new(LowerNodes(syntax.Roots, htmlContext: false, preserveAll: false));
@@ -53,8 +54,13 @@ internal static class SqvTemplateLowerer
                 var branches = new List<TemplateIrIfBranch>();
                 var chainStart = element.Origin;
                 var cursor = index;
-                while (cursor < nodes.Count && nodes[cursor] is SqvElementSyntax branchElement)
+                while (cursor < nodes.Count)
                 {
+                    var branchIndex = cursor;
+                    while (branchIndex < nodes.Count && nodes[branchIndex] is SqvTextSyntax text &&
+                           IsTemplateWhitespace(text.Text))
+                        branchIndex++;
+                    if (branchIndex >= nodes.Count || nodes[branchIndex] is not SqvElementSyntax branchElement) break;
                     var branchAttribute = FindConditional(branchElement);
                     if (branchAttribute == null ||
                         branches.Count > 0 && branchAttribute.Name is not ("v-else-if" or "v-else")) break;
@@ -63,7 +69,7 @@ internal static class SqvTemplateLowerer
                         branchAttribute.Name == "v-else",
                         new TemplateIrNode[] { LowerElement(branchElement, ConditionalAttributes, htmlContext, preserveAll) },
                         branchAttribute.FullRange));
-                    cursor++;
+                    cursor = branchIndex + 1;
                     if (branchAttribute.Name == "v-else") break;
                 }
                 index = cursor - 1;
@@ -88,6 +94,9 @@ internal static class SqvTemplateLowerer
         return result.ToArray();
     }
 
+    private static bool IsTemplateWhitespace(string text) =>
+        text.All(character => character is ' ' or '\t' or '\r' or '\n' or '\f');
+
     private static TemplateIrNode LowerNode(SqvSyntaxNode node, bool htmlContext, bool preserveAll)
     {
         if (node is SqvTextSyntax text)
@@ -95,10 +104,10 @@ internal static class SqvTemplateLowerer
             if (htmlContext)
             {
                 // HTML 上下文保留原文；pre/textarea 之外的纯缩进空白丢弃。
-                if (!preserveAll && string.IsNullOrWhiteSpace(text.Text)) return null;
+                if (!preserveAll && IsTemplateWhitespace(text.Text)) return null;
                 return new TemplateIrText(text.Text, text.Origin);
             }
-            return string.IsNullOrWhiteSpace(text.Text) ? null : new TemplateIrText(text.Text.Trim(), text.Origin);
+            return IsTemplateWhitespace(text.Text) ? null : new TemplateIrText(text.Text.Trim(TemplateWhitespace), text.Origin);
         }
         if (node is SqvInterpolationSyntax expression)
             return new TemplateIrExpression(expression.Expression, expression.Origin);

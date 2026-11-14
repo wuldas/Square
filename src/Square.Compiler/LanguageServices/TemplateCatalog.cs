@@ -44,6 +44,7 @@ public sealed class TemplateCatalog
             ["Input"] = "Square.Controls.Input",
             ["TextArea"] = "Square.Controls.TextArea",
             ["CheckBox"] = "Square.Controls.CheckBox",
+            ["TriStateCheckBox"] = "Square.Controls.TriStateCheckBox",
             ["Radio"] = "Square.Controls.Radio",
             ["Select"] = "Square.Controls.Select",
             ["Image"] = "Square.Controls.Image",
@@ -120,6 +121,7 @@ public sealed class TemplateCatalog
             ["overscan-count"] = "OverscanCount",
             ["indent-size"] = "IndentSize",
             ["expanded"] = "IsExpanded",
+            ["header"] = "Header",
             ["loop"] = "Loop",
             ["to"] = "To",
             ["href"] = "Href",
@@ -148,6 +150,7 @@ public sealed class TemplateCatalog
             ["Input"] = new[] { "value", "placeholder", "type" },
             ["TextArea"] = new[] { "value", "placeholder" },
             ["CheckBox"] = new[] { "text", "checked" },
+            ["TriStateCheckBox"] = new[] { "text", "checked" },
             ["Radio"] = new[] { "text", "checked", "group" },
             ["Select"] = new[] { "options", "value", "placeholder" },
             ["Image"] = new[] { "source", "image" },
@@ -156,7 +159,7 @@ public sealed class TemplateCatalog
             ["List"] = new[] { "items", "selected-index" },
             ["VirtualList"] = new[] { "selected-index", "item-height", "overscan-count" },
             ["VirtualTree"] = new[] { "item-height", "overscan-count", "indent-size" },
-            ["TreeItem"] = new[] { "text", "expanded", "color" },
+            ["TreeItem"] = new[] { "text", "expanded", "color", "header" },
             ["ListItem"] = new[] { "text", "marker", "color" },
             ["Swiper"] = new[] { "selected-index", "loop" },
             ["MenuItem"] = new[] { "text", "icon", "group", "shortcut", "checkable", "checked", "stays-open-on-click", "disabled" },
@@ -180,7 +183,7 @@ public sealed class TemplateCatalog
         };
 
     private static readonly HashSet<string> TextContentTags = new(StringComparer.OrdinalIgnoreCase)
-        { "Text", "Button", "Link", "ListItem", "TreeItem" };
+        { "Text", "Button", "Link", "ListItem", "TreeItem", "TriStateCheckBox" };
     private static readonly HashSet<string> BooleanPropertyNames = new(StringComparer.OrdinalIgnoreCase)
         { "seamless", "vertical", "reversed", "checked", "disabled", "checkable", "stays-open-on-click", "expanded", "loop", "replace", "underline" };
     /// <summary>HTML 全局属性完成集（不与 Square CLR 属性别名混淆）。</summary>
@@ -196,7 +199,8 @@ public sealed class TemplateCatalog
         ("wheel", "onWheel"), ("scroll", "onScroll"), ("keydown", "onKeyDown"), ("keyup", "onKeyUp"),
         ("textinput", "onTextInput"), ("focusin", "onFocusIn"), ("focusout", "onFocusOut"),
         ("focus", "onFocus"), ("blur", "onBlur"), ("click", "onClick"), ("contextmenu", "onContextMenu"),
-        ("change", "onChange"), ("selectionchange", "onSelectionChange"), ("input", "onInput"), ("requestframe", "onRequestFrame")
+        ("change", "onChange"), ("selectionchange", "onSelectionChange"), ("input", "onInput"),
+        ("loaded", "onLoaded"), ("requestframe", "onRequestFrame")
     };
 
     private readonly IReadOnlyDictionary<string, TemplateComponentDescriptor> _builtIns;
@@ -634,7 +638,8 @@ public sealed class TemplateCatalog
         {
             var svg = pair.Value.StartsWith("Square.UI.Svg.", StringComparison.Ordinal);
             var slotHost = pair.Key.Equals("TitleBar", StringComparison.OrdinalIgnoreCase) ||
-                           pair.Key.Equals("SplitContainer", StringComparison.OrdinalIgnoreCase);
+                           pair.Key.Equals("SplitContainer", StringComparison.OrdinalIgnoreCase) ||
+                           pair.Key.Equals("TreeItem", StringComparison.OrdinalIgnoreCase);
             components[pair.Key] = new TemplateComponentDescriptor(
                 pair.Key, pair.Value, pair.Value, svg ? SvgNamespaceUri : SquareNamespaceUri, svg ? "svg" : "ui", pair.Key,
                 "Square", string.Empty, svg ? TemplateElementKind.Svg : TemplateElementKind.Square, true,

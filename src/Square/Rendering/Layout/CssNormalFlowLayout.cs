@@ -134,7 +134,7 @@ public sealed partial class LayoutEngine
             if (inline.Count == 0) return;
             // A whitespace-only run of DOM text between blocks must not open a line box nor
             // break margin collapsing (Normal/Nowrap only; preserved modes keep their boxes).
-            if (inline.All(item => item.TextNode is { } text && text.Data.AsSpan().IsWhiteSpace()) &&
+            if (inline.All(item => item.TextNode is { } text && text.Data.AsSpan().IndexOfAnyExcept(" \t\n\r\f") < 0) &&
                 CssKeyword(container, "white-space") is not ("pre" or "pre-wrap" or "pre-line"))
                 return;
             // A line box does not collapse margins with the preceding block, so the pending
@@ -605,7 +605,7 @@ public sealed partial class LayoutEngine
                 var sourceIndex = DataIndexOf(valueIndex);
                 valueIndex += rune.Utf16SequenceLength;
                 lastConsumedEnd = DataIndexOf(valueIndex);
-                if (Rune.IsWhiteSpace(rune))
+                if (TextWrapping.IsCollapsibleWhitespace(rune.Value))
                 {
                     if (!pendingSpace)
                     {
@@ -716,7 +716,7 @@ public sealed partial class LayoutEngine
                 atWordStart = true;
                 continue;
             }
-            var isSpace = Rune.IsWhiteSpace(rune);
+            var isSpace = TextWrapping.IsCollapsibleWhitespace(rune.Value);
             if (segment.Length > 0 && isSpace != whitespace) Flush(previousEnd);
             if (isSpace && !preserveWhitespace)
             {

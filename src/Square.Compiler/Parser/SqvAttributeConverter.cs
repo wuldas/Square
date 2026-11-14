@@ -369,7 +369,7 @@ internal static class SqvAttributeConverter
         }
         if (component.NamespaceUri == TemplateCatalog.SquareNamespaceUri)
         {
-            if (component.LocalName is "CheckBox" or "Radio") return new ModelProperty("checked");
+            if (component.LocalName is "CheckBox" or "TriStateCheckBox" or "Radio") return new ModelProperty("checked");
             if (component.LocalName is "Input" or "TextArea" or "Select") return new ModelProperty("value");
             return null;
         }
@@ -391,7 +391,7 @@ internal static class SqvAttributeConverter
     {
         if (IsHtmlCheckableInput(element)) return "checked";
         return element.Resolution?.Component?.NamespaceUri == TemplateCatalog.SquareNamespaceUri &&
-            element.Resolution.Component.LocalName is "CheckBox" or "Radio" ? "IsChecked" : "Value";
+            element.Resolution.Component.LocalName is "CheckBox" or "TriStateCheckBox" or "Radio" ? "IsChecked" : "Value";
     }
 
     private static bool IsHtmlCheckableInput(SqxElement element)

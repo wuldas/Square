@@ -3,6 +3,21 @@
     <Text class="page-title" text="Controls and reactive collections" />
     <Button ref="MyBtn" @click="OnClick">Button - add activity</Button>
     <CheckBox ref="AcceptCheckBox" text="CheckBox - enable feature" :checked="Accepted" @change="OnAcceptedChanged" />
+    <TriStateCheckBox text="Tri-state: false / true / mixed" v-model="MixedSelection" @change="OnMixedSelectionChanged" />
+    <Text class="status" :text="MixedLabel" />
+    <Tree class="header-tree">
+      <TreeItem text="Resources" expanded="true">
+        <template #header>
+          <View class="tree-header-content">
+            <Text text="▣ Resources" />
+            <Text class="tree-badge" text="2" />
+            <Button @click.stop="OnTreeAction">Action</Button>
+          </View>
+        </template>
+        <TreeItem text="Source" />
+        <TreeItem text="Images" />
+      </TreeItem>
+    </Tree>
     <Radio ref="RadioA" text="Radio - option A" group="demo" :checked="OptionA" @change="OnRadioAChanged" />
     <Radio ref="RadioB" text="Radio - option B" group="demo" :checked="OptionB" @change="OnRadioBChanged" />
     <Select ref="DemoSelect" :value="SelectedValue" :options="ColorOptions" @change="OnSelectChanged" />
@@ -15,6 +30,8 @@
   public ObservableValue<bool> ShowCount = new(false);
   public ObservableValue<bool> LastEventSourceWasButton = new(false);
   public ObservableValue<bool> Accepted = new(false);
+  public ObservableValue<bool?> MixedSelection = new(null);
+  public ObservableValue<string> MixedLabel = new("Tri-state value: mixed");
   public ObservableValue<bool> OptionA = new(true);
   public ObservableValue<bool> OptionB = new(false);
   public ObservableValue<string> SelectedValue = new("Blue");
@@ -32,6 +49,21 @@
   private void OnAcceptedChanged(Event e)
   {
     Accepted.Value = AcceptCheckBox.IsChecked;
+  }
+
+  private void OnMixedSelectionChanged()
+  {
+    MixedLabel.Value = MixedSelection.Value switch
+    {
+      true => "Tri-state value: checked",
+      false => "Tri-state value: unchecked",
+      null => "Tri-state value: mixed"
+    };
+  }
+
+  private void OnTreeAction(Event e)
+  {
+    Items.Add("Tree header action");
   }
 
   private void OnRadioAChanged()
@@ -55,5 +87,8 @@
   .sample-page { display: flex; flex-direction: column; gap: 10px; padding: 0; overflow-y: auto; }
   .page-title { color: #202124; font-size: 18px; }
   .status { color: #555b61; font-size: 14px; }
+  .header-tree { flex-shrink: 0; }
+  .tree-header-content { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+  .tree-badge { color: #555b61; background: #e8edf3; padding: 2px 6px; }
   .controls-page Button { background: #0078d4; color: #ffffff; }
 </style>

@@ -38,7 +38,7 @@
       Save
     </Button>
 
-    <Text v-if="Saved.Value">Saved</Text>
+    <Text v-if="Saved">Saved</Text>
 
     <Text v-for="item in Items" :key="item.Id">
       {{ item.Name }}
@@ -160,7 +160,7 @@ SQV 拥有完全独立的解析栈，不依赖 SQX 的词法器/解析器：
 - `:prop="expr"` 与 `v-bind:prop="expr"` -> `BindProperty`；当表达式为局部循环变量时直接设置属性。
 - `@click="OnClick"` 与 `v-on:click="OnClick"` -> `AddEventListener("click", OnClick)`。
 - `.stop` 与 `.prevent` 事件修饰符 -> 生成事件包装器，在调用处理函数前先调用 `StopPropagation()` 和 `PreventDefault()`。
-- 静态 `class` 与 `style` -> 沿用现有的 class/style 生成。
+- 静态 `class` 与 `style` -> 沿用现有的 class/style 生成。`class="base" :class="Classes"` 合并静态与动态字符串 class；动态更新保留 `base`，空串/null 移除动态部分，重复 class 去重。重复静态 class 或重复动态 class 仍报诊断。
 - `v-text="expr"` -> 绑定或设置 `TextContent`。
 - `v-show="expr"` -> 绑定 `IsVisible`。
 - `v-if` / `v-else-if` / `v-else` -> `SqvIfChainDirective` -> 互斥 `ShowNode` 条件链。
@@ -178,9 +178,16 @@ SQV 拥有完全独立的解析栈，不依赖 SQX 的词法器/解析器：
 - `<KeepAlive>`，在具备组件实例缓存语义之前。
 - `<Suspense>`，在具备异步组件语义之前。
 
+## 响应式与生命周期约定
+
+- 单独的 `v-if="Visible"` 直接传 `ObservableValue<bool>` / `IReactiveValue<bool>` 才会订阅变化；`Visible.Value` 或普通布尔表达式为构建时快照。下文条件链示意互斥代码生成，不表示会自动追踪所有 C# 表达式的依赖。
+- `v-for` 支持 Square 集合、实现 `INotifyCollectionChanged` 的 BCL `ObservableCollection<T>`，以及 `IReactiveValue<IReadOnlyList<T>>`。普通 List 的原地修改不会自动通知；循环里的普通 `item.X` 也不自动跟踪对象成员变化。
+- 带参数的事件使用 C# lambda，例如 `@click="() => Select(item)"`。处理函数表达式应产生可用的回调，而非立即执行一个返回 void 的方法。
+- `@loaded="OnReady"` 在目标元素的 `OnLoadedCore()` 和子树加载完成后派发，不冒泡；同实例 unload/load 后再次派发。该事件不表示布局或图片资源下载已经完成。挂载期订阅仍应与卸载期释放配对。
+
 ## 条件链
 
-Vue 条件链通过 `SqvIfChainDirective` 保持互斥：
+Vue 条件链通过 `SqvIfChainDirective` 保持互斥。相邻分支间允许换行、ASCII 缩进空白和注释；实际文本、插值或普通元素会截断条件链：
 
 ```vue
 <Text v-if="State.Value == 0">A</Text>
@@ -254,7 +261,8 @@ _vfor0 = ForNode.Create(Items, (item, index) => { ... });
 | Vue 语法 | Square 含义 |
 |---|---|
 | `<Input v-model="Name" />` | 绑定 `Value` 并在 input 时更新 |
-| `<CheckBox v-model="Checked" />` | 绑定 `IsChecked` 并在 change 时更新 |
+| `<CheckBox v-model="Checked" />` | 绑定 bool `IsChecked` 并在 change 时更新 |
+| `<TriStateCheckBox v-model="Selection" />` | 绑定 bool? `IsChecked` 并在 change 时更新；null 表示半选，源应为 ObservableValue<bool?> 或对应可写响应源 |
 | `<Select v-model="Selected" />` | 绑定 `Value` 并在 change 时更新 |
 
 修饰符：
@@ -265,7 +273,7 @@ _vfor0 = ForNode.Create(Items, (item, index) => { ... });
 
 ## 插槽
 
-基础 Vue 插槽应映射到 Square 插槽。
+基础 Vue 插槽映射到 Square 插槽。内置 TreeItem 支持 `header` 具名插槽以组合 Image/Text/Button 等控件；其未命名文字继续作为 TextContent 回退，未命名 TreeItem 和结构指令仍直接生成在子项层级中，不会被放入未消费的默认插槽。普通行头点击操作树，行头内交互控件保留自己的输入行为。
 
 ```vue
 <Card>

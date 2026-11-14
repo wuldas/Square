@@ -105,6 +105,7 @@ public sealed class TextLayout
 
 - 按宽度自动换行
 - 换行宽度比较采用与 DirectWrite 一致的 `1/64px` 容差，避免字形 advance 和字距的浮点累加误差导致刚好容纳的文本意外换行。
+- CSS 文本折叠仅针对 ASCII 空格、tab、换行、回车和 form-feed；全角空格（U+3000）、NBSP 等 Unicode 排版空格保留字符和测量宽度。`pre` / `pre-wrap` 继续保留普通空白；文本控件与 HTML normal-flow 使用相同的可折叠空白集合。
 - 行高 = `font.Size * line-height`
 - 对齐：left / center / right
 

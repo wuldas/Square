@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Numerics;
 using Square.Events;
 using Square.Graphics;
+using Square.Rendering;
 using Square.UI;
 
 namespace Square.Controls;
@@ -96,15 +98,35 @@ public class Image : UIElement, ITextSelectable
         if (_frameSource is { FrameCount: > 1 } && !_frameScheduled && CanAnimate())
             ResumeAnimation();
         var image = DisplayImage;
-        if (image is VectorImage vectorImage)
-        {
-            vectorImage.Draw(ctx, Geometry);
-            return;
-        }
-
         if (image != null)
         {
-            ctx.DrawImage(image, Geometry);
+            var content = LayoutEngine.ResolveContentRect(this);
+            if (content.IsEmpty || image.Width <= 0 || image.Height <= 0) return;
+            var destination = ResolveObjectRect(image, content);
+            ctx.PushClip(content);
+            try
+            {
+                if (image is VectorImage vectorImage)
+                {
+                    // 在固有视口内绘制后映射到 object rect，fill 也能对矢量图作非等比缩放。
+                    ctx.PushTransform(Matrix3x2.CreateScale(destination.Width / image.Width, destination.Height / image.Height) *
+                        Matrix3x2.CreateTranslation(destination.X, destination.Y));
+                    try
+                    {
+                        vectorImage.Draw(ctx, new Rect(0, 0, image.Width, image.Height));
+                    }
+                    finally
+                    {
+                        ctx.PopTransform();
+                    }
+                }
+                else
+                    ctx.DrawImage(image, destination);
+            }
+            finally
+            {
+                ctx.PopClip();
+            }
             return;
         }
 
@@ -116,6 +138,23 @@ public class Image : UIElement, ITextSelectable
         ctx.DrawRect(Geometry, Pen.FromColor(Color.FromRgb(150, 155, 160)));
         if (!string.IsNullOrEmpty(Source))
             ControlDrawing.DrawText(ctx, this, Source, new Point(Geometry.X + 8, Geometry.Y + 8), Color.FromRgb(80, 85, 90), 12f);
+    }
+
+    private Rect ResolveObjectRect(Square.Graphics.Image image, Rect content)
+    {
+        var fit = Style.Get("object-fit")?.Trim().ToLowerInvariant();
+        if (fit is not ("contain" or "cover" or "none" or "scale-down")) return content;
+
+        var scale = fit switch
+        {
+            "none" => 1f,
+            "cover" => Math.Max(content.Width / image.Width, content.Height / image.Height),
+            "scale-down" => Math.Min(1f, Math.Min(content.Width / image.Width, content.Height / image.Height)),
+            _ => Math.Min(content.Width / image.Width, content.Height / image.Height)
+        };
+        var width = image.Width * scale;
+        var height = image.Height * scale;
+        return new Rect(content.X + (content.Width - width) / 2f, content.Y + (content.Height - height) / 2f, width, height);
     }
 
     private void BeginSourceLoad()

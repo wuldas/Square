@@ -442,7 +442,23 @@ public interface IComponentLifecycle
 }
 ```
 
-`Element` 实现此接口。通过显式接口调用触发生命周期。
+`Element` 实现此接口。通过显式接口调用触发生命周期。`OnLoaded()` 的顺序为当前元素 `OnLoadedCore()`、加载子树、在当前元素派发 `loaded`；此事件不冒泡、不可取消，SQV 使用 `@loaded`，SQX 使用 `onLoaded`。它表示生命周期加载阶段，不保证首帧布局或异步图片加载已结束；unload 后再次 load 会再次派发。
+
+### SqvObjectBinding.BindClass
+
+```csharp
+namespace Square.Runtime.Binding;
+
+public static class SqvObjectBinding
+{
+    public static IDisposable BindClass(Element target, string staticClasses, string? value);
+    public static IDisposable BindClass<T>(Element target, string staticClasses, Func<T> getter);
+    public static IDisposable BindClass<T>(Element target, string staticClasses, ObservableValue<T> source);
+    public static IDisposable BindClass<T>(Element target, string staticClasses, IReactiveValue<T> source);
+}
+```
+
+该生成调用协议用于合并模板静态 `class` 与动态字符串 class。每次响应源变化都保留静态 class，空串或 null 仅移除动态部分，重复 class 去重。字符串和 getter 重载只求值一次；响应源重载在元素 Dispatcher 上更新。生成器自动将返回的订阅资源注册到元素，永久丢弃生成子树时释放。普通 `SetProperty("class", ...)` 和 `BindProperty("class", ...)` 仍为替换语义；此入口不解析 Vue 的数组或对象形式 class。
 
 ### Signal\<T\>
 
@@ -628,10 +644,12 @@ public static class StandardEvents
     public const string Blur = "blur";        // 不冒泡
     public const string FocusIn = "focusin";  // 冒泡
     public const string FocusOut = "focusout";
+    public const string Loaded = "loaded";           // 生命周期加载，不冒泡
     public const string RequestFrame = "requestframe"; // 框架扩展
 
     public static Event Create(string type);
     public static Event CreateClick();
+    public static Event CreateLoaded();
     public static Event CreatePointerDown();
     // … 其它 Create* 工厂
     public static FrameRequestEvent CreateRequestFrame(double framesPerSecond = 60d);
@@ -907,11 +925,14 @@ public abstract class UIElement : Element
 namespace Square.UI;
 
 [Flags]
-public enum ElementState : byte
+public enum ElementState : ushort
 {
-    None = 0, Hover = 1, Focus = 2, Active = 4, Disabled = 8, Checked = 16, Empty = 32
+    None = 0, Hover = 1, Focus = 2, Active = 4, Disabled = 8, Checked = 16, Empty = 32,
+    Open = 64, FocusVisible = 128, Indeterminate = 256
 }
 ```
+
+为容纳 `Indeterminate`，底层类型由 byte 扩为 ushort；原有标志值保持不变。持久化或传输状态时应保留完整的 ushort 位宽。
 
 ### StyleAccessor
 
@@ -1051,6 +1072,7 @@ public static class HtmlLoader
 | `Link` | `UIElement` | `TextContent`, `Href`, `Color`, `FontSize`, `Underline`（类似 HTML `a`；应用内路由导航见 `Square.Extensions.Routing.RouterLink`） |
 | `Button` | `UIElement` | `TextContent`, `Background`, `Foreground` |
 | `CheckBox` | `UIElement` | `IsChecked`, `TextContent` |
+| `TriStateCheckBox` | `UIElement` | `IsChecked`（`bool?`）、`TextContent` |
 | `Radio` | `UIElement` | `IsChecked`, `TextContent`, `GroupName` |
 | `Select` | `UIElement` | `Value`, `Options`, `Placeholder` |
 | `Image` | `UIElement` | `Source`, `ImageContent` |
@@ -1274,6 +1296,35 @@ public class CheckBox : UIElement
 
 点击时自动切换 `IsChecked` 并触发 `change` 事件。
 
+### TriStateCheckBox
+
+```csharp
+namespace Square.Controls;
+
+public class TriStateCheckBox : UIElement
+{
+    public bool? IsChecked { get; set; }  // false（默认）、true、null（半选）
+    public string TextContent { get; set; }
+}
+```
+
+`TriStateCheckBox` 是独立的三态组件，`CheckBox.IsChecked` 仍为 `bool`。点击或获得焦点后按 Space，按 `false → true → null → false` 循环，每次用户切换派发一次 `change`；程序赋值和绑定更新不派发 `change`。长按 Space 不会重复切换，禁用时不响应激活，`click` 的 `PreventDefault()` 可取消切换。
+
+`true` 显示勾选，`null` 显示半选横线；`:checked` 仅匹配 `true`，`:indeterminate` 仅匹配 `null`。默认 UA `appearance: auto`，`appearance: none` 隐藏内置指示框。当前可通过鼠标或 `Focus()` 获取焦点，宿主尚未提供通用 Tab 焦点遍历。
+
+SQV 可直接双向绑定可空布尔源，半选不会被转换为 false：
+
+```vue
+<template xmlns="urn:square:ui">
+  <TriStateCheckBox text="选择全部" v-model="Selection" />
+</template>
+<script lang="csharp">
+  public ObservableValue<bool?> Selection = new(null);
+</script>
+```
+
+SQX 使用 `checked={Selection}` 并在 `onChange` 中将控件 `IsChecked` 写回源。状态与行头组合示例见 `samples/Square.Sample.Vue/Components/ControlsSamplesPage.sqv`。
+
 ### Radio
 
 ```csharp
@@ -1337,6 +1388,12 @@ HTTP 加载器使用但不释放调用方注入的 `HttpClient`。嵌入资源 U
 通过 `Source` 加载的图片资源由控件拥有，改变 `Source` 或卸载控件会取消旧请求并释放旧文档。动画在控件挂载且可见时自动播放，隐藏时暂停并从剩余帧时长恢复。成功派发冒泡的 `load`，失败设置只读 `Error` 并派发冒泡的 `loaderror`；失败不会在 UI Dispatcher 上抛出。
 
 `ImageContent` 仍可直接接收调用方管理的 `Bitmap` 或 `VectorImage`，不会转移所有权。手动内容优先显示并禁用 `Source` 自动加载，此时 `Source` 仅作为替代文本；清空 `ImageContent` 后会重新加载非空 `Source`。
+
+`Image` 支持 CSS `object-fit: fill | contain | cover | none | scale-down`（默认 `fill`）。图片按控件内容盒绘制，扣除 CSS border 和 padding；`contain` 保持比例完整显示，`cover` 保持比例铺满并裁剪，`none` 使用固有尺寸，`scale-down` 仅等比缩小。位图、Source 动画帧与矢量图使用相同规则，固定居中（暂未支持 `object-position`）。该属性不继承，仅影响绘制，不改变控件测量或布局尺寸。
+
+```xml
+<Image source="Assets/photo.png" style="width: 160px; height: 100px; object-fit: cover;" />
+```
 
 ### Canvas
 
@@ -2418,6 +2475,7 @@ public class Tree : ScrollViewer
 public class TreeItem : UIElement
 {
     public string TextContent { get; set; }
+    public Element? Header { get; set; }
     public bool IsExpanded { get; set; }
     public bool IsSelected { get; set; }
     public IReadOnlyList<TreeItem> Items { get; }
@@ -2430,6 +2488,31 @@ public class TreeItem : UIElement
 ```
 
 `Tree` 使用嵌套 `<TreeItem>` 表达层级。上下键在可见节点间移动，右键展开或进入第一个子项，左键折叠或返回父项，Enter/Space 切换展开状态。选择变化派发 `selectionchange` 和 `change`，节点展开/折叠分别派发 `expand` 和 `collapse`。
+
+`TreeItem.Header` 可设置任意无父节点的 Element，组合行头通常使用横向 flex 的 View。SQV 的 `<template #header>` 或 SQX 的 `slot="header"` 使用相同的具名插槽。行头最低 28px，并随内容自然增高；子 TreeItem 保持直接孩子关系，折叠仅隐藏子项。Header 为空时继续绘制原有 TextContent/LeadingIcon。
+
+```vue
+<template xmlns="urn:square:ui">
+  <Tree>
+    <TreeItem text="资源" expanded="true">
+      <template #header>
+        <View style="display: flex; align-items: center; gap: 8px;">
+          <Image :image="FolderIcon" style="width: 16px; height: 16px; object-fit: contain;" />
+          <Text text="资源" />
+          <Text text="2" />
+          <Button @click="OpenFolder">打开</Button>
+        </View>
+      </template>
+      <TreeItem text="源代码" />
+      <TreeItem text="图片" />
+    </TreeItem>
+  </Tree>
+</template>
+```
+
+示例中的 FolderIcon 为调用方提供的图像，OpenFolder 为事件处理函数。行头中的按钮、编辑器、复选框、链接等交互控件独立处理输入；它们的点击不会默认改变树选择或展开状态，普通行头区域仍遵循行点击行为。`@click.stop` 可进一步阻止事件传播。
+
+C# 的 Header 设置和替换立即更新元素树，无需手动 Build。Build 时已有显式 Header 则优先使用该值；否则 header 插槽投影一次。投影后清空 Header 会恢复文字行头，不重新播放插槽。行头与节点自身或其祖先之间不允许成环，已属于其他父节点的元素应先从原树移除再用作 Header。
 
 ### VirtualTree
 
@@ -2455,6 +2538,8 @@ public sealed class VirtualTree : ScrollViewer
 ```
 
 `VirtualTree` 将已展开的逻辑层级扁平化，只实现视口附近的 `TreeItem`，并按深度应用缩进。展开和选择状态按 key 保存，不依赖对应行是否已实现；键盘方向键保持普通 `Tree` 的父子导航语义。当前版本采用固定行高，根集合可通过 `INotifyCollectionChanged` 通知更新，子集合变化后可重新设置数据源刷新。
+
+`itemTemplate` 可以返回设置了 Header 的 TreeItem。虚拟行仍严格使用 ItemHeight（默认 28px），超高的行头内容在该行内裁剪，背景、箭头、命中区域与此高度一致；需要更高的组合行时显式增大 ItemHeight。退休行会卸载并永久释放绑定及生成资源，下一次实现时由 itemTemplate 重建；itemTemplate 不应返回已退休的旧实例，否则抛出 InvalidOperationException。同一轮继续使用的行及整个 VirtualTree 的普通 detach/reattach 保留绑定。行头控件的业务状态应保存在数据模型或响应源中。
 
 ### Swiper
 
@@ -2697,7 +2782,7 @@ private void OnClick(Event e) { }
 | `Square.UI.Svg` | `SVGDocument`, `SVGElement`, `SVGSVGElement`, `SVGGElement`, `SVGPathElement`, `SVGRectElement`, `SVGCircleElement`, `SVGEllipseElement`, `SVGLineElement`, `SVGPolylineElement`, `SVGPolygonElement` |
 | `Square.UI.ElementApi` | `StyleAccessor`, `ClassListAccessor`, `ChildrenCollection` |
 | `Square.UI.Properties` | `PropertyStore` |
-| `Square.Controls` | `View`, `ScrollViewer`, `List`, `VirtualList`, `ListItem`, `Tree`, `VirtualTree`, `TreeItem`, `Swiper`, `Popup`, `Dialog`, `MenuBar`, `Menu`, `ContextMenu`, `MenuItem`, `MenuSeparator`, `Text`, `Link`, `Button`, `Input`, `TextArea`, `CheckBox`, `Radio`, `Select`, `Image`, `Canvas` |
+| `Square.Controls` | `View`, `ScrollViewer`, `List`, `VirtualList`, `ListItem`, `Tree`, `VirtualTree`, `TreeItem`, `Swiper`, `Popup`, `Dialog`, `MenuBar`, `Menu`, `ContextMenu`, `MenuItem`, `MenuSeparator`, `Text`, `Link`, `Button`, `Input`, `TextArea`, `CheckBox`, `TriStateCheckBox`, `Radio`, `Select`, `Image`, `Canvas` |
 | `Square.Controls.Primitives` | `ShowNode`, `ForNode`, `SwitchNode` |
 | `Square.Graphics` | `IRenderContext`, `Color`, `Rect`, `Size`, `Point`, `Brush`, `Pen`, `Font`, `PathGeometry`, `TextLayout`, `Bitmap`, `RenderBackendRegistry` |
 | `Square.Graphics.Svg` | `SvgImage` |

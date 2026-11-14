@@ -10,6 +10,20 @@ public class TreeItem : UIElement, ITextSelectable
     private const float RowHeight = 28f;
     private const float TextOffset = 20f;
     private const float IconTextOffset = 40f;
+    private HeaderHost? _headerHost;
+    private Element? _appliedHeader;
+    private bool _headerSlotRendered;
+    private float? _fixedRowHeight;
+
+    /// <summary>
+    /// 自定义行头；为空时绘制 TextContent/LeadingIcon。显式设置的行头优先于 header 插槽。
+    /// 行头与子项独立布局，替换或清空会立即更新元素树。
+    /// </summary>
+    public Element? Header
+    {
+        get => GetProperty<Element>(nameof(Header));
+        set => SetProperty(nameof(Header), value);
+    }
 
     /// <summary>初始化 <see cref="TreeItem"/> 的新实例。</summary>
     public TreeItem()
@@ -83,23 +97,42 @@ public class TreeItem : UIElement, ITextSelectable
     public bool HasItems => HasVirtualItems || Items.Count > 0;
     internal bool HasVirtualItems { get; set; }
     /// <inheritdoc/>
-    public string SelectableText => TextContent;
+    public string SelectableText => Header == null ? TextContent : "";
 
     /// <inheritdoc/>
-    public Rect SelectableTextBounds => ControlDrawing.GetTextBounds(
-        this, TextContent, FontSize, new Point(Geometry.X + GetTextOffset(), Geometry.Y + 5));
+    public Rect SelectableTextBounds => Header == null
+        ? ControlDrawing.GetTextBounds(this, TextContent, FontSize,
+            new Point(Geometry.X + GetTextOffset(), Geometry.Y + GetTextTop()))
+        : Rect.Empty;
 
     /// <inheritdoc/>
     public override Size Measure(Size availableSize)
     {
+        // Custom headers are measured by their flex subtree, rather than the fallback label.
+        if (Header != null) return new Size(TextOffset, _fixedRowHeight ?? RowHeight);
         var text = ControlDrawing.MeasureText(this, TextContent, FontSize, availableSize);
-        return new Size(text.Width + GetTextOffset() + 4, RowHeight);
+        return new Size(text.Width + GetTextOffset() + 4, _fixedRowHeight ?? RowHeight);
+    }
+
+    /// <inheritdoc/>
+    public override void BuildElementTree()
+    {
+        base.BuildElementTree();
+        if (_headerSlotRendered || Header != null || !Slots.Contains("header")) return;
+        _headerSlotRendered = true;
+        var content = new HeaderHost();
+        content.Style.SetCascaded("display", "flex", int.MinValue);
+        content.Style.SetCascaded("flex-direction", "row", int.MinValue);
+        content.Style.SetCascaded("align-items", "center", int.MinValue);
+        content.Style.SetCascaded("min-width", "0", int.MinValue);
+        Header = content;
+        Slots.Render("header", content);
     }
 
     /// <inheritdoc/>
     public override void Paint(IRenderContext ctx)
     {
-        var row = new Rect(Geometry.X, Geometry.Y, Geometry.Width, Math.Min(RowHeight, Geometry.Height));
+        var row = new Rect(Geometry.X, Geometry.Y, Geometry.Width, Math.Min(GetRowHeight(), Geometry.Height));
         var background = ControlDrawing.GetStyledColor(this, "background",
             IsSelected ? Color.FromRgb(0, 120, 212) : Color.Transparent);
         if (background.A > 0) ctx.FillRect(row, new SolidColorBrush(background));
@@ -122,18 +155,20 @@ public class TreeItem : UIElement, ITextSelectable
             ctx.DrawPath(marker, Pen.FromColor(foreground, 1.5f));
         }
 
+        if (Header != null) return;
+
         if (!string.IsNullOrEmpty(LeadingIcon))
         {
             var iconColor = LeadingIconColor.A == 0 ? foreground : LeadingIconColor;
             var iconFont = new Font(LeadingIconFontFamily, FontSize + 1);
             ctx.DrawText(
                 new TextLayout(LeadingIcon, iconFont),
-                new Point(row.X + TextOffset, row.Y + 4),
+                new Point(row.X + TextOffset, row.Y + GetTextTop() - 1),
                 new SolidColorBrush(iconColor));
         }
 
         if (!string.IsNullOrEmpty(TextContent))
-            ControlDrawing.DrawText(ctx, this, TextContent, new Point(row.X + GetTextOffset(), row.Y + 5), foreground, FontSize);
+            ControlDrawing.DrawText(ctx, this, TextContent, new Point(row.X + GetTextOffset(), row.Y + GetTextTop()), foreground, FontSize);
     }
 
     /// <summary>展开当前节点，返回是否实际发生展开。</summary>
@@ -163,6 +198,7 @@ public class TreeItem : UIElement, ITextSelectable
         base.OnPropertyChanged(name);
         if (name == nameof(IsSelected)) SetState(ElementState.Checked, IsSelected);
         if (name == nameof(IsExpanded)) UpdateChildLayout();
+        if (name == nameof(Header)) UpdateHeader();
     }
 
     internal override void OnChildAdded(Element child)
@@ -191,10 +227,113 @@ public class TreeItem : UIElement, ITextSelectable
         InvalidateLayout();
     }
 
+    private void UpdateHeader()
+    {
+        var candidate = Header;
+        if (ReferenceEquals(candidate, _appliedHeader)) return;
+
+        // BindProperty/SetProperty write the property bag before reaching this hook, so all
+        // entry points validate here and restore the applied value before reporting an error.
+        string? error = candidate?.ParentNode != null ? "The header already has a parent." : null;
+        for (Element? current = this; current != null; current = current.Parent)
+            if (ReferenceEquals(current, candidate))
+                error = "The header cannot be the item or one of its ancestors.";
+        if (error != null)
+        {
+            Properties.SetValue(nameof(Header), _appliedHeader);
+            throw new InvalidOperationException(error);
+        }
+
+        if (_headerHost != null)
+        {
+            _headerHost.Children.Clear();
+            if (candidate == null)
+            {
+                Children.Remove(_headerHost);
+                _headerHost = null;
+            }
+        }
+        if (candidate != null)
+        {
+            if (_headerHost == null)
+            {
+                _headerHost = new HeaderHost(this);
+                _headerHost.ClassList.Add("tree-item-header");
+                _headerHost.Style.SetCascaded("display", "flex", int.MinValue);
+                _headerHost.Style.SetCascaded("flex-direction", "row", int.MinValue);
+                _headerHost.Style.SetCascaded("align-items", "center", int.MinValue);
+                _headerHost.Style.SetCascaded("padding-left", $"{TextOffset}px", int.MinValue);
+                _headerHost.Style.SetCascaded("flex-shrink", "0", int.MinValue);
+                ApplyHeaderHeight();
+                Children.Insert(0, _headerHost);
+            }
+            _headerHost.Children.Add(candidate);
+        }
+        _appliedHeader = candidate;
+        UpdateHeaderPadding();
+        InvalidateLayout();
+    }
+
+    internal void SetFixedRowHeight(float height)
+    {
+        _fixedRowHeight = height;
+        ApplyHeaderHeight();
+        InvalidateLayout();
+    }
+
+    private void ApplyHeaderHeight()
+    {
+        if (_headerHost == null) return;
+        var height = (_fixedRowHeight ?? RowHeight).ToString(System.Globalization.CultureInfo.InvariantCulture) + "px";
+        _headerHost.Style.Set("min-height", height);
+        if (_fixedRowHeight != null)
+        {
+            _headerHost.Style.Set("height", height);
+            _headerHost.Style.Set("max-height", height);
+            _headerHost.Style.Set("overflow", "hidden");
+        }
+    }
+
+    // Keep embedded controls' pointer and keyboard behavior independent from the tree row.
+    internal bool IsHeaderInteraction(Element target)
+    {
+        if (_headerHost == null) return false;
+        var interactive = false;
+        for (Element? current = target; current != null && current != this; current = current.Parent)
+        {
+            if (current is Button or CheckBox or TriStateCheckBox or Radio or Select or ITextEditor or Link or
+                List or Swiper or ScrollViewer or Splitter ||
+                current is Square.Html.HTMLElement { LocalName: "button" or "input" or "textarea" or "select" or "a" or "summary" })
+                interactive = true;
+            if (ReferenceEquals(current, _headerHost)) return interactive;
+        }
+        return false;
+    }
+
     private void UpdateHeaderPadding() =>
-        Style.SetCascaded("padding-top", IsExpanded && Items.Count > 0 ? $"{RowHeight}px" : "0px", int.MinValue);
+        Style.SetCascaded("padding-top", Header == null && IsExpanded && Items.Count > 0 ? $"{RowHeight}px" : "0px", int.MinValue);
+
+    private float GetRowHeight() => _fixedRowHeight ??
+        (_headerHost != null && _headerHost.Geometry.Height > 0 ? _headerHost.Geometry.Height : RowHeight);
+
+    private float GetTextTop() => 5 + (GetRowHeight() - RowHeight) / 2f;
 
     private float GetTextOffset() => string.IsNullOrEmpty(LeadingIcon) ? TextOffset : IconTextOffset;
+
+    private sealed class HeaderHost(TreeItem? owner = null) : View
+    {
+        // A container's natural size comes from its children, never View.Measure's available size.
+        public override bool HasCustomMeasure => false;
+        public override Size Measure(Size availableSize) => Size.Zero;
+
+        public override void Arrange(Rect finalRect)
+        {
+            var previousHeight = Geometry.Height;
+            base.Arrange(finalRect);
+            // The owner's total height may be constrained while its header row still changes.
+            if (previousHeight != finalRect.Height) owner?.InvalidatePaint();
+        }
+    }
 }
 
 /// <summary>Scrollable single-selection hierarchical tree.</summary>
@@ -210,6 +349,7 @@ public class Tree : ScrollViewer
         AddEventListener(StandardEvents.Click, OnItemClick);
         AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
         {
+            if (e.DefaultPrevented || e.Target is Element target && FindItemAncestor(target)?.IsHeaderInteraction(target) == true) return;
             if (!HandleKey(e.KeyCode)) return;
             e.PreventDefault();
         });
@@ -298,7 +438,7 @@ public class Tree : ScrollViewer
     {
         if (!IsEnabled || e.Target is not Element target) return;
         var item = FindItemAncestor(target);
-        if (item == null) return;
+        if (item == null || item.IsHeaderInteraction(target)) return;
         SelectItem(item);
         if (item.HasItems) item.Toggle();
         Focus();
@@ -314,10 +454,9 @@ public class Tree : ScrollViewer
 
     private bool ContainsItem(TreeItem item)
     {
-        for (Element? current = item; current != null; current = current.Parent)
-            if (ReferenceEquals(current, this))
-                return true;
-        return false;
+        Element? current = item;
+        while (current is TreeItem) current = current.Parent;
+        return ReferenceEquals(current, this);
     }
 
     private static bool ContainsSelectedItem(TreeItem item) =>

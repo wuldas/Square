@@ -285,7 +285,7 @@ internal static class ControlDrawing
     {
         var value = (element.Style.Get("appearance") ?? "none").Trim();
         return value.Equals("auto", StringComparison.OrdinalIgnoreCase) &&
-               element is Button or CheckBox or Radio or Select or TextEditorBase;
+               element is Button or CheckBox or TriStateCheckBox or Radio or Select or TextEditorBase;
     }
 
     internal static void DrawInputFrame(IRenderContext context, UIElement element)

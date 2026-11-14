@@ -910,6 +910,7 @@ public sealed class CssEngine
             "active" => Element.HasState(ElementState.Active),
             "disabled" => Element.HasState(ElementState.Disabled),
             "checked" => Element.HasState(ElementState.Checked),
+            "indeterminate" => Element.HasState(ElementState.Indeterminate),
             "open" => Element.HasState(ElementState.Open),
             "empty" => Element.ChildNodes.All(node => node is CssGeneratedPseudoElement),
             "first-child" => Element.Parent != null && SelectorChildren(Element.Parent).FirstOrDefault() == Element,

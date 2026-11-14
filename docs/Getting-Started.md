@@ -197,7 +197,7 @@ dotnet new square -n LocalApp -o ../LocalApp
     <Text class="title">Hello Square</Text>
     <Input :value="Name" @input="OnNameChanged" placeholder="输入你的名字" />
     <Button @click="OnGreet" class="greet-btn">打招呼</Button>
-    <Text v-if="Greeted.Value" class="greeting">你好，{{ Name.Value }}！</Text>
+    <Text v-if="Greeted" class="greeting">你好，{{ Name.Value }}！</Text>
   </View>
 </template>
 
@@ -444,10 +444,10 @@ protected override void OnPropChanged(string name)
 ### 7.1 条件渲染
 
 ```vue
-<Text v-if="IsLoggedIn.Value">欢迎回来</Text>
+<Text v-if="IsLoggedIn">欢迎回来</Text>
 ```
 
-`v-if` 绑定 C# 布尔表达式。条件变化时增删 Element 子树。
+当 `IsLoggedIn` 为 `ObservableValue<bool>` 或 `IReactiveValue<bool>` 时，直接传入该响应源，条件变化会增删 Element 子树。`IsLoggedIn.Value` 或普通 C# 布尔表达式在构建时求值，不自动订阅其依赖。
 
 ### 7.2 列表渲染
 

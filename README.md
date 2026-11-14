@@ -44,7 +44,7 @@ Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌
       Save
     </Button>
 
-    <Text v-if="Saved.Value">Saved</Text>
+    <Text v-if="Saved">Saved</Text>
   </View>
 </template>
 

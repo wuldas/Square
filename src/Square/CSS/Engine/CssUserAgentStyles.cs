@@ -95,22 +95,22 @@ internal static class CssUserAgentStyles
         Input:focus-visible, TextArea:focus-visible, Select:focus-visible, Button:focus-visible {
             outline-offset: 0;
         }
-        CheckBox:focus-visible, Radio:focus-visible,
+        CheckBox:focus-visible, TriStateCheckBox:focus-visible, Radio:focus-visible,
         Input[type="checkbox" i]:focus-visible, Input[type="radio" i]:focus-visible {
             outline-offset: 2px;
         }
-        CheckBox, Radio, Input[type="checkbox" i], Input[type="radio" i] {
+        CheckBox, TriStateCheckBox, Radio, Input[type="checkbox" i], Input[type="radio" i] {
             appearance: auto;
             box-sizing: border-box;
             cursor: default;
         }
-        CheckBox, Input[type="checkbox" i] {
+        CheckBox, TriStateCheckBox, Input[type="checkbox" i] {
             margin: 3px 3px 3px 4px;
         }
         Radio, Input[type="radio" i] {
             margin: 3px 3px 0 5px;
         }
-        CheckBox:disabled, Radio:disabled,
+        CheckBox:disabled, TriStateCheckBox:disabled, Radio:disabled,
         Input[type="checkbox" i]:disabled, Input[type="radio" i]:disabled {
             color: GrayText;
             cursor: default;

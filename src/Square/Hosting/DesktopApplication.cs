@@ -2017,7 +2017,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     }
 
     private static bool IsFocusable(UIElement element) => element.IsEnabled &&
-                                                          (element is ITextEditor or Button or CheckBox or Radio
+                                                          (element is ITextEditor or Button or CheckBox or TriStateCheckBox or Radio
                                                               or Select or List or Tree or Swiper or Link or ScrollViewer);
 
     private static Point MapPointerPoint(Element? target, Point point)
@@ -2157,7 +2157,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     {
         for (var current = hit; current != null; current = current.Parent)
         {
-            if (current is Button or Input or TextArea or CheckBox or Radio or Select or Link or
+            if (current is Button or Input or TextArea or CheckBox or TriStateCheckBox or Radio or Select or Link or
                 MenuBar or Menu or MenuItem or List or Tree or Swiper or ITextEditor)
                 return true;
             if (current is UIHeadElement) break;

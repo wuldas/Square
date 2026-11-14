@@ -29,10 +29,12 @@ internal static class SqxValidator
 
     private static void ValidateElement(SqxElement element)
     {
-        var attributes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var attributes = new HashSet<(string Name, bool IsStaticClass)>();
         foreach (var attribute in element.Attributes)
         {
-            if (!attributes.Add(attribute.Name))
+            // Match SQV: allow one static class plus one expression without relaxing other duplicates.
+            var key = (attribute.Name.ToLowerInvariant(), attribute.Name.Equals("class", StringComparison.OrdinalIgnoreCase) && !attribute.IsExpression);
+            if (!attributes.Add(key))
                 throw new SqxParseException(
                     "Duplicate attribute '" + attribute.Name + "' on <" + element.TagName + ">",
                     attribute.Position);

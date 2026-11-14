@@ -111,7 +111,7 @@ SQV 示例：
 ```vue
 <template>
   <Button :disabled="Saving" @click="Save">Save</Button>
-  <Text v-if="Saved.Value">Saved</Text>
+  <Text v-if="Saved">Saved</Text>
 </template>
 ```
 

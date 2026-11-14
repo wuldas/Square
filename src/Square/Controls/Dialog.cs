@@ -128,7 +128,7 @@ public class Dialog : Popup
     /// <summary>初始焦点候选：原生交互控件，或 HTML 的 button/input/textarea/select/a/summary。</summary>
     private static bool IsInitialFocusCandidate(IFocusableElement element) => element switch
     {
-        Button or Input or TextArea or CheckBox or Radio or Select or Link => true,
+        Button or Input or TextArea or CheckBox or TriStateCheckBox or Radio or Select or Link => true,
         HTMLElement host => host.LocalName is "button" or "input" or "textarea" or "select" or "a" or "summary",
         _ => false
     };

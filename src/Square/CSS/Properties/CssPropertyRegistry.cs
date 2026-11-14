@@ -109,6 +109,7 @@ internal static class CssPropertyRegistry
             value => IsKeyword(value, "none") || IsNonNegativeLength(value, allowPercent: true));
         AddMany(new[] { "min-width", "min-height" }, "0", false,
             value => IsNonNegativeLength(value, allowPercent: true));
+        Add("object-fit", "fill", false, value => IsKeyword(value, "fill", "contain", "cover", "none", "scale-down"));
         Add("opacity", "1", false, IsOpacity);
         Add("orphans", "2", true, IsPositiveInteger);
         Add("outline", "invert none medium", false, Any);

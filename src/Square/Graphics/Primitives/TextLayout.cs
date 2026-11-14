@@ -539,7 +539,7 @@ public static class TextWrapping
             {
                 var advance = measureAdvance(start, rune);
                 if (rune.Value != '\n') advance += options.LetterSpacing;
-                if (isWhitespace) advance += options.WordSpacing;
+                if (Rune.IsWhiteSpace(rune)) advance += options.WordSpacing;
                 tokens.Add(new TextWrapToken(start, end, rune, Math.Max(0, advance), isWhitespace, false));
             }
         }
@@ -550,7 +550,7 @@ public static class TextWrapping
             var start = offset;
             offset += sourceRune.Utf16SequenceLength;
             var isNewline = sourceRune.Value == '\n';
-            var isWhitespace = Rune.IsWhiteSpace(sourceRune) && !isNewline;
+            var isWhitespace = IsCollapsibleWhitespace(sourceRune.Value) && !isNewline;
 
             if (isNewline && !options.CollapseNewlines)
             {
@@ -650,6 +650,9 @@ public static class TextWrapping
             break;
         }
     }
+
+    // CSS 可折叠空白不包含全角空格、NBSP 或其他 Unicode 排版空格。
+    internal static bool IsCollapsibleWhitespace(int value) => value is ' ' or '\t' or '\n' or '\r' or '\f';
 
     private static bool CanBreakBetween(Rune previous, Rune current)
     {

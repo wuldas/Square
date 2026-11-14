@@ -78,8 +78,7 @@ internal sealed class SqvLexer
                     }
                     else
                     {
-                        _position = end + 3;
-                        while (_position > 0 && _source[_position - 1] != '\n') _column++;
+                        while (_position < end + 3) AdvanceChar();
                     }
                     continue;
                 }

@@ -247,33 +247,7 @@ public class CheckBox : UIElement, ITextSelectable
     public override void Paint(IRenderContext ctx)
     {
         if (ControlDrawing.UsesWidgetAppearance(this))
-        {
-            var box = new Rect(
-                MathF.Round(Geometry.X, MidpointRounding.AwayFromZero),
-                MathF.Round(Geometry.Y + (Geometry.Height - 13) / 2f, MidpointRounding.AwayFromZero),
-                13,
-                13);
-            if (IsChecked)
-            {
-                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(Color.FromRgb(0, 117, 255)));
-                ctx.DrawPath(PathGeometry.Create()
-                    .MoveTo(new Point(box.X + 2.5f, box.Y + 6))
-                    .LineTo(new Point(box.X + 5, box.Y + 8.5f))
-                    .LineTo(new Point(box.X + 10.5f, box.Y + 3)),
-                    Pen.FromColor(Color.White, 1.5f));
-            }
-            else
-            {
-                var border = !IsEnabled
-                    ? Color.FromRgb(209, 209, 209)
-                    : HasState(ElementState.Active)
-                        ? Color.FromRgb(141, 141, 141)
-                        : Color.FromRgb(79, 79, 79);
-                var fill = IsEnabled ? Color.White : Color.FromRgb(248, 248, 248);
-                ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(border));
-                ctx.FillGeometry(new RoundedRectGeometry(box.Inflate(-1, -1), 1, 1), new SolidColorBrush(fill));
-            }
-        }
+            CheckBoxDrawing.PaintIndicator(ctx, this, IsChecked);
         ControlDrawing.DrawText(ctx, this, TextContent,
             new Point(Geometry.X + GetLabelOffset(), Geometry.Y + (Geometry.Height - 17) / 2f), Color.Black, 14f);
     }
@@ -292,6 +266,43 @@ public class CheckBox : UIElement, ITextSelectable
         if (!IsEnabled) return;
         IsChecked = !IsChecked;
         DispatchEvent(StandardEvents.CreateChange());
+    }
+}
+
+internal static class CheckBoxDrawing
+{
+    internal static void PaintIndicator(IRenderContext ctx, UIElement element, bool? isChecked)
+    {
+        var box = new Rect(
+            MathF.Round(element.Geometry.X, MidpointRounding.AwayFromZero),
+            MathF.Round(element.Geometry.Y + (element.Geometry.Height - 13) / 2f, MidpointRounding.AwayFromZero),
+            13,
+            13);
+        if (isChecked == true || (isChecked == null && element.IsEnabled))
+        {
+            ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(Color.FromRgb(0, 117, 255)));
+            if (isChecked == true)
+                ctx.DrawPath(PathGeometry.Create()
+                    .MoveTo(new Point(box.X + 2.5f, box.Y + 6))
+                    .LineTo(new Point(box.X + 5, box.Y + 8.5f))
+                    .LineTo(new Point(box.X + 10.5f, box.Y + 3)),
+                    Pen.FromColor(Color.White, 1.5f));
+            else
+                ctx.FillRect(new Rect(box.X + 3, box.Y + 5, 7, 3), new SolidColorBrush(Color.White));
+        }
+        else
+        {
+            var border = !element.IsEnabled
+                ? Color.FromRgb(209, 209, 209)
+                : element.HasState(ElementState.Active)
+                    ? Color.FromRgb(141, 141, 141)
+                    : Color.FromRgb(79, 79, 79);
+            var fill = element.IsEnabled ? Color.White : Color.FromRgb(248, 248, 248);
+            ctx.FillGeometry(new RoundedRectGeometry(box, 2, 2), new SolidColorBrush(border));
+            ctx.FillGeometry(new RoundedRectGeometry(box.Inflate(-1, -1), 1, 1), new SolidColorBrush(fill));
+            if (isChecked == null)
+                ctx.FillRect(new Rect(box.X + 3, box.Y + 5, 7, 3), new SolidColorBrush(border));
+        }
     }
 }
 

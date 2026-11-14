@@ -592,7 +592,7 @@ public static class TemplateCompletionService
         return component.Kind is TemplateElementKind.Html or TemplateElementKind.HtmlCustom
             ? component.LocalName is "input" or "textarea" or "select"
             : component.NamespaceUri == TemplateCatalog.SquareNamespaceUri &&
-              component.LocalName is "Input" or "TextArea" or "Select" or "CheckBox" or "Radio";
+              component.LocalName is "Input" or "TextArea" or "Select" or "CheckBox" or "TriStateCheckBox" or "Radio";
     }
 
     private static IReadOnlyList<TemplateCompletionItem> GetAttributeItems(

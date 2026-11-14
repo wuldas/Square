@@ -7,6 +7,27 @@ namespace Square.Runtime.Binding;
 /// <summary>AOT-safe runtime protocol for Vue object-form property and event bindings.</summary>
 public static class SqvObjectBinding
 {
+    /// <summary>合并模板静态 class 与动态值。</summary>
+    public static IDisposable BindClass(Element target, string staticClasses, string? value) =>
+        new ClassBinding<string?>(target, staticClasses, value);
+
+    /// <summary>合并模板静态 class 与表达式求值结果。</summary>
+    public static IDisposable BindClass<T>(Element target, string staticClasses, Func<T> getter) =>
+        new ClassBinding<T>(target, staticClasses, getter());
+
+    /// <summary>合并模板静态 class，并响应动态值更新。</summary>
+    public static IDisposable BindClass<T>(Element target, string staticClasses, ObservableValue<T> source) =>
+        BindClass(target, staticClasses, (IReactiveValue<T>)source);
+
+    /// <summary>合并模板静态 class，并在元素 Dispatcher 上响应动态值更新。</summary>
+    public static IDisposable BindClass<T>(Element target, string staticClasses, IReactiveValue<T> source)
+    {
+        var binding = new ClassBinding<T>(target, staticClasses, source.Value);
+        binding.SetSubscription(source.Subscribe(binding.Apply,
+            new ReactiveSubscriptionOptions { Dispatcher = target.Dispatcher }));
+        return binding;
+    }
+
     /// <summary>绑定单个动态名称属性。</summary>
     public static IDisposable BindProperty<TName, T>(Element target, TName name, T value) =>
         name is IReactiveValue<string> reactiveName
@@ -85,6 +106,44 @@ public static class SqvObjectBinding
             value => binding.Apply(value),
             new ReactiveSubscriptionOptions { Dispatcher = dispatcher }));
         return binding;
+    }
+
+    private sealed class ClassBinding<T> : IDisposable
+    {
+        private readonly Element _target;
+        private readonly string _staticClasses;
+        private IDisposable? _subscription;
+        private bool _disposed;
+
+        public ClassBinding(Element target, string staticClasses, T value)
+        {
+            _target = target;
+            _staticClasses = staticClasses;
+            Apply(value);
+        }
+
+        public void SetSubscription(IDisposable subscription) => _subscription = subscription;
+
+        public void Apply(T value)
+        {
+            if (_disposed) return;
+            var dispatcher = _target.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                dispatcher.Invoke(() => Apply(value));
+                return;
+            }
+            var dynamicClasses = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+            _target.SetProperty("class", _staticClasses + " " + dynamicClasses);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _subscription?.Dispose();
+            _subscription = null;
+        }
     }
 
     private sealed class PropertyMapBinding : IDisposable
@@ -335,6 +394,7 @@ public static class SqvPropertyNames
             "items" => "Items",
             "selected-index" => "SelectedIndex",
             "expanded" => "IsExpanded",
+            "header" => "Header",
             "loop" => "Loop",
             "to" => "To",
             "href" => "Href",

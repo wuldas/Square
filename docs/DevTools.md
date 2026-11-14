@@ -19,20 +19,18 @@ using Square.DevTools;
 
 PlatformRegistry.Register(new Win32PlatformFactory());
 
-var app = new DesktopApplication(new Main(), new PlatformHostCreateInfo
-{
-    Title = "My App",
-    Width = 800,
-    Height = 600
-});
+var window = new AppWindow("My App", 800, 600);
+window.Load(new Main());
 
-var devTools = app.UseDevToolsServer(new DevToolsOptions
+var devTools = window.UseDevToolsServer(new DevToolsOptions
 {
     Port = 0,
     AccessToken = "dev-token",
     AllowInputInjection = true,
+    AllowInspector = true,
     AllowMemoryDiagnostics = true
 });
+var app = new DesktopApplication(window);
 
 Console.WriteLine($"{devTools.BaseAddress}/api/v1/health");
 Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
@@ -108,7 +106,7 @@ X-Square-DevTools-Token: <启动时生成的随机令牌>
 自动端口是常规开发、并行测试和多实例运行的默认选择：
 
 ```csharp
-var devTools = app.UseDevToolsServer();
+var devTools = window.UseDevToolsServer();
 
 Console.WriteLine($"DevTools endpoint: {devTools.BaseAddress}/api/v1");
 Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
@@ -127,7 +125,7 @@ Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
 只有外部工具无法接收动态地址，或防火墙/容器映射要求固定端口时才使用固定端口：
 
 ```csharp
-var devTools = app.UseDevToolsServer(new DevToolsOptions
+var devTools = window.UseDevToolsServer(new DevToolsOptions
 {
     Port = 5128
 });
@@ -540,7 +538,7 @@ dotnet publish samples/Square.Sample/Square.Sample.csproj `
 artifacts/aot-vulkan-win-x64/Square.Sample.exe --backend Vulkan --devtools
 ```
 
-`Square.Sample` 的 AOT 发布默认不引用 `Square.DevTools`。只有 `SquareSampleUseDevTools=true` 时才添加项目引用和 `app.UseDevToolsServer()` 调用路径；普通应用不引用 `Square.DevTools` 即可从发布产物中完全移除 DevTools 服务。
+`Square.Sample` 的 AOT 发布默认不引用 `Square.DevTools`。只有 `SquareSampleUseDevTools=true` 时才添加项目引用和 `window.UseDevToolsServer()` 调用路径；普通应用不引用 `Square.DevTools` 即可从发布产物中完全移除 DevTools 服务。
 
 截图通过 `DesktopApplication.CaptureRendererBitmapAsync()` 获取，优先读取活动渲染上下文的实时帧：若 `_renderContext` 实现 `IRenderBitmapSource` 且 `IsCaptureAvailable` 为 `true`，直接 `CaptureBitmap()` 读回真实 GPU 输出；否则在 UI 线程创建离屏 Software RenderContext，重放当前 DisplayTree、文本选择和诊断覆盖层。因此 Software 与 Vulkan 都能使用同一截图 API；Vulkan 只有在设置 `SQUARE_VULKAN_READBACK=1` 后才捕获真实 GPU 帧，默认使用软件重放以降低内存和拷贝成本。
 
@@ -714,25 +712,24 @@ client point
 
 `DebugId` 只要求在单次运行期间稳定，不要求跨进程或跨构建稳定。跨构建跳转应依赖 `SourceSpan`。
 
-### 7.5 计划 endpoint
+### 7.5 HTTP Inspector endpoint
 
-后续 Inspector endpoint 建议挂在 `/api/v1/inspect/*` 下：
+下列接口已实现，完整路径以 `/api/v1` 为前缀。启动时设置 `AllowInspector = true`，请求携带 `X-Square-DevTools-Token`；未启用 Inspector 时返回 `403`。
 
-| 方法 | 路径 | 说明 |
+| 方法 | 路径 | 当前行为 |
 |---|---|---|
-| `GET` | `/inspect/tree` | 返回当前 Element / Layout 调试树摘要 |
-| `GET` | `/inspect/hit-test?x=120&y=80` | 返回指定客户区坐标命中的最深元素 |
-| `GET` | `/inspect/elements/{id}` | 返回元素详情 |
-| `GET` | `/inspect/elements/{id}/styles` | 返回 computed style、matched rules 和 inline style |
-| `GET` | `/inspect/elements/{id}/layout` | 返回 content/padding/border/margin box 与 flex/grid 信息 |
-| `GET` | `/inspect/elements/{id}/source` | 返回模板源码位置 |
-| `GET` | `/inspect/snapshot` | 返回 tree + layout + selected display info 的一次性快照 |
+| `GET` | `/inspect/tree` | 返回当前元素树快照，包含客户区 bounds、boxModel、状态、源码信息及后代 |
+| `GET` | `/inspect/hit-test?x=120&y=80` | 返回指定客户区逻辑坐标命中的元素；未命中返回 `404` |
+| `GET` | `/inspect/elements/{id}` | 按数值运行时 ID 返回元素详情；ID 失效时返回 `404` |
 
-`/inspect/hit-test` 示例响应：
+`/inspect/elements/{id}/styles`、`/layout`、`/source` 和 `/inspect/snapshot` 没有独立 HTTP 路由。已有节点响应包含盒模型和源码信息；完整样式检查与运行时编辑使用上文的 CDP 子集。
+
+`/inspect/hit-test` 示例响应（节选）：
 
 ```json
 {
-  "elementId": 42,
+  "id": 42,
+  "elementId": "save-button",
   "tagName": "Button",
   "componentName": "Main",
   "bounds": { "x": 24, "y": 96, "width": 128, "height": 36 },
@@ -752,7 +749,7 @@ client point
 }
 ```
 
-`/inspect/tree` 应默认返回摘要，避免大型 UI 一次性输出过多数据：
+`/inspect/tree` 当前返回完整的后代快照。大型 UI 应优先通过 hit-test 或已知 ID 查询单个元素；树响应结构示例（节选）：
 
 ```json
 {
@@ -799,13 +796,7 @@ public sealed class DevToolsOptions
 }
 ```
 
-建议默认策略：
-
-| 构建 | `AllowInspector` | `IncludeSourcePaths` | 说明 |
-|---|---:|---:|---|
-| Debug | true | true | 本地开发默认可用 |
-| Release | false | false | 除非显式打开 |
-| NativeAOT publish | false | false | 避免泄露路径并减少 metadata |
+`DevToolsOptions` 的 `AllowInspector`、`IncludeSourcePaths` 和 `IncludeTextContent` 在所有构建配置中均默认 `false`，Debug 也需显式开启。源码位置和文本字段是否返回由对应开关决定。
 
 即使 Inspector 启用，服务仍只监听 `127.0.0.1`，并继续要求 `X-Square-DevTools-Token`。
 
@@ -822,4 +813,4 @@ public sealed class DevToolsOptions
 | D6 | Style / layout diagnostics | 可查看 computed style、matched rules、box model |
 | D7 | IDE 集成 | 外部工具可基于 DevTools 响应跳转源码 |
 
-CDP 的元素增量同步、真实盒模型、运行时声明编辑和 managed Console 转发已接通，详见 [Chrome Inspector（CDP 子集）](#chrome-inspectorcdp-子集)。本节 HTTP / IDE endpoint 表仍是路线图；IDE 打开和磁盘源码热编辑不在当前实现范围。
+上表保留 Inspector 的分阶段设计；HTTP tree、hit-test、element detail 已落地，当前路由以上文 7.5 为准。CDP 的元素增量同步、真实盒模型、运行时声明编辑和 managed Console 转发已接通，详见 [Chrome Inspector（CDP 子集）](#chrome-inspectorcdp-子集)。IDE 打开和磁盘源码热编辑仍属于后续能力。

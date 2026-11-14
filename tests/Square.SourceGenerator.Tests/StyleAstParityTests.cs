@@ -11,6 +11,8 @@ public sealed class StyleAstParityTests
     [InlineData(".page { color: red; gap: 8px !important; }")]
     [InlineData("Button:hover, .primary { background: rgb(1, 2, 3); opacity: 0.5; }")]
     [InlineData(".page { width: var(--size, calc(100% - 8px)); }")]
+    [InlineData("Image { object-fit: scale-down !important; }")]
+    [InlineData("Image { object-fit: var(--fit, contain); }")]
     public void CompilerAndRuntimeCssParsersAgreeOnDeclarations(string css)
     {
         var compiler = CssSyntaxParser.Parse(css, 0);

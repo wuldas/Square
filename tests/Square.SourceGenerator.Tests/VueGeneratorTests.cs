@@ -13,6 +13,44 @@ namespace Square.Compiler.Tests;
 public class VueGeneratorTests
 {
 
+    [Theory]
+    [InlineData("sqv", "@loaded=\"OnReady\"")]
+    [InlineData("sqx", "onLoaded={OnReady}")]
+    public void GeneratedLoadedListenerRunsForEachLoad(string dialect, string attribute)
+    {
+        var template = "<template><View " + attribute + " /></template>" +
+            "<script namespace=\"LoadedFixture\">public int Calls; private void OnReady() { Calls++; }</script>";
+        var compilation = CreateCompilation("""
+            namespace LoadedFixture;
+            public static class Factory
+            {
+                public static int Run()
+                {
+                    var component = new LoadedCard();
+                    component.BuildElementTree();
+                    var lifecycle = (Square.Runtime.IComponentLifecycle)component;
+                    lifecycle.OnAttached();
+                    lifecycle.OnLoaded();
+                    lifecycle.OnUnloaded();
+                    lifecycle.OnLoaded();
+                    return component.Calls;
+                }
+            }
+            """);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SqxGenerator().AsSourceGenerator()],
+            [new InMemoryAdditionalText("LoadedCard." + dialect, template)],
+            (CSharpParseOptions?)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var diagnostics);
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        using var stream = new MemoryStream();
+        Assert.True(output.Emit(stream).Success);
+        var assembly = System.Reflection.Assembly.Load(stream.ToArray());
+        var run = assembly.GetType("LoadedFixture.Factory")!.GetMethod("Run")!;
+        Assert.Equal(2, (int)run.Invoke(null, null)!);
+    }
+
     [Fact]
     public void SqvScriptUsingsCompileIntoGeneratedComponent()
     {
