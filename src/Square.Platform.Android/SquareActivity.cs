@@ -23,6 +23,9 @@ public abstract class SquareActivity : AndroidActivity
     private AppWindow? _window;
     private bool _destroyed;
     private bool _resumed;
+    private bool _processingFrame;
+    private bool _updatingFrameSchedule;
+    private int _frameRequestPosted;
 
     /// <summary>创建应用窗口和真实 Square 内容。</summary>
     protected abstract AppWindow CreateSquareWindow();
@@ -83,6 +86,7 @@ public abstract class SquareActivity : AndroidActivity
 
         var session = new ApplicationSession(window, host);
         _session = session;
+        host.TextEditorQuery = () => session.FocusedTextEditor;
         host.TextEditorFocusQuery = () => session.HasTextEditorFocus;
         host.TextInputClientQuery = () => session.FocusedTextInputClient;
         session.BackRequested = OnSquareBackRequested;
@@ -90,7 +94,7 @@ public abstract class SquareActivity : AndroidActivity
         var scheduler = new AndroidFrameScheduler(ProcessFrame);
         _scheduler = scheduler;
         host.RenderRequested += RequestFrame;
-        window.Dispatcher.WorkAvailable += RequestFrame;
+        session.FrameRequested += RequestFrame;
         if (!requiresVulkanSurface) AttachSession();
         else if (_vulkanSurface?.HasSurface == true) AttachSession();
     }
@@ -106,7 +110,7 @@ public abstract class SquareActivity : AndroidActivity
         }
         catch
         {
-            _window.Dispatcher.WorkAvailable -= RequestFrame;
+            _session.FrameRequested -= RequestFrame;
             _host.RenderRequested -= RequestFrame;
             _scheduler.Dispose();
             _scheduler = null;
@@ -122,6 +126,7 @@ public abstract class SquareActivity : AndroidActivity
 
     private void SuspendForSurfaceLoss()
     {
+        _host?.CancelInput();
         _scheduler?.Pause();
         _session?.Suspend();
         _session?.ReleaseRenderContext();
@@ -138,7 +143,7 @@ public abstract class SquareActivity : AndroidActivity
         }
         _session.Resume();
         _scheduler.Resume();
-        if (_session.HasPendingFrame) RequestFrame();
+        RequestFrame();
     }
 
     /// <inheritdoc />
@@ -187,7 +192,7 @@ public abstract class SquareActivity : AndroidActivity
     protected override void OnDestroy()
     {
         _destroyed = true;
-        if (_window != null) _window.Dispatcher.WorkAvailable -= RequestFrame;
+        if (_session != null) _session.FrameRequested -= RequestFrame;
         if (_host != null) _host.RenderRequested -= RequestFrame;
         var vulkanSurface = _vulkanSurface;
         if (vulkanSurface != null)
@@ -245,20 +250,45 @@ public abstract class SquareActivity : AndroidActivity
     private bool ProcessFrame()
     {
         if (_destroyed || _session == null || _host == null) return false;
-        _host.StepFling();
-        _session.Tick();
-        if (_session.HasPendingFrame)
-            _session.ProcessFrame();
-        return !_destroyed && (_host.HasFling || _session.HasPendingFrame);
+        _processingFrame = true;
+        try
+        {
+            _host.StepFling();
+            _session.Tick();
+        }
+        finally
+        {
+            _processingFrame = false;
+            // 帧内请求可能已被当前帧消费。只使用帧完成后的需求，避免遗留立即回调。
+            _scheduler?.RequestFrame(null);
+            RequestFrame();
+        }
+        return false;
     }
 
     private void RequestFrame()
     {
-        if (_destroyed || _scheduler == null) return;
-        if (Looper.MyLooper() == Looper.MainLooper)
-            _scheduler.RequestFrame();
-        else
-            RunOnUiThread(_scheduler.RequestFrame);
+        if (_destroyed) return;
+        if (Looper.MyLooper() != Looper.MainLooper)
+        {
+            if (Interlocked.Exchange(ref _frameRequestPosted, 1) != 0) return;
+            RunOnUiThread(() =>
+            {
+                Interlocked.Exchange(ref _frameRequestPosted, 0);
+                RequestFrame();
+            });
+            return;
+        }
+        if (_processingFrame || _updatingFrameSchedule || _scheduler == null || _session == null) return;
+        _updatingFrameSchedule = true;
+        try
+        {
+            _scheduler.RequestFrame(_host?.HasFling == true ? TimeSpan.Zero : _session.NextFrameDelay);
+        }
+        finally
+        {
+            _updatingFrameSchedule = false;
+        }
     }
 
     private void ConfigureSystemBars()

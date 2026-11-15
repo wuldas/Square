@@ -96,6 +96,14 @@ public interface IPlatformHost : IDisposable
 
     /// <summary>创建渲染上下文。</summary>
     IRenderContext CreateRenderContext();
+    /// <summary>查询下一次 Tick 的延迟；null 结果表示空闲，零表示下个原生帧节拍。仅由宿主线程调用。</summary>
+    Func<TimeSpan?>? FrameDelayQuery
+    {
+        get => null;
+        set { }
+    }
+    /// <summary>线程安全地唤醒事件循环并请求一次 Tick，不代表必须重绘。</summary>
+    void Wake() { }
     /// <summary>处理平台事件队列。</summary>
     void PumpEvents();
     /// <summary>设置输入法候选区矩形。</summary>

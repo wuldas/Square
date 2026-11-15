@@ -169,6 +169,39 @@ internal static partial class X11Api
     [LibraryImport("libX11.so.6", EntryPoint = "XCloseDisplay")]
     public static partial int CloseDisplay(IntPtr display);
 
+    [LibraryImport("libX11.so.6", EntryPoint = "XConnectionNumber")]
+    public static partial int ConnectionNumber(IntPtr display);
+
+    public const short PollIn = 0x0001;
+    public const short PollError = 0x0008 | 0x0010 | 0x0020;
+    public const int Interrupted = 4;
+    public const int WouldBlock = 11;
+    public const int EventFdNonBlock = 0x800;
+    public const int EventFdCloseOnExec = 0x80000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PollFd
+    {
+        public int fd;
+        public short events;
+        public short revents;
+    }
+
+    [LibraryImport("libc.so.6", EntryPoint = "poll", SetLastError = true)]
+    public static unsafe partial int Poll(PollFd* fds, nuint count, int timeout);
+
+    [LibraryImport("libc.so.6", EntryPoint = "eventfd", SetLastError = true)]
+    public static partial int EventFd(uint initialValue, int flags);
+
+    [LibraryImport("libc.so.6", EntryPoint = "read", SetLastError = true)]
+    public static partial nint ReadEventFd(int fd, out ulong value, nuint count);
+
+    [LibraryImport("libc.so.6", EntryPoint = "write", SetLastError = true)]
+    public static partial nint WriteEventFd(int fd, in ulong value, nuint count);
+
+    [LibraryImport("libc.so.6", EntryPoint = "close")]
+    public static partial int CloseFd(int fd);
+
     [LibraryImport("libX11.so.6", EntryPoint = "XDefaultRootWindow")]
     public static partial IntPtr DefaultRootWindow(IntPtr display);
 

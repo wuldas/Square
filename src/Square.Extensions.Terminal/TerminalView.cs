@@ -317,6 +317,11 @@ public sealed class TerminalView : UIElement, ITextEditor
     public bool DeleteSelection() => false;
 
     /// <inheritdoc/>
+    public TimeSpan? CaretBlinkDelay => !IsFocused || SelectionLength > 0 || !_screen.CursorVisible
+        ? null
+        : TimeSpan.FromSeconds(Math.Max(0, _nextCaretTransitionSeconds - _caretClock.Elapsed.TotalSeconds));
+
+    /// <inheritdoc/>
     public bool ToggleCaretBlink()
     {
         if (!IsFocused || SelectionLength > 0 || !_screen.CursorVisible) return false;

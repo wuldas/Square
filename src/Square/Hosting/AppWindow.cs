@@ -125,6 +125,20 @@ public sealed class AppWindow : IRenderBackendApplication
     /// <summary>窗口背景色。</summary>
     public Color Background { get; set; } = Color.White;
 
+    private bool _powerSavingEnabled = true;
+
+    /// <summary>是否按帧需求休眠；默认开启。关闭后恢复宿主连续帧节拍。</summary>
+    public bool PowerSavingEnabled
+    {
+        get => _powerSavingEnabled;
+        set
+        {
+            if (_powerSavingEnabled == value) return;
+            _powerSavingEnabled = value;
+            RequestRenderIfBound();
+        }
+    }
+
     /// <summary>渲染模式。</summary>
     public RenderMode RenderingMode { get; set; } = RenderMode.FullFrame;
 
@@ -508,6 +522,7 @@ public sealed class AppWindow : IRenderBackendApplication
             RenderBackend = RenderBackend,
             Background = Background,
             RenderingMode = RenderingMode,
+            PowerSavingEnabled = PowerSavingEnabled,
             ScrollbarProfile = ScrollbarProfile,
             BorderStyle = BorderStyle,
             OwnerHandle = nativeOwner.Handle,

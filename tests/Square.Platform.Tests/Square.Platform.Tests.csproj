@@ -19,6 +19,10 @@
     <ProjectReference Include="..\..\src\Square.Platform.MacOS\Square.Platform.MacOS.csproj" Condition="'$(SquareTargetPlatform)' == 'MacOS'" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\src\Square.Platform.Android\AndroidTextInputSession.cs" Link="Android\AndroidTextInputSession.cs" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(SquareTargetPlatform)' != 'X11'">
     <Compile Remove="X11DisplayMetricsTests.cs" />
     <Compile Remove="X11InputPolicyTests.cs" />

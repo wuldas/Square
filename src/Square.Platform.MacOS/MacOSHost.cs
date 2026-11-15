@@ -1,5 +1,6 @@
 using Square.Graphics;
 using Square.Hosting;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Square.Platform.MacOS;
@@ -18,7 +19,13 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     private IntPtr _runLoopMode;
     private IntPtr _colorSpace;
     private IRenderContext? _renderContext;
-    private bool _running;
+    private readonly MacOSFrameScheduler _frameScheduler = new();
+    private readonly object _wakeLock = new();
+    private IntPtr _wakeEvent;
+    private IntPtr _postEventSelector;
+    private MacOSWindowObserver? _windowObserver;
+    private bool _disposed;
+    private volatile bool _running;
     private bool _pointerCaptured;
     private bool _closed;
     private CursorKind _cursor;
@@ -56,6 +63,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     public bool IsRunning => _running;
     public AppWindowState State => _state;
     public KeyModifiers Modifiers => _modifiers;
+    public Func<TimeSpan?>? FrameDelayQuery { get; set; }
 
     public string Title
     {
@@ -145,6 +153,8 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
         _runLoopMode = MacOSApi.CreateString("kCFRunLoopDefaultMode");
         _colorSpace = MacOSApi.ColorSpaceCreateDeviceRgb();
         if (_colorSpace == IntPtr.Zero) throw new InvalidOperationException("Unable to create the software color space.");
+        CreateWakeEvent();
+        _windowObserver = new MacOSWindowObserver(_window, Wake);
         _running = true;
     }
 
@@ -173,33 +183,88 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
         return _renderContext;
     }
 
+    public void Wake()
+    {
+        lock (_wakeLock)
+        {
+            if (_disposed || !_frameScheduler.RequestWake()) return;
+            // postEvent:atStart: is thread-safe. The immutable event is retained on
+            // the UI thread, so background callers need no autorelease pool.
+            if (_wakeEvent != IntPtr.Zero)
+                MacOSApi.PostEvent(_application, _postEventSelector, _wakeEvent, 1);
+        }
+    }
+
+    private void CreateWakeEvent()
+    {
+        var pool = MacOSApi.SendIntPtr(MacOSApi.GetClass("NSAutoreleasePool"), MacOSApi.Selector("new"));
+        try
+        {
+            var nativeEvent = MacOSApi.CreateApplicationEvent(
+                MacOSApi.GetClass("NSEvent"),
+                MacOSApi.Selector("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+                15, // NSEventTypeApplicationDefined
+                new MacOSApi.NSPoint(0, 0), 0, 0, 0, IntPtr.Zero, 0, 0, 0);
+            if (nativeEvent == IntPtr.Zero) throw new InvalidOperationException("Unable to create the macOS wake event.");
+            lock (_wakeLock)
+            {
+                _postEventSelector = MacOSApi.Selector("postEvent:atStart:");
+                _wakeEvent = MacOSApi.SendIntPtr(nativeEvent, MacOSApi.Selector("retain"));
+            }
+        }
+        finally
+        {
+            MacOSApi.SendIntPtr(pool, MacOSApi.Selector("drain"));
+        }
+    }
+
     public void PumpEvents()
     {
-        var distantPast = MacOSApi.SendIntPtr(MacOSApi.GetClass("NSDate"), MacOSApi.Selector("distantPast"));
+        var dateClass = MacOSApi.GetClass("NSDate");
+        var distantPast = MacOSApi.SendIntPtr(dateClass, MacOSApi.Selector("distantPast"));
+        var distantFuture = MacOSApi.SendIntPtr(dateClass, MacOSApi.Selector("distantFuture"));
         var eventSelector = MacOSApi.Selector("nextEventMatchingMask:untilDate:inMode:dequeue:");
+        var clock = Stopwatch.StartNew();
         while (_running)
         {
             var pool = MacOSApi.SendIntPtr(MacOSApi.GetClass("NSAutoreleasePool"), MacOSApi.Selector("new"));
             try
             {
-                IntPtr nativeEvent;
-                while ((nativeEvent = MacOSApi.SendEventQuery(
-                           _application,
-                           eventSelector,
-                           nuint.MaxValue,
-                           distantPast,
-                           _runLoopMode,
-                           1)) != IntPtr.Zero)
+                var delay = _frameScheduler.GetWaitDelay(clock.Elapsed, FrameDelayQuery);
+                var expiration = delay == null ? distantFuture
+                    : delay <= TimeSpan.Zero ? distantPast
+                    : MacOSApi.SendDouble(dateClass, MacOSApi.Selector("dateWithTimeIntervalSinceNow:"), delay.Value.TotalSeconds);
+                var nativeEvent = MacOSApi.SendEventQuery(
+                    _application, eventSelector, nuint.MaxValue, expiration, _runLoopMode, 1);
+                for (var count = 0; nativeEvent != IntPtr.Zero && _running; count++)
                 {
-                    var type = MacOSApi.SendNuintResult(nativeEvent, MacOSApi.Selector("type"));
-                    var sendToAppKit = DispatchEvent(nativeEvent, type);
-                    if (sendToAppKit)
-                        MacOSApi.SendPointer(_application, MacOSApi.Selector("sendEvent:"), nativeEvent);
-                    if (type == EventKeyDown && sendToAppKit) DrainCommittedText();
-                    RefreshWindowMetrics();
-                    RefreshWindowState();
+                    if (nativeEvent != _wakeEvent)
+                    {
+                        var type = MacOSApi.SendNuintResult(nativeEvent, MacOSApi.Selector("type"));
+                        var sendToAppKit = DispatchEvent(nativeEvent, type);
+                        if (!_running) break;
+                        if (sendToAppKit)
+                            MacOSApi.SendPointer(_application, MacOSApi.Selector("sendEvent:"), nativeEvent);
+                        if (!_running) break;
+                        if (type == EventKeyDown && sendToAppKit) DrainCommittedText();
+                        RefreshWindowMetrics();
+                        if (!_running) break;
+                        RefreshWindowState();
+                    }
+
+                    if (count + 1 >= MacOSFrameScheduler.MaxEventsPerBatch ||
+                        _frameScheduler.HasPendingWake || _frameScheduler.IsFrameDue(clock.Elapsed) || !_running)
+                        break;
+                    nativeEvent = MacOSApi.SendEventQuery(
+                        _application, eventSelector, nuint.MaxValue, distantPast, _runLoopMode, 1);
                 }
 
+                if (!_running) break;
+                MacOSApi.SendIntPtr(_application, MacOSApi.Selector("updateWindows"));
+                RefreshWindowMetrics();
+                if (!_running) break;
+                RefreshWindowState();
+                if (!_running) break;
                 var visible = MacOSApi.SendByteResult(_window, MacOSApi.Selector("isVisible")) != 0;
                 var miniaturized = MacOSApi.SendByteResult(_window, MacOSApi.Selector("isMiniaturized")) != 0;
                 if (!visible && !miniaturized)
@@ -209,18 +274,19 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
                     break;
                 }
 
-                Tick?.Invoke();
-                MacOSApi.SendIntPtr(_application, MacOSApi.Selector("updateWindows"));
-                RefreshWindowMetrics();
-                RefreshWindowState();
+                // Consume before Tick: a Wake racing with Tick remains pending for
+                // the next pass, including work queued by Tick itself.
+                var wakePending = _frameScheduler.ConsumeWake();
+                if (wakePending || _frameScheduler.IsFrameDue(clock.Elapsed))
+                {
+                    _frameScheduler.FrameCompleted();
+                    Tick?.Invoke();
+                }
             }
             finally
             {
                 MacOSApi.SendIntPtr(pool, MacOSApi.Selector("drain"));
             }
-
-            if (!_running) break;
-            Thread.Sleep(16);
         }
     }
 
@@ -504,6 +570,7 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
     public void Close()
     {
         _running = false;
+        Wake();
         if (_window != IntPtr.Zero) MacOSApi.SendIntPtr(_window, MacOSApi.Selector("close"));
         SignalClosed();
     }
@@ -656,7 +723,22 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
 
     public void Dispose()
     {
-        _running = false;
+        lock (_wakeLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _running = false;
+            if (_wakeEvent != IntPtr.Zero)
+            {
+                MacOSApi.PostEvent(_application, _postEventSelector, _wakeEvent, 1);
+                MacOSApi.SendIntPtr(_wakeEvent, MacOSApi.Selector("release"));
+                _wakeEvent = IntPtr.Zero;
+            }
+        }
+        FrameDelayQuery = null;
+        _frameScheduler.ConsumeWake();
+        _windowObserver?.Dispose();
+        _windowObserver = null;
         ReleasePointerCapture();
         _renderContext?.Dispose();
         _renderContext = null;
@@ -681,8 +763,21 @@ internal sealed unsafe class MacOSHost : IPlatformHost, IPlatformNativeWindow
             _colorSpace = IntPtr.Zero;
         }
         _layer = IntPtr.Zero;
+        _application = IntPtr.Zero;
+        Tick = null;
+        MouseEvent = null;
+        WheelEvent = null;
+        KeyEvent = null;
+        TextInput = null;
         SizeChanged = null;
         StateChanged = null;
-        SignalClosed();
+        try
+        {
+            SignalClosed();
+        }
+        finally
+        {
+            Closed = null;
+        }
     }
 }

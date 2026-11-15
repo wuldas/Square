@@ -110,6 +110,7 @@ M2 与架构重建完成后，以下能力作为增量落地，未归入既有 M
 - **DOM `Range` 与 `TextFragment`**：`Square.UI.Range` 提供最小 DOM Range 文本选择模型（`SetStart` / `SetEnd` / `SelectNodeContents` / `Collapse` / 边界点比较）；`Square.Rendering.TextFragment` 提供字符级命中测试（`HitTestOffset`），为富文本编辑与选择奠定基础。
 - **Software Renderer 性能优化**：`RenderContext` 缓存位图像素指针与尺寸、裁剪区域缓存（避免栈查找）、批量 BGRA 填充；`LayoutEngine` 与 `StyleAccessor` 同步优化。
 - **`DesktopApplication.RenderingMode`**：新增 `RenderMode` 枚举（`FullFrame` / `Auto` / `DirtyRegion`），控制每帧重绘策略，可通过 `--render-mode` 参数或 `SQUARE_RENDER_MODE` 环境变量配置。
+- **全平台按需节能**：默认开启 `AppWindow.PowerSavingEnabled`；Win32 单次定时器、X11 poll/eventfd、macOS AppKit 原生事件等待消除空闲帧轮询；Android 延迟 Choreographer、Godot 会话截止时间统一接入 `ApplicationSession.NextFrameDelay`。Dispatcher/Reconciler 可唤醒空闲宿主，内置编辑器上报光标截止时间，桌面最小化保留任务处理并停止绘制。Web 保留已有请求驱动模式。实现与验证边界见 [Power-Saving.md](Power-Saving.md)。
 - **多目标渲染与宿主路线**：将后续 WinUI XAML、HTML DOM、Android UI、SVG、PDF、Godot 等目标拆分为 `Platform Host`、`Drawing Backend`、`Native UI Adapter`、`Exporter` 四类能力。完整计划见 `docs/Rendering-Targets.md`。
 - **Static HTML、Web Server 与交互 DOM**：`Square.Native.Html` 从已求值 Element Tree 生成浏览器语义 HTML，并将最终样式默认去重为 CSS class；`Square.Hosting.Web` 提供无状态 `MapSquarePage` 和保留独立页面会话的 `MapSquareInteractivePage`。交互模式已打通 `click`/`input`/`change`、原生表单值同步、C# 事件派发、Reconciler/CSS 刷新和根节点替换；不注册或替换桌面 `PlatformRegistry`，可与 Win32/X11/macOS 宿主共存。复杂绘制控件仍输出带诊断的占位节点，SignalR/WASM 和细粒度 DOM diff 属于后续阶段。
 
@@ -162,7 +163,7 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 [~] Phase 0：Android workload、SDK platform/build-tools、JDK17、像素探针与 arm64 APK/AAB 已验证；x86_64 emulator smoke 与性能证据已完成，非紧凑 stride/lockPixels 仍不在核心 Bitmap API
 [~] Phase 1–2：ApplicationSession、按需帧调度、PointerInput 和 touch 路由已实现；桌面输入专项回归待补
 [~] Phase 3–4：Android host、Activity/View、触摸滚动、fling、Back 与剪贴板已实现；Canvas/Skia/Vulkan 后端和 x86_64 emulator smoke 已完成，arm64 conformance 待补
-[~] Phase 5–6：Android 字体、软键盘、中文组合输入、性能采样和资源清理路径已实现；生命周期压力已完成，arm64 IME/压力待补
+[~] Phase 5–6：Android 字体、软键盘、中文组合输入、性能采样和资源清理路径已实现；2026-11-15 补充输入连接按编辑器身份隔离、关闭/暂停失效、键盘类型与选区同步，托管回归和 Android 构建/arm64 Release 发布通过；新增 IME 行为的设备回归与 arm64 IME/压力待补
 [~] Phase 7：APK/AAB、Android CI、trimming + profiled AOT 已实现并验证；`PublishAot=true` 仍受 XA1040/IL3053 官方实验限制
 [~] Phase 8：虚拟 accessibility tree、AndroidCanvas/Skia/Vulkan 与 profiling 已实现；NativeUiNode 原生 adapter、TalkBack 多设备矩阵和更深度性能优化后置
 

@@ -52,10 +52,23 @@ public sealed class ApplicationSession : IDisposable
     /// <summary>会话是否仍有待处理的帧工作。</summary>
     public bool HasPendingFrame => _attached && !_suspended && _application.HasPendingSessionFrame;
     /// <summary>会话当前是否聚焦文本编辑器。</summary>
-    public bool HasTextEditorFocus => _attached && _application.HasFocusedTextEditor;
+    public bool HasTextEditorFocus => _attached && !_suspended && _application.HasFocusedTextEditor;
+    /// <summary>当前焦点文本编辑器；暂停或未附加时返回 null。</summary>
+    public Square.Controls.ITextEditor? FocusedTextEditor =>
+        _attached && !_suspended ? _application.FocusedTextEditor : null;
     /// <summary>当前焦点文本编辑器的组合输入客户端。</summary>
     public Square.Controls.ITextInputClient? FocusedTextInputClient =>
         _attached && !_suspended ? _application.FocusedTextInputClient : null;
+
+    /// <summary>下次帧时钟延迟；null 表示空闲，零表示下个原生帧节拍。须在会话线程查询。</summary>
+    public TimeSpan? NextFrameDelay => _attached && !_suspended ? _application.NextFrameDelay : null;
+
+    /// <summary>帧需求改变；可能来自其他线程，宿主应合并并在 UI 线程查询 NextFrameDelay。</summary>
+    public event Action? FrameRequested
+    {
+        add => _application.FrameRequested += value;
+        remove => _application.FrameRequested -= value;
+    }
 
     /// <summary>未被 Popup 消费时尝试处理路由后退。</summary>
     public Func<bool>? BackRequested { get; set; }

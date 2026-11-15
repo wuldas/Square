@@ -20,8 +20,10 @@ internal static partial class MacOSApi
 
     private static readonly IntPtr AppKitHandle = NativeLibrary.Load(AppKit);
 
-    internal static IntPtr PasteboardTypeString =>
-        Marshal.ReadIntPtr(NativeLibrary.GetExport(AppKitHandle, "NSPasteboardTypeString"));
+    internal static IntPtr PasteboardTypeString => AppKitConstant("NSPasteboardTypeString");
+
+    internal static IntPtr AppKitConstant(string name) =>
+        Marshal.ReadIntPtr(NativeLibrary.GetExport(AppKitHandle, name));
 
     internal static IntPtr GetClass(string name)
     {
@@ -42,6 +44,19 @@ internal static partial class MacOSApi
 
     [LibraryImport(ObjectiveC, EntryPoint = "sel_registerName", StringMarshalling = StringMarshalling.Utf8)]
     private static partial IntPtr RegisterSelector(string name);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_allocateClassPair", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial IntPtr AllocateClassPair(IntPtr superclass, string name, nuint extraBytes);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "class_addMethod", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial byte AddMethod(IntPtr nativeClass, IntPtr selector, IntPtr implementation, string types);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_registerClassPair")]
+    internal static partial void RegisterClassPair(IntPtr nativeClass);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial void AddNotificationObserver(
+        IntPtr receiver, IntPtr selector, IntPtr observer, IntPtr callback, IntPtr name, IntPtr nativeObject);
 
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
     internal static partial IntPtr SendIntPtr(IntPtr receiver, IntPtr selector);
@@ -91,6 +106,23 @@ internal static partial class MacOSApi
         IntPtr expiration,
         IntPtr mode,
         byte dequeue);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr CreateApplicationEvent(
+        IntPtr receiver,
+        IntPtr selector,
+        nuint type,
+        NSPoint location,
+        nuint modifierFlags,
+        double timestamp,
+        nint windowNumber,
+        IntPtr context,
+        short subtype,
+        nint data1,
+        nint data2);
+
+    [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
+    internal static partial void PostEvent(IntPtr receiver, IntPtr selector, IntPtr nativeEvent, byte atStart);
 
     [LibraryImport(ObjectiveC, EntryPoint = "objc_msgSend")]
     internal static partial double SendDoubleResult(IntPtr receiver, IntPtr selector);

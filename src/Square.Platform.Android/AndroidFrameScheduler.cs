@@ -10,6 +10,7 @@ public sealed class AndroidFrameScheduler : Java.Lang.Object, Choreographer.IFra
     private readonly Choreographer _choreographer;
     private readonly Func<bool> _onFrame;
     private bool _callbackPending;
+    private long _deadlineMillis;
     private bool _paused;
     private bool _disposed;
     private long _frameCount;
@@ -29,11 +30,33 @@ public sealed class AndroidFrameScheduler : Java.Lang.Object, Choreographer.IFra
     internal AndroidFrameMetrics GetMetrics() => new(_frameCount, _totalFrameTicks, _lastFrameTicks);
 
     /// <summary>请求一帧；重复请求合并。</summary>
-    public void RequestFrame()
+    public void RequestFrame() => RequestFrame(TimeSpan.Zero);
+
+    /// <summary>在 UI 线程请求下一帧；保留最早截止时间，null 撤销，零使用下一个原生帧节拍。</summary>
+    public void RequestFrame(TimeSpan? delay)
     {
-        if (_disposed || _paused || _callbackPending) return;
+        if (_disposed) return;
+        if (delay == null)
+        {
+            RemovePendingCallback();
+            return;
+        }
+        if (_paused) return;
+
+        // Android 延迟回调以毫秒计时；向上取整，避免在控件截止时间之前唤醒。
+        var ticks = Math.Max(0, delay.Value.Ticks);
+        var delayMillis = ticks / TimeSpan.TicksPerMillisecond;
+        if (ticks % TimeSpan.TicksPerMillisecond != 0) delayMillis++;
+        var deadline = SystemClock.UptimeMillis() + delayMillis;
+        if (_callbackPending && _deadlineMillis <= deadline) return;
+
+        RemovePendingCallback();
         _callbackPending = true;
-        _choreographer.PostFrameCallback(this);
+        _deadlineMillis = deadline;
+        if (delayMillis == 0)
+            _choreographer.PostFrameCallback(this);
+        else
+            _choreographer.PostFrameCallbackDelayed(this, delayMillis);
     }
 
     /// <summary>暂停并撤销待处理回调。</summary>

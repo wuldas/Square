@@ -22,6 +22,7 @@ internal static partial class Win32Api
     public const int SW_MAXIMIZE = 3;
     public const int SW_RESTORE = 9;
     public const int WM_CLOSE = 0x0010;
+    public const int WM_SQUARE_WAKE = 0x8001;
     public const int WM_DESTROY = 0x0002;
     public const int WM_PAINT = 0x000F;
     public const int WM_NCACTIVATE = 0x0086;
@@ -181,6 +182,10 @@ internal static partial class Win32Api
 
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     public static partial IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [return: MarshalAs(UnmanagedType.Bool)]
+    [LibraryImport("user32.dll", EntryPoint = "PostMessageW")]
+    public static partial bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [LibraryImport("user32.dll", EntryPoint = "GetDC")]
     public static partial IntPtr GetDC(IntPtr hWnd);

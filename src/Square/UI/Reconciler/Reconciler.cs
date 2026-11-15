@@ -17,6 +17,9 @@ public sealed class Reconciler
     private readonly List<Action> _pendingUpdates = [];
     private bool _flushing;
 
+    /// <summary>工作队列从空变为非空时在锁外触发，用于唤醒按需宿主。</summary>
+    public event Action? WorkAvailable;
+
     /// <summary>是否有待 flush 的变更。</summary>
     public bool HasWork
     {
@@ -30,8 +33,13 @@ public sealed class Reconciler
     public void MarkDirty(Element element)
     {
         ArgumentNullException.ThrowIfNull(element);
+        bool wasEmpty;
         lock (_gate)
+        {
+            wasEmpty = _dirtyElements.Count == 0 && _pendingUpdates.Count == 0;
             _dirtyElements.Add(element);
+        }
+        if (wasEmpty) WorkAvailable?.Invoke();
     }
 
     /// <summary>
@@ -41,8 +49,13 @@ public sealed class Reconciler
     public void ScheduleUpdate(Action update)
     {
         ArgumentNullException.ThrowIfNull(update);
+        bool wasEmpty;
         lock (_gate)
+        {
+            wasEmpty = _dirtyElements.Count == 0 && _pendingUpdates.Count == 0;
             _pendingUpdates.Add(update);
+        }
+        if (wasEmpty) WorkAvailable?.Invoke();
     }
 
     /// <summary>

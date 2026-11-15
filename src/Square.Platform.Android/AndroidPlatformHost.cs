@@ -22,6 +22,11 @@ public sealed class AndroidPlatformHost : IPlatformHost
     private IRenderContext? _renderContext;
     private SquareView? _view;
     private AndroidView? _inputView;
+    private AndroidInputConnection? _inputConnection;
+    private Square.Controls.ITextInputClient? _textInputClient;
+    private object? _textInputEditorIdentity;
+    private bool _hasTextInputFocus;
+    private global::Android.Text.InputTypes _textInputType;
     private global::Android.Views.Surface? _nativeSurface;
     private AndroidVulkanRenderTarget? _nativeRenderTarget;
     private IntPtr _nativeWindow;
@@ -39,6 +44,8 @@ public sealed class AndroidPlatformHost : IPlatformHost
     private int _insetBottom;
     /// <summary>查询当前焦点文本编辑器的组合输入客户端。</summary>
     public Func<Square.Controls.ITextInputClient?>? TextInputClientQuery { get; set; }
+    /// <summary>查询当前焦点编辑器，包括只实现 ITextEditor 的编辑器；用于隔离输入连接。</summary>
+    public Func<Square.Controls.ITextEditor?>? TextEditorQuery { get; set; }
     /// <summary>查询 Square 当前是否存在文本编辑焦点。</summary>
     public Func<bool>? TextEditorFocusQuery { get; set; }
     /// <summary>查询当前 Square 可访问性根节点。</summary>
@@ -175,8 +182,7 @@ public sealed class AndroidPlatformHost : IPlatformHost
             handled |= DispatchHardwareCharacter(eventArgs.UnicodeChar);
         if (handled)
         {
-            NotifyAccessibilityChanged();
-            RequestRenderFrame();
+            NotifyTextInputChanged();
         }
         return handled;
     }
@@ -326,12 +332,99 @@ public sealed class AndroidPlatformHost : IPlatformHost
     {
         _pendingAccent = 0;
         _inputAdapter.Cancel();
+        PrepareInputConnection();
+        _textInputClient = null;
+        _textInputEditorIdentity = null;
+        _hasTextInputFocus = false;
+    }
+
+    internal void PrepareInputConnection()
+    {
+        // Finishing composition can synchronously raise input handlers and create another connection.
+        while (_inputConnection is { } connection)
+        {
+            _inputConnection = null;
+            connection.Deactivate();
+        }
+    }
+
+    internal object? TextInputEditorIdentity =>
+        (object?)TextEditorQuery?.Invoke() ?? TextInputClientQuery?.Invoke();
+
+    internal bool HasTextInputFocus => !_disposed &&
+        (TextInputEditorIdentity != null || TextEditorFocusQuery?.Invoke() == true);
+
+    internal void RegisterInputConnection(AndroidInputConnection connection)
+    {
+        if (_disposed) connection.Deactivate();
+        else
+        {
+            _inputConnection = connection;
+            _textInputClient = TextInputClientQuery?.Invoke();
+            _textInputEditorIdentity = TextInputEditorIdentity;
+            _hasTextInputFocus = HasTextInputFocus;
+            _textInputType = AndroidInputConnection.GetInputType(_textInputClient);
+        }
+    }
+
+    internal global::Android.Views.InputMethods.IInputConnection? CreateInputConnection(
+        AndroidView target, global::Android.Views.InputMethods.EditorInfo? info)
+    {
+        PrepareInputConnection();
+        if (!HasTextInputFocus) return null;
+        var connection = new AndroidInputConnection(target, this);
+        if (info != null)
+            AndroidInputConnection.ConfigureEditorInfo(info, TextInputClientQuery?.Invoke());
+        return connection;
+    }
+
+    private void SynchronizeTextInput()
+    {
+        var inputView = _inputView ?? _view;
+        if (_disposed || inputView == null) return;
+        var client = TextInputClientQuery?.Invoke();
+        var editorIdentity = TextInputEditorIdentity;
+        var hasFocus = editorIdentity != null || TextEditorFocusQuery?.Invoke() == true;
+        var inputType = AndroidInputConnection.GetInputType(client);
+        var manager = _activity.GetSystemService(Context.InputMethodService) as global::Android.Views.InputMethods.InputMethodManager;
+        if (!ReferenceEquals(_textInputClient, client) || !ReferenceEquals(_textInputEditorIdentity, editorIdentity) ||
+            _hasTextInputFocus != hasFocus || _textInputType != inputType)
+        {
+            PrepareInputConnection();
+            // Composition completion may have changed focus or input type through an input handler.
+            client = TextInputClientQuery?.Invoke();
+            editorIdentity = TextInputEditorIdentity;
+            hasFocus = editorIdentity != null || TextEditorFocusQuery?.Invoke() == true;
+            inputType = AndroidInputConnection.GetInputType(client);
+            _textInputClient = client;
+            _textInputEditorIdentity = editorIdentity;
+            _hasTextInputFocus = hasFocus;
+            _textInputType = inputType;
+            if (hasFocus) inputView.RequestFocus();
+            manager?.RestartInput(inputView);
+            if (!hasFocus)
+                manager?.HideSoftInputFromWindow(inputView.WindowToken, global::Android.Views.InputMethods.HideSoftInputFlags.None);
+        }
+        if (client != null)
+        {
+            var compositionStart = client.CompositionStart;
+            var compositionEnd = compositionStart < 0 ? -1 : compositionStart + client.CompositionLength;
+            manager?.UpdateSelection(inputView, client.SelectionStart, client.SelectionEnd, compositionStart, compositionEnd);
+        }
+    }
+
+    internal void NotifyTextInputChanged()
+    {
+        SynchronizeTextInput();
+        NotifyAccessibilityChanged();
+        RequestRenderFrame();
     }
 
     internal void RaisePointer(PointerInput input)
     {
         if (input.Action == PointerAction.Down) _pendingAccent = 0;
         PointerEvent?.Invoke(input);
+        SynchronizeTextInput();
         if (input.Action != PointerAction.Move)
         {
             NotifyAccessibilityChanged();
@@ -352,7 +445,11 @@ public sealed class AndroidPlatformHost : IPlatformHost
         NotifyAccessibilityChanged();
     }
     internal void NotifyAccessibilityChanged() => _view?.NotifyAccessibilityChanged();
-    internal void InvalidateView() => _view?.PostInvalidateOnAnimation();
+    internal void InvalidateView()
+    {
+        SynchronizeTextInput();
+        _view?.PostInvalidateOnAnimation();
+    }
     internal void LogPerformanceDiagnostics(AndroidFrameScheduler? scheduler)
     {
         var presenter = _presenter.GetMetrics();
@@ -379,7 +476,8 @@ public sealed class AndroidPlatformHost : IPlatformHost
     {
         var inputView = _inputView ?? _view;
         if (inputView == null || _disposed) return;
-        if (TextInputClientQuery?.Invoke() == null && TextEditorFocusQuery?.Invoke() != true) return;
+        SynchronizeTextInput();
+        if (!HasTextInputFocus) return;
         inputView.RequestFocus();
         var inputManager = _activity.GetSystemService(Context.InputMethodService) as global::Android.Views.InputMethods.InputMethodManager;
         inputManager?.ShowSoftInput(inputView, global::Android.Views.InputMethods.ShowFlags.Implicit);
@@ -474,11 +572,16 @@ public sealed class AndroidPlatformHost : IPlatformHost
         _disposed = true;
         _running = false;
         _inputAdapter.Cancel();
+        PrepareInputConnection();
+        _textInputClient = null;
+        _textInputEditorIdentity = null;
+        _hasTextInputFocus = false;
         _inputView = null;
         _presenter.Dispose();
         _renderContext = null;
         ClearNativeSurface();
         AccessibilityRootQuery = null;
+        TextEditorQuery = null;
         TextEditorFocusQuery = null;
         TextInputClientQuery = null;
         SizeChanged = null;

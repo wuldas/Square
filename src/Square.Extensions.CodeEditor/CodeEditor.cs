@@ -1282,6 +1282,13 @@ public sealed class CodeEditor : UIElement, ITextEditor
     }
 
     /// <inheritdoc/>
+    public TimeSpan? CaretBlinkDelay => !IsFocused || SelectionLength > 0
+        ? null
+        : _caretBlinkAnimation is { IsComplete: false }
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(Math.Max(0, _nextCaretTransitionSeconds - _caretClock.Elapsed.TotalSeconds));
+
+    /// <inheritdoc/>
     public bool ToggleCaretBlink()
     {
         if (!IsFocused || SelectionLength > 0) return false;

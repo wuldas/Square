@@ -1,7 +1,7 @@
 <template>
   <View class="app">
     <Text class="app-title" text="Square Framework Vue Samples" />
-    <Tabs :paths="TabPaths" :pageFactories="TabPages" initialPath="/text" @selected="OnTabSelected">
+    <Tabs class="main-tabs" :paths="TabPaths" :pageFactories="TabPages" initialPath="/text" @selected="OnTabSelected">
       <template v-slot:tabs>
         <Button class="tab-button">Text</Button>
         <Button class="tab-button">Controls</Button>
@@ -43,7 +43,8 @@
     SelectedTabStatus.Value = "Selected tab: " + e.Detail;
 </script>
 <style>
-  .app { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+  .app { display: flex; flex-direction: column; gap: 10px; padding: 16px; height: 100%; }
+  .main-tabs { flex: 1 1 0; min-height: 0; }
   .app-title { color: #202124; font-size: 22px; }
   .tab-status { color: #475467; font-size: 13px; }
 </style>

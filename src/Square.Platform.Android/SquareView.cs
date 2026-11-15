@@ -1,6 +1,5 @@
 using Android.Content;
 using Android.Graphics;
-using Android.Text;
 using Android.Views;
 using Android.Views.InputMethods;
 using SkiaSharp;
@@ -136,21 +135,11 @@ public sealed class SquareView : SKCanvasView
         _host.HandleKeyEvent(keyCode, e, Square.Platform.KeyAction.Up) || base.OnKeyUp(keyCode, e);
 
     /// <inheritdoc />
-    public override bool OnCheckIsTextEditor() => true;
+    public override bool OnCheckIsTextEditor() => _host.HasTextInputFocus;
 
     /// <inheritdoc />
-    public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs)
-    {
-        if (outAttrs != null)
-        {
-            outAttrs.InputType = InputTypes.ClassText;
-            if (_host.TextInputClientQuery?.Invoke()?.IsMultiline == true)
-                outAttrs.InputType |= InputTypes.TextFlagMultiLine;
-            outAttrs.ImeOptions = ImeFlags.NoExtractUi;
-        }
-
-        return new AndroidInputConnection(this, _host);
-    }
+    public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs) =>
+        _host.CreateInputConnection(this, outAttrs);
 
     /// <summary>请求 Android 将输入法候选区滚动到指定位置。</summary>
     internal void RequestInputRectangle(global::Android.Graphics.Rect rectangle) =>

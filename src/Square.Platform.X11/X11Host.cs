@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Square.Graphics;
@@ -58,6 +59,9 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     private Rect _textInputRect;
     private X11CaretSpot _textInputSpot;
     private bool _disposed;
+    private readonly object _wakeGate = new();
+    private int _wakeFd = -1;
+    private int _wakePending;
     private bool _pointerCaptured;
     private bool _closed;
     private AppWindowState _state = AppWindowState.Normal;
@@ -185,6 +189,13 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         UpdateClientSize(new Size((int)w, (int)h));
 
         InitInputMethod();
+        _wakeFd = X11Api.EventFd(0, X11Api.EventFdNonBlock | X11Api.EventFdCloseOnExec);
+        if (_wakeFd < 0)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            Dispose();
+            throw new Win32Exception(error, "eventfd failed");
+        }
     }
 
     private void InitInputMethod()
@@ -245,6 +256,7 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
     public float DpiScale => _dpiScale;
     public bool IsRunning => _running;
     public AppWindowState State => _state;
+    public Func<TimeSpan?>? FrameDelayQuery { get; set; }
     public CursorKind Cursor
     {
         get => _cursor;
@@ -387,17 +399,38 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
         return _renderContext;
     }
 
+    public void Wake()
+    {
+        // Only libc is used here: background producers must never enter Xlib.
+        if (Interlocked.Exchange(ref _wakePending, 1) != 0) return;
+        lock (_wakeGate)
+        {
+            if (_disposed || _wakeFd < 0) return;
+            ulong value = 1;
+            nint result;
+            do { result = X11Api.WriteEventFd(_wakeFd, in value, sizeof(ulong)); }
+            while (result < 0 && Marshal.GetLastPInvokeError() == X11Api.Interrupted);
+            // EAGAIN means the fd is already readable and the pending flag still owns the work.
+            if (result < 0 && Marshal.GetLastPInvokeError() != X11Api.WouldBlock)
+                throw new Win32Exception(Marshal.GetLastPInvokeError(), "eventfd write failed");
+        }
+    }
+
     public void PumpEvents()
     {
         var clock = Stopwatch.StartNew();
         var frameInterval = X11DisplayMetrics.FrameIntervalTicks(_refreshRate, Stopwatch.Frequency);
         var nextFrameDeadline = X11DisplayMetrics.NextFrameDeadline(0, clock.ElapsedTicks, frameInterval);
+        double? deadline = null;
+        var fds = stackalloc X11Api.PollFd[2];
+        fds[0] = new X11Api.PollFd { fd = X11Api.ConnectionNumber(_display), events = X11Api.PollIn };
+        fds[1] = new X11Api.PollFd { fd = _wakeFd, events = X11Api.PollIn };
         while (_running)
         {
             try
             {
                 var processedEvents = 0;
-                while (X11Api.Pending(_display) > 0 && !X11InputPolicy.ShouldYieldEventPump(processedEvents))
+                while (_running && X11Api.Pending(_display) > 0 && !X11InputPolicy.ShouldYieldEventPump(processedEvents))
                 {
                     X11Api.NextEvent(_display, out var e);
                     processedEvents++;
@@ -409,7 +442,10 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
             {
                 System.Console.Error.WriteLine($"[X11] Exception in event loop: {ex}");
             }
+            if (!_running) break;
 
+            DrainWake();
+            var wake = Interlocked.Exchange(ref _wakePending, 0) != 0;
             var now = clock.ElapsedTicks;
             var updatedFrameInterval = X11DisplayMetrics.FrameIntervalTicks(_refreshRate, Stopwatch.Frequency);
             if (updatedFrameInterval != frameInterval)
@@ -417,17 +453,41 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
                 frameInterval = updatedFrameInterval;
                 nextFrameDeadline = X11DisplayMetrics.NextFrameDeadline(0, now, frameInterval);
             }
-            if (now >= nextFrameDeadline)
+            if (wake || deadline is { } due && now >= due)
             {
+                // Advance before Tick so rendering backpressure does not add a whole frame.
                 nextFrameDeadline = X11DisplayMetrics.NextFrameDeadline(nextFrameDeadline, now, frameInterval);
                 try { Tick?.Invoke(); }
                 catch (Exception ex) { System.Console.Error.WriteLine($"[X11] Exception in tick: {ex}"); }
             }
-            else
-            {
-                Thread.Sleep(1);
-            }
+            if (!_running) break;
+
+            var query = FrameDelayQuery;
+            var delay = query != null ? query() : TimeSpan.Zero;
+            now = clock.ElapsedTicks;
+            deadline = delay is not { } requested ? null : requested <= TimeSpan.Zero
+                ? nextFrameDeadline
+                : now + requested.TotalSeconds * Stopwatch.Frequency;
+            // Xlib may already have buffered more events than the bounded drain consumed.
+            if (X11Api.Pending(_display) > 0) continue;
+            var timeout = deadline is { } next
+                ? (int)Math.Clamp(Math.Ceiling((next - clock.ElapsedTicks) * 1000d / Stopwatch.Frequency), 0, int.MaxValue)
+                : -1;
+            var result = X11Api.Poll(fds, 2, timeout);
+            if (result < 0 && Marshal.GetLastPInvokeError() != X11Api.Interrupted)
+                throw new Win32Exception(Marshal.GetLastPInvokeError(), "poll failed");
+            if (result > 0 && ((fds[0].revents | fds[1].revents) & X11Api.PollError) != 0)
+                throw new InvalidOperationException("X11 event connection closed");
         }
+    }
+
+    private void DrainWake()
+    {
+        nint result;
+        do { result = X11Api.ReadEventFd(_wakeFd, out _, sizeof(ulong)); }
+        while (result < 0 && Marshal.GetLastPInvokeError() == X11Api.Interrupted);
+        if (result < 0 && Marshal.GetLastPInvokeError() != X11Api.WouldBlock)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "eventfd read failed");
     }
 
     private void DispatchEvent(X11Api.XEvent e)
@@ -1056,8 +1116,15 @@ internal sealed unsafe class X11Host : IPlatformHost, IPlatformNativeWindow
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        lock (_wakeGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _running = false;
+            if (_wakeFd >= 0) X11Api.CloseFd(_wakeFd);
+            _wakeFd = -1;
+        }
+        FrameDelayQuery = null;
         ReleasePointerCapture();
         DestroyXImage();
         if (_xic != IntPtr.Zero)

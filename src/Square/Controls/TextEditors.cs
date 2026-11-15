@@ -71,6 +71,8 @@ public interface ITextEditor
     void SelectAll();
     /// <summary>删除当前选区，返回是否实际删除。</summary>
     bool DeleteSelection();
+    /// <summary>距下次光标变化的延迟；null 表示无需闪烁。自定义编辑器默认沿用原生帧节拍。</summary>
+    TimeSpan? CaretBlinkDelay => TimeSpan.Zero;
     /// <summary>切换光标闪烁，返回是否触发了视觉变化。</summary>
     bool ToggleCaretBlink();
     /// <summary>重置光标闪烁状态。</summary>
@@ -94,7 +96,8 @@ public interface ITextInputClient
     int SelectionEnd { get; }
     /// <summary>组合文本起点；无组合文本时为 -1。</summary>
     int CompositionStart { get; }
-    /// <summary>组合文本长度。</summary>
+    /// <summary>组合文本长度；不支持组合范围查询的客户端默认为 0。</summary>
+    int CompositionLength => 0;
     /// <summary>编辑器是否接受换行。</summary>
     bool IsMultiline { get; }
     /// <summary>替换或更新组合文本。</summary>
@@ -554,6 +557,11 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
         RestoreSnapshot(snapshot);
         return true;
     }
+
+    /// <inheritdoc/>
+    public TimeSpan? CaretBlinkDelay => !IsFocused || SelectionLength > 0 || !ShowCaret
+        ? null
+        : TimeSpan.FromSeconds(Math.Max(0, _nextCaretTransitionSeconds - _caretClock.Elapsed.TotalSeconds));
 
     /// <inheritdoc/>
     public bool ToggleCaretBlink()

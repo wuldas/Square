@@ -17,7 +17,7 @@ using Reconciler = Square.UI.Reconciler;
 namespace Square.Hosting;
 
 /// <summary>桌面平台应用程序：驱动平台宿主、布局、渲染与输入分发。</summary>
-public sealed class DesktopApplication : Application, IAppWindowRuntime
+public sealed partial class DesktopApplication : Application, IAppWindowRuntime
 {
     private static readonly Color DefaultSelectionBackground = Color.FromRgb(51, 144, 255);
     private static readonly Color DefaultSelectionForeground = Color.White;
@@ -318,13 +318,24 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     internal void ProcessSessionTick()
     {
         if (_sessionSuspended) return;
-        HandleTick();
+        _frameProcessingDepth++;
+        try
+        {
+            if (_renderContext == null || !_root.IsLoaded) ProcessSessionFrame();
+            else HandleTick();
+        }
+        finally
+        {
+            if (--_frameProcessingDepth == 0) FrameRequested?.Invoke();
+        }
     }
 
     internal void SuspendSession()
     {
         if (_sessionSuspended) return;
         _sessionSuspended = true;
+        _frameClockIdle = true;
+        NotifyFrameRequested();
     }
 
     internal void ResumeSession()
@@ -397,6 +408,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         _sessionSuspended = false;
         _sessionPrepared = false;
         FramePresented = null;
+        FrameRequested = null;
         if (cleanupException != null) throw cleanupException;
     }
     internal bool HasSessionHost => _host != null;
@@ -440,6 +452,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         host.TextInput += HandleTextInput;
         host.Tick += ProcessSessionTick;
         host.RenderRequested += RequestRender;
+        host.StateChanged += HandleHostStateChanged;
+        host.FrameDelayQuery = () => NextFrameDelay;
+        Dispatcher.WorkAvailable += NotifyFrameRequested;
+        _document.Context.Reconciler.WorkAvailable += NotifyFrameRequested;
     }
 
     private void DetachHostEvents(IPlatformHost host)
@@ -452,6 +468,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         host.TextInput -= HandleTextInput;
         host.Tick -= ProcessSessionTick;
         host.RenderRequested -= RequestRender;
+        host.StateChanged -= HandleHostStateChanged;
+        host.FrameDelayQuery = null;
+        Dispatcher.WorkAvailable -= NotifyFrameRequested;
+        _document.Context.Reconciler.WorkAvailable -= NotifyFrameRequested;
     }
 
     private void HandlePointerInput(PointerInput input)
@@ -563,6 +583,7 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
                 _scheduledFrames[target] = requestedTime;
         }
         e.StopPropagation();
+        NotifyFrameRequested();
     }
 
     internal bool HasPendingSessionFrame =>
@@ -572,8 +593,16 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
          _document.Context.Reconciler.HasWork || CssStyleReconciler.HasWorkForTree(_root) ||
          CssStyleReconciler.HasRunningAnimationsForTree(_root) ||
          _scheduledFrames.Count > 0 || HasVisualInvalidation(_root));
-    internal bool HasFocusedTextEditor => _focusedEditor != null;
-    internal Square.Controls.ITextInputClient? FocusedTextInputClient => _focusedEditor as Square.Controls.ITextInputClient;
+    internal ITextEditor? FocusedTextEditor
+    {
+        get
+        {
+            SyncFocusedElementFromTree();
+            return _focusedEditor;
+        }
+    }
+    internal bool HasFocusedTextEditor => FocusedTextEditor != null;
+    internal Square.Controls.ITextInputClient? FocusedTextInputClient => FocusedTextEditor as Square.Controls.ITextInputClient;
 
     internal bool HandleBackSession()
     {
@@ -586,7 +615,11 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
     }
 
     /// <inheritdoc/>
-    public void RequestRender() => Volatile.Write(ref _renderRequested, true);
+    public void RequestRender()
+    {
+        Volatile.Write(ref _renderRequested, true);
+        NotifyFrameRequested();
+    }
 
     internal void QueueHotReloadUpdate()
     {
@@ -1159,6 +1192,8 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void RenderFrame()
     {
+        if (_host?.State == AppWindowState.Minimized) return;
+        _frameProcessingDepth++;
         try
         {
             RenderFrameCore();
@@ -1167,6 +1202,10 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
         {
             FailRendererCaptures(exception);
             throw;
+        }
+        finally
+        {
+            if (--_frameProcessingDepth == 0) FrameRequested?.Invoke();
         }
     }
 
@@ -3063,8 +3102,16 @@ public sealed class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleTick()
     {
+        if (_host?.State == AppWindowState.Minimized)
+        {
+            RunUpdatePass();
+            _frameClockIdle = true;
+            _lastAnimationTickSeconds = _clock.Elapsed.TotalSeconds;
+            return;
+        }
         var now = _clock.Elapsed.TotalSeconds;
-        var animationDelta = (float)Math.Max(0, now - _lastAnimationTickSeconds);
+        var animationDelta = _frameClockIdle ? 0f : (float)Math.Max(0, now - _lastAnimationTickSeconds);
+        _frameClockIdle = false;
         _lastAnimationTickSeconds = now;
         var animationsRunning = CssStyleReconciler.TickAnimations(_root, animationDelta);
         // 避免每 tick 分配 LINQ 数组

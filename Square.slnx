@@ -39,6 +39,7 @@
     <Project Path="tests/Square.Extensions.CodeEditor.Tests/Square.Extensions.CodeEditor.Tests.csproj" />
     <Project Path="tests/Square.Extensions.Terminal.Tests/Square.Extensions.Terminal.Tests.csproj" />
     <Project Path="tests/Square.Extensions.WebView.Tests/Square.Extensions.WebView.Tests.csproj" />
+    <Project Path="tests/Square.ExternalHostScheduling.Tests/Square.ExternalHostScheduling.Tests.csproj" />
     <Project Path="tests/Square.Graphics.Tests/Square.Graphics.Tests.csproj" />
     <Project Path="tests/Square.Images.Tests/Square.Images.Tests.csproj" />
     <Project Path="tests/Square.Native.Html.Tests/Square.Native.Html.Tests.csproj" />

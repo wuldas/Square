@@ -10,7 +10,7 @@ using Xunit;
 using TextControl = Square.Controls.Text;
 namespace Square.Platform.Tests;
 
-public sealed class ApplicationSessionTests
+public sealed partial class ApplicationSessionTests
 {
     [Fact]
     public void ExternalSessionDoesNotPumpAndCleansHostOnce()
@@ -108,8 +108,11 @@ public sealed class ApplicationSessionTests
 
         client.SetComposingText("ni");
         Assert.Equal("ani", input.Value);
+        Assert.Equal(1, client.CompositionStart);
+        Assert.Equal(2, client.CompositionLength);
         client.SetComposingText("你");
         Assert.Equal("a你", input.Value);
+        Assert.Equal(1, client.CompositionLength);
 
         client.CommitText("好");
         Assert.Equal("a好", input.Value);
@@ -345,6 +348,61 @@ public sealed class ApplicationSessionTests
     }
 
     [Fact]
+    public void ProgrammaticFocusChangesAreReflectedWithoutHardwareInput()
+    {
+        var root = new View();
+        var first = new Input();
+        var second = new TextArea();
+        root.Children.Add(first);
+        root.Children.Add(second);
+        var window = new AppWindow("programmatic-input", 64, 48);
+        window.Load(root);
+        using var session = new ApplicationSession(window, new FakeHost());
+        session.Attach();
+        Assert.False(session.HasTextEditorFocus);
+
+        first.Focus();
+        Assert.True(session.HasTextEditorFocus);
+        Assert.Same(first, session.FocusedTextEditor);
+        Assert.Same(first, session.FocusedTextInputClient);
+        first.Unfocus();
+        second.Focus();
+        session.ProcessFrame();
+        Assert.Same(second, session.FocusedTextEditor);
+        Assert.Same(second, session.FocusedTextInputClient);
+        second.Unfocus();
+        Assert.False(session.HasTextEditorFocus);
+        Assert.Null(session.FocusedTextEditor);
+        Assert.Null(session.FocusedTextInputClient);
+    }
+
+    [Fact]
+    public void SuspendedSessionDoesNotExposeTextInputFocusAndResumeRestoresClient()
+    {
+        var input = new Input { Geometry = new Rect(0, 0, 64, 48) };
+        var window = new AppWindow("suspended-input", 64, 48);
+        window.Load(input);
+        var host = new FakeHost();
+        using var session = new ApplicationSession(window, host);
+        Assert.False(session.HasTextEditorFocus);
+        Assert.Null(session.FocusedTextInputClient);
+        session.Attach();
+        host.RaisePointer(new PointerInput(new Point(12, 12), PointerAction.Down, button: MouseButton.Left));
+        Assert.True(session.HasTextEditorFocus);
+        Assert.Same(input, session.FocusedTextInputClient);
+
+        session.Suspend();
+        Assert.False(session.HasTextEditorFocus);
+        Assert.Null(session.FocusedTextInputClient);
+        session.Resume();
+        Assert.True(session.HasTextEditorFocus);
+        Assert.Same(input, session.FocusedTextInputClient);
+        session.Detach();
+        Assert.False(session.HasTextEditorFocus);
+        Assert.Null(session.FocusedTextInputClient);
+    }
+
+    [Fact]
     public void PointerExitClearsHoverWithoutDroppingKeyboardFocus()
     {
         var root = new View { Geometry = new Rect(0, 0, 160, 64) };
@@ -429,7 +487,17 @@ public sealed class ApplicationSessionTests
         public Size ClientSize { get; private set; } = new(64, 48);
         public float DpiScale => 1f;
         public bool IsRunning { get; private set; }
-        public AppWindowState State => AppWindowState.Normal;
+        public AppWindowState State { get; private set; }
+        public Func<TimeSpan?>? FrameDelayQuery { get; set; }
+        public int WakeCount;
+        public int PresentCount { get; private set; }
+        public void Wake() => Interlocked.Increment(ref WakeCount);
+        public event Action<AppWindowState>? StateChanged;
+        public void ChangeState(AppWindowState state)
+        {
+            State = state;
+            StateChanged?.Invoke(state);
+        }
         public string Title { get => _title; set => _title = value; }
         public CursorKind Cursor { get; set; }
         public KeyModifiers Modifiers => KeyModifiers.None;
@@ -497,6 +565,7 @@ public sealed class ApplicationSessionTests
                 {
                     if (PresentationFailure is { } failure) throw failure;
                     LastFrame = bitmap;
+                    PresentCount++;
                 }
             });
         }

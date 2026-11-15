@@ -32,6 +32,7 @@ public sealed class DesktopApplication : Application
 | `RenderingMode` | 每帧重绘策略，默认 `FullFrame`；可通过 `--render-mode` 参数或 `SQUARE_RENDER_MODE` 环境变量配置 |
 | `Dispatcher`（继承自 `Application`） | UI 线程调度器，用于 Signal 跨线程投递 |
 | `FramePresented` | `event Action?`；每次渲染帧提交后触发，供原生性能计数；不代表显示器已实际扫描输出该帧 |
+| `FrameRequested` | `event Action?`；通知帧需求变化，可由后台线程触发，外部宿主须合并并投递到 UI 线程 |
 | `Run()`（继承自 `Application`） | 启动应用：注册默认后端/控件 → 构建文档 → 使用已注册的平台工厂创建窗口 → 消息循环 |
 | `Shutdown()`（继承自 `Application`） | 请求关闭消息循环 |
 
@@ -72,6 +73,7 @@ namespace Square.Hosting;
 public sealed class AppWindow
 {
     public IntPtr NativeWindow { get; }
+    public bool PowerSavingEnabled { get; set; } // 默认 true
     public void LoadGlobalCss(params string[] paths);
     public void LoadGlobalCssText(params string[] css);
     public void Open(Element content, Size? size = null);
@@ -141,6 +143,8 @@ private void Cancel()
 - 子窗口继承 owner 的渲染后端、背景、渲染模式、标题栏样式和边框样式。
 - 每个子窗口拥有独立 `UIDocument`、Dispatcher、渲染上下文和原生消息线程。
 
+`PowerSavingEnabled` 默认开启：空闲时停止帧时钟，动画使用正常宿主节拍，延迟控件帧与光标按截止时间唤醒。关闭后恢复连续 Tick；子窗口创建时继承此设置。最小化仍停止绘制，但可处理 Dispatcher 工作。完整平台行为与自定义宿主接入见 [节能与按需调度](Power-Saving.md)。
+
 ### ApplicationSession — 外部事件循环宿主
 
 `new ApplicationSession(AppWindow window, IPlatformHost host)` 复用桌面运行内核，由 Android Activity/Looper 等宿主驱动，不调用 `PumpEvents()`。
@@ -151,15 +155,27 @@ private void Cancel()
 | `Attach()` | 附加、加载并提交首帧；重复调用不重复附加；Detach 后不可重新 Attach |
 | `ProcessFrame()` | 处理更新与必要的布局、绘制和提交；暂停或未附加时不执行 |
 | `Tick()` | 推进动画、控件帧请求和 caret，需要时直接提交；暂停或未附加时不执行 |
-| `HasPendingFrame` | 当前树的更新、绘制、CSS 动画及控件帧需求；暂停时返回 `false` |
+| `HasPendingFrame` | 兼容的工作查询，包含未来控件帧；暂停时返回 `false`，不宜用作连续 Tick 的判断 |
+| `NextFrameDelay` | UI 线程查询；`null` 为空闲/暂停，零为下个原生帧节拍，正值为最早延迟截止时间 |
+| `FrameRequested` | 帧需求变化事件，宿主应合并并在 UI 线程读取 `NextFrameDelay`；Tick/输入绘制结束后同样通知重新排程 |
 | `Suspend()` / `Resume()` | 保留文档与控件待处理帧请求；恢复时重置动画时间基线并请求重绘 |
 | `ReleaseRenderContext()` | 释放失效原生目标的渲染上下文，不卸载文档或释放 host；已附加且未暂停时抛 `InvalidOperationException`，未附加时不执行 |
 | `FramePresented` | `event Action?`；每次成功提交到后端后通知宿主刷新原生 View，不表示系统已将帧显示到屏幕 |
-| `HasTextEditorFocus` / `FocusedTextInputClient` | 焦点编辑器状态及 `ITextInputClient`；未附加或暂停时客户端为 `null` |
+| `HasTextEditorFocus` / `FocusedTextEditor` / `FocusedTextInputClient` | 查询时同步当前元素树焦点；分别返回编辑焦点、`ITextEditor` 身份和可选的 `ITextInputClient`；未附加或暂停时为 `false` / `null` / `null` |
 | `BackRequested` / `HandleBack()` | Popup 优先，然后调用应用路由后退；返回是否消费 Back |
 | `Detach()` / `Dispose()` | 幂等卸载、分离并释放会话拥有的资源 |
 
-Vulkan Surface 更换顺序：暂停调度和会话 → `ReleaseRenderContext()` → 释放旧原生窗口并更新 host 目标及上下文缓存 → 新 Surface 就绪且 Activity resumed → `Resume()` 并处理帧。不能把已销毁的 Surface 或 renderer 留给后续 `Present()`。
+Vulkan Surface 更换顺序：取消输入连接、暂停调度和会话 → `ReleaseRenderContext()` → 释放旧原生窗口并更新 host 目标及上下文缓存 → 新 Surface 就绪且 Activity resumed → `Resume()` 并处理帧。不能把已销毁的 Surface 或 renderer 留给后续 `Present()`。
+
+### Android 文本输入
+
+`AndroidPlatformHost` 通过 `TextEditorQuery` 查询焦点 `ITextEditor` 身份，通过 `TextInputClientQuery` 查询可选的组合输入客户端。`SquareActivity` 自动将其连接到 `ApplicationSession` 的查询；自行组合 host/session 时也应设置两者，尤其是只实现 `ITextEditor` 的 CodeEditor/Terminal，单独的 `TextEditorFocusQuery` 布尔值不足以区分两个编辑器。
+
+`AndroidInputConnection` 绑定创建时的编辑器。切换编辑器、重建连接、`CancelInput()`、Activity 暂停、Vulkan Surface 丢失和宿主释放都会使旧连接永久失效；关闭连接结束原客户端的组合文本，后续文本提交、删除、选区和按键调用不会转发给新焦点。失效连接的写操作返回 `false`，文本查询返回 `null`。
+
+两个 Android View 共用 `EditorInfo` 配置：普通文本、密码（关闭建议并请求禁止个性化学习）、带符号小数、多行文本，以及初始选区。编辑器身份或类型改变时执行 `RestartInput`；提交、组合、选区、硬件输入和帧提交后通过 `UpdateSelection` 同步当前选区与组合范围。没有焦点编辑器时不创建连接。
+
+`ITextInputClient.CompositionLength` 表示当前组合范围的 UTF-16 长度，默认接口实现为 `0`，已有自定义客户端保持源码兼容；支持组合范围的客户端应实现此属性。`Input` / `TextArea` 已提供实际长度，无组合文本时 `CompositionStart == -1`、`CompositionLength == 0`。
 
 ---
 
@@ -1434,6 +1450,7 @@ public interface ITextEditor
     void HandlePointerUp(Point point);
     void SelectAll();
     bool DeleteSelection();
+    TimeSpan? CaretBlinkDelay => TimeSpan.Zero; // null 为无闪烁，内置编辑器返回实际截止延时
     bool ToggleCaretBlink();
     void ResetCaretBlink();
 }
@@ -2058,6 +2075,8 @@ public interface IPlatformHost
     void Show();
     void Close();
     IRenderContext CreateRenderContext();
+    Func<TimeSpan?>? FrameDelayQuery { get; set; } // 宿主 UI 线程读取，默认接口实现不存储
+    void Wake(); // 线程安全，请求一次 Tick；默认接口实现为空
     void PumpEvents();
     void SetTextInputRect(Rect rect);
     string GetClipboardText();
@@ -2074,7 +2093,9 @@ public interface IPlatformHost
 | `WheelEvent` | `WheelInput`；浮点 DeltaX/DeltaY 使用内容方向，附带精确滚动和惯性阶段标记 |
 | `KeyEvent` | `(keyCode, action)` 键盘事件 |
 | `TextInput` | `(text)` 文本输入（IME） |
-| `Tick` | 平台消息循环空闲回调 |
+| `Tick` | 到期帧或显式唤醒时的 UI 工作回调；启用节能后空闲不持续触发 |
+| `FrameDelayQuery` | 委托返回 `null` 时等待原生事件；零为下个正常帧节拍；正值等待最早截止时间；未设置委托时内置桌面宿主保留旧连续节拍 |
+| `Wake()` | 从任意线程唤醒原生等待并请求一次 Tick；不等于重绘，也不得递归触发 `RenderRequested` |
 | `RenderRequested` | 平台曝光或原生后端 target 重建后请求应用重新提交完整画面 |
 | `PumpEvents()` | 阻塞消息循环，直到窗口关闭 |
 | `SetTextInputRect` | 设置 IME 候选框位置 |

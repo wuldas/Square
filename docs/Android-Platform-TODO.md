@@ -1,6 +1,6 @@
 # Square Android 平台支持 TODO
 
-> Document Revision: 0.5
+> Document Revision: 0.6
 > Status: Experimental MVP 已实现（除 arm64 真机验证外的 emulator、像素、性能、生命周期、IME、accessibility、Canvas/Skia/Vulkan 和 profiled AOT 门禁已验证；官方 `PublishAot=true` 仍为实验能力）
 > Planning Baseline: 2026-09-04
 > 配套：`Architecture.md`、`Rendering-Targets.md`、`Roadmap.md`、`Rendering.md`
@@ -570,6 +570,40 @@ adb exec-out screencap -p > artifacts/android/first-frame.png
 - AndroidCanvas：Dispatcher 将背景从红改蓝后，屏幕自动刷新为蓝色；记录画面像素为 `FF0000FF`，无需触摸或强制 redraw。
 - arm64 Release：`dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj -c Release -f net10.0-android -r android-arm64 --self-contained false -p:SquareTargetPlatform=Android -p:PublishAot=false -p:TrimMode=full -o artifacts/android-review-arm64` 成功，包含 Android AOT 编译；签名 APK/AAB 位于该目录，未做 arm64 真机运行验证。
 - 证据：`artifacts/android/review-fixes.log`、`review-vulkan-resumed.png`、`review-vulkan-input.png` / `.xml`、`review-canvas-refresh.png`。上述证据不替代 arm64 真机和不同 IME/厂商驱动的验证。
+
+### 2026-11-15 输入连接与焦点回归
+
+本轮补齐 IME 输入连接的编辑器身份与生命周期：
+
+- 连接捕获创建时的 `ITextInputClient` 和 `ITextEditor` 身份；切换编辑器、重建、关闭、暂停、Vulkan Surface 丢失或 host Dispose 后旧连接永久失效，包括 `SendKeyEvent` 和 legacy 文本事件回退。
+- 关闭旧连接先完成其组合文本，再采样新编辑器与 `EditorInfo`，避免 composition 的同步 input 回调切换焦点后返回过期连接。
+- `ApplicationSession.FocusedTextEditor` 暴露 legacy 编辑器身份；所有编辑焦点查询同步元素树中的程序焦点变更，暂停/未附加时隐藏编辑焦点。
+- 两种 View 共用密码、带符号小数、多行和初始选区配置。焦点/类型变更执行 `RestartInput`，输入及帧提交后执行 `UpdateSelection`。`ITextInputClient.CompositionLength` 提供组合范围长度，默认值 `0` 保持已有客户端兼容。
+- 自行组合 Android host/session 时设置 `TextEditorQuery = () => session.FocusedTextEditor` 和 `TextInputClientQuery = () => session.FocusedTextInputClient`；`SquareActivity` 已自动设置。
+
+验证环境：Windows、.NET SDK 10.0.201、Android workload 36.1.53、JDK 17.0.14、Android platform 36 revision 2、Build Tools 36.0.0。本机初始出现 NETSDK1147 和 XA5207，恢复 workload 并安装 SDK/JDK 后构建成功。SDK/JDK 安装在忽略的 `artifacts` 下，没有更改项目目标版本或降低编译检查。
+
+```powershell
+# 在仓库根目录运行；依赖已安装时可跳过前两条。
+dotnet workload restore Square.Android.slnx --skip-manifest-update
+$androidSdk = Join-Path $PWD 'artifacts/android-sdk'
+$androidJdk = Join-Path $PWD 'artifacts/android-jdk'
+dotnet build samples/Square.Sample.Android/Square.Sample.Android.csproj -t:InstallAndroidDependencies -f net10.0-android -p:SquareTargetPlatform=Android "-p:AndroidSdkDirectory=$androidSdk" "-p:JavaSdkDirectory=$androidJdk" -p:AcceptAndroidSDKLicenses=true
+
+dotnet test tests/Square.Platform.Tests/Square.Platform.Tests.csproj -c Release
+dotnet test tests/Square.UI.Tests/Square.UI.Tests.csproj -c Release --filter "Category!=Performance"
+dotnet build Square.Android.slnx -c Debug -p:SquareTargetPlatform=Android "-p:AndroidSdkDirectory=$androidSdk" "-p:JavaSdkDirectory=$androidJdk"
+dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj -c Release -f net10.0-android -r android-arm64 --self-contained false -p:SquareTargetPlatform=Android -p:PublishAot=false -p:TrimMode=full "-p:AndroidSdkDirectory=$androidSdk" "-p:JavaSdkDirectory=$androidJdk" -o artifacts/android-ime-arm64
+```
+
+- 平台回归 56/56，通过的新增用例包含 15 项 Android 托管会话测试、程序聚焦与暂停/恢复查询测试；组合范围通过 `ITextInputClient` 接口断言。
+- UI 功能回归 1,761 通过、35 项现有 Yoga 测试跳过、0 失败。
+- `dotnet build Square.slnx -c Release`：Windows 上桌面解决方案构建退出码 0，0 警告、0 错误；`git diff --check` 通过。
+- Android Debug 解决方案构建：退出码 0，0 警告、0 错误。签名 APK：`samples/Square.Sample.Android/bin/Debug/net10.0-android/com.wuldas.square.sample-Signed.apk`，57,199,881 bytes。
+- arm64 Release full trimming + Android AOT publish：退出码 0。`artifacts/android-ime-arm64/com.wuldas.square.sample-Signed.apk` 为 9,405,123 bytes，签名 AAB 为 9,405,884 bytes；`aapt2 dump badging` 确认 `arm64-v8a`、min API 26、target API 36。此处 Android AOT 不等于实验 `PublishAot=true` NativeAOT。
+- 本轮 `adb devices -l` 无设备：尚未执行新增行为的原生 IME 调用探针、键盘布局/候选区截图、第三方 IME、emulator 或 arm64 真机验收；上述通过项限于托管回归与构建/发布，不替代前述设备门禁。macOS/Linux 本轮未运行。
+
+待设备回归矩阵：两个 View 分别验证普通↔密码↔数字↔多行切换与初始非零选区；A→B 后对旧连接调用 commit/composition/delete/selection/key；pause→resume 与 Surface 重建后旧连接失效；composition 完成的 input 回调主动聚焦 B 时新连接仍可提交；同一客户端内光标/选区变更和中文候选区同步。
 
 ### 后续阶段证据要求
 

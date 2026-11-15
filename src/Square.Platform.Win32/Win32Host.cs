@@ -35,6 +35,8 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
     private bool _skipPointerCapture;
     private IntPtr _frameTimer;
     private double _nextFrameTimestamp;
+    private int _wakePending;
+    private bool _disposed;
     // Private diagnostics, read by an explicitly rooted external validation harness only.
     private long _softwareDwmFlushCount;
     private long _softwareDwmFlushTicks;
@@ -56,6 +58,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
     public float DpiScale => _dpiScale;
     public bool IsRunning => _running;
     public AppWindowState State => _state;
+    public Func<TimeSpan?>? FrameDelayQuery { get; set; }
 
     public string Title
     {
@@ -533,6 +536,17 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         return width > 0 && height > 0;
     }
 
+    public void Wake()
+    {
+        // The flag survives calls before Show and coalesces work independently of messages.
+        if (Interlocked.Exchange(ref _wakePending, 1) != 0) return;
+        lock (HostsGate)
+        {
+            if (!_disposed && _hwnd != IntPtr.Zero)
+                Win32Api.PostMessage(_hwnd, Win32Api.WM_SQUARE_WAKE, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
+
     public unsafe void PumpEvents()
     {
         var handle = Win32Api.CreateWaitableTimerEx(IntPtr.Zero, null,
@@ -547,16 +561,10 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         _frameTimer = handle;
         try
         {
-            RestartFrameTimer();
+            _nextFrameTimestamp = Stopwatch.GetTimestamp() + FramePeriodTicks;
+            double? deadline = null;
             while (_running)
             {
-                var count = _state == AppWindowState.Minimized ? 0u : 1u;
-                var result = Win32Api.MsgWaitForMultipleObjectsEx(count, count == 0 ? null : &handle,
-                    Win32Api.INFINITE, Win32Api.QS_ALLINPUT, Win32Api.MWMO_INPUTAVAILABLE);
-                if (result == Win32Api.WAIT_FAILED)
-                    throw new Win32Exception(Marshal.GetLastPInvokeError());
-                if (!_running) break;
-
                 // Bound queue draining so continuous mouse/input traffic cannot starve frames.
                 for (var messages = 0; messages < 64 && _running &&
                      Win32Api.PeekMessage(out var message, IntPtr.Zero, 0, 0, Win32Api.PM_REMOVE); messages++)
@@ -569,14 +577,36 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
                     Win32Api.TranslateMessage(ref message);
                     Win32Api.DispatchMessage(ref message);
                 }
-                if (!_running || count == 0 || result != 0 || _state == AppWindowState.Minimized) continue;
+                if (!_running) break;
 
                 var now = Stopwatch.GetTimestamp();
-                if (now < _nextFrameTimestamp) continue;
-                // Advance before rendering: a slightly over-budget frame must not halve FPS.
-                _nextFrameTimestamp += (Math.Floor((now - _nextFrameTimestamp) / FramePeriodTicks) + 1) * FramePeriodTicks;
-                Tick?.Invoke();
-                if (_running && _state != AppWindowState.Minimized) ArmFrameTimer();
+                var wake = Interlocked.Exchange(ref _wakePending, 0) != 0;
+                if (wake || deadline is { } due && now >= due)
+                {
+                    // Advance before rendering: a slightly over-budget frame must not halve FPS.
+                    if (now >= _nextFrameTimestamp)
+                        _nextFrameTimestamp += (Math.Floor((now - _nextFrameTimestamp) / FramePeriodTicks) + 1) * FramePeriodTicks;
+                    // Wake also services Dispatcher work while minimized.
+                    Tick?.Invoke();
+                }
+                if (!_running) break;
+
+                var query = FrameDelayQuery;
+                var delay = query != null ? query() :
+                    _state == AppWindowState.Minimized ? (TimeSpan?)null : TimeSpan.Zero;
+                now = Stopwatch.GetTimestamp();
+                deadline = delay is not { } requested ? null : requested <= TimeSpan.Zero
+                    ? _nextFrameTimestamp
+                    : now + requested.TotalSeconds * Stopwatch.Frequency;
+                var count = deadline.HasValue ? 1u : 0u;
+                if (deadline is { } next) ArmFrameTimer(next);
+                else StopFrameTimer();
+                // A producer racing the exchange above also posts a message, so this wait
+                // cannot swallow new work between querying demand and entering the kernel.
+                var result = Win32Api.MsgWaitForMultipleObjectsEx(count, count == 0 ? null : &handle,
+                    Win32Api.INFINITE, Win32Api.QS_ALLINPUT, Win32Api.MWMO_INPUTAVAILABLE);
+                if (result == Win32Api.WAIT_FAILED)
+                    throw new Win32Exception(Marshal.GetLastPInvokeError());
             }
         }
         finally
@@ -586,16 +616,9 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         }
     }
 
-    private void RestartFrameTimer()
+    private void ArmFrameTimer(double deadline)
     {
-        if (_frameTimer == IntPtr.Zero || !_running || _state == AppWindowState.Minimized) return;
-        _nextFrameTimestamp = Stopwatch.GetTimestamp() + FramePeriodTicks;
-        ArmFrameTimer();
-    }
-
-    private void ArmFrameTimer()
-    {
-        var remainingTicks = _nextFrameTimestamp - Stopwatch.GetTimestamp();
+        var remainingTicks = deadline - Stopwatch.GetTimestamp();
         var dueTime = -(long)Math.Max(1, Math.Ceiling(remainingTicks * 10_000_000d / Stopwatch.Frequency));
         if (!Win32Api.SetWaitableTimer(_frameTimer, in dueTime, 0, IntPtr.Zero, IntPtr.Zero, false))
             throw new Win32Exception(Marshal.GetLastPInvokeError());
@@ -622,6 +645,9 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
 
         switch (msg)
         {
+            case Win32Api.WM_SQUARE_WAKE:
+                // Tick runs in PumpEvents, never recursively inside WndProc.
+                return IntPtr.Zero;
             case Win32Api.WM_MOUSEACTIVATE:
                 if (host._titleStyle == TitleStyle.Custom)
                 {
@@ -1028,7 +1054,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
         if (_state == state) return;
         _state = state;
         if (state == AppWindowState.Minimized) StopFrameTimer();
-        else RestartFrameTimer();
+        else _nextFrameTimestamp = Stopwatch.GetTimestamp() + FramePeriodTicks;
         StateChanged?.Invoke(state);
     }
 
@@ -1061,6 +1087,12 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
 
     public void Dispose()
     {
+        lock (HostsGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
+        FrameDelayQuery = null;
         StopFrameTimer();
         ReleasePresentResources();
         _lastFrame = null;

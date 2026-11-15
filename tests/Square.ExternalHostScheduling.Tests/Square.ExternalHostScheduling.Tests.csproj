@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\Square.Platform.Android\AndroidFrameScheduler.cs" Link="AndroidFrameScheduler.cs" />
+    <Compile Include="..\..\src\Square.Platform.Godot\SquareControl.cs" Link="SquareControl.cs" />
+  </ItemGroup>
+</Project>

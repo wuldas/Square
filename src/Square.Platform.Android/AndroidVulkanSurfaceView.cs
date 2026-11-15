@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using AndroidFormat = global::Android.Graphics.Format;
 using Android.Content;
-using Android.Text;
 using Android.Views.InputMethods;
 using AndroidKeyEvent = global::Android.Views.KeyEvent;
 using Android.Views;
@@ -82,19 +81,10 @@ public sealed class AndroidVulkanSurfaceView : AndroidView, ISurfaceHolderCallba
     public override bool OnKeyUp(Keycode keyCode, AndroidKeyEvent? e) =>
         _host.HandleKeyEvent(keyCode, e, Square.Platform.KeyAction.Up) || base.OnKeyUp(keyCode, e);
 
-    public override bool OnCheckIsTextEditor() => true;
+    public override bool OnCheckIsTextEditor() => _host.HasTextInputFocus;
 
-    public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs)
-    {
-        if (outAttrs != null)
-        {
-            outAttrs.InputType = InputTypes.ClassText;
-            if (_host.TextInputClientQuery?.Invoke()?.IsMultiline == true)
-                outAttrs.InputType |= InputTypes.TextFlagMultiLine;
-            outAttrs.ImeOptions = ImeFlags.NoExtractUi;
-        }
-        return new AndroidInputConnection(this, _host);
-    }
+    public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs) =>
+        _host.CreateInputConnection(this, outAttrs);
 
     internal void ReleaseSurface()
     {
