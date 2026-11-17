@@ -58,8 +58,15 @@ public static class Program
                 AllowInspector = true,
                 IncludeTextContent = true
             });
-            System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
-            System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+            if (devTools == null)
+            {
+                System.Console.WriteLine("Square DevTools: unavailable; the application continues without it.");
+            }
+            else
+            {
+                System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
+                System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+            }
         }
         app.Run();
     }

@@ -194,7 +194,12 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
     public int Port { get; }
     public string BaseAddress { get; } // http://127.0.0.1:{Port}
 
-    public static DevToolsServer Start(DesktopApplication application, DevToolsOptions? options = null);
+    public static DevToolsServer Start(AppWindow window, DevToolsOptions? options = null);
+    public static bool TryStart(
+        AppWindow window,
+        DevToolsOptions? options,
+        out DevToolsServer? server,
+        out string? error);
     public void Dispose();
     public ValueTask DisposeAsync();
 }
@@ -202,7 +207,8 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
 | 成员 | 说明 |
 |---|---|
-| `Start(application, options)` | 在 `127.0.0.1:{Port}` 启动 HTTP 服务；`Port = 0` 时由操作系统分配；所有 endpoint 要求 `TokenHeader` |
+| `Start(window, options)` | 在 `127.0.0.1:{Port}` 启动 HTTP 服务；`Port = 0` 时由操作系统分配；loopback 监听失败时抛出 `InvalidOperationException`；所有 endpoint 要求 `TokenHeader` |
+| `TryStart(window, options, out server, out error)` | 非抛出版本：只有监听绑定失败返回 `false` 并给出 `error`；参数错误与已关闭窗口仍抛出异常 |
 | `AccessToken` | 实际使用的 token；未配置时为自动生成值 |
 | `Port` | 实际绑定端口；自动端口模式下以此值为准 |
 | `BaseAddress` | 本地服务根地址 |
@@ -210,13 +216,13 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
 Endpoint 以 `/api/v1` 为前缀，提供 `/health`、`/screenshot`、`/input/pointer`、`/input/key`、`/input/text` 和 `/input/wheel`。请求/响应格式见 [`DevTools.md`](DevTools.md)。
 
-推荐通过应用扩展启动服务：
+推荐通过窗口扩展启动服务：
 
 ```csharp
-var devTools = app.UseDevToolsServer(options);
+var devTools = window.UseDevToolsServer(options); // DevToolsServer?
 ```
 
-服务会在 `DesktopApplication` 退出时自动释放。直接调用 `DevToolsServer.Start()` 仍可用于需要自行控制生命周期的场景。
+`UseDevToolsServer` 在监听失败时记录警告并返回 `null`，不会中止应用启动；`DevToolsOptions.ThrowOnStartFailure = true` 时改为抛出异常。服务随窗口 `Closed` 自动释放。直接调用 `DevToolsServer.Start()` 仍可用于需要严格失败或自行控制生命周期的场景。
 
 ### DevToolsOptions
 
@@ -227,17 +233,22 @@ public sealed class DevToolsOptions
 {
     public int Port { get; set; } = 0;
     public string? AccessToken { get; set; }
-    public bool AllowInputInjection { get; set; } = true;
-    public bool AllowInspector { get; set; } = true;
-    public bool IncludeSourcePaths { get; set; } = true;
-    public bool IncludeTextContent { get; set; } = true;
+    public bool ThrowOnStartFailure { get; set; } = false;
+    public bool AllowInputInjection { get; set; } = false;
+    public bool AllowInspector { get; set; } = false;
+    public bool AllowMemoryDiagnostics { get; set; } = false;
+    public bool AllowChromeInspect { get; set; } = false;
+    public bool AllowChromeStyleEditing { get; set; } = false;
+    public bool AllowChromeConsole { get; set; } = false;
+    public bool IncludeSourcePaths { get; set; } = false;
+    public bool IncludeTextContent { get; set; } = false;
 }
 ```
 
 `Port` 语义：
 
 - `0`：由操作系统自动分配空闲端口，是默认和多实例推荐模式。
-- `1..65535`：严格绑定指定端口；端口冲突时 `Start` 抛出异常。
+- `1..65535`：严格绑定指定端口；端口冲突时 `Start` 抛出异常，`UseDevToolsServer` 降级。
 - 启动后通过 `DevToolsServer.Port` 和 `DevToolsServer.BaseAddress` 获取实际地址。
 
 `GET /api/v1/health` 返回：

@@ -129,19 +129,26 @@ public static class Program
                 AllowChromeConsole = chromeConsole,
                 IncludeTextContent = HasOption(args, "--devtools-chrome-inspect")
             });
-            bootstrapWriter.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
-            bootstrapWriter.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
-            bootstrapWriter.WriteLine($"Chrome capabilities: inspect={HasOption(args, "--devtools-chrome-inspect")}, styleEditing={chromeEditing}, console={chromeConsole}");
-            if (HasOption(args, "--devtools-memory"))
-                bootstrapWriter.WriteLine($"Memory diagnostics: {devTools.BaseAddress}/api/v1/memory");
-            if (HasOption(args, "--devtools-chrome-inspect"))
+            if (devTools == null)
             {
-                bootstrapWriter.WriteLine($"Chrome Inspector: {devTools.BaseAddress}/json/list");
-                bootstrapWriter.WriteLine("Warning: Chrome Inspector allows local unauthenticated CDP connections while enabled.");
-                if (chromeEditing)
-                    bootstrapWriter.WriteLine("Warning: 编辑修改运行时应用，不写回源文件。");
-                if (chromeConsole)
-                    bootstrapWriter.WriteLine("Warning: 日志捕获进程 managed 输出，可能包含应用敏感信息。");
+                bootstrapWriter.WriteLine("Square DevTools: unavailable; the application continues without it.");
+            }
+            else
+            {
+                bootstrapWriter.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
+                bootstrapWriter.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+                bootstrapWriter.WriteLine($"Chrome capabilities: inspect={HasOption(args, "--devtools-chrome-inspect")}, styleEditing={chromeEditing}, console={chromeConsole}");
+                if (HasOption(args, "--devtools-memory"))
+                    bootstrapWriter.WriteLine($"Memory diagnostics: {devTools.BaseAddress}/api/v1/memory");
+                if (HasOption(args, "--devtools-chrome-inspect"))
+                {
+                    bootstrapWriter.WriteLine($"Chrome Inspector: {devTools.BaseAddress}/json/list");
+                    bootstrapWriter.WriteLine("Warning: Chrome Inspector allows local unauthenticated CDP connections while enabled.");
+                    if (chromeEditing)
+                        bootstrapWriter.WriteLine("Warning: 编辑修改运行时应用，不写回源文件。");
+                    if (chromeConsole)
+                        bootstrapWriter.WriteLine("Warning: 日志捕获进程 managed 输出，可能包含应用敏感信息。");
+                }
             }
 #else
             throw new NotSupportedException("This build does not include DevTools. Build with -p:SquareSampleUseDevTools=true to enable it.");

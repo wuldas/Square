@@ -806,6 +806,8 @@ Source Generator 默认只将源码交给编译器，不写入磁盘。需要检
 dotnet build -p:SquareEmitCompilerGeneratedFiles=true
 ```
 
+该属性由 `Square.Compiler` 的 buildTransitive targets 映射到 Roslyn 的 `EmitCompilerGeneratedFiles`，因此示例工程和使用 NuGet 编译器包的应用都能生效。文件写入 `obj/<Configuration>/<TargetFramework>/generated/Square.Compiler/`；生成器不会删除上次构建遗留的旧文件，诊断"文件没有更新"时先删除对应 `obj` 目录再重建，不要长期保留磁盘输出。
+
 不要在日常 Windows/Linux 多目标构建中长期启用磁盘输出，否则 IDE 可能同时索引多个 RuntimeIdentifier 下的同名 partial 类型。
 
 ### 15.2 诊断代码
@@ -844,15 +846,18 @@ var devTools = app.UseDevToolsServer(new DevToolsOptions
   Port = 0
 });
 
-Console.WriteLine($"DevTools: {devTools.BaseAddress}/api/v1");
-Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+if (devTools != null)
+{
+    Console.WriteLine($"DevTools: {devTools.BaseAddress}/api/v1");
+    Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+}
 
 app.Run();
 ```
 
 `Port = 0` 是推荐默认值，由操作系统为每个进程分配独立端口。多个应用或测试实例可以同时运行。连接方必须使用 `devTools.BaseAddress`，不能假设固定端口。
 
-固定端口只用于外部系统要求稳定地址的场景；端口被占用时启动会失败，不会自动递增到其他端口。完整规则、认证和 HTTP API 见 [`DevTools.md`](DevTools.md)。
+`UseDevToolsServer()` 在 loopback 监听无法绑定时记录警告并返回 `null`，应用继续运行；需要严格失败时设置 `ThrowOnStartFailure = true`。固定端口只用于外部系统要求稳定地址的场景；端口被占用时 `DevToolsServer.Start` 抛出异常，不会自动递增到其他端口。完整规则、认证和 HTTP API 见 [`DevTools.md`](DevTools.md)。
 
 ---
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -51,12 +52,34 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
     public static DevToolsServer Start(AppWindow window, DevToolsOptions? options = null)
     {
+        if (TryStart(window, options, out var server, out var error)) return server;
+        throw new InvalidOperationException(error);
+    }
+
+    /// <summary>
+    /// 尝试启动服务，环境导致的 loopback 监听失败通过返回值报告，不抛出异常。
+    /// 参数错误、能力开关组合无效或窗口已关闭仍抛出异常。
+    /// </summary>
+    /// <param name="window">目标窗口。</param>
+    /// <param name="options">服务选项；为空时使用默认值。</param>
+    /// <param name="server">启动成功时的服务实例。</param>
+    /// <param name="error">启动失败原因；成功时为 null。</param>
+    /// <returns>启动成功返回 true。</returns>
+    public static bool TryStart(
+        AppWindow window,
+        DevToolsOptions? options,
+        [NotNullWhen(true)] out DevToolsServer? server,
+        out string? error)
+    {
         ArgumentNullException.ThrowIfNull(window);
         options ??= new DevToolsOptions();
         if (options.Port is < 0 or > 65535) throw new ArgumentOutOfRangeException(nameof(options.Port));
         if ((options.AllowChromeStyleEditing || options.AllowChromeConsole) && !options.AllowChromeInspect)
             throw new ArgumentException("Chrome editing and console forwarding require AllowChromeInspect.", nameof(options));
         if (window.IsClosed) throw new InvalidOperationException("The window is closed.");
+
+        server = null;
+        error = null;
 
         // The server runs on a conservative snapshot: mutating the caller's options
         // afterwards never changes the capabilities of a running server.
@@ -73,31 +96,33 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         var token = string.IsNullOrWhiteSpace(options.AccessToken)
             ? Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant()
             : options.AccessToken;
-        var listener = StartListener(options.Port, out var port);
+        var listener = TryStartListener(options.Port, out var port, out error);
+        if (listener == null) return false;
 
-        DevToolsServer? server = null;
+        DevToolsServer? started = null;
         try
         {
-            server = new DevToolsServer(listener, token, port, Guid.NewGuid().ToString("N"), window, snapshot);
-            server.StartLogCapture();
+            started = new DevToolsServer(listener, token, port, Guid.NewGuid().ToString("N"), window, snapshot);
+            started.StartLogCapture();
             // The accept loop is registered before the lifecycle subscription exists,
             // so a window close can never race an unregistered loop.
-            server._acceptLoop = Task.Run(server.AcceptLoopAsync);
+            started._acceptLoop = Task.Run(started.AcceptLoopAsync);
             // Start owns the window lifecycle; the extension entry point shares it
             // through this single subscription.
-            window.Closed += server.Dispose;
+            window.Closed += started.Dispose;
             if (window.IsClosed)
             {
-                server.Dispose();
+                started.Dispose();
                 throw new InvalidOperationException("The window is closed.");
             }
-            return server;
+            server = started;
+            return true;
         }
         catch
         {
-            if (server != null)
+            if (started != null)
             {
-                try { server.Dispose(); }
+                try { started.Dispose(); }
                 catch { /* Preserve the initialization exception. */ }
             }
             else listener.Close();
@@ -495,30 +520,34 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
         return port;
     }
 
-    private static HttpListener StartListener(int requestedPort, out int port)
+    private static HttpListener? TryStartListener(int requestedPort, out int port, out string? error)
     {
         const int attempts = 5;
+        port = 0;
+        error = null;
         for (var attempt = 0; attempt < attempts; attempt++)
         {
-            port = requestedPort == 0 ? ReserveLoopbackPort() : requestedPort;
-            var listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            HttpListener listener;
             try
             {
+                port = requestedPort == 0 ? ReserveLoopbackPort() : requestedPort;
+                listener = new HttpListener();
+                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
                 listener.Start();
                 return listener;
             }
-            catch (HttpListenerException exception) when (requestedPort == 0 && attempt + 1 < attempts)
+            catch (Exception exception) when (exception is HttpListenerException or PlatformNotSupportedException
+                                                   or InvalidOperationException or SocketException)
             {
-                Console.Error.WriteLine(
-                    $"Square DevTools: loopback bind attempt {attempt + 1} failed for port {port} "
-                    + $"with error {exception.NativeErrorCode} ({exception.Message}); "
-                    + $"HttpListener supported: {HttpListener.IsSupported}.");
-                listener.Close();
+                error = $"Unable to bind the Square DevTools loopback listener on 127.0.0.1:{port}: {exception.Message} "
+                    + $"(HttpListener supported: {HttpListener.IsSupported})";
+                if (requestedPort != 0 || attempt + 1 == attempts || exception is PlatformNotSupportedException)
+                    return null;
+                Console.Error.WriteLine($"Square DevTools: {error}; retrying on another port.");
             }
         }
 
-        throw new InvalidOperationException("Unable to bind the Square DevTools loopback listener.");
+        return null;
     }
 
     private static bool IsAuthorized(HttpListenerRequest request, string token)
