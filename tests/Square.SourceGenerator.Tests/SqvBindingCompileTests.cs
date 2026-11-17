@@ -93,6 +93,53 @@ public sealed class SqvBindingCompileTests
         Assert.Contains("\"Loading\", \"HasError\"", generated);
     }
 
+    [Fact]
+    public void ParameterizedEventHandlerRegistersALambdaInsteadOfCallingAtBuildTime()
+    {
+        const string source = """
+            <template>
+              <View>
+                <Button v-for="p in Items" @click="Pick(p)">x</Button>
+              </View>
+            </template>
+            <script lang="csharp">
+              public string[] Items = ["a", "b"];
+              private void Pick(string value) { }
+            </script>
+            """;
+
+        var output = Generate(("Events.sqv", source), out var generated);
+
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("Listen(\"click\", e => { Pick(p); })", generated);
+    }
+
+    [Fact]
+    public void StopModifierAcceptsLambdasAndParameterizedCalls()
+    {
+        const string source = """
+            <template>
+              <View>
+                <Button @click.stop="() => Pick(Name)">a</Button>
+                <Button @click.stop="Pick(Name)">b</Button>
+                <Button @click.stop="OnClick">c</Button>
+              </View>
+            </template>
+            <script lang="csharp">
+              public string Name = "x";
+              private void Pick(string value) { }
+              private void OnClick(Square.Events.Event e) { }
+            </script>
+            """;
+
+        var output = Generate(("Stop.sqv", source), out var generated);
+
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("e.StopPropagation(); ((System.Action)(() => Pick(Name)))();", generated);
+        Assert.Contains("e.StopPropagation(); Pick(Name);", generated);
+        Assert.Contains("e.StopPropagation(); OnClick(e);", generated);
+    }
+
     private static Compilation Generate(
         (string Path, string Source) file,
         out string generatedSources) =>

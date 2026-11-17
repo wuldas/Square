@@ -601,6 +601,20 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     public void BindText<T>(IReactiveValue<T> source) =>
         BindProperty("TextContent", () => Convert.ToString(source.Value, CultureInfo.InvariantCulture) ?? "");
 
+    /// <summary>
+    /// 把指针捕获到该元素（Square 扩展；对齐 <c>setPointerCapture</c>）。捕获期间
+    /// pointermove/pointerup 派发到该元素，不再依赖命中测试；pointerup/cancel 或元素
+    /// 脱离文档时自动释放。
+    /// </summary>
+    public void SetPointerCapture(int pointerId) => OwnerDocument?.SetPointerCapture(this, pointerId);
+
+    /// <summary>释放该元素持有的指针捕获（对齐 <c>releasePointerCapture</c>）。</summary>
+    public void ReleasePointerCapture(int pointerId) => OwnerDocument?.ReleasePointerCapture(this, pointerId);
+
+    /// <summary>该元素是否持有指定指针的捕获。</summary>
+    public bool HasPointerCapture(int pointerId) =>
+        OwnerDocument?.GetPointerCapture(pointerId) is { } captured && ReferenceEquals(captured, this);
+
     private void SetBoundValue<T>(string name, T value)
     {
         if (TrySetSpecialBoundValue(name, value)) return;

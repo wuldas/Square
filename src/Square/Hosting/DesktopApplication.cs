@@ -543,6 +543,7 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
                     _pointerDownTarget = null;
                     ClearActivePath();
                     _touchDownTarget?.DispatchTrusted(StandardEvents.CreatePointerCancel(input));
+                    _document.ClearPointerCapture(input.PointerId);
                 }
 
                 HandleMouseWithPointer(input.Position, MouseAction.Move, input.Button, input);
@@ -1872,8 +1873,9 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
         }
 
         var hit = HitTest(point);
-        if (pointerInput is { Action: PointerAction.Move } moveInput && hit != null)
-            hit.DispatchTrusted(StandardEvents.CreatePointerMove(moveInput));
+        if (pointerInput is { Action: PointerAction.Move } moveInput &&
+            (_document.GetPointerCapture(moveInput.PointerId) ?? hit) is { } moveTarget)
+            moveTarget.DispatchTrusted(StandardEvents.CreatePointerMove(moveInput));
 
         if (action == MouseAction.Down && MainWindow.TitleStyle == TitleStyle.Custom &&
             _document.Head.Geometry.Contains(point) && !IsInteractiveTitleBarElement(hit))
@@ -1941,7 +1943,11 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
             }
 
             if (pointerInput is { Action: PointerAction.Up } upInput)
-                hit?.DispatchTrusted(StandardEvents.CreatePointerUp(upInput));
+            {
+                var upTarget = _document.GetPointerCapture(upInput.PointerId) ?? hit;
+                upTarget?.DispatchTrusted(StandardEvents.CreatePointerUp(upInput));
+                _document.ClearPointerCapture(upInput.PointerId);
+            }
             if (_pointerDownTarget != null && hit == _pointerDownTarget)
                 hit?.DispatchTrusted(StandardEvents.CreateClick());
             _pointerDownTarget = null;

@@ -371,13 +371,31 @@ public ObservableValue<bool> Visible = new(true);
 <Input @input="OnInput" />
 ```
 
-SQV 使用 Vue 风格事件绑定：`@click="OnClick"`。Handler 支持三种签名：
+SQV 使用 Vue 风格事件绑定：`@click="OnClick"`。Handler 支持两种签名：
 
 ```csharp
 private void OnClick() { }
 private void OnClick(Event e) { }
-
 ```
+
+参数化调用按事件回调执行，不会在构建时调用：`@click="Pick(item)"` 生成 `e => { Pick(item); }`；也可以显式写 lambda（`@click="() => Pick(item)"`）。
+
+`.stop` / `.prevent` 只影响事件路由，不要求 handler 带 `Event` 参数：`@click.stop="Pick(item)"`、`@click.stop="() => Pick(item)"` 与 `@click.stop="OnClick(Event)"` 都可编译。
+
+指针拖拽需要捕获时用 `Element.SetPointerCapture(pointerId)` / `ReleasePointerCapture(pointerId)`：
+
+```csharp
+private void OnDown(Event e)
+{
+    var pointer = (PointerEvent)e;
+    ((Element)e.Target!).SetPointerCapture(pointer.PointerId);
+}
+
+private void OnMove(Event e) { /* 指针移出元素边界后仍会收到 */ }
+private void OnUp(Event e) { /* pointerup 后自动释放捕获 */ }
+```
+
+捕获期间 `pointermove` / `pointerup` 派发到捕获元素；`pointerup`、`pointercancel` 或元素从文档树移除时自动释放。命中测试、焦点和 click 仍使用真实坐标。
 
 ### 5.5 双向绑定（显式）
 

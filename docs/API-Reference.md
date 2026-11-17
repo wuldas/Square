@@ -772,6 +772,10 @@ public abstract class Element : EventTarget, IComponentLifecycle, ILayoutLifecyc
     public void BindText<T>(ObservableValue<T> source);  // 插值：订阅并格式化
     public void BindText<T>(IReactiveValue<T> source);
 
+    public void SetPointerCapture(int pointerId);
+    public void ReleasePointerCapture(int pointerId);
+    public bool HasPointerCapture(int pointerId);
+
     // 事件：继承 EventTarget（AddEventListener / DispatchEvent）
 
     public virtual Element? HitTest(Point point);\n    public bool ClipsOverflow();

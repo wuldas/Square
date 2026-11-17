@@ -47,6 +47,34 @@ public abstract class Document : Node
     /// <summary>文档按加载顺序持有的顶层全局样式表。</summary>
     public IReadOnlyList<DocumentStyleSheet> StyleSheets => _styleSheets;
 
+    private readonly Dictionary<int, Element> _pointerCaptures = [];
+
+    /// <summary>
+    /// 把指针捕获到指定元素（对齐 <c>setPointerCapture</c>）：后续 pointermove/pointerup
+    /// 派发到该元素而不是命中测试结果。元素脱离文档后捕获自动失效。
+    /// </summary>
+    internal void SetPointerCapture(Element element, int pointerId) =>
+        _pointerCaptures[pointerId] = element;
+
+    /// <summary>释放指定指针的捕获；只有当前持有者可以释放。</summary>
+    internal void ReleasePointerCapture(Element element, int pointerId)
+    {
+        if (_pointerCaptures.TryGetValue(pointerId, out var current) && ReferenceEquals(current, element))
+            _pointerCaptures.Remove(pointerId);
+    }
+
+    /// <summary>无条件清除指定指针的捕获（pointerup/cancel 隐式释放）。</summary>
+    internal void ClearPointerCapture(int pointerId) => _pointerCaptures.Remove(pointerId);
+
+    /// <summary>读取指针捕获元素；已从文档树移除的捕获会被丢弃。</summary>
+    internal Element? GetPointerCapture(int pointerId)
+    {
+        if (!_pointerCaptures.TryGetValue(pointerId, out var element)) return null;
+        if (element.Parent != null || ReferenceEquals(element, _documentElement)) return element;
+        _pointerCaptures.Remove(pointerId);
+        return null;
+    }
+
     /// <inheritdoc />
     public override NodeType NodeTypeValue => NodeType.Document;
 
