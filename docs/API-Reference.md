@@ -1480,6 +1480,8 @@ public class TextArea : TextEditorBase { protected override bool IsMultiline => 
 
 光标与选择高亮共享同一视觉行盒，其高度为 CSS `line-height` 与字体自然行高的较大值，因此单行和多行编辑器中的光标、高亮及 IME 定位保持一致。
 
+`change` 事件的触发时机与 HTML 文本输入一致：只对用户编辑派发（程序赋值和绑定更新不派发），比较基准是获得焦点时或上一次提交时的 `Value`。单行 `Input` 在失焦或按 Enter 时提交；多行 `TextArea` 的 Enter 插入换行、只在失焦时提交；没有实际改动时不重复派发。`input` 事件仍然在每次用户输入时派发。
+
 ### 结构原语
 
 ```csharp

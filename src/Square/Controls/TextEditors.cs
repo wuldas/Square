@@ -439,6 +439,9 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
             case 13 when CanEditText && IsMultiline:
                 ReplaceSelection("\n");
                 return;
+            case 13 when CanEditText:
+                CommitPendingChange();
+                return;
             case 35:
                 MoveCaret(control ? Value.Length : CurrentLine().End, shift);
                 return;
@@ -1170,6 +1173,18 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
         _changeBaseline = Value;
         _hasChangeBaseline = false;
         _hasUserEditSinceFocus = false;
+        if (changed) DispatchEvent(StandardEvents.CreateChange());
+    }
+
+    /// <summary>
+    /// Enter in a single-line editor commits the pending user edit, matching HTML input
+    /// behavior. The session is re-baselined so a later Enter or blur can commit again.
+    /// </summary>
+    private void CommitPendingChange()
+    {
+        var changed = _hasChangeBaseline && _hasUserEditSinceFocus &&
+            !string.Equals(Value, _changeBaseline, StringComparison.Ordinal);
+        BeginChangeSession();
         if (changed) DispatchEvent(StandardEvents.CreateChange());
     }
 

@@ -646,6 +646,44 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void InputEnterCommitsThePendingChangeAndRebaselinesTheSession()
+    {
+        var input = new Input { Value = "seed" };
+        var changes = 0;
+        input.AddEventListener("change", () => changes++);
+
+        input.Focus();
+        input.HandleTextInput("x");
+        input.HandleKey(13);
+        Assert.Equal(1, changes);
+        Assert.Equal("seedx", input.Value);
+
+        input.HandleKey(13);
+        Assert.Equal(1, changes);
+
+        input.HandleTextInput("y");
+        input.HandleKey(13);
+        Assert.Equal(2, changes);
+
+        input.Unfocus();
+        Assert.Equal(2, changes);
+    }
+
+    [Fact]
+    public void TextAreaEnterInsertsANewlineWithoutCommittingChange()
+    {
+        var area = new TextArea { Value = "seed" };
+        var changes = 0;
+        area.AddEventListener("change", () => changes++);
+
+        area.Focus();
+        area.HandleKey(13);
+
+        Assert.Equal("seed\n", area.Value);
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
     public void CaptureFocusEditParticipatesInChangeSession()
     {
         var input = new Input { Value = "seed" };
