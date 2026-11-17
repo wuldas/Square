@@ -259,6 +259,9 @@ public sealed class AppWindow : IRenderBackendApplication
 
         if (Content != null) _document.Body.Children.Remove(Content);
         Content = content;
+        // Window content fills the body by default (the desktop-app counterpart of a page
+        // root with height:100%). Cascaded at the lowest priority so author CSS wins.
+        content.Style.SetCascaded("height", "100%", int.MinValue);
         _document.Body.Children.Add(content);
     }
 

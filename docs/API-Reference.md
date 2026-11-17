@@ -85,6 +85,8 @@ public sealed class AppWindow
 
 `LoadGlobalCss` 从文件加载窗口级全局样式。相对路径以 `AppContext.BaseDirectory` 为基准；可一次传入多个路径，也可多次调用。`LoadGlobalCssText` 接收一个或多个 CSS 源文本。两种方法均保持添加顺序，同等 specificity 下后加载规则覆盖先加载规则，并且必须在应用开始运行前调用。
 
+`Load(content)` 把页面内容加入文档 `body`，并以最低优先级级联 `height: 100%`，让页面根默认填满窗口；作者 CSS 显式设置的 `height`/`flex` 覆盖该值。
+
 ```csharp
 var window = new AppWindow("My App");
 window.LoadGlobalCss("Styles/base.css", "Styles/theme.css");
