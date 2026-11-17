@@ -9,6 +9,46 @@
 
 Square 的兼容目标是以 CSS2.1 为基础、叠加 CSS2.2 修订/勘误对齐的可移植子集，而不是完整 CSS2.2。CSS2.2 相关条目只描述已实现且可验证的局部语义；完整规范模型仍按下文边界处理。
 
+## 常用属性速查
+
+以下按“常用页面直接可用”与“未支持”分组；逐项细节和测试覆盖以本文后续矩阵为准。
+
+| 类别 | 可直接使用 | 未支持 / 注意 |
+|---|---|---|
+| 布局 | `display: block/flex/grid/table/none`、`flex-direction`、`justify-content`、`align-items`、`align-self`、`flex`、`flex-grow/shrink/basis`、`gap`/`row-gap`/`column-gap`、`width/height/min-max`（px、%、rp）、`margin`、`padding`、`border-width/style/color`、`border-radius`、`box-sizing`、`overflow`、`position: relative/absolute/fixed`、`top/right/bottom/left/inset`、`z-index`（同级简单排序） | `position: sticky`、`calc()`/`min()`/`max()`/`clamp()`、`float`/`clear` 的完整 BFC、`grid-template-areas` 之外的复杂 grid 排布 |
+| 文本 | `color`、`font-family`、`font-size`、`font-weight`、`font-style`、`line-height`、`text-align`、`white-space`（normal/pre/nowrap/pre-wrap/pre-line）、`letter-spacing`、`word-spacing`、`text-indent`、`text-transform`、`text-decoration` | `text-overflow: ellipsis`、`word-break`、`overflow-wrap`、`hyphens`、完整 `vertical-align` |
+| 绘制 | `background`/`background-color`（纯色）、`border`（solid/none）、`box-shadow`、`outline`、`opacity`（子树整体）、`visibility` | `background-image`、CSS gradient（`linear-gradient` 等）、`filter`、`mix-blend-mode`、CSS `transform`（SVG `transform` 属性是独立子集） |
+| 动画 | `@keyframes` 数值关键帧、`animation` 的 duration/delay/iteration/direction | `transition`、颜色/transform 插值、`animation-fill-mode`/`play-state`、动画事件 |
+| 颜色 | `#RGB`、`#RRGGBB`、Square `#AARRGGBB`、`rgb()`/`rgba()`、颜色关键字 | 标准 CSS `#RRGGBBAA`（八位十六进制顺序不同）、相对颜色/颜色空间 |
+| 伪类/伪元素 | `:hover`、`:active`、`:focus-visible`、`:disabled`、`::before`/`::after` + `content`、`::-webkit-scrollbar*` 子集 | `::part()`、highlight 系列、完整 stacking context |
+
+### 布局配方
+
+```css
+/* 撑满剩余高度的滚动区 */
+.page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.page-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+
+/* 固定头尾 + 滚动中间：头部/尾部用 flex: 0 0 <高度>，中间 flex: 1 1 0 */
+.header, .footer { flex: 0 0 48px; }
+.content { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+
+/* 模态遮罩：fixed 相对视口铺满，内容居中 */
+.overlay {
+  position: fixed; inset: 0; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.dialog { width: 420px; max-width: 90%; background: #fff; border-radius: 12px; }
+
+/* 空元素不会占位；需要占位时显式给高度或 flex-grow */
+.spacer { flex: 1 1 0; min-height: 0; }
+```
+
+`height: auto` 的元素高度由内容决定：没有子节点或子节点全部 `display: none` 时高度为 0（与 CSS 块级盒一致）。`width: auto` 的块级元素按包含块宽度拉伸。
+
+
+
 ## CSS2.1 基线与 CSS2.2 对齐状态
 
 当前已接入 CSS2.1 阶段 1-9 的最低可用实现路径，包括属性元数据与简写展开、`@media` 的 `screen` / `all` 求值、Block/Inline normal flow、直接 Float/Clear、Relative/Absolute/Fixed 定位、通用盒绘制、生成内容/Counter/List Marker，以及独立 Table formatting path。

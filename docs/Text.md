@@ -168,10 +168,22 @@ public sealed class TextLayout
 
 ---
 
-## 9. Font Fallback（M7）
+## 9. Font Fallback
 
-- 缺字时自动回退到备用字体
-- 回退链可配置
+现状（0.3.1）：
+
+- `font-family` 支持逗号分隔列表：`FontManager.ResolveFamilyList` 选择列表中的第一个可用族，不支持逐字形回退链。
+- Windows 系统光栅器对默认族（`Segoe UI` / `Segoe UI Variable`）做了 CJK 字形映射：日文假名映射到 `Yu Gothic UI`，CJK 统一表意文字映射到 `Microsoft YaHei UI`。非 Windows 的 STB 光栅器维护候选面列表并选择可用面。
+- 其它符号区（几何图形、装饰符号）和 astral emoji 是否可见取决于所选字体是否包含该字形；缺字时可能显示空白或 tofu，框架不会自动切换到 Segoe UI Symbol / Segoe UI Emoji / Noto Color Emoji。
+- 当前没有按字形构造回退 run 的排版路径，也没有全局 fallback 列表 API；完整 Font Fallback（含 emoji 和跨 fallback run 的 cluster 边界）仍是 M7 计划项（见下表）。
+
+配置入口：
+
+- CSS `font-family`（可继承，作用到整棵子树）：`font-family: 'Segoe UI Symbol', 'Segoe UI Emoji', 'Microsoft YaHei UI', sans-serif;`
+- 控件属性：`Text.FontFamily` / `FontIcon.FontFamily`（`LeadingIconFontFamily` 等）。
+- 代码：`FontManager.Instance.FromCss(familyList, size, weight, style, defaultSize)`。
+
+需要显示符号或 emoji 时，优先选择覆盖这些码位的字体族（如 `Segoe UI Symbol`、`Segoe UI Emoji`）并把它放在 `font-family` 列表前面。
 
 ---
 
