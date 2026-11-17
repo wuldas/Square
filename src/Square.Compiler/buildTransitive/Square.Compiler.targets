@@ -1,6 +1,9 @@
 <Project>
   <PropertyGroup>
     <SquareEnableDefaultMarkup Condition="'$(SquareEnableDefaultMarkup)' == ''">true</SquareEnableDefaultMarkup>
+    <!-- 文档化开关：-p:SquareEmitCompilerGeneratedFiles=true 把生成的 partial 写入
+         obj/<Configuration>/<TargetFramework>/generated/Square.Compiler/。 -->
+    <EmitCompilerGeneratedFiles Condition="'$(SquareEmitCompilerGeneratedFiles)' == 'true'">true</EmitCompilerGeneratedFiles>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(SquareEnableDefaultMarkup)' == 'true'">
