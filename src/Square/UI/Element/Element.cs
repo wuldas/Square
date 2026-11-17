@@ -569,6 +569,27 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         _bindings.Add(subscription!);
     }
 
+    /// <summary>绑定集合快照：集合实例直接写入属性袋（Square 扩展；变更通知不传递）。</summary>
+    public void BindProperty(string name, System.Collections.IEnumerable collection)
+    {
+        ArgumentNullException.ThrowIfNull(collection);
+        SetProperty(name, collection);
+    }
+
+    /// <summary>
+    /// 把模板插值写入 <c>TextContent</c>：响应源订阅后按字符串转换，普通值直接格式化。
+    /// 生成代码对 <c>{{ Expression }}</c> 使用该入口，避免方法调用/数值表达式编译失败。
+    /// </summary>
+    public void BindText<T>(T value) => SetProperty("TextContent", Convert.ToString(value, CultureInfo.InvariantCulture) ?? "");
+
+    /// <summary>订阅 <see cref="ObservableValue{T}"/> 并转换为 <c>TextContent</c>。</summary>
+    public void BindText<T>(ObservableValue<T> source) =>
+        BindProperty("TextContent", () => Convert.ToString(source.Value, CultureInfo.InvariantCulture) ?? "");
+
+    /// <summary>订阅任意响应值并转换为 <c>TextContent</c>。</summary>
+    public void BindText<T>(IReactiveValue<T> source) =>
+        BindProperty("TextContent", () => Convert.ToString(source.Value, CultureInfo.InvariantCulture) ?? "");
+
     private void SetBoundValue<T>(string name, T value)
     {
         if (TrySetSpecialBoundValue(name, value)) return;

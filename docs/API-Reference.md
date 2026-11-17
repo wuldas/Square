@@ -764,7 +764,13 @@ public abstract class Element : EventTarget, IComponentLifecycle, ILayoutLifecyc
     public T? GetProperty<T>(string name);
     public void SetProperty<T>(string name, T value);
     public void BindProperty<T>(string name, Func<T> getter);
+    public void BindProperty<T>(string name, Func<T> getter, params IReactiveSource[] sources);
     public void BindProperty<T>(string name, ObservableValue<T> source);
+    public void BindProperty<T>(string name, IReactiveValue<T> source);
+    public void BindProperty(string name, System.Collections.IEnumerable collection); // 集合快照
+    public void BindText<T>(T value);                    // 插值：格式化为 TextContent
+    public void BindText<T>(ObservableValue<T> source);  // 插值：订阅并格式化
+    public void BindText<T>(IReactiveValue<T> source);
 
     // 事件：继承 EventTarget（AddEventListener / DispatchEvent）
 
@@ -791,9 +797,9 @@ public abstract class Element : EventTarget, IComponentLifecycle, ILayoutLifecyc
 }
 ```
 
-### Document / UIDocument
+绑定写入属性袋并触发 `OnPropertyChanged`/`OnPropChanged`，**不调用 CLR 属性的 setter**；`[Prop]` 属性的 getter/setter 应读写属性袋，派生逻辑放在 `OnPropertyChanged`。模板中的常量表达式（如 `:size="40"`）生成 CLR 属性直接赋值，因此会执行 setter 并获得 C# 类型转换；普通集合表达式生成 `BindProperty(name, collection)` 快照，`ObservableCollection<T>` 的变更不会自动推送。单表达式插值（`{{ Fn(x) }}`、`{{ Count.Value }}`）生成 `BindText`：响应源订阅后格式化，其他表达式按字符串输出，不会产生 CS0411。
 
-```csharp
+### Document / UIDocument```csharp
 namespace Square.UI;
 
 public abstract class Document : EventTarget

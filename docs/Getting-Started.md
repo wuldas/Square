@@ -416,7 +416,36 @@ private void OnNameChanged(Event e)
 <UserCard Title="Hello" Count={5} />
 ```
 
-### 6.3 数据流
+静态值（`Title="Hello"`、`Count={5}`）直接写入子组件属性；动态表达式（`{PageTitle}`）在父组件构建时求值。需要父 → 子持续更新时使用 `ObservableValue<T>` / `IReactiveValue<T>`：
+
+```xml
+<UserCard Title={ViewModel.PageTitle} />
+```
+
+### 6.3 绑定语义
+
+模板绑定最终写入元素的属性袋（`SetProperty`/`BindProperty`），**不会调用 CLR 属性的 setter**。因此 `[Prop]` 属性应使用 store-backed 写法，派生逻辑放在 `OnPropertyChanged` / `OnPropChanged`：
+
+```csharp
+[Prop]
+public IReadOnlyList<Track> Tracks
+{
+    get => GetProperty<IReadOnlyList<Track>>(nameof(Tracks)) ?? [];
+    set => SetProperty(nameof(Tracks), value ?? []);
+}
+
+protected override void OnPropertyChanged(string name)
+{
+    base.OnPropertyChanged(name);
+    if (name == nameof(Tracks)) ApplyTracks(Tracks);
+}
+```
+
+在 `set` 中写副作用（例如直接调用 `ApplyTracks`）在手动赋值属性时有效，但模板绑定会绕过它，属于静默失效，应避免。常量表达式（`:size="40"`）会直接赋值 CLR 属性以获得类型转换；动态表达式仍走属性袋。
+
+普通值也可以用于一次性绑定，例如 `:tracks="Collection"` 会写入集合快照（`ObservableCollection<T>` 的变更不会自动推送，需要持续更新时改用 `ObservableValue<T>` 或在 `v-for` 中使用集合）。
+
+### 6.4 数据流
 
 - 单向：父 → 子
 - 子组件不可改写 Props 值
@@ -433,7 +462,7 @@ protected override void OnPropChanged(string name)
 }
 ```
 
-### 6.4 编译期校验
+### 6.5 编译期校验
 
 必填 Prop 缺失时，编译期报诊断（带 `.sqv` / `.sqx` 行列号）。
 
