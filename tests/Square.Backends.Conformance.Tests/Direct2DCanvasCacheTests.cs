@@ -305,12 +305,41 @@ public sealed class Direct2DCanvasCacheTests
         }
         public Bitmap Capture()
         {
-            Thread.Sleep(160);
-            return VisibleHwndCapture.Capture(Host);
+            var handle = (IntPtr)Host.GetType().GetProperty("Handle")!.GetValue(Host)!;
+            Assert.True(SetWindowPos(handle, new IntPtr(-1), 0, 0, 0, 0, 0x0053));
+            // Windows 11 rounds popup corners and the shell may still animate a freshly shown
+            // window, so the desktop composition can lag the presented frame. Flush DWM and
+            // require two identical frames before comparing pixels; otherwise a half-composed
+            // first capture would differ from every later one for reasons unrelated to caching.
+            var cornerPreference = 1; // DWMWCP_DONOTROUND
+            var attribute = DwmSetWindowAttribute(handle, 33, ref cornerPreference, sizeof(int));
+            Assert.True(attribute >= 0, $"DwmSetWindowAttribute(DONOTROUND) failed: 0x{attribute:X8}");
+            Bitmap? previous = null;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                DwmFlush();
+                Thread.Sleep(160);
+                var current = VisibleHwndCapture.Capture(Host);
+                if (previous != null && current.Width == previous.Width && current.Height == previous.Height &&
+                    current.Pixels.AsSpan().SequenceEqual(previous.Pixels))
+                {
+                    previous.Dispose();
+                    return current;
+                }
+                previous?.Dispose();
+                previous = current;
+            }
+            return previous!;
         }
         public void Dispose() { Context.Dispose(); Host.Dispose(); }
     }
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr handle, IntPtr after, int x, int y, int width, int height, uint flags);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int size);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmFlush();
 }
