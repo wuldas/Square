@@ -2662,7 +2662,9 @@ public class M1IntegrationTests
         var secondPage = Assert.Single(secondPages);
         Assert.DoesNotContain(firstPage, tabs.QueryAll<View>());
         Assert.Contains(secondPage, tabs.QueryAll<View>());
-        Assert.False(secondPage.Geometry.IsEmpty);
+        // An empty page is content-sized (auto height = 0), but it must still be laid out
+        // inside the tab panel instead of keeping a stale/empty rectangle.
+        Assert.True(secondPage.Geometry.Width > 0);
         Assert.InRange(secondPage.Geometry.Y, 0, 500);
         Assert.Same(secondPage, tabs.QueryAll<View>().Single(view => view == secondPage));
         Assert.Equal(1, tabs.SelectedIndex);

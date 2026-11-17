@@ -122,7 +122,10 @@ public abstract class UIElement : Element, IFocusableElement
     public override Size Measure(Size availableSize)
     {
         var w = ConstrainWidth(availableSize.Width);
-        var h = ConstrainHeight(availableSize.Height);
+        // Block-level auto height is content-based. A childless element must collapse to 0
+        // instead of claiming the whole available height, otherwise empty Views each take an
+        // equal share of a flex/column parent's remaining space (empty modal hosts, etc.).
+        var h = ConstrainHeight(0);
         return new Size(w, h);
     }
 

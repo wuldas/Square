@@ -169,9 +169,13 @@ Square 使用 Yoga Web Defaults，但对显式主轴尺寸采用更适合桌面 
 |---|---|---|
 | `static` | 默认流式 | ✅ |
 | `relative` | 相对自身 | ✅ |
-| `absolute` | 相对最近定位祖先 | M2 |
-| `fixed` | 相对视口 | M2 |
+| `absolute` | 相对最近定位祖先 | ✅ |
+| `fixed` | 相对视口 | ✅ |
 | `sticky` | 滚动吸顶 | M3+ |
+
+`fixed` 元素不参与文档流、不贡献滚动范围，按视口解析 `top` / `right` / `bottom` / `left` / `inset` 与尺寸（`width:100%; height:100%` 或 `inset:0` 即铺满窗口）。CSS normal flow 与 Yoga（flex/grid）路径行为一致，弹层/遮罩可以直接使用。
+
+自动高度的空元素内容尺寸为 0（块级 `height: auto` 语义）：空 `View` 不会均分父级剩余空间。需要撑满剩余高度时显式使用 `flex-grow: 1`（并配合 `min-height: 0`）或 `height: 100%`。
 
 ---
 
