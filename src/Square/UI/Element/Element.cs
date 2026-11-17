@@ -486,6 +486,14 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// </summary>
     public Rect GetBoundingClientRect() => Geometry;
 
+    /// <summary>
+    /// 属性袋值变化通知（按属性名）。模板条件链用它重新求值 <c>v-if</c> 依赖的组件属性；
+    /// 只在实际写入属性袋时触发，不包含 CLR 字段或局部变量。
+    /// </summary>
+    public event Action<string>? PropertyChanged;
+
+    private void RaisePropertyChanged(string name) => PropertyChanged?.Invoke(name);
+
     /// <summary>读取强类型属性（Square 扩展）。</summary>
     public T? GetProperty<T>(string name)
     {
@@ -499,6 +507,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (TrySetSpecialBoundValue(name, value)) return;
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();
@@ -511,6 +520,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (!Properties.RemoveValue(name)) return false;
         Properties.UnmarkBound(name);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();
@@ -525,6 +535,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         Properties.MarkBound(name);
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();
@@ -595,6 +606,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (TrySetSpecialBoundValue(name, value)) return;
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();

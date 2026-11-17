@@ -69,6 +69,30 @@ public sealed class SqvBindingCompileTests
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
+    [Fact]
+    public void IfChainSubscribesToThePropertiesItsConditionsReference()
+    {
+        const string source = """
+            <template>
+              <View>
+                <Text v-if="Loading">loading</Text>
+                <Text v-else-if="HasError">failed</Text>
+                <Text v-else>done</Text>
+              </View>
+            </template>
+            <script lang="csharp">
+              public bool Loading = true;
+              public bool HasError;
+            </script>
+            """;
+
+        var output = Generate(("Conditional.sqv", source), out var generated);
+
+        Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("ShowNode.BindCondition(this, Loading", generated);
+        Assert.Contains("\"Loading\", \"HasError\"", generated);
+    }
+
     private static Compilation Generate(
         (string Path, string Source) file,
         out string generatedSources) =>

@@ -13,6 +13,8 @@ public sealed class ShowNode : IDisposable
     private readonly Func<Element?> _build;
     private readonly Func<Element?>? _fallbackBuild;
     private IDisposable? _subscription;
+    private Element? _owner;
+    private string[]? _dependencies;
     private bool _lastValue;
     private Element? _child;
     private Element? _fallback;
@@ -52,7 +54,7 @@ public sealed class ShowNode : IDisposable
 
     /// <summary>以布尔条件函数与构造器初始化 <see cref="ShowNode"/>。</summary>
     public ShowNode(Func<bool> condition, Func<Element?> build)
-        : this(condition, build, null)
+        : this(condition, build, (Func<Element?>?)null)
     {
     }
 
@@ -66,6 +68,48 @@ public sealed class ShowNode : IDisposable
         if (_lastValue) _child = _build();
         else if (_fallbackBuild != null) _fallback = _fallbackBuild();
     }
+
+    /// <summary>
+    /// 以布尔条件函数、构造器和属性依赖初始化：条件引用的 <paramref name="dependencies"/>
+    /// 在 <paramref name="owner"/> 的属性袋变化时重新求值（组件 <c>v-if</c> 链使用）。
+    /// </summary>
+    public ShowNode(Func<bool> condition, Func<Element?> build, Element? owner, params string[] dependencies)
+        : this(condition, build)
+    {
+        if (owner == null || dependencies.Length == 0) return;
+        _owner = owner;
+        _dependencies = dependencies;
+        owner.PropertyChanged += OnOwnerPropertyChanged;
+    }
+
+    private void OnOwnerPropertyChanged(string name)
+    {
+        if (_disposed || _dependencies == null) return;
+        foreach (var dependency in _dependencies)
+        {
+            if (!string.Equals(dependency, name, StringComparison.Ordinal)) continue;
+            ScheduleUpdate();
+            return;
+        }
+    }
+
+    /// <summary>
+    /// 以条件值创建节点：响应源直接订阅，普通布尔值按属性依赖创建快照节点。
+    /// 供生成代码为 <c>v-if="Member"</c> 选择正确语义，避免重载漂移。
+    /// </summary>
+    public static ShowNode BindCondition(
+        Element owner, bool condition, Func<Element?> build, params string[] dependencies) =>
+        new(() => condition, build, owner, dependencies);
+
+    /// <summary>以响应源创建条件节点。</summary>
+    public static ShowNode BindCondition(
+        Element owner, ObservableValue<bool> source, Func<Element?> build, params string[] dependencies) =>
+        new(source, build);
+
+    /// <summary>以通用响应值创建条件节点。</summary>
+    public static ShowNode BindCondition(
+        Element owner, IReactiveValue<bool> source, Func<Element?> build, params string[] dependencies) =>
+        new(source, build);
 
     /// <summary>把节点挂载到指定父元素。</summary>
     public void AttachTo(Element parent)
@@ -127,6 +171,12 @@ public sealed class ShowNode : IDisposable
         _disposed = true;
         _subscription?.Dispose();
         _subscription = null;
+        if (_owner != null)
+        {
+            _owner.PropertyChanged -= OnOwnerPropertyChanged;
+            _owner = null;
+            _dependencies = null;
+        }
         if (_child != null && _parent != null) _parent.Children.Remove(_child);
         if (_fallback != null && _parent != null) _parent.Children.Remove(_fallback);
         _child?.DiscardGeneratedSubtree();

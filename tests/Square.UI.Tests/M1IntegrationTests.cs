@@ -2762,6 +2762,34 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void ShowNodeReevaluatesWhenAComponentPropertyDependencyChanges()
+    {
+        Reconciler.Current.Reset();
+        var owner = new View();
+        var host = new View();
+        var shown = new Square.Controls.Text("shown");
+        var node = new ShowNode(
+            () => owner.GetProperty<bool>("Visible"),
+            () => shown,
+            owner,
+            "Visible");
+        node.AttachTo(host);
+
+        owner.SetProperty("Visible", true);
+        Reconciler.Current.Flush();
+        Assert.Same(shown, Assert.Single(host.Children));
+
+        owner.SetProperty("Visible", false);
+        Reconciler.Current.Flush();
+        Assert.Empty(host.Children);
+
+        node.Dispose();
+        owner.SetProperty("Visible", true);
+        Reconciler.Current.Flush();
+        Assert.Empty(host.Children);
+    }
+
+    [Fact]
     public void SwitchNodeReactsToObservableBranchCondition()
     {
         Reconciler.Current.Reset();

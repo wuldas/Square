@@ -476,7 +476,9 @@ protected override void OnPropChanged(string name)
 <Text v-if="IsLoggedIn">欢迎回来</Text>
 ```
 
-当 `IsLoggedIn` 为 `ObservableValue<bool>` 或 `IReactiveValue<bool>` 时，直接传入该响应源，条件变化会增删 Element 子树。`IsLoggedIn.Value` 或普通 C# 布尔表达式在构建时求值，不自动订阅其依赖。
+当 `IsLoggedIn` 为 `ObservableValue<bool>` 或 `IReactiveValue<bool>` 时，直接传入该响应源，条件变化会增删 Element 子树。普通布尔成员若通过元素属性袋更新（`[Prop]` 的 store-backed setter 或 `SetProperty`），条件链也会在该属性变化时重新求值；`v-if`/`v-else-if`/`v-else` 之间允许空白行和注释。`.Value`、方法调用等任意 C# 表达式在构建时求值，不自动订阅其依赖，需要响应性时改用直接传响应源或先写入组件属性。
+
+组件模板根上的 `v-if` 同样生效：条件为假时根元素不会构建。组件元素本身（宿主盒）始终存在于父布局中；需要它不占空间时，把条件放到调用方或为宿主设置尺寸约束。
 
 ### 7.2 列表渲染
 
