@@ -1697,8 +1697,21 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleMouseFromHost(Point point, MouseAction action, MouseButton button) =>
         HandleMouse(point, action, button);
-    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left) =>
-        HandleMouseWithPointer(point, action, button);
+
+    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left)
+    {
+        // Win32/macOS host mouse events and DevTools injection enter here instead of the
+        // PointerEvent path. Synthesize the payload so pointerdown/move/up carry the real
+        // client coordinates instead of the zero-position compatibility events.
+        var pointerAction = action switch
+        {
+            MouseAction.Down => PointerAction.Down,
+            MouseAction.Up => PointerAction.Up,
+            _ => PointerAction.Move
+        };
+        HandleMouseWithPointer(point, action, button,
+            new PointerInput(point, pointerAction, 0, PointerDeviceKind.Mouse, button));
+    }
 
     private void HandleMouseWithPointer(Point point, MouseAction action, MouseButton button = MouseButton.Left,
         PointerInput? pointerInput = null)
