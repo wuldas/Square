@@ -32,17 +32,23 @@ var devTools = window.UseDevToolsServer(new DevToolsOptions
 });
 var app = new DesktopApplication(window);
 
-Console.WriteLine($"{devTools.BaseAddress}/api/v1/health");
-Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+if (devTools != null)
+{
+    Console.WriteLine($"{devTools.BaseAddress}/api/v1/health");
+    Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+}
 
 app.Run();
 ```
+
+`UseDevToolsServer()` 在 loopback 监听无法绑定（端口冲突、HTTP.sys URL ACL 拒绝、平台不支持等）时把原因写入 stderr 并返回 `null`，应用继续运行；需要把启动失败当作致命错误时设置 `ThrowOnStartFailure = true`。`DevToolsServer.Start()` 和 `DevToolsServer.TryStart()` 分别提供严格抛出版本和非抛出版本。
 
 `DevToolsOptions`：
 
 | 属性 | 默认值 | 说明 |
 |---|---:|---|
 | `Port` | `0` | `0` 表示由操作系统自动分配空闲端口；`1..65535` 表示严格绑定指定端口 |
+| `ThrowOnStartFailure` | `false` | `UseDevToolsServer()` 监听失败时是否抛出异常；默认记录警告并返回 `null` 继续运行 |
 | `AccessToken` | `null` | 访问令牌；为空时自动生成 24 字节随机 token 的十六进制字符串 |
 | `AllowInputInjection` | `false` | 是否允许 `/input/*` 输入注入接口；关闭后输入接口返回 `403` |
 | `AllowInspector` | `false` | 是否允许 `/inspect/*` 运行时检查接口；关闭后返回 `403` |
@@ -108,16 +114,21 @@ X-Square-DevTools-Token: <启动时生成的随机令牌>
 ```csharp
 var devTools = window.UseDevToolsServer();
 
-Console.WriteLine($"DevTools endpoint: {devTools.BaseAddress}/api/v1");
-Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+if (devTools != null)
+{
+    Console.WriteLine($"DevTools endpoint: {devTools.BaseAddress}/api/v1");
+    Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+}
 ```
+
+`UseDevToolsServer()` 返回 `null` 表示当前环境无法绑定 loopback 监听（例如 HTTP.sys URL ACL 拒绝、端口冲突或平台不支持），应用继续运行；设置 `ThrowOnStartFailure = true` 可改为抛出异常。直接调用 `DevToolsServer.Start()` 仍会在失败时抛出 `InvalidOperationException`；需要自行判定时使用 `DevToolsServer.TryStart()`。
 
 `UseDevToolsServer()` 和直接 `DevToolsServer.Start()` 均随窗口 `Closed` 停止服务；已关闭窗口不能启动服务。`Dispose()` 只发起取消并停止监听，不阻塞 UI。需要确认所有请求、CDP session 和事件泵已退出时，使用 `await server.DisposeAsync()`。
 
 `DevToolsServer.Start` 返回前，`HttpListener` 已完成监听。此时：
 
-- `devTools.Port` 是实际绑定端口，不会是 `0`。
-- `devTools.BaseAddress` 是当前实例的实际根地址。
+- `Port` 是实际绑定端口，不会是 `0`。
+- `BaseAddress` 是当前实例的实际根地址。
 - 自动端口使用短暂的探测再绑定流程，存在极小的竞争窗口；实现会有限重试，持续冲突时启动失败。
 
 ### 固定端口模式
@@ -514,7 +525,7 @@ curl -X POST -H "X-Square-DevTools-Token: $TOKEN" \
 | `403` | `AllowMemoryDiagnostics=false` 时调用 `/memory` |
 | `500` | 截图、输入注入、Inspector 或内存快照期间出现未处理异常 |
 
-DevTools 启动阶段的端口冲突不会转换为 HTTP 状态码，因为此时服务尚未启动；`DevToolsServer.Start` 会直接抛出异常。
+DevTools 启动阶段的端口冲突不会转换为 HTTP 状态码，因为此时服务尚未启动：`DevToolsServer.Start` 抛出异常，`UseDevToolsServer` 默认记录警告并返回 `null`。
 
 输入 JSON 使用 camelCase 字段名。枚举值解析不区分大小写。
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text.Json;
 using Square.DevTools;
@@ -264,6 +265,64 @@ public sealed class DevToolsServerTests
         var health = await healthResponse.Content.ReadFromJsonAsync<HealthResponse>();
         Assert.NotNull(health);
         Assert.True(health.ChromeInspect);
+    }
+
+    [Fact]
+    public void TryStartReportsLoopbackBindFailureWithoutThrowing()
+    {
+        var window = CreateWindow();
+        var port = ReserveLoopbackPort();
+        var blocker = new HttpListener();
+        blocker.Prefixes.Add($"http://127.0.0.1:{port}/");
+        blocker.Start();
+        try
+        {
+            var options = new DevToolsOptions { Port = port, AccessToken = "test-token", AllowInspector = true };
+
+            Assert.False(DevToolsServer.TryStart(window, options, out var server, out var error));
+            Assert.Null(server);
+            Assert.NotNull(error);
+            Assert.Contains($"127.0.0.1:{port}", error);
+
+            // Start stays strict for callers that manage the service lifecycle themselves.
+            var strict = Assert.Throws<InvalidOperationException>(() => DevToolsServer.Start(window, options));
+            Assert.Equal(error, strict.Message);
+        }
+        finally
+        {
+            blocker.Close();
+        }
+    }
+
+    [Fact]
+    public void UseDevToolsServerDegradesUnlessStartFailureIsRequired()
+    {
+        var window = CreateWindow();
+        var port = ReserveLoopbackPort();
+        var blocker = new HttpListener();
+        blocker.Prefixes.Add($"http://127.0.0.1:{port}/");
+        blocker.Start();
+        try
+        {
+            // A development server must not take the application down when the loopback
+            // listener cannot bind (port conflict, HTTP.sys ACL, missing support).
+            Assert.Null(window.UseDevToolsServer(new DevToolsOptions { Port = port }));
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                window.UseDevToolsServer(new DevToolsOptions { Port = port, ThrowOnStartFailure = true }));
+            Assert.Contains($"127.0.0.1:{port}", exception.Message);
+        }
+        finally
+        {
+            blocker.Close();
+        }
+    }
+
+    private static int ReserveLoopbackPort()
+    {
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return ((IPEndPoint)socket.LocalEndPoint!).Port;
     }
 
     private static AppWindow CreateWindow()

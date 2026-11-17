@@ -646,6 +646,44 @@ public class M1IntegrationTests
     }
 
     [Fact]
+    public void InputEnterCommitsThePendingChangeAndRebaselinesTheSession()
+    {
+        var input = new Input { Value = "seed" };
+        var changes = 0;
+        input.AddEventListener("change", () => changes++);
+
+        input.Focus();
+        input.HandleTextInput("x");
+        input.HandleKey(13);
+        Assert.Equal(1, changes);
+        Assert.Equal("seedx", input.Value);
+
+        input.HandleKey(13);
+        Assert.Equal(1, changes);
+
+        input.HandleTextInput("y");
+        input.HandleKey(13);
+        Assert.Equal(2, changes);
+
+        input.Unfocus();
+        Assert.Equal(2, changes);
+    }
+
+    [Fact]
+    public void TextAreaEnterInsertsANewlineWithoutCommittingChange()
+    {
+        var area = new TextArea { Value = "seed" };
+        var changes = 0;
+        area.AddEventListener("change", () => changes++);
+
+        area.Focus();
+        area.HandleKey(13);
+
+        Assert.Equal("seed\n", area.Value);
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
     public void CaptureFocusEditParticipatesInChangeSession()
     {
         var input = new Input { Value = "seed" };
@@ -2624,7 +2662,9 @@ public class M1IntegrationTests
         var secondPage = Assert.Single(secondPages);
         Assert.DoesNotContain(firstPage, tabs.QueryAll<View>());
         Assert.Contains(secondPage, tabs.QueryAll<View>());
-        Assert.False(secondPage.Geometry.IsEmpty);
+        // An empty page is content-sized (auto height = 0), but it must still be laid out
+        // inside the tab panel instead of keeping a stale/empty rectangle.
+        Assert.True(secondPage.Geometry.Width > 0);
         Assert.InRange(secondPage.Geometry.Y, 0, 500);
         Assert.Same(secondPage, tabs.QueryAll<View>().Single(view => view == secondPage));
         Assert.Equal(1, tabs.SelectedIndex);
@@ -2721,6 +2761,34 @@ public class M1IntegrationTests
         visible.Value = false;
         Reconciler.Current.Flush();
         Assert.False(shown.IsAttached);
+    }
+
+    [Fact]
+    public void ShowNodeReevaluatesWhenAComponentPropertyDependencyChanges()
+    {
+        Reconciler.Current.Reset();
+        var owner = new View();
+        var host = new View();
+        var shown = new Square.Controls.Text("shown");
+        var node = new ShowNode(
+            () => owner.GetProperty<bool>("Visible"),
+            () => shown,
+            owner,
+            "Visible");
+        node.AttachTo(host);
+
+        owner.SetProperty("Visible", true);
+        Reconciler.Current.Flush();
+        Assert.Same(shown, Assert.Single(host.Children));
+
+        owner.SetProperty("Visible", false);
+        Reconciler.Current.Flush();
+        Assert.Empty(host.Children);
+
+        node.Dispose();
+        owner.SetProperty("Visible", true);
+        Reconciler.Current.Flush();
+        Assert.Empty(host.Children);
     }
 
     [Fact]

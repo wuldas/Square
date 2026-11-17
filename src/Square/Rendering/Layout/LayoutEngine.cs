@@ -121,6 +121,7 @@ public sealed partial class LayoutEngine
     private static float _viewportHeight;
 
     private readonly Config _yogaConfig;
+    private readonly HashSet<Element> _pendingFixedElements = [];
 
     // ——— 保留式外部 Flex 缓存（plan step 3）———
     // 仅在 DesktopApplication.PrepareSession 显式 EnableRetainedFlexLayout() 后开启；
@@ -204,6 +205,7 @@ public sealed partial class LayoutEngine
         {
             _viewportWidth = availableSize.Width;
             _viewportHeight = availableSize.Height;
+            _pendingFixedElements.Clear();
         }
         try
         {
@@ -275,10 +277,35 @@ public sealed partial class LayoutEngine
             _layoutDepth--;
             if (outermost)
             {
+                LayoutPendingFixedElements();
                 _gutterSnapshotDepth = 0;
                 if (_retainFlexLayout) SweepRetainedFlexCaches(element);
             }
         }
+    }
+
+    /// <summary>
+    /// 按视口布局 Yoga 路径中跳过的 fixed 元素。CSS normal flow 在自身计划里处理 fixed；
+    /// 这里复用同一套绝对定位代码，避免 flex 容器中的 fixed 弹层/遮罩塌缩为 0×0。
+    /// </summary>
+    private void LayoutPendingFixedElements()
+    {
+        if (_pendingFixedElements.Count == 0) return;
+        var viewport = new Rect(0, 0, Math.Max(0, _viewportWidth), Math.Max(0, _viewportHeight));
+        foreach (var fixedElement in _pendingFixedElements)
+        {
+            if (!fixedElement.IsVisible) continue;
+            var plan = new CssLayoutPlan();
+            plan.FixedRoots.Add(fixedElement);
+            LayoutAbsolute(fixedElement, viewport, plan);
+            foreach (var entry in plan.Entries)
+                entry.Element.Arrange(entry.Bounds);
+            foreach (var external in plan.ExternalLayouts)
+                ArrangeCore(external.Element, external.Bounds);
+            foreach (var fixedRoot in plan.FixedRoots)
+                ElementLayoutStore.Get(fixedRoot).IsFixedRoot = true;
+        }
+        _pendingFixedElements.Clear();
     }
 
     private void ArrangeCore(Element element, Rect finalRect)
@@ -356,6 +383,7 @@ public sealed partial class LayoutEngine
         {
             _viewportWidth = finalRect.Width;
             _viewportHeight = finalRect.Height;
+            _pendingFixedElements.Clear();
         }
 
         try
@@ -428,6 +456,7 @@ public sealed partial class LayoutEngine
             _layoutDepth--;
             if (outermost)
             {
+                LayoutPendingFixedElements();
                 _gutterSnapshotDepth = 0;
                 if (_retainFlexLayout) SweepRetainedFlexCaches(element);
             }
@@ -566,9 +595,15 @@ public sealed partial class LayoutEngine
                 {
                     var child = visibleChildren[j];
                     if (child is IPopupElement { IsLayoutOverlay: true }) continue;
-                    // fixed 子元素由 DisplayTree 作为独立固定层渲染，不参与文档流布局，
-                    // 也不应贡献滚动范围；这里与 CSS 流的 fixedPositioned 处理保持一致。
-                    if (child.IsFixedPositioned()) continue;
+                    // fixed 子元素不参与文档流：测量阶段先登记，排列完成后按视口独立布局，
+                    // 与 CSS normal flow 的 fixedPositioned 处理保持一致。
+                    if (child.IsFixedPositioned())
+                    {
+                        _pendingFixedElements.Add(child);
+                        continue;
+                    }
+                    if (ElementLayoutStore.TryGet(child, out var childLayout) && childLayout.IsFixedRoot)
+                        childLayout.IsFixedRoot = false;
                     var childNode = CreateYogaSubtree(child, session, refW, refH, rem, isRoot: false);
                     if (element.IsScrollContainer() && child.Style.Get("flex-shrink") == null)
                         YGNodeStyleSetFlexShrink(childNode, 0);

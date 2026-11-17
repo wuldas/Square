@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Square.Compiler.LanguageServices;
 
 namespace Square.Compiler.Parser;
@@ -247,16 +248,67 @@ internal static class SqvAttributeConverter
 
     private static string WrapEventHandler(string handler, string modifiers)
     {
-        if (string.IsNullOrWhiteSpace(modifiers)) return handler;
         var stop = ContainsModifier(modifiers, "stop");
         var prevent = ContainsModifier(modifiers, "prevent");
-        if (!stop && !prevent) return handler;
+        var shape = ClassifyHandler(handler);
+        if (!stop && !prevent)
+        {
+            // A bare call/assignment cannot be converted to Action<Event>; turn it into a
+            // statement lambda so the expression is evaluated per event instead of at build time.
+            return shape == HandlerShape.Statement ? "e => { " + handler + "; }" : handler;
+        }
+
         var sb = new StringBuilder("e => { ");
         if (stop) sb.Append("e.StopPropagation(); ");
         if (prevent) sb.Append("e.PreventDefault(); ");
-        sb.Append(handler).Append("(e); }");
+        switch (shape)
+        {
+            case HandlerShape.Statement:
+                sb.Append(handler).Append("; }");
+                break;
+            case HandlerShape.Lambda when LambdaAcceptsEvent(handler):
+                // A lambda has no natural delegate type when invoked directly, so cast it
+                // to the event delegate before calling.
+                sb.Append("((System.Action<Event>)(").Append(handler).Append("))(e); }");
+                break;
+            case HandlerShape.Lambda:
+                sb.Append("((System.Action)(").Append(handler).Append("))(); }");
+                break;
+            default:
+                sb.Append(handler).Append("(e); }");
+                break;
+        }
         return sb.ToString();
     }
+
+    private enum HandlerShape
+    {
+        Delegate,
+        Lambda,
+        Statement
+    }
+
+    private static HandlerShape ClassifyHandler(string handler)
+    {
+        var syntax = SyntaxFactory.ParseExpression(handler);
+        if (syntax.ContainsDiagnostics) return HandlerShape.Delegate;
+        return syntax switch
+        {
+            LambdaExpressionSyntax => HandlerShape.Lambda,
+            IdentifierNameSyntax or MemberAccessExpressionSyntax or ObjectCreationExpressionSyntax
+                or ParenthesizedExpressionSyntax or CastExpressionSyntax => HandlerShape.Delegate,
+            _ => HandlerShape.Statement
+        };
+    }
+
+    private static bool LambdaAcceptsEvent(string handler) =>
+        SyntaxFactory.ParseExpression(handler) is LambdaExpressionSyntax lambda &&
+        lambda switch
+        {
+            SimpleLambdaExpressionSyntax => true,
+            ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters.Count > 0,
+            _ => false
+        };
 
     private static bool ContainsModifier(string modifiers, string name)
     {

@@ -140,7 +140,9 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 - M6 Android：已落地非 MAUI、Canvas-first、Software-first、外部事件循环 `ApplicationSession`、统一 `PointerInput`、Activity/View host、触摸滚动、剪贴板、组合 IME、Android 原生字体回退、虚拟 accessibility tree、AndroidCanvas/AndroidSkia/Vulkan surface、独立 `Square.Android.slnx` 与 CI；x86_64 emulator 的全部非 arm64 门禁已完成，arm64 真机验证待补，实施与验收见 [Android-Platform-TODO.md](Android-Platform-TODO.md)
 - M9 多目标输出：WinUI host + Software bitmap、SVG exporter、NativeUiNode 原型、Godot 嵌入宿主（见 `docs/Rendering-Targets.md`）
 - M7 标准 RichTextBox/WYSIWYG：富文本 document model、per-range style、selection/run 映射；折叠选区已支持活动样式、相邻 run 样式继承及基础加粗/下划线/斜体操作，RichText 选区已映射到文档 DOM `Range`；BiDi 与复杂文本 shaping 仍待完成
-- `.sqv` 前端继续推进：语言无关 `TemplateDocument` IR 入口、基于 `[SlotContract]` 的类型化 scoped slot 解构、动态/缺失 slot contract 诊断及 Roslyn 模板语义诊断已落地；下一步继续把剩余 `SqxNode` 兼容节点迁移为完整 Template IR 节点，并扩展跨模板联合语义绑定（见 `docs/vue-plan.md` 里程碑 F–G）
+- **常用控件补齐**：在现有 10 个第一阶段控件与 M3 扩展控件之外，按真实客户端反馈排期以下缺口：`Slider`（水平/垂直、键盘步进、拖动值提交、`change`/`input` 语义，复用指针捕获）、`ProgressBar`（确定/不确定、CSS 主题状态）、`Toast`（固定层 + 自动消失 + 队列，复用 `position: fixed` 视口布局）、`FileDialog`（Win32 `IFileOpenDialog`/macOS `NSOpenPanel`/X11 门户的安全封装，失败时回退自绘浏览）。同时补齐 `Menu`/`Dropdown` 的溢出定位（基于 fixed 视口约束）。实现遵循“先复用现有控件与 CSS 状态”的原则，不引入新的布局容器。
+- **CSS 子集文档**：`docs/CSS-Support.md` 增加常用属性速查、未支持清单和布局配方（剩余高度滚动区、固定头尾、模态遮罩、空元素占位），减少“写法在浏览器正常、在 Square 静默无效”的落差。
+- **`.sqv` 前端继续推进**：语言无关 `TemplateDocument` IR 入口、基于 `[SlotContract]` 的类型化 scoped slot 解构、动态/缺失 slot contract 诊断及 Roslyn 模板语义诊断已落地；下一步继续把剩余 `SqxNode` 兼容节点迁移为完整 Template IR 节点，并扩展跨模板联合语义绑定（见 `docs/vue-plan.md` 里程碑 F–G）
 - 继续扩展 CSS Grid / Animation 到更完整规范
 
 ---

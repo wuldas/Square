@@ -89,6 +89,9 @@ public class Swiper : View
     internal override void OnChildAdded(Element child)
     {
         base.OnChildAdded(child);
+        // Pages are viewport-sized by default; author styles keep precedence.
+        child.Style.SetCascaded("width", "100%", int.MinValue);
+        child.Style.SetCascaded("height", "100%", int.MinValue);
         child.IsVisible = Children.IndexOf(child) == SelectedIndex;
     }
 

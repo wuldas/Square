@@ -565,6 +565,93 @@ public class DocumentTests
     }
 
     [Fact]
+    public void PointerCaptureRoutesMoveAndUpToTheCapturedElement()
+    {
+        var window = new AppWindow("Pointer capture", 320, 200);
+        var root = new View { Geometry = new Square.Graphics.Rect(0, 0, 320, 200) };
+        var target = new View { Geometry = new Square.Graphics.Rect(10, 10, 120, 60) };
+        var outside = new View { Geometry = new Square.Graphics.Rect(200, 120, 100, 60) };
+        root.Children.Add(target);
+        root.Children.Add(outside);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        window.WindowDocument.Build();
+        GetPrivateField<DisplayTree>(application, "_displayTree")!.BuildFrom(application.Document.DocumentElement);
+        var moves = 0;
+        var ups = 0;
+        var outsideMoves = 0;
+        target.AddEventListener(StandardEvents.PointerDown, e => target.SetPointerCapture(((PointerEvent)e).PointerId));
+        target.AddEventListener(StandardEvents.PointerMove, _ => moves++);
+        target.AddEventListener(StandardEvents.PointerUp, _ => ups++);
+        outside.AddEventListener(StandardEvents.PointerMove, _ => outsideMoves++);
+
+        InvokeHandleMouse(application, new Square.Graphics.Point(20, 20), MouseAction.Down);
+        InvokeHandleMouse(application, new Square.Graphics.Point(240, 150), MouseAction.Move);
+        InvokeHandleMouse(application, new Square.Graphics.Point(240, 150), MouseAction.Up);
+
+        Assert.Equal(1, moves);
+        Assert.Equal(1, ups);
+        Assert.Equal(0, outsideMoves);
+        Assert.False(target.HasPointerCapture(0));
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
+    public void MouseHostEventsCarryClientCoordinatesInPointerEvents()
+    {
+        var window = new AppWindow("Pointer coordinates", 320, 200);
+        var root = new View { Geometry = new Square.Graphics.Rect(0, 0, 320, 200) };
+        var target = new View { Geometry = new Square.Graphics.Rect(10, 10, 120, 60) };
+        root.Children.Add(target);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        window.WindowDocument.Build();
+        GetPrivateField<DisplayTree>(application, "_displayTree")!.BuildFrom(application.Document.DocumentElement);
+        var events = new List<PointerEvent>();
+        target.AddEventListener(StandardEvents.PointerDown, e => events.Add((PointerEvent)e));
+        target.AddEventListener(StandardEvents.PointerMove, e => events.Add((PointerEvent)e));
+        target.AddEventListener(StandardEvents.PointerUp, e => events.Add((PointerEvent)e));
+
+        InvokeHandleMouse(application, new Square.Graphics.Point(20, 25), MouseAction.Move, MouseButton.None);
+        InvokeHandleMouse(application, new Square.Graphics.Point(25, 30), MouseAction.Down);
+        InvokeHandleMouse(application, new Square.Graphics.Point(26, 31), MouseAction.Up);
+
+        Assert.Equal(3, events.Count);
+        Assert.Equal(new[] { 20f, 25f, 26f }, events.Select(e => e.ClientX).ToArray());
+        Assert.Equal(new[] { 25f, 30f, 31f }, events.Select(e => e.ClientY).ToArray());
+        Assert.All(events, e => Assert.Equal(Square.Platform.PointerDeviceKind.Mouse, e.PointerType));
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
+    public async Task DevToolsPointerInjectionCarriesPayloadCoordinates()
+    {
+        var window = new AppWindow("Injected pointer coordinates", 320, 200);
+        var root = new View { Geometry = new Square.Graphics.Rect(0, 0, 320, 200) };
+        var target = new View { Geometry = new Square.Graphics.Rect(10, 10, 120, 60) };
+        root.Children.Add(target);
+        window.Load(root);
+        var application = new DesktopApplication(window);
+        SetPrivateField<IPlatformHost>(application, "_host", new SplitterTestHost());
+        window.WindowDocument.Build();
+        GetPrivateField<DisplayTree>(application, "_displayTree")!.BuildFrom(application.Document.DocumentElement);
+        var events = new List<PointerEvent>();
+        target.AddEventListener(StandardEvents.PointerDown, e => events.Add((PointerEvent)e));
+
+        var injection = application.InjectPointerAsync(
+            new DevToolsPointerInput(new Square.Graphics.Point(42, 33), MouseAction.Down));
+        application.Dispatcher.Run();
+        await injection;
+
+        var pointer = Assert.Single(events);
+        Assert.Equal(42f, pointer.ClientX);
+        Assert.Equal(33f, pointer.ClientY);
+        SetPrivateField<IPlatformHost?>(application, "_host", null);
+    }
+
+    [Fact]
     public void MouseMoveWithoutTooltipRequestsFrameOnlyWhenTooltipStateChanges()
     {
         var window = new AppWindow("No tooltip", 320, 200);

@@ -147,8 +147,16 @@ public class TreeItemHeaderTests
         Assert.Same(item.Header, button.Parent);
         Assert.Same(child, Assert.Single(item.Items));
         Assert.Equal(item.Geometry.Y + 44, child.Geometry.Y);
-        Assert.True(text.Geometry.X >= image.Geometry.Right);
-        Assert.True(button.Geometry.X >= text.Geometry.Right);
+        var layoutDiagnostics = $"item={item.Geometry} header={item.Header.Geometry} image={image.Geometry} " +
+            $"text={text.Geometry} textMeasure={text.Measure(new Size(float.MaxValue, float.MaxValue))} " +
+            $"button={button.Geometry} buttonMeasure={button.Measure(new Size(float.MaxValue, float.MaxValue))} " +
+            $"treeExtent={tree.ExtentWidth}x{tree.ExtentHeight}";
+        // Yoga snaps sizes and positions to the device pixel grid independently. A fractional
+        // text advance (system fonts on X11/macOS measure sub-pixel) rounds the text width up
+        // while the sibling offset uses the rounded position, so the row can overlap by one
+        // pixel. These assertions guard row order, not pixel-grid rounding.
+        Assert.True(text.Geometry.X + 1 >= image.Geometry.Right, layoutDiagnostics);
+        Assert.True(button.Geometry.X + 1 >= text.Geometry.Right, layoutDiagnostics);
     }
 
     [Fact]

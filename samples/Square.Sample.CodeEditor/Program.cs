@@ -29,21 +29,28 @@ public static class Program
             AllowInspector = true,
             IncludeTextContent = true
         });
-        System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
-        System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
-        try
+        if (devTools == null)
         {
-            var infoPath = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                "opencode",
-                "codeeditor-devtools.json");
-            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(infoPath)!);
-            System.IO.File.WriteAllText(infoPath,
-                $"{{\"baseAddress\":\"{devTools.BaseAddress}\",\"token\":\"{devTools.AccessToken}\",\"processId\":{System.Environment.ProcessId}}}");
+            System.Console.WriteLine("Square DevTools: unavailable; the application continues without it.");
         }
-        catch
+        else
         {
-            // ignore local debug file failures
+            System.Console.WriteLine($"Square DevTools: {devTools.BaseAddress}/api/v1/health");
+            System.Console.WriteLine($"Token header: {DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+            try
+            {
+                var infoPath = System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(),
+                    "opencode",
+                    "codeeditor-devtools.json");
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(infoPath)!);
+                System.IO.File.WriteAllText(infoPath,
+                    $"{{\"baseAddress\":\"{devTools.BaseAddress}\",\"token\":\"{devTools.AccessToken}\",\"processId\":{System.Environment.ProcessId}}}");
+            }
+            catch
+            {
+                // ignore local debug file failures
+            }
         }
         app.Run();
     }

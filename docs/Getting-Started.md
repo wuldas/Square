@@ -371,13 +371,31 @@ public ObservableValue<bool> Visible = new(true);
 <Input @input="OnInput" />
 ```
 
-SQV 使用 Vue 风格事件绑定：`@click="OnClick"`。Handler 支持三种签名：
+SQV 使用 Vue 风格事件绑定：`@click="OnClick"`。Handler 支持两种签名：
 
 ```csharp
 private void OnClick() { }
 private void OnClick(Event e) { }
-
 ```
+
+参数化调用按事件回调执行，不会在构建时调用：`@click="Pick(item)"` 生成 `e => { Pick(item); }`；也可以显式写 lambda（`@click="() => Pick(item)"`）。
+
+`.stop` / `.prevent` 只影响事件路由，不要求 handler 带 `Event` 参数：`@click.stop="Pick(item)"`、`@click.stop="() => Pick(item)"` 与 `@click.stop="OnClick(Event)"` 都可编译。
+
+指针拖拽需要捕获时用 `Element.SetPointerCapture(pointerId)` / `ReleasePointerCapture(pointerId)`：
+
+```csharp
+private void OnDown(Event e)
+{
+    var pointer = (PointerEvent)e;
+    ((Element)e.Target!).SetPointerCapture(pointer.PointerId);
+}
+
+private void OnMove(Event e) { /* 指针移出元素边界后仍会收到 */ }
+private void OnUp(Event e) { /* pointerup 后自动释放捕获 */ }
+```
+
+捕获期间 `pointermove` / `pointerup` 派发到捕获元素；`pointerup`、`pointercancel` 或元素从文档树移除时自动释放。命中测试、焦点和 click 仍使用真实坐标。
 
 ### 5.5 双向绑定（显式）
 
@@ -416,7 +434,36 @@ private void OnNameChanged(Event e)
 <UserCard Title="Hello" Count={5} />
 ```
 
-### 6.3 数据流
+静态值（`Title="Hello"`、`Count={5}`）直接写入子组件属性；动态表达式（`{PageTitle}`）在父组件构建时求值。需要父 → 子持续更新时使用 `ObservableValue<T>` / `IReactiveValue<T>`：
+
+```xml
+<UserCard Title={ViewModel.PageTitle} />
+```
+
+### 6.3 绑定语义
+
+模板绑定最终写入元素的属性袋（`SetProperty`/`BindProperty`），**不会调用 CLR 属性的 setter**。因此 `[Prop]` 属性应使用 store-backed 写法，派生逻辑放在 `OnPropertyChanged` / `OnPropChanged`：
+
+```csharp
+[Prop]
+public IReadOnlyList<Track> Tracks
+{
+    get => GetProperty<IReadOnlyList<Track>>(nameof(Tracks)) ?? [];
+    set => SetProperty(nameof(Tracks), value ?? []);
+}
+
+protected override void OnPropertyChanged(string name)
+{
+    base.OnPropertyChanged(name);
+    if (name == nameof(Tracks)) ApplyTracks(Tracks);
+}
+```
+
+在 `set` 中写副作用（例如直接调用 `ApplyTracks`）在手动赋值属性时有效，但模板绑定会绕过它，属于静默失效，应避免。常量表达式（`:size="40"`）会直接赋值 CLR 属性以获得类型转换；动态表达式仍走属性袋。
+
+普通值也可以用于一次性绑定，例如 `:tracks="Collection"` 会写入集合快照（`ObservableCollection<T>` 的变更不会自动推送，需要持续更新时改用 `ObservableValue<T>` 或在 `v-for` 中使用集合）。
+
+### 6.4 数据流
 
 - 单向：父 → 子
 - 子组件不可改写 Props 值
@@ -433,7 +480,7 @@ protected override void OnPropChanged(string name)
 }
 ```
 
-### 6.4 编译期校验
+### 6.5 编译期校验
 
 必填 Prop 缺失时，编译期报诊断（带 `.sqv` / `.sqx` 行列号）。
 
@@ -447,7 +494,9 @@ protected override void OnPropChanged(string name)
 <Text v-if="IsLoggedIn">欢迎回来</Text>
 ```
 
-当 `IsLoggedIn` 为 `ObservableValue<bool>` 或 `IReactiveValue<bool>` 时，直接传入该响应源，条件变化会增删 Element 子树。`IsLoggedIn.Value` 或普通 C# 布尔表达式在构建时求值，不自动订阅其依赖。
+当 `IsLoggedIn` 为 `ObservableValue<bool>` 或 `IReactiveValue<bool>` 时，直接传入该响应源，条件变化会增删 Element 子树。普通布尔成员若通过元素属性袋更新（`[Prop]` 的 store-backed setter 或 `SetProperty`），条件链也会在该属性变化时重新求值；`v-if`/`v-else-if`/`v-else` 之间允许空白行和注释。`.Value`、方法调用等任意 C# 表达式在构建时求值，不自动订阅其依赖，需要响应性时改用直接传响应源或先写入组件属性。
+
+组件模板根上的 `v-if` 同样生效：条件为假时根元素不会构建。组件元素本身（宿主盒）始终存在于父布局中；需要它不占空间时，把条件放到调用方或为宿主设置尺寸约束。
 
 ### 7.2 列表渲染
 
@@ -806,6 +855,8 @@ Source Generator 默认只将源码交给编译器，不写入磁盘。需要检
 dotnet build -p:SquareEmitCompilerGeneratedFiles=true
 ```
 
+该属性由 `Square.Compiler` 的 buildTransitive targets 映射到 Roslyn 的 `EmitCompilerGeneratedFiles`，因此示例工程和使用 NuGet 编译器包的应用都能生效。文件写入 `obj/<Configuration>/<TargetFramework>/generated/Square.Compiler/`；生成器不会删除上次构建遗留的旧文件，诊断"文件没有更新"时先删除对应 `obj` 目录再重建，不要长期保留磁盘输出。
+
 不要在日常 Windows/Linux 多目标构建中长期启用磁盘输出，否则 IDE 可能同时索引多个 RuntimeIdentifier 下的同名 partial 类型。
 
 ### 15.2 诊断代码
@@ -844,15 +895,18 @@ var devTools = app.UseDevToolsServer(new DevToolsOptions
   Port = 0
 });
 
-Console.WriteLine($"DevTools: {devTools.BaseAddress}/api/v1");
-Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+if (devTools != null)
+{
+    Console.WriteLine($"DevTools: {devTools.BaseAddress}/api/v1");
+    Console.WriteLine($"{DevToolsServer.TokenHeader}: {devTools.AccessToken}");
+}
 
 app.Run();
 ```
 
 `Port = 0` 是推荐默认值，由操作系统为每个进程分配独立端口。多个应用或测试实例可以同时运行。连接方必须使用 `devTools.BaseAddress`，不能假设固定端口。
 
-固定端口只用于外部系统要求稳定地址的场景；端口被占用时启动会失败，不会自动递增到其他端口。完整规则、认证和 HTTP API 见 [`DevTools.md`](DevTools.md)。
+`UseDevToolsServer()` 在 loopback 监听无法绑定时记录警告并返回 `null`，应用继续运行；需要严格失败时设置 `ThrowOnStartFailure = true`。固定端口只用于外部系统要求稳定地址的场景；端口被占用时 `DevToolsServer.Start` 抛出异常，不会自动递增到其他端口。完整规则、认证和 HTTP API 见 [`DevTools.md`](DevTools.md)。
 
 ---
 

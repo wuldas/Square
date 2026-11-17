@@ -543,6 +543,7 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
                     _pointerDownTarget = null;
                     ClearActivePath();
                     _touchDownTarget?.DispatchTrusted(StandardEvents.CreatePointerCancel(input));
+                    _document.ClearPointerCapture(input.PointerId);
                 }
 
                 HandleMouseWithPointer(input.Position, MouseAction.Move, input.Button, input);
@@ -1697,8 +1698,21 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
 
     private void HandleMouseFromHost(Point point, MouseAction action, MouseButton button) =>
         HandleMouse(point, action, button);
-    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left) =>
-        HandleMouseWithPointer(point, action, button);
+
+    private void HandleMouse(Point point, MouseAction action, MouseButton button = MouseButton.Left)
+    {
+        // Win32/macOS host mouse events and DevTools injection enter here instead of the
+        // PointerEvent path. Synthesize the payload so pointerdown/move/up carry the real
+        // client coordinates instead of the zero-position compatibility events.
+        var pointerAction = action switch
+        {
+            MouseAction.Down => PointerAction.Down,
+            MouseAction.Up => PointerAction.Up,
+            _ => PointerAction.Move
+        };
+        HandleMouseWithPointer(point, action, button,
+            new PointerInput(point, pointerAction, 0, PointerDeviceKind.Mouse, button));
+    }
 
     private void HandleMouseWithPointer(Point point, MouseAction action, MouseButton button = MouseButton.Left,
         PointerInput? pointerInput = null)
@@ -1859,8 +1873,9 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
         }
 
         var hit = HitTest(point);
-        if (pointerInput is { Action: PointerAction.Move } moveInput && hit != null)
-            hit.DispatchTrusted(StandardEvents.CreatePointerMove(moveInput));
+        if (pointerInput is { Action: PointerAction.Move } moveInput &&
+            (_document.GetPointerCapture(moveInput.PointerId) ?? hit) is { } moveTarget)
+            moveTarget.DispatchTrusted(StandardEvents.CreatePointerMove(moveInput));
 
         if (action == MouseAction.Down && MainWindow.TitleStyle == TitleStyle.Custom &&
             _document.Head.Geometry.Contains(point) && !IsInteractiveTitleBarElement(hit))
@@ -1928,7 +1943,11 @@ public sealed partial class DesktopApplication : Application, IAppWindowRuntime
             }
 
             if (pointerInput is { Action: PointerAction.Up } upInput)
-                hit?.DispatchTrusted(StandardEvents.CreatePointerUp(upInput));
+            {
+                var upTarget = _document.GetPointerCapture(upInput.PointerId) ?? hit;
+                upTarget?.DispatchTrusted(StandardEvents.CreatePointerUp(upInput));
+                _document.ClearPointerCapture(upInput.PointerId);
+            }
             if (_pointerDownTarget != null && hit == _pointerDownTarget)
                 hit?.DispatchTrusted(StandardEvents.CreateClick());
             _pointerDownTarget = null;

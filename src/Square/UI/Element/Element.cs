@@ -486,6 +486,14 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// </summary>
     public Rect GetBoundingClientRect() => Geometry;
 
+    /// <summary>
+    /// 属性袋值变化通知（按属性名）。模板条件链用它重新求值 <c>v-if</c> 依赖的组件属性；
+    /// 只在实际写入属性袋时触发，不包含 CLR 字段或局部变量。
+    /// </summary>
+    public event Action<string>? PropertyChanged;
+
+    private void RaisePropertyChanged(string name) => PropertyChanged?.Invoke(name);
+
     /// <summary>读取强类型属性（Square 扩展）。</summary>
     public T? GetProperty<T>(string name)
     {
@@ -499,6 +507,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (TrySetSpecialBoundValue(name, value)) return;
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();
@@ -511,6 +520,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (!Properties.RemoveValue(name)) return false;
         Properties.UnmarkBound(name);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();
@@ -525,6 +535,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         Properties.MarkBound(name);
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();
@@ -569,11 +580,47 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         _bindings.Add(subscription!);
     }
 
+    /// <summary>绑定集合快照：集合实例直接写入属性袋（Square 扩展；变更通知不传递）。</summary>
+    public void BindProperty(string name, System.Collections.IEnumerable collection)
+    {
+        ArgumentNullException.ThrowIfNull(collection);
+        SetProperty(name, collection);
+    }
+
+    /// <summary>
+    /// 把模板插值写入 <c>TextContent</c>：响应源订阅后按字符串转换，普通值直接格式化。
+    /// 生成代码对 <c>{{ Expression }}</c> 使用该入口，避免方法调用/数值表达式编译失败。
+    /// </summary>
+    public void BindText<T>(T value) => SetProperty("TextContent", Convert.ToString(value, CultureInfo.InvariantCulture) ?? "");
+
+    /// <summary>订阅 <see cref="ObservableValue{T}"/> 并转换为 <c>TextContent</c>。</summary>
+    public void BindText<T>(ObservableValue<T> source) =>
+        BindProperty("TextContent", () => Convert.ToString(source.Value, CultureInfo.InvariantCulture) ?? "");
+
+    /// <summary>订阅任意响应值并转换为 <c>TextContent</c>。</summary>
+    public void BindText<T>(IReactiveValue<T> source) =>
+        BindProperty("TextContent", () => Convert.ToString(source.Value, CultureInfo.InvariantCulture) ?? "");
+
+    /// <summary>
+    /// 把指针捕获到该元素（Square 扩展；对齐 <c>setPointerCapture</c>）。捕获期间
+    /// pointermove/pointerup 派发到该元素，不再依赖命中测试；pointerup/cancel 或元素
+    /// 脱离文档时自动释放。
+    /// </summary>
+    public void SetPointerCapture(int pointerId) => OwnerDocument?.SetPointerCapture(this, pointerId);
+
+    /// <summary>释放该元素持有的指针捕获（对齐 <c>releasePointerCapture</c>）。</summary>
+    public void ReleasePointerCapture(int pointerId) => OwnerDocument?.ReleasePointerCapture(this, pointerId);
+
+    /// <summary>该元素是否持有指定指针的捕获。</summary>
+    public bool HasPointerCapture(int pointerId) =>
+        OwnerDocument?.GetPointerCapture(pointerId) is { } captured && ReferenceEquals(captured, this);
+
     private void SetBoundValue<T>(string name, T value)
     {
         if (TrySetSpecialBoundValue(name, value)) return;
         Properties.SetValue(name, value);
         OnPropertyChanged(name);
+        RaisePropertyChanged(name);
         ((IComponentLifecycle)this).OnPropChanged(name);
         Invalidate(PropertyInvalidation.ForProperty(name));
         NotifyInspectionPropertyChange();

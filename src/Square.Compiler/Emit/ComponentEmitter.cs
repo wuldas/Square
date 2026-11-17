@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Square.Compiler.Directives;
 using Square.Compiler.LanguageServices;
 using Square.Compiler.Parser;
@@ -405,7 +407,12 @@ namespace Square.Compiler.Emit
                         ? attribute.Name.ToLowerInvariant()
                         : MapPropName(_variableComponents[variableName], attribute.Name);
                     var start = MappingStart();
-                    if (IsLocalExpression(attribute.RawValue, localNames))
+                    if (!isHtml && IsPropertyLikeName(propertyName) && IsConstantBindingExpression(attribute.RawValue))
+                        // Constant values assign the CLR property directly so the setter runs and
+                        // the literal converts to the declared property type (float, enum, ...).
+                        EmitSourceMappedLine(indent, attribute.Line,
+                            variableName + "." + propertyName + " = " + attribute.RawValue + ";");
+                    else if (IsLocalExpression(attribute.RawValue, localNames))
                         EmitSourceMappedLine(indent, attribute.Line,
                             variableName + ".SetProperty(\"" + propertyName + "\", " + attribute.RawValue + ");");
                     else
@@ -458,7 +465,9 @@ namespace Square.Compiler.Emit
                 if (IsLocalExpression(expression.Expression, localNames))
                     _sb.AppendLine(indent + variableName + ".SetProperty(\"TextContent\", $\"{(" + expression.Expression + ")}\");");
                 else
-                    _sb.AppendLine(indent + variableName + ".BindProperty(\"TextContent\", " + expression.Expression + ");");
+                    // BindText keeps observable members reactive and formats plain values,
+                    // method calls and numeric expressions without a CS0411 binding error.
+                    _sb.AppendLine(indent + variableName + ".BindText(" + expression.Expression + ");");
                 return true;
             }
             if (content.All(node => node is SqxText or SqxExpression))
@@ -602,6 +611,7 @@ namespace Square.Compiler.Emit
         private void EmitVIfChain(TemplateIfChainDirective chain, string indent, string parentName, IReadOnlyList<string> localNames)
         {
             string accumulated = null;
+            var accumulatedDependencies = new List<string>();
             foreach (var branch in chain.Branches)
             {
                 var field = "_vif" + _vifIndex++;
@@ -617,13 +627,70 @@ namespace Square.Compiler.Emit
                     ? "(" + (branch.Condition ?? "false") + ")"
                     : accumulated + " || (" + (branch.Condition ?? "false") + ")";
 
-                _sb.AppendLine(indent + "var " + field + " = new ShowNode(" + condition + ", () =>");
+                // Later branches also embed the accumulated negations, so every branch
+                // depends on all conditions seen so far.
+                foreach (var dependency in CollectConditionDependencies(branch.Condition, localNames))
+                    if (!accumulatedDependencies.Contains(dependency)) accumulatedDependencies.Add(dependency);
+                var dependencies = accumulatedDependencies.ToArray();
+                var dependencyArguments = dependencies.Length == 0
+                    ? ""
+                    : ", \"" + string.Join("\", \"", dependencies) + "\"";
+                var simpleBranch = dependencies.Length > 0 && IsSimpleMemberExpression(branch.Condition);
+                if (simpleBranch)
+                {
+                    // Simple member: BindCondition picks the reactive overload for
+                    // ObservableValue/IReactiveValue and snapshots + property dependencies
+                    // for plain bool component properties.
+                    _sb.AppendLine(indent + "var " + field + " = ShowNode.BindCondition(this, " +
+                        branch.Condition + ", () =>");
+                }
+                else if (dependencies.Length > 0)
+                {
+                    // Compound condition: re-evaluate the whole expression when one of the
+                    // referenced properties changes.
+                    _sb.AppendLine(indent + "var " + field + " = new ShowNode(() => (" + condition +
+                        "), () =>");
+                }
+                else
+                {
+                    _sb.AppendLine(indent + "var " + field + " = new ShowNode(" + condition + ", () =>");
+                }
                 _sb.AppendLine(indent + "{");
                 EmitFactoryBody(branch.Children, indent + "    ", localNames);
-                _sb.AppendLine(indent + "});");
+                var ownerArguments = dependencies.Length == 0 ? "" : simpleBranch ? dependencyArguments : ", this" + dependencyArguments;
+                _sb.AppendLine(indent + "}" + ownerArguments + ");");
                 _sb.AppendLine(indent + parentName + ".RegisterGeneratedResource(" + field + ");");
                 _sb.AppendLine(indent + field + ".AttachTo(" + parentName + ");");
             }
+        }
+
+        /// <summary>
+        /// 收集条件表达式中依赖的组件属性名（成员链根、<c>this.X</c> 的 X），
+        /// 让 ShowNode 在属性袋变化时重新求值；局部变量与字面量不参与。
+        /// </summary>
+        private static string[] CollectConditionDependencies(string condition, IReadOnlyList<string> localNames)
+        {
+            if (string.IsNullOrWhiteSpace(condition)) return Array.Empty<string>();
+            var syntax = SyntaxFactory.ParseExpression(condition);
+            if (syntax.ContainsDiagnostics) return Array.Empty<string>();
+            var names = new List<string>();
+            foreach (var identifier in syntax.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>())
+            {
+                var name = identifier.Identifier.ValueText;
+                if (localNames.Contains(name)) continue;
+                if (!IsRootOfMemberAccess(identifier)) continue;
+                if (!names.Contains(name)) names.Add(name);
+            }
+            return names.ToArray();
+        }
+
+        private static bool IsRootOfMemberAccess(IdentifierNameSyntax identifier)
+        {
+            if (identifier.Parent is MemberAccessExpressionSyntax member && ReferenceEquals(member.Name, identifier))
+                return member.Expression is ThisExpressionSyntax or BaseExpressionSyntax;
+            if (identifier.Parent is QualifiedNameSyntax qualified && ReferenceEquals(qualified.Right, identifier))
+                return false;
+            return true;
         }
 
         private void EmitFactoryBody(List<SqxNode> nodes, string indent, IReadOnlyList<string> localNames)
@@ -908,6 +975,29 @@ namespace Square.Compiler.Emit
             }
             return true;
         }
+
+        private static bool IsPropertyLikeName(string name) =>
+            !string.IsNullOrEmpty(name) && (char.IsUpper(name[0]) || name[0] == '_');
+
+        private static bool IsConstantBindingExpression(string expression)
+        {
+            if (string.IsNullOrWhiteSpace(expression)) return false;
+            var syntax = SyntaxFactory.ParseExpression(expression);
+            if (syntax.ContainsDiagnostics) return false;
+            return IsConstantBindingSyntax(syntax);
+        }
+
+        private static bool IsConstantBindingSyntax(ExpressionSyntax syntax) => syntax switch
+        {
+            LiteralExpressionSyntax literal =>
+                !literal.IsKind(SyntaxKind.NullLiteralExpression) &&
+                !literal.IsKind(SyntaxKind.DefaultLiteralExpression),
+            PrefixUnaryExpressionSyntax { Operand: LiteralExpressionSyntax } unary =>
+                unary.IsKind(SyntaxKind.UnaryMinusExpression) || unary.IsKind(SyntaxKind.UnaryPlusExpression),
+            ParenthesizedExpressionSyntax parenthesized => IsConstantBindingSyntax(parenthesized.Expression),
+            CastExpressionSyntax cast => IsConstantBindingSyntax(cast.Expression),
+            _ => false
+        };
 
         private static string NormalizeText(string value)
         {

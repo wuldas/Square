@@ -85,6 +85,8 @@ public sealed class AppWindow
 
 `LoadGlobalCss` 从文件加载窗口级全局样式。相对路径以 `AppContext.BaseDirectory` 为基准；可一次传入多个路径，也可多次调用。`LoadGlobalCssText` 接收一个或多个 CSS 源文本。两种方法均保持添加顺序，同等 specificity 下后加载规则覆盖先加载规则，并且必须在应用开始运行前调用。
 
+`Load(content)` 把页面内容加入文档 `body`，并以最低优先级级联 `height: 100%`，让页面根默认填满窗口；作者 CSS 显式设置的 `height`/`flex` 覆盖该值。
+
 ```csharp
 var window = new AppWindow("My App");
 window.LoadGlobalCss("Styles/base.css", "Styles/theme.css");
@@ -194,7 +196,12 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
     public int Port { get; }
     public string BaseAddress { get; } // http://127.0.0.1:{Port}
 
-    public static DevToolsServer Start(DesktopApplication application, DevToolsOptions? options = null);
+    public static DevToolsServer Start(AppWindow window, DevToolsOptions? options = null);
+    public static bool TryStart(
+        AppWindow window,
+        DevToolsOptions? options,
+        out DevToolsServer? server,
+        out string? error);
     public void Dispose();
     public ValueTask DisposeAsync();
 }
@@ -202,7 +209,8 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
 | 成员 | 说明 |
 |---|---|
-| `Start(application, options)` | 在 `127.0.0.1:{Port}` 启动 HTTP 服务；`Port = 0` 时由操作系统分配；所有 endpoint 要求 `TokenHeader` |
+| `Start(window, options)` | 在 `127.0.0.1:{Port}` 启动 HTTP 服务；`Port = 0` 时由操作系统分配；loopback 监听失败时抛出 `InvalidOperationException`；所有 endpoint 要求 `TokenHeader` |
+| `TryStart(window, options, out server, out error)` | 非抛出版本：只有监听绑定失败返回 `false` 并给出 `error`；参数错误与已关闭窗口仍抛出异常 |
 | `AccessToken` | 实际使用的 token；未配置时为自动生成值 |
 | `Port` | 实际绑定端口；自动端口模式下以此值为准 |
 | `BaseAddress` | 本地服务根地址 |
@@ -210,13 +218,13 @@ public sealed class DevToolsServer : IAsyncDisposable, IDisposable
 
 Endpoint 以 `/api/v1` 为前缀，提供 `/health`、`/screenshot`、`/input/pointer`、`/input/key`、`/input/text` 和 `/input/wheel`。请求/响应格式见 [`DevTools.md`](DevTools.md)。
 
-推荐通过应用扩展启动服务：
+推荐通过窗口扩展启动服务：
 
 ```csharp
-var devTools = app.UseDevToolsServer(options);
+var devTools = window.UseDevToolsServer(options); // DevToolsServer?
 ```
 
-服务会在 `DesktopApplication` 退出时自动释放。直接调用 `DevToolsServer.Start()` 仍可用于需要自行控制生命周期的场景。
+`UseDevToolsServer` 在监听失败时记录警告并返回 `null`，不会中止应用启动；`DevToolsOptions.ThrowOnStartFailure = true` 时改为抛出异常。服务随窗口 `Closed` 自动释放。直接调用 `DevToolsServer.Start()` 仍可用于需要严格失败或自行控制生命周期的场景。
 
 ### DevToolsOptions
 
@@ -227,17 +235,22 @@ public sealed class DevToolsOptions
 {
     public int Port { get; set; } = 0;
     public string? AccessToken { get; set; }
-    public bool AllowInputInjection { get; set; } = true;
-    public bool AllowInspector { get; set; } = true;
-    public bool IncludeSourcePaths { get; set; } = true;
-    public bool IncludeTextContent { get; set; } = true;
+    public bool ThrowOnStartFailure { get; set; } = false;
+    public bool AllowInputInjection { get; set; } = false;
+    public bool AllowInspector { get; set; } = false;
+    public bool AllowMemoryDiagnostics { get; set; } = false;
+    public bool AllowChromeInspect { get; set; } = false;
+    public bool AllowChromeStyleEditing { get; set; } = false;
+    public bool AllowChromeConsole { get; set; } = false;
+    public bool IncludeSourcePaths { get; set; } = false;
+    public bool IncludeTextContent { get; set; } = false;
 }
 ```
 
 `Port` 语义：
 
 - `0`：由操作系统自动分配空闲端口，是默认和多实例推荐模式。
-- `1..65535`：严格绑定指定端口；端口冲突时 `Start` 抛出异常。
+- `1..65535`：严格绑定指定端口；端口冲突时 `Start` 抛出异常，`UseDevToolsServer` 降级。
 - 启动后通过 `DevToolsServer.Port` 和 `DevToolsServer.BaseAddress` 获取实际地址。
 
 `GET /api/v1/health` 返回：
@@ -753,7 +766,17 @@ public abstract class Element : EventTarget, IComponentLifecycle, ILayoutLifecyc
     public T? GetProperty<T>(string name);
     public void SetProperty<T>(string name, T value);
     public void BindProperty<T>(string name, Func<T> getter);
+    public void BindProperty<T>(string name, Func<T> getter, params IReactiveSource[] sources);
     public void BindProperty<T>(string name, ObservableValue<T> source);
+    public void BindProperty<T>(string name, IReactiveValue<T> source);
+    public void BindProperty(string name, System.Collections.IEnumerable collection); // 集合快照
+    public void BindText<T>(T value);                    // 插值：格式化为 TextContent
+    public void BindText<T>(ObservableValue<T> source);  // 插值：订阅并格式化
+    public void BindText<T>(IReactiveValue<T> source);
+
+    public void SetPointerCapture(int pointerId);
+    public void ReleasePointerCapture(int pointerId);
+    public bool HasPointerCapture(int pointerId);
 
     // 事件：继承 EventTarget（AddEventListener / DispatchEvent）
 
@@ -780,9 +803,9 @@ public abstract class Element : EventTarget, IComponentLifecycle, ILayoutLifecyc
 }
 ```
 
-### Document / UIDocument
+绑定写入属性袋并触发 `OnPropertyChanged`/`OnPropChanged`，**不调用 CLR 属性的 setter**；`[Prop]` 属性的 getter/setter 应读写属性袋，派生逻辑放在 `OnPropertyChanged`。模板中的常量表达式（如 `:size="40"`）生成 CLR 属性直接赋值，因此会执行 setter 并获得 C# 类型转换；普通集合表达式生成 `BindProperty(name, collection)` 快照，`ObservableCollection<T>` 的变更不会自动推送。单表达式插值（`{{ Fn(x) }}`、`{{ Count.Value }}`）生成 `BindText`：响应源订阅后格式化，其他表达式按字符串输出，不会产生 CS0411。
 
-```csharp
+### Document / UIDocument```csharp
 namespace Square.UI;
 
 public abstract class Document : EventTarget
@@ -1468,6 +1491,8 @@ public class TextArea : TextEditorBase { protected override bool IsMultiline => 
 ```
 
 光标与选择高亮共享同一视觉行盒，其高度为 CSS `line-height` 与字体自然行高的较大值，因此单行和多行编辑器中的光标、高亮及 IME 定位保持一致。
+
+`change` 事件的触发时机与 HTML 文本输入一致：只对用户编辑派发（程序赋值和绑定更新不派发），比较基准是获得焦点时或上一次提交时的 `Value`。单行 `Input` 在失焦或按 Enter 时提交；多行 `TextArea` 的 Enter 插入换行、只在失焦时提交；没有实际改动时不重复派发。`input` 事件仍然在每次用户输入时派发。
 
 ### 结构原语
 
