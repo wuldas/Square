@@ -13,6 +13,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     public bool SupportsPartialRendering => true;
     private const int CoverageSampleGrid = 4;
     private const int CoverageSampleCount = CoverageSampleGrid * CoverageSampleGrid;
+    // Text at or below this logical size is rasterized and placed on whole pixels; blending a small
+    // glyph column across two pixels costs legibility, so only larger text is subpixel sampled.
+    private const float MinBlendedTextSize = 14f;
     private const uint AlphaMask = 0xFF000000u;
 
     private readonly ISoftwareRenderSurface _surface;
@@ -2787,6 +2790,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         // Match measurement in logical coordinates; scale only glyph rasterization and placement.
         var lines = TextWrapping.Wrap(textLayout.Text, textLayout.MaxSize.Width, (_, rune) =>
             TextLayout.MeasureRuneAdvance(rune, textLayout.Font), textLayout.WrappingOptions);
+        // Small glyphs read as smudges when a column is split across two pixels, so only larger text
+        // is sampled between pixels; small text keeps one crisp sample per column.
+        var blendSubpixels = textLayout.Font.Size > MinBlendedTextSize;
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
@@ -2802,7 +2808,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 if (rune.IsBmp)
                     glyph = _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
                 if (glyph != null)
-                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, y + glyph.OffsetY, color);
+                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, y + glyph.OffsetY, color, blendSubpixels);
                 x += advance;
             }
         }
@@ -2811,13 +2817,15 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     // GDI advances are fractional at non-integral DPI. Snapping every origin to a whole pixel turns
     // a 13.75px advance into alternating 14/13/14 gaps, so blend each column into the two pixels it
     // actually covers. At integral DPI the fraction is zero and the snapped path runs unchanged.
-    private void DrawSubpixelGlyph(RasterizedGlyph glyph, float originX, float originY, Color color)
+    private void DrawSubpixelGlyph(RasterizedGlyph glyph, float originX, float originY, Color color,
+        bool blendSubpixels = true)
     {
         var baseX = (int)MathF.Floor(originX);
         var baseY = (int)MathF.Round(originY);
         var fraction = originX - baseX;
-        if (fraction < 0.02f || fraction > 0.98f)
+        if (!blendSubpixels || fraction < 0.02f || fraction > 0.98f)
         {
+            var snappedX = (int)MathF.Round(originX);
             for (var row = 0; row < glyph.Height; row++)
             {
                 var y = baseY + row;
@@ -2828,7 +2836,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                     if (coverageIndex >= glyph.Coverage.Length) continue;
                     var coverage = glyph.Coverage[coverageIndex];
                     if (coverage == 0) continue;
-                    var x = baseX + column;
+                    var x = snappedX + column;
                     if ((uint)x >= (uint)_bitmapWidth) continue;
                     if (!IsPointVisible(x + 0.5f, y + 0.5f)) continue;
                     BlendPixelCore(x, y, color.R, color.G, color.B, GetByteCoverageAlpha(color.A, coverage));
