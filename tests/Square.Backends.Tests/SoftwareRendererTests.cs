@@ -1170,6 +1170,27 @@ public class SoftwareRendererTests
     }
 
     [Fact]
+    public void SmallCjkTextKeepsATrailingGapBesideGridFitInk()
+    {
+        var rasterizer = new SystemGlyphRasterizer();
+        if (!rasterizer.IsAvailable) return;
+        var small = new Font("Segoe UI", 11);
+        var han = new System.Text.Rune('偏');
+        var glyph = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(small, '偏'));
+        var inkRight = glyph.OffsetX + glyph.Width;
+        var advance = TextLayout.MeasureRuneAdvance(han, small);
+
+        Assert.Equal(TextMetrics.GetGlyphMetrics(small, han).AdvanceX + 0.5f, advance, 3);
+        Assert.True(advance - inkRight >= 0.5f - 0.001f,
+            $"Expected a trailing gap between small CJK glyphs, advance={advance}, ink right edge={inkRight}.");
+
+        var large = new Font("Segoe UI", 24);
+        var wide = new System.Text.Rune('中');
+        Assert.Equal(TextMetrics.GetGlyphMetrics(large, wide).AdvanceX,
+            TextLayout.MeasureRuneAdvance(wide, large), 3);
+    }
+
+    [Fact]
     public void RasterizedGlyphVerticalOffsetsAreBaselineRelative()
     {
         var rasterizer = new SystemGlyphRasterizer();

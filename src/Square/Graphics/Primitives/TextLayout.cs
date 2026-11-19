@@ -36,6 +36,11 @@ public sealed class TextLayout
 {
     /// <summary>默认行高倍数（1.2）。</summary>
     public const float DefaultLineHeight = 1.2f;
+
+    // Windows GDI grid-fits CJK glyphs so their ink fills the whole advance at small sizes,
+    // leaving adjacent characters with no gap. Below this size the layout adds a hair of tracking.
+    private const float SmallCjkTrackingMaxSize = 12f;
+    private const float SmallCjkTrackingPx = 0.5f;
     private static Func<Rune, Font, float?>? _advanceProvider;
     internal static bool UsesStandardAdvanceProvider =>
         _advanceProvider == Square.Text.Glyph.SystemTextMeasurementRegistration.MeasureAdvance;
@@ -414,11 +419,23 @@ public sealed class TextLayout
     {
         if (TextMetrics.IsZeroAdvanceCategory(rune)) return 0;
         var provided = TextMetrics.GetGlyphMetrics(font, rune).AdvanceX;
-        if (provided >= 0 && float.IsFinite(provided)) return provided;
+        if (provided >= 0 && float.IsFinite(provided)) return provided + SmallCjkTracking(rune, font);
         var measured = _advanceProvider?.Invoke(rune, font);
-        if (measured is >= 0 and float value && float.IsFinite(value)) return value;
-        return MeasureRuneAdvanceFallback(rune, font);
+        if (measured is >= 0 and float value && float.IsFinite(value))
+            return value + SmallCjkTracking(rune, font);
+        return MeasureRuneAdvanceFallback(rune, font) + SmallCjkTracking(rune, font);
     }
+
+    /// <summary>小字号下 GDI 会把 CJK 墨迹填满整个字宽，补一点字距以免相邻字粘连。</summary>
+    internal static float SmallCjkTracking(Rune rune, Font font)
+        => font.Size <= SmallCjkTrackingMaxSize && IsCjkRune(rune.Value) ? SmallCjkTrackingPx : 0;
+
+    internal static bool IsCjkRune(int value)
+        => value is >= 0x3000 and <= 0x30ff or
+            >= 0x3400 and <= 0x4dbf or
+            >= 0x4e00 and <= 0x9fff or
+            >= 0xf900 and <= 0xfaff or
+            >= 0xff01 and <= 0xff60;
 
     internal static float MeasureRuneAdvanceFallback(Rune rune, Font font)
     {

@@ -2802,36 +2802,65 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 if (rune.IsBmp)
                     glyph = _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
                 if (glyph != null)
-                {
-                    var glyphX = (int)MathF.Round(x);
-                    var glyphY = (int)MathF.Round(y);
-
-                    for (var row = 0; row < glyph.Height; row++)
-                    {
-                        for (var column = 0; column < glyph.Width; column++)
-                        {
-                            var coverageIndex = row * glyph.Stride + column;
-                            if (coverageIndex >= glyph.Coverage.Length) continue;
-                            var coverage = glyph.Coverage[coverageIndex];
-                            if (coverage == 0) continue;
-                            var targetX = glyphX + glyph.OffsetX + column;
-                            var targetY = glyphY + glyph.OffsetY + row;
-                            if ((uint)targetX >= (uint)_bitmapWidth || (uint)targetY >= (uint)_bitmapHeight)
-                                continue;
-                            if (!IsPointVisible(targetX + 0.5f, targetY + 0.5f)) continue;
-                            BlendPixelCore(
-                                targetX,
-                                targetY,
-                                color.R,
-                                color.G,
-                                color.B,
-                                GetByteCoverageAlpha(color.A, coverage));
-                        }
-                    }
-                }
+                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, y + glyph.OffsetY, color);
                 x += advance;
             }
         }
+    }
+
+    // GDI advances are fractional at non-integral DPI. Snapping every origin to a whole pixel turns
+    // a 13.75px advance into alternating 14/13/14 gaps, so blend each column into the two pixels it
+    // actually covers. At integral DPI the fraction is zero and the snapped path runs unchanged.
+    private void DrawSubpixelGlyph(RasterizedGlyph glyph, float originX, float originY, Color color)
+    {
+        var baseX = (int)MathF.Floor(originX);
+        var baseY = (int)MathF.Round(originY);
+        var fraction = originX - baseX;
+        if (fraction < 0.02f || fraction > 0.98f)
+        {
+            for (var row = 0; row < glyph.Height; row++)
+            {
+                var y = baseY + row;
+                if ((uint)y >= (uint)_bitmapHeight) continue;
+                for (var column = 0; column < glyph.Width; column++)
+                {
+                    var coverageIndex = row * glyph.Stride + column;
+                    if (coverageIndex >= glyph.Coverage.Length) continue;
+                    var coverage = glyph.Coverage[coverageIndex];
+                    if (coverage == 0) continue;
+                    var x = baseX + column;
+                    if ((uint)x >= (uint)_bitmapWidth) continue;
+                    if (!IsPointVisible(x + 0.5f, y + 0.5f)) continue;
+                    BlendPixelCore(x, y, color.R, color.G, color.B, GetByteCoverageAlpha(color.A, coverage));
+                }
+            }
+            return;
+        }
+
+        var leftWeight = 1f - fraction;
+        for (var row = 0; row < glyph.Height; row++)
+        {
+            var y = baseY + row;
+            if ((uint)y >= (uint)_bitmapHeight) continue;
+            for (var column = 0; column < glyph.Width; column++)
+            {
+                var coverageIndex = row * glyph.Stride + column;
+                if (coverageIndex >= glyph.Coverage.Length) continue;
+                var coverage = glyph.Coverage[coverageIndex];
+                if (coverage == 0) continue;
+                BlendGlyphColumn(baseX + column, y, coverage, leftWeight, color);
+                BlendGlyphColumn(baseX + column + 1, y, coverage, fraction, color);
+            }
+        }
+    }
+
+    private void BlendGlyphColumn(int x, int y, byte coverage, float weight, Color color)
+    {
+        if (weight <= 0.02f || (uint)x >= (uint)_bitmapWidth) return;
+        if (!IsPointVisible(x + 0.5f, y + 0.5f)) return;
+        var alpha = (int)MathF.Round(GetByteCoverageAlpha(color.A, coverage) * weight);
+        if (alpha <= 0) return;
+        BlendPixelCore(x, y, color.R, color.G, color.B, (byte)Math.Min(255, alpha));
     }
 
     private void RenderTextDecorations(TextLayout textLayout, Point origin, Color color)
