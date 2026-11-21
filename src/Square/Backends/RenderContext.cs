@@ -2845,30 +2845,25 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             return;
         }
 
+        // Adjacent mask columns cover disjoint parts of a destination pixel. Sum their
+        // coverage before compositing so a solid stroke stays solid at every X position.
         var leftWeight = 1f - fraction;
         for (var row = 0; row < glyph.Height; row++)
         {
             var y = baseY + row;
             if ((uint)y >= (uint)_bitmapHeight) continue;
-            for (var column = 0; column < glyph.Width; column++)
+            var rowStart = row * glyph.Stride;
+            byte previous = 0;
+            for (var column = 0; column <= glyph.Width; column++)
             {
-                var coverageIndex = row * glyph.Stride + column;
-                if (coverageIndex >= glyph.Coverage.Length) continue;
-                var coverage = glyph.Coverage[coverageIndex];
-                if (coverage == 0) continue;
-                BlendGlyphColumn(baseX + column, y, coverage, leftWeight, color);
-                BlendGlyphColumn(baseX + column + 1, y, coverage, fraction, color);
+                // The zero sample after the last column emits the trailing edge.
+                var current = column < glyph.Width && rowStart + column < glyph.Coverage.Length
+                    ? glyph.Coverage[rowStart + column] : (byte)0;
+                var coverage = (byte)MathF.Round(previous * fraction + current * leftWeight);
+                BlendPixelCoverage(baseX + column, y, color, coverage);
+                previous = current;
             }
         }
-    }
-
-    private void BlendGlyphColumn(int x, int y, byte coverage, float weight, Color color)
-    {
-        if (weight <= 0.02f || (uint)x >= (uint)_bitmapWidth) return;
-        if (!IsPointVisible(x + 0.5f, y + 0.5f)) return;
-        var alpha = (int)MathF.Round(GetByteCoverageAlpha(color.A, coverage) * weight);
-        if (alpha <= 0) return;
-        BlendPixelCore(x, y, color.R, color.G, color.B, (byte)Math.Min(255, alpha));
     }
 
     private void RenderTextDecorations(TextLayout textLayout, Point origin, Color color)

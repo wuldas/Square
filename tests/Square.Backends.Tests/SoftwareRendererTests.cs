@@ -1036,6 +1036,48 @@ public class SoftwareRendererTests
         Assert.True(secondLineHasInk);
     }
 
+    [Theory]
+    [InlineData(0.25f)]
+    [InlineData(0.5f)]
+    [InlineData(0.75f)]
+    public void FractionalGlyphOriginPreservesStrokeBrightness(float pixelShift)
+    {
+        if (!new SystemGlyphRasterizer().IsAvailable) return;
+        const float dpi = 1.5f;
+        var layout = new TextLayout(OperatingSystem.IsWindows() ? "绵" : "H", new Font("Segoe UI", 21));
+        var background = Color.FromRgb(16, 35, 28);
+        var foreground = Color.FromRgb(153, 178, 174);
+        var brush = Brush.FromColor(foreground);
+        using var aligned = CreateContext(64, 64, dpi);
+        using var shifted = CreateContext(64, 64, dpi);
+        aligned.Clear(background);
+        shifted.Clear(background);
+        aligned.DrawText(layout, new Point(4, 4), brush);
+        shifted.DrawText(layout, new Point(4 + pixelShift / dpi, 4), brush);
+
+        var reference = aligned.GetBitmap();
+        var actual = shifted.GetBitmap();
+        var solidPixels = 0;
+        for (var y = 0; y < actual.Height; y++)
+        for (var x = 1; x < actual.Width; x++)
+        {
+            var left = reference.GetPixel(x - 1, y)[2];
+            var right = reference.GetPixel(x, y)[2];
+            var red = actual.GetPixel(x, y)[2];
+            if (left == foreground.R && right == foreground.R)
+            {
+                solidPixels++;
+                Assert.Equal(foreground.R, red);
+            }
+            else
+            {
+                var expected = (int)MathF.Round(left * pixelShift + right * (1 - pixelShift));
+                Assert.InRange((int)red, expected - 1, expected + 1);
+            }
+        }
+        Assert.True(solidPixels > 0);
+    }
+
     [Fact]
     public void HighDpiNegativeLetterSpacingDoesNotWrapFittingText()
     {
