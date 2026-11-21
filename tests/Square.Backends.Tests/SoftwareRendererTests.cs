@@ -1246,6 +1246,29 @@ public class SoftwareRendererTests
         Assert.True(chinese.OffsetY < 0, $"Expected CJK top bearing above baseline, got {chinese.OffsetY}.");
     }
 
+    [Theory]
+    [InlineData("双击数值重置，键盘按 Enter 重置", 12f, 1f, 30.5f)]
+    [InlineData("双击数值重置，键盘按 Enter 重置", 12f, 1.5f, 31.5f)]
+    [InlineData("修改立即生效，双击数值重置", 10f, 1.25f, 31.5f)]
+    [InlineData("修改立即生效，双击数值重置", 10f, 1.5f, 30.5f)]
+    public void HalfPixelBaselineMovesTheWholeLineTogether(string text, float size, float dpi, float baseline)
+    {
+        if (!new SystemGlyphRasterizer().IsAvailable) return;
+        var font = new Font("Segoe UI", size);
+        var layout = new TextLayout(text, font);
+        var lineHeight = TextMetrics.GetLineHeight(font, layout.LineHeight) * dpi;
+        var offset = TextMetrics.GetBaselineOffset(font.WithSize(size * dpi), lineHeight);
+        using var actual = CreateContext(400, 64, dpi);
+        using var expected = CreateContext(400, 64, dpi);
+        var brush = Brush.FromColor(Color.White);
+        actual.DrawText(layout, new Point(4, (baseline - offset) / dpi), brush);
+        expected.DrawText(layout, new Point(4, (MathF.Round(baseline) - offset) / dpi), brush);
+
+        var pixels = expected.GetBitmap().Pixels;
+        Assert.Contains((byte)255, pixels);
+        Assert.Equal(pixels, actual.GetBitmap().Pixels);
+    }
+
     [Fact]
     public void MixedFallbackGlyphsRenderFromOneLineBaseline()
     {

@@ -1669,90 +1669,70 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     {
         RoundedRectStrokeFastPathCount++;
         var width = Math.Min(strokeWidth, Math.Min(rect.Width, rect.Height) / 2f);
-        BlendRectCoverage(new Rect(rect.X + rx, rect.Y, Math.Max(0, rect.Width - rx * 2), width), color);
-        BlendRectCoverage(new Rect(rect.X + rx, rect.Bottom - width, Math.Max(0, rect.Width - rx * 2), width), color);
-        BlendRectCoverage(new Rect(rect.X, rect.Y + ry, width, Math.Max(0, rect.Height - ry * 2)), color);
-        BlendRectCoverage(new Rect(rect.Right - width, rect.Y + ry, width, Math.Max(0, rect.Height - ry * 2)), color);
+        var inner = rect.Inflate(-width, -width);
+        var innerRx = Math.Max(0, rx - width);
+        var innerRy = Math.Max(0, ry - width);
+        var x0 = Math.Max(0, (int)MathF.Floor(_hasClip ? Math.Max(rect.Left, _clipLeft) : rect.Left));
+        var x1 = Math.Min(_bitmapWidth, (int)MathF.Ceiling(_hasClip ? Math.Min(rect.Right, _clipRight) : rect.Right));
+        var y0 = Math.Max(0, (int)MathF.Floor(_hasClip ? Math.Max(rect.Top, _clipTop) : rect.Top));
+        var y1 = Math.Min(_bitmapHeight, (int)MathF.Ceiling(_hasClip ? Math.Min(rect.Bottom, _clipBottom) : rect.Bottom));
+        if (x0 >= x1 || y0 >= y1) return;
 
-        var hasInner = rect.Width > width * 2 && rect.Height > width * 2;
-        var inner = hasInner ? rect.Inflate(-width, -width) : Rect.Empty;
-        RasterizeRoundedRectCorners(rect, rx, ry, inner, Math.Max(0, rx - width), Math.Max(0, ry - width), hasInner, color);
-    }
-
-    private void RasterizeRoundedRectCorners(Rect rect, float rx, float ry, Rect inner, float innerRx, float innerRy, bool hasInner, Color color)
-    {
-        RasterizeRoundedRectCorner(new Rect(rect.X, rect.Y, rx, ry), rect, rx, ry, inner, innerRx, innerRy, hasInner, color);
-        RasterizeRoundedRectCorner(new Rect(rect.Right - rx, rect.Y, rx, ry), rect, rx, ry, inner, innerRx, innerRy, hasInner, color);
-        RasterizeRoundedRectCorner(new Rect(rect.X, rect.Bottom - ry, rx, ry), rect, rx, ry, inner, innerRx, innerRy, hasInner, color);
-        RasterizeRoundedRectCorner(new Rect(rect.Right - rx, rect.Bottom - ry, rx, ry), rect, rx, ry, inner, innerRx, innerRy, hasInner, color);
-    }
-
-    private void RasterizeRoundedRectCorner(Rect cornerBounds, Rect rect, float rx, float ry, Rect inner, float innerRx, float innerRy, bool hasInner, Color color)
-    {
-        var x0 = Math.Max(0, (int)MathF.Floor(rect.X));
-        x0 = Math.Max(x0, (int)MathF.Floor(cornerBounds.X));
-        var y0 = Math.Max(0, (int)MathF.Floor(cornerBounds.Y));
-        var x1 = Math.Min(_bitmapWidth - 1, (int)MathF.Ceiling(cornerBounds.Right));
-        var y1 = Math.Min(_bitmapHeight - 1, (int)MathF.Ceiling(cornerBounds.Bottom));
-        var outerCx = cornerBounds.X < rect.X + rx ? rect.X + rx : rect.Right - rx;
-        var outerCy = cornerBounds.Y < rect.Y + ry ? rect.Y + ry : rect.Bottom - ry;
-        var isLeft = cornerBounds.X < rect.X + rx;
-        var isTop = cornerBounds.Y < rect.Y + ry;
-        var outerInvRx2 = 1f / (rx * rx);
-        var outerInvRy2 = 1f / (ry * ry);
-
-        var innerCx = 0f;
-        var innerCy = 0f;
-        var innerInvRx2 = 0f;
-        var innerInvRy2 = 0f;
-        if (hasInner && innerRx > 0 && innerRy > 0)
+        // Each sample row cuts the outline into an outer span minus an inner span.
+        // Composite once per pixel, including where a tangent crosses the pixel.
+        Span<(int Start, int End)> outerSpans = stackalloc (int, int)[CoverageSampleGrid];
+        Span<(int Start, int End)> innerSpans = stackalloc (int, int)[CoverageSampleGrid];
+        for (var y = y0; y < y1; y++)
         {
-            innerCx = cornerBounds.X < rect.X + rx ? inner.X + innerRx : inner.Right - innerRx;
-            innerCy = cornerBounds.Y < rect.Y + ry ? inner.Y + innerRy : inner.Bottom - innerRy;
-            innerInvRx2 = 1f / (innerRx * innerRx);
-            innerInvRy2 = 1f / (innerRy * innerRy);
-        }
-
-        for (var y = y0; y <= y1; y++)
-        {
-            for (var x = x0; x <= x1; x++)
+            var holeStart = x0 * CoverageSampleGrid;
+            var holeEnd = x1 * CoverageSampleGrid;
+            for (var sy = 0; sy < CoverageSampleGrid; sy++)
             {
+                var py = y + (sy + 0.5f) / CoverageSampleGrid;
+                outerSpans[sy] = RoundedRectSampleSpan(rect, rx, ry, py);
+                innerSpans[sy] = RoundedRectSampleSpan(inner, innerRx, innerRy, py);
+                holeStart = Math.Max(holeStart, innerSpans[sy].Start);
+                holeEnd = Math.Min(holeEnd, innerSpans[sy].End);
+            }
+
+            var skipStart = (holeStart + CoverageSampleGrid - 1) / CoverageSampleGrid;
+            var skipEnd = holeEnd / CoverageSampleGrid;
+            for (var x = x0; x < x1; x++)
+            {
+                if (x == skipStart && x < skipEnd)
+                {
+                    x = skipEnd - 1;
+                    continue;
+                }
+                var start = x * CoverageSampleGrid;
                 var covered = 0;
                 for (var sy = 0; sy < CoverageSampleGrid; sy++)
-                {
-                    for (var sx = 0; sx < CoverageSampleGrid; sx++)
-                    {
-                        var px = x + (sx + 0.5f) / CoverageSampleGrid;
-                        var py = y + (sy + 0.5f) / CoverageSampleGrid;
-                        if (isLeft ? px >= outerCx : px < outerCx) continue;
-                        if (isTop ? py >= outerCy : py < outerCy) continue;
-                        if (!IsInsideEllipse(px, py, outerCx, outerCy, outerInvRx2, outerInvRy2)) continue;
-                        if (hasInner && IsInsideInnerRoundedRectCorner(px, py, inner, innerRx, innerRy, innerCx, innerCy, innerInvRx2, innerInvRy2)) continue;
-                        covered++;
-                    }
-                }
+                    covered += SamplesInPixel(outerSpans[sy], start) - SamplesInPixel(innerSpans[sy], start);
                 BlendPixelCoverage(x, y, color, covered, CoverageSampleCount);
             }
         }
     }
 
-    private static bool IsInsideEllipse(float x, float y, float cx, float cy, float invRx2, float invRy2)
+    private (int Start, int End) RoundedRectSampleSpan(Rect rect, float rx, float ry, float y)
     {
-        var dx = x - cx;
-        var dy = y - cy;
-        return dx * dx * invRx2 + dy * dy * invRy2 <= 1f;
+        if (rect.IsEmpty || y < rect.Top || y >= rect.Bottom) return default;
+        var left = rect.Left;
+        var right = rect.Right;
+        var dy = Math.Max(rect.Top + ry - y, y - (rect.Bottom - ry));
+        if (dy > 0 && ry > 0 && rx > 0)
+        {
+            var normalizedY = dy / ry;
+            var inset = rx * (1f - MathF.Sqrt(Math.Max(0, 1f - normalizedY * normalizedY)));
+            left += inset;
+            right -= inset;
+        }
+        // The sample at index i is centered at (i + 0.5) / CoverageSampleGrid.
+        return ((int)MathF.Ceiling(Math.Clamp(left, 0, _bitmapWidth) * CoverageSampleGrid - 0.5f),
+                (int)MathF.Ceiling(Math.Clamp(right, 0, _bitmapWidth) * CoverageSampleGrid - 0.5f));
     }
 
-    private static bool IsInsideInnerRoundedRectCorner(
-        float x, float y, Rect inner, float innerRx, float innerRy,
-        float cornerCx, float cornerCy, float invRx2, float invRy2)
-    {
-        if (x < inner.X || x > inner.Right || y < inner.Y || y > inner.Bottom) return false;
-        var inHorizontalBody = x >= inner.X + innerRx && x <= inner.Right - innerRx;
-        var inVerticalBody = y >= inner.Y + innerRy && y <= inner.Bottom - innerRy;
-        if (inHorizontalBody || inVerticalBody) return true;
-        return IsInsideEllipse(x, y, cornerCx, cornerCy, invRx2, invRy2);
-    }
+    private static int SamplesInPixel((int Start, int End) span, int start)
+        => Math.Max(0, Math.Min(span.End, start + CoverageSampleGrid) - Math.Max(span.Start, start));
 
     private void DrawRectPixels(Rect rect, float width, Color color)
     {
@@ -2799,7 +2779,9 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             var line = lines[lineIndex];
             var indent = textLayout.GetLineIndent(lineIndex);
             var x = origin.X + (indent + GetTextAlignmentOffset(textLayout, line.Width + indent)) * _dpiScale;
-            var y = origin.Y + lineIndex * lineHeight + baselineOffset;
+            // Snap the shared baseline before adding glyph bearings: at a half pixel,
+            // rounding each glyph's top separately can move neighbors in opposite directions.
+            var baselineY = (int)MathF.Round(origin.Y + lineIndex * lineHeight + baselineOffset);
             foreach (var visualRune in textLayout.EnumerateVisualRunes(line))
             {
                 var rune = visualRune.Glyph;
@@ -2808,7 +2790,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 if (rune.IsBmp)
                     glyph = _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
                 if (glyph != null)
-                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, y + glyph.OffsetY, color, blendSubpixels);
+                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, baselineY + glyph.OffsetY, color, blendSubpixels);
                 x += advance;
             }
         }
@@ -2817,11 +2799,10 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     // GDI advances are fractional at non-integral DPI. Snapping every origin to a whole pixel turns
     // a 13.75px advance into alternating 14/13/14 gaps, so blend each column into the two pixels it
     // actually covers. At integral DPI the fraction is zero and the snapped path runs unchanged.
-    private void DrawSubpixelGlyph(RasterizedGlyph glyph, float originX, float originY, Color color,
+    private void DrawSubpixelGlyph(RasterizedGlyph glyph, float originX, int baseY, Color color,
         bool blendSubpixels = true)
     {
         var baseX = (int)MathF.Floor(originX);
-        var baseY = (int)MathF.Round(originY);
         var fraction = originX - baseX;
         if (!blendSubpixels || fraction < 0.02f || fraction > 0.98f)
         {
