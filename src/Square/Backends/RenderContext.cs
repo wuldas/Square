@@ -2795,9 +2795,7 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
             {
                 var rune = visualRune.Glyph;
                 var advance = visualRune.Advance * _dpiScale;
-                RasterizedGlyph? glyph = null;
-                if (rune.IsBmp)
-                    glyph = _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
+                var glyph = _glyphRasterizer.Rasterize(physicalFont, rune);
                 if (glyph != null)
                     DrawSubpixelGlyph(glyph, x + glyph.OffsetX, baselineY + glyph.OffsetY, color,
                         blendSubpixels: !smallText || rune.IsAscii);

@@ -403,15 +403,26 @@ namespace Square.Compiler.Emit
                 else
                 {
                     // HTML 动态属性绑定小写 attribute 名；Square 控件继续走别名映射。
+                    var descriptor = _variableComponents[variableName];
+                    var prop = isHtml ? null : FindProp(descriptor, attribute.Name);
                     var propertyName = isHtml
                         ? attribute.Name.ToLowerInvariant()
-                        : MapPropName(_variableComponents[variableName], attribute.Name);
+                        : prop?.Name ?? _templateCatalog.MapPropertyName(attribute.Name);
                     var start = MappingStart();
                     if (!isHtml && IsPropertyLikeName(propertyName) && IsConstantBindingExpression(attribute.RawValue))
                         // Constant values assign the CLR property directly so the setter runs and
                         // the literal converts to the declared property type (float, enum, ...).
                         EmitSourceMappedLine(indent, attribute.Line,
                             variableName + "." + propertyName + " = " + attribute.RawValue + ";");
+                    else if (prop?.UseSetter == true)
+                    {
+                        var target = NextVariable();
+                        var value = NextVariable();
+                        _sb.AppendLine(indent + "var " + target + " = " + variableName + ";");
+                        EmitSourceMappedLine(indent, attribute.Line,
+                            target + ".BindProp(\"" + Escape(propertyName) + "\", global::Square.Runtime.Binding.PropBinding.From(" +
+                            attribute.RawValue + "), " + value + " => " + target + ".@" + propertyName + " = " + value + ");");
+                    }
                     else if (IsLocalExpression(attribute.RawValue, localNames))
                         EmitSourceMappedLine(indent, attribute.Line,
                             variableName + ".SetProperty(\"" + propertyName + "\", " + attribute.RawValue + ");");
@@ -610,58 +621,24 @@ namespace Square.Compiler.Emit
 
         private void EmitVIfChain(TemplateIfChainDirective chain, string indent, string parentName, IReadOnlyList<string> localNames)
         {
-            string accumulated = null;
-            var accumulatedDependencies = new List<string>();
+            var field = "_vif" + _vifIndex++;
+            var dependencies = chain.Branches.SelectMany(branch => CollectConditionDependencies(branch.Condition, localNames))
+                .Distinct(StringComparer.Ordinal);
+            var dependencyArguments = string.Concat(dependencies.Select(name => ", \"" + Escape(name) + "\""));
+            _sb.AppendLine(indent + "var " + field + " = new SwitchNode(this" + dependencyArguments + ");");
             foreach (var branch in chain.Branches)
             {
-                var field = "_vif" + _vifIndex++;
-                string condition;
                 if (branch.IsElse)
-                    condition = accumulated == null ? "true" : "!(" + accumulated + ")";
-                else if (accumulated == null)
-                    condition = branch.Condition ?? "false";
+                    _sb.AppendLine(indent + field + ".AddDefault(() =>");
                 else
-                    condition = "!(" + accumulated + ") && (" + (branch.Condition ?? "false") + ")";
-
-                accumulated = accumulated == null
-                    ? "(" + (branch.Condition ?? "false") + ")"
-                    : accumulated + " || (" + (branch.Condition ?? "false") + ")";
-
-                // Later branches also embed the accumulated negations, so every branch
-                // depends on all conditions seen so far.
-                foreach (var dependency in CollectConditionDependencies(branch.Condition, localNames))
-                    if (!accumulatedDependencies.Contains(dependency)) accumulatedDependencies.Add(dependency);
-                var dependencies = accumulatedDependencies.ToArray();
-                var dependencyArguments = dependencies.Length == 0
-                    ? ""
-                    : ", \"" + string.Join("\", \"", dependencies) + "\"";
-                var simpleBranch = dependencies.Length > 0 && IsSimpleMemberExpression(branch.Condition);
-                if (simpleBranch)
-                {
-                    // Simple member: BindCondition picks the reactive overload for
-                    // ObservableValue/IReactiveValue and snapshots + property dependencies
-                    // for plain bool component properties.
-                    _sb.AppendLine(indent + "var " + field + " = ShowNode.BindCondition(this, " +
-                        branch.Condition + ", () =>");
-                }
-                else if (dependencies.Length > 0)
-                {
-                    // Compound condition: re-evaluate the whole expression when one of the
-                    // referenced properties changes.
-                    _sb.AppendLine(indent + "var " + field + " = new ShowNode(() => (" + condition +
-                        "), () =>");
-                }
-                else
-                {
-                    _sb.AppendLine(indent + "var " + field + " = new ShowNode(" + condition + ", () =>");
-                }
+                    _sb.AppendLine(indent + field + ".AddBranch(() => " + field + ".ReadCondition(" +
+                        (branch.Condition ?? "false") + "), () =>");
                 _sb.AppendLine(indent + "{");
                 EmitFactoryBody(branch.Children, indent + "    ", localNames);
-                var ownerArguments = dependencies.Length == 0 ? "" : simpleBranch ? dependencyArguments : ", this" + dependencyArguments;
-                _sb.AppendLine(indent + "}" + ownerArguments + ");");
-                _sb.AppendLine(indent + parentName + ".RegisterGeneratedResource(" + field + ");");
-                _sb.AppendLine(indent + field + ".AttachTo(" + parentName + ");");
+                _sb.AppendLine(indent + "});");
             }
+            _sb.AppendLine(indent + parentName + ".RegisterGeneratedResource(" + field + ");");
+            _sb.AppendLine(indent + field + ".AttachTo(" + parentName + ");");
         }
 
         /// <summary>
@@ -1189,16 +1166,14 @@ namespace Square.Compiler.Emit
             return builder.ToString();
         }
 
-        private string MapPropName(TemplateComponentDescriptor component, string name)
-        {
-            if (component != null && !component.IsBuiltIn)
-            {
-                var prop = _templateCatalog.GetProps(component)
+        private TemplatePropDescriptor FindProp(TemplateComponentDescriptor component, string name) =>
+            component == null || component.IsBuiltIn
+                ? null
+                : _templateCatalog.GetProps(component)
                     .FirstOrDefault(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-                if (prop != null) return prop.Name;
-            }
-            return _templateCatalog.MapPropertyName(name);
-        }
+
+        private string MapPropName(TemplateComponentDescriptor component, string name) =>
+            FindProp(component, name)?.Name ?? _templateCatalog.MapPropertyName(name);
 
         private sealed class RefInfo
         {

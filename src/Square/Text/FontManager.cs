@@ -9,13 +9,27 @@ namespace Square.Text;
 /// </summary>
 public sealed class FontManager
 {
-    private static FontManager? _instance;
+    private IReadOnlyList<string> _defaultFallbackFamilies = [];
 
     /// <summary>进程内默认实例。</summary>
-    public static FontManager Instance => _instance ??= new FontManager();
+    public static FontManager Instance { get; } = new();
+
+    /// <summary>应用级字形回退族，按顺序在局部列表之后、系统回退之前查询。建议在创建窗口前配置。</summary>
+    public IReadOnlyList<string> DefaultFallbackFamilies
+    {
+        get => Volatile.Read(ref _defaultFallbackFamilies);
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            var families = value.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            Volatile.Write(ref _defaultFallbackFamilies, Array.AsReadOnly(families));
+        }
+    }
 
     private readonly object _gate = new();
     private readonly HashSet<string> _loadedFamilies = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _windowsFamilies = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, string> _familyCache = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -95,28 +109,45 @@ public sealed class FontManager
         return family;
     }
 
-    /// <summary>
-    /// 按 CSS <c>font-family</c> 列表顺序做简化 font matching：
-    /// 优先已加载 FontFace / 缓存中的已知项，否则回退到 sans-serif。
-    /// </summary>
+    /// <summary>从 CSS 列表中选择第一个可用字体族作为主族。</summary>
     public string ResolveFamilyList(string? fontFamilyCss)
     {
-        string? first = null;
-        foreach (var family in Graphics.Font.ParseFamilyList(fontFamilyCss))
+        var entries = Graphics.Font.ParseFamilyEntries(fontFamilyCss ?? "sans-serif");
+        return ResolvePrimaryFamily(entries).Family;
+    }
+
+    private (string Family, int Index) ResolvePrimaryFamily(IReadOnlyList<(string Name, bool Quoted)> entries)
+    {
+        for (var i = 0; i < entries.Count; i++)
         {
-            first ??= family;
-            var key = family.Trim().Trim('\'', '"');
-            lock (_gate)
-            {
-                if (_loadedFamilies.Contains(key))
-                    return key;
-                if (_familyCache.ContainsKey(key))
-                    return ResolveFamily(key);
-            }
-            if (FontCollection.Shared.ContainsFamily(key))
-                return key;
+            var entry = entries[i];
+            var family = ResolveEntry(entry);
+            if (!entry.Quoted && Graphics.Font.IsGenericFamily(entry.Name) || IsAvailableFamily(entry, family))
+                return (family, i);
         }
-        return ResolveFamily(first ?? "sans-serif");
+        return (ResolveEntry(entries[0]), 0);
+    }
+
+    private string ResolveEntry((string Name, bool Quoted) entry) => entry.Quoted ? entry.Name :
+        ResolveFamily(Graphics.Font.IsFontFamilyKeyword(entry.Name) ? "sans-serif" : entry.Name);
+
+    private bool IsAvailableFamily((string Name, bool Quoted) entry, string family)
+    {
+        lock (_gate)
+        {
+            if (_loadedFamilies.Contains(family)) return true;
+            if (!entry.Quoted && _familyCache.ContainsKey(entry.Name)) return true;
+            if (OperatingSystem.IsWindows() && _windowsFamilies.TryGetValue(family, out var available))
+                return available;
+        }
+        if (OperatingSystem.IsWindows())
+        {
+            var available = SystemGlyphRasterizer.TryGetWin32FontMetrics(
+                new Graphics.Font(family, 16), out _, requireExactFamily: true);
+            lock (_gate) _windowsFamilies[family] = available;
+            return available;
+        }
+        return FontCollection.Shared.ContainsFamily(family);
     }
 
     /// <summary>匹配得到绘图用 <see cref="Graphics.Font"/>。</summary>
@@ -135,12 +166,18 @@ public sealed class FontManager
         string? fontStyle = null,
         float defaultSize = 16f)
     {
-        return Graphics.Font.FromCss(
-            fontFamily,
-            fontSize,
-            fontWeight,
-            fontStyle,
-            defaultSize,
-            css => ResolveFamilyList(css));
+        var entries = Graphics.Font.ParseFamilyEntries(fontFamily ?? "sans-serif");
+        var (family, index) = ResolvePrimaryFamily(entries);
+        var fallback = index + 1 < entries.Count
+            ? Array.AsReadOnly(entries.Skip(index + 1).Select(ResolveEntry)
+                .Where(name => !string.Equals(name, family, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+            : (IReadOnlyList<string>)[];
+        return new Graphics.Font(family, Graphics.Font.ParseSize(fontSize, defaultSize),
+            Graphics.Font.ParseWeight(fontWeight), Graphics.Font.ParseStyle(fontStyle))
+        {
+            FallbackFamilies = fallback,
+            UseLiteralFamily = entries[index].Quoted
+        };
     }
 }

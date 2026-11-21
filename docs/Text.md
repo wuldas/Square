@@ -27,7 +27,7 @@
 | Caret | M3 | ✅ |
 | Selection | M3 | ✅ |
 | Line Break | ✅ 基础 | ✅ 完整 |
-| Font Fallback | M7 | ✅ |
+| Font Fallback | ✅ Software 按标量回退 | 完整 cluster 回退 |
 | BiDi | M7 | ✅ |
 
 ---
@@ -170,20 +170,15 @@ public sealed class TextLayout
 
 ## 9. Font Fallback
 
-现状（0.3.1）：
+Software 后端按 Unicode 标量为缺失字形选字体。已有字形保留在主族，后续按局部列表、应用级列表和系统回退查找。测量和绘制使用同一顺序与字形步进，补充平面字符仍对应原始的两个 UTF-16 单元。Windows 保留日文、CJK 和韩文脚本候选，并尝试 `Segoe UI Symbol` 与 `Segoe UI Emoji`。
 
-- `font-family` 支持逗号分隔列表：`FontManager.ResolveFamilyList` 选择列表中的第一个可用族，不支持逐字形回退链。
-- Windows 系统光栅器对默认族（`Segoe UI` / `Segoe UI Variable`）做了 CJK 字形映射：日文假名映射到 `Yu Gothic UI`，CJK 统一表意文字映射到 `Microsoft YaHei UI`。非 Windows 的 STB 光栅器维护候选面列表并选择可用面。
-- 其它符号区（几何图形、装饰符号）和 astral emoji 是否可见取决于所选字体是否包含该字形；缺字时可能显示空白或 tofu，框架不会自动切换到 Segoe UI Symbol / Segoe UI Emoji / Noto Color Emoji。
-- 当前没有按字形构造回退 run 的排版路径，也没有全局 fallback 列表 API；完整 Font Fallback（含 emoji 和跨 fallback run 的 cluster 边界）仍是 M7 计划项（见下表）。
+配置方式
 
-配置入口：
+- 用可继承的 CSS `font-family` 为整棵窗口子树或局部控件设置顺序，例如 `font-family: 'Segoe UI', 'Segoe UI Symbol', 'Segoe UI Emoji', sans-serif;`。`Text.FontFamily` 等控件属性也接受 CSS 字体列表。
+- 用 `FontManager.Instance.FromCss(...)` 或 `new Font("Segoe UI", 16) { FallbackFamilies = ["Segoe UI Symbol", "Segoe UI Emoji"] }` 构造绘图字体。`WithSize`、`WithWeight` 和 `WithStyle` 会保留局部列表。
+- 在创建窗口之前用 `FontManager.Instance.DefaultFallbackFamilies = ["My Symbols", "Segoe UI Emoji"];` 配置应用级候选。自定义族可先用 `FontFace` 加载，再明确写入列表。自定义主族和私用区码位仅按显式设置的族查找，避免误用其他图标字体。
 
-- CSS `font-family`（可继承，作用到整棵子树）：`font-family: 'Segoe UI Symbol', 'Segoe UI Emoji', 'Microsoft YaHei UI', sans-serif;`
-- 控件属性：`Text.FontFamily` / `FontIcon.FontFamily`（`LeadingIconFontFamily` 等）。
-- 代码：`FontManager.Instance.FromCss(familyList, size, weight, style, defaultSize)`。
-
-需要显示符号或 emoji 时，优先选择覆盖这些码位的字体族（如 `Segoe UI Symbol`、`Segoe UI Emoji`）并把它放在 `font-family` 列表前面。
+Win32 Software 已验证 `♡ ● ○ ■ □ ⚙ ≡ ▶` 以及 `🎵`（U+1F3B5）都有可绘制的字形。Software 使用单色灰度覆盖。颜色字形、ZWJ emoji 组合、变体选择符组合、仅有位图或彩色图层的码位，以及已安装候选字体中没有轮廓的码位，仍可能缺字或分开呈现。跨平台覆盖取决于可用字体。DirectWrite 和 Skia 的原生文本路径各自解析字体。
 
 ---
 

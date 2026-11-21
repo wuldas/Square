@@ -23,28 +23,31 @@ internal sealed class StbGlyphRasterizer
     /// <summary>光栅化指定字体的单个字符，返回字形位图与度量；不可用或无字形时返回 null。</summary>
     /// <param name="font">目标字体。</param>
     /// <param name="character">要光栅化的字符。</param>
-    public RasterizedGlyph? Rasterize(Font font, char character)
+    public RasterizedGlyph? Rasterize(Font font, char character) =>
+        Rune.TryCreate(character, out var rune) ? Rasterize(font, rune) : null;
+
+    public RasterizedGlyph? Rasterize(Font font, Rune rune, bool allowSystemFallback = true)
     {
-        if (!IsAvailable) return null;
-        var entry = _fonts.Resolve(font.Family, character, font.Weight, font.Style);
+        if (!IsAvailable || Rune.IsControl(rune)) return null;
+        var entry = _fonts.ResolveGlyph(font, rune, allowSystemFallback);
         if (entry == null) return null;
 
         var effectiveFont = entry.Family == font.Family
             ? font
             : new Font(entry.Family, font.Size, font.Weight, font.Style);
-        if (!_cacheGlyphs) return RasterizeStb(entry, effectiveFont, character);
+        if (!_cacheGlyphs) return RasterizeStb(entry, effectiveFont, rune);
         var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style,
-            character, _fonts.CustomGeneration);
+            rune.Value, _fonts.CustomGeneration);
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
-        var glyph = RasterizeStb(entry, effectiveFont, character);
+        var glyph = RasterizeStb(entry, effectiveFont, rune);
         _cache[key] = glyph;
         return glyph;
     }
 
     public void Clear() => _cache.Clear();
 
-    private static unsafe RasterizedGlyph? RasterizeStb(FontEntry entry, Font font, char character)
+    private static unsafe RasterizedGlyph? RasterizeStb(FontEntry entry, Font font, Rune rune)
     {
         var info = entry.AcquireFontInfo();
         if (info == null) return null;
@@ -52,7 +55,7 @@ internal sealed class StbGlyphRasterizer
         var scale = StbTrueType.stbtt_ScaleForMappingEmToPixels(info, font.Size);
         if (scale <= 0) return null;
 
-        var codepoint = (int)character;
+        var codepoint = rune.Value;
         var glyphIndex = StbTrueType.stbtt_FindGlyphIndex(info, codepoint);
         if (glyphIndex == 0) return null;
 
@@ -106,7 +109,7 @@ internal sealed class StbGlyphRasterizer
         float Size,
         FontWeight Weight,
         FontStyle Style,
-        char Character,
+        int CodePoint,
         int CustomGeneration);
 }
 
@@ -116,6 +119,8 @@ internal sealed class FontEntry
     private readonly string? _path;
     private readonly int _offset;
     private byte[]? _data;
+    private readonly object _infoGate = new();
+    private volatile bool _fontInfoInitialized;
     private StbTrueType.stbtt_fontinfo? _info;
 
     /// <summary>字体族名称。</summary>
@@ -191,17 +196,29 @@ internal sealed class FontEntry
     /// <returns>字体信息；加载失败返回 null。</returns>
     public StbTrueType.stbtt_fontinfo? AcquireFontInfo()
     {
-        if (_info != null) return _info;
-        var data = EnsureData();
-        if (data == null) return null;
-        var offset = _offset;
-        if (offset == 0)
+        if (_fontInfoInitialized) return _info;
+        lock (_infoGate)
         {
-            var firstFaceOffset = GetFirstFaceOffset(data);
-            if (firstFaceOffset >= 0) offset = firstFaceOffset;
+            if (_fontInfoInitialized) return _info;
+            var data = EnsureData();
+            if (data is { Length: >= 12 })
+            {
+                var offset = _offset != 0 ? _offset : GetFirstFaceOffset(data);
+                if (offset >= 0 && offset <= data.Length - 12)
+                {
+                    try
+                    {
+                        _info = StbTrueType.CreateFont(data, offset);
+                    }
+                    catch (Exception error) when (error.GetType() == typeof(Exception))
+                    {
+                        // STB reports unsupported faces, such as a non-Unicode cmap, with plain Exception.
+                    }
+                }
+            }
+            _fontInfoInitialized = true;
+            return _info;
         }
-        _info = StbTrueType.CreateFont(data, offset);
-        return _info;
     }
 
     private static unsafe int GetFirstFaceOffset(byte[] data)
@@ -361,6 +378,30 @@ internal sealed class FontCollection
                 if (Normalize(fb.Family) != normRequested) return fb;
             }
             return _fallbacks.Count > 0 ? _fallbacks[0] : null;
+        }
+    }
+
+    internal FontEntry? ResolveGlyph(Font font, Rune rune, bool allowSystemFallback)
+    {
+        static bool Covers(FontEntry entry, Rune rune) => entry.AcquireFontInfo() is { } info &&
+            StbTrueType.stbtt_FindGlyphIndex(info, rune.Value) != 0;
+
+        lock (_gate)
+        {
+            if (_customFaces.TryGetValue(font.Family, out var customFaces))
+            {
+                var custom = MatchFace(customFaces, font.Weight, font.Style);
+                return Covers(custom, rune) ? custom : null;
+            }
+
+            if (_byFamily.TryGetValue(font.Family, out var primary) && Covers(primary, rune))
+                return primary;
+            if (!allowSystemFallback) return null;
+
+            var family = rune.IsBmp ? ResolveScriptFamily((char)rune.Value) : null;
+            if (family != null && _byFamily.TryGetValue(family, out var script) && Covers(script, rune))
+                return script;
+            return _fallbacks.FirstOrDefault(entry => entry != primary && Covers(entry, rune));
         }
     }
 
@@ -532,7 +573,8 @@ internal sealed class FontCollection
                 "Noto Sans CJK SC",
                 "NotoSansCJK",
                 "Noto Sans Mono",
-                "DejaVu Sans Mono"
+                "DejaVu Sans Mono",
+                "Noto Sans Symbols 2"
             ];
         }
 

@@ -398,7 +398,7 @@ public sealed class TerminalView : UIElement, ITextEditor
             var font = baseFont;
             if (cell.Style.Bold) font = font.WithWeight(FontWeight.Bold);
             if (cell.Style.Italic)
-                font = new Font(font.Family, font.Size, font.Weight, Square.Graphics.FontStyle.Italic);
+                font = font.WithStyle(Square.Graphics.FontStyle.Italic);
             if (cell.Style.Dim)
                 foreground = Color.FromRgba(foreground.R, foreground.G, foreground.B, (byte)(foreground.A / 2));
             var textRect = new Rect(rect.X, rect.Y, rect.Width * cell.ColumnSpan, rect.Height);

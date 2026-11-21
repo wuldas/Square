@@ -803,7 +803,7 @@ public abstract class Element : EventTarget, IComponentLifecycle, ILayoutLifecyc
 }
 ```
 
-绑定写入属性袋并触发 `OnPropertyChanged`/`OnPropChanged`，**不调用 CLR 属性的 setter**；`[Prop]` 属性的 getter/setter 应读写属性袋，派生逻辑放在 `OnPropertyChanged`。模板中的常量表达式（如 `:size="40"`）生成 CLR 属性直接赋值，因此会执行 setter 并获得 C# 类型转换；普通集合表达式生成 `BindProperty(name, collection)` 快照，`ObservableCollection<T>` 的变更不会自动推送。单表达式插值（`{{ Fn(x) }}`、`{{ Count.Value }}`）生成 `BindText`：响应源订阅后格式化，其他表达式按字符串输出，不会产生 CS0411。
+`BindProperty` 按名称写入属性袋，并触发 `OnPropertyChanged` / `OnPropChanged`。给 `[Prop]` 设置 `UseSetter = true` 后，静态名称的模板值绑定生成类型化 CLR setter 调用，在初始化和响应源变化时传值。setter 可调用 `SetProperty` 来发出属性变更通知。模板中的常量表达式（如 `:size="40"`）直接赋值 CLR 属性，并应用 C# 类型转换。普通 `ObservableCollection<T>` 绑定传入集合实例，集合内部变更不会再次赋值。单表达式插值（`{{ Fn(x) }}`、`{{ Count.Value }}`）通过 `BindText` 格式化，直接传入响应源时还会订阅更新。
 
 ### Document / UIDocument```csharp
 namespace Square.UI;
@@ -1702,6 +1702,7 @@ public sealed class Font
     public float Size { get; set; }
     public FontWeight Weight { get; set; }
     public FontStyle Style { get; set; }
+    public IReadOnlyList<string> FallbackFamilies { get; init; }
 
     public Font();
     public Font(string family, float size);
@@ -1709,12 +1710,15 @@ public sealed class Font
 
     public Font WithSize(float size);
     public Font WithWeight(FontWeight weight);
+    public Font WithStyle(FontStyle style);
 }
 
 public enum FontWeight : ushort { Thin=100, ExtraLight=200, Light=300, Normal=400, Medium=500, SemiBold=600, Bold=700, ExtraBold=800, Black=900 }
 public enum FontStyle : byte { Normal, Italic, Oblique }
 public enum TextAlignment : byte { Left, Center, Right, Justify }
 ```
+
+Square 的字形栅格器先查找 `Font.Family`，缺字时依次查询 `Font.FallbackFamilies`、`Square.Text.FontManager.Instance.DefaultFallbackFamilies` 和系统候选字体。建议在创建窗口前设置应用级列表。CSS `font-family` 列表也可为局部文本指定候选族。原生文字后端使用各自的字体匹配规则，详见 [字体回退](Text.md#9-font-fallback)。
 
 ### Geometry / PathGeometry
 

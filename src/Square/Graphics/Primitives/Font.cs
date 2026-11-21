@@ -59,6 +59,11 @@ public sealed class Font
     /// <summary>已解析的主字体族名（不含 CSS 列表语法）。</summary>
     public string Family { get; set; } = "sans-serif";
 
+    /// <summary>按顺序查找缺失字形的局部字体族，优先于应用级和系统回退。</summary>
+    public IReadOnlyList<string> FallbackFamilies { get; init; } = [];
+
+    internal bool UseLiteralFamily { get; init; }
+
     /// <summary>字号（CSS px 逻辑像素）。</summary>
     public float Size { get; set; } = 16f;
 
@@ -88,10 +93,13 @@ public sealed class Font
     }
 
     /// <summary>复制并改字号。</summary>
-    public Font WithSize(float size) => new(Family, size, Weight, Style);
+    public Font WithSize(float size) => new(Family, size, Weight, Style) { FallbackFamilies = FallbackFamilies, UseLiteralFamily = UseLiteralFamily };
 
     /// <summary>复制并改字重。</summary>
-    public Font WithWeight(FontWeight weight) => new(Family, Size, weight, Style);
+    public Font WithWeight(FontWeight weight) => new(Family, Size, weight, Style) { FallbackFamilies = FallbackFamilies, UseLiteralFamily = UseLiteralFamily };
+
+    /// <summary>复制并改字体样式。</summary>
+    public Font WithStyle(FontStyle style) => new(Family, Size, Weight, style) { FallbackFamilies = FallbackFamilies, UseLiteralFamily = UseLiteralFamily };
 
     /// <summary>
     /// 解析 CSS <c>font-family</c> 列表，返回按优先级排列的族名（去掉引号）。
@@ -105,7 +113,7 @@ public sealed class Font
         return ParseFamilyEntries(fontFamily).Select(entry => entry.Name).ToArray();
     }
 
-    private static IReadOnlyList<(string Name, bool Quoted)> ParseFamilyEntries(string fontFamily)
+    internal static IReadOnlyList<(string Name, bool Quoted)> ParseFamilyEntries(string fontFamily)
     {
         var result = new List<(string Name, bool Quoted)>();
         var current = new System.Text.StringBuilder();
@@ -205,10 +213,11 @@ public sealed class Font
         // - 若提供 resolveFamily（如 FontManager），对列表逐项解析，优先已知/通用族
         // - 默认：列表中第一项；若为通用族则映射；未知族名保留，直至遇到通用族
         // 无 resolveFamily：取列表第一项；若为通用族则映射。完整回退链由 FontManager 负责。
+        var families = ParseFamilyEntries(fontFamily ?? "sans-serif");
+        var first = families[0];
         string family;
         if (resolveFamily != null)
         {
-            var first = ParseFamilyEntries(fontFamily ?? "sans-serif")[0];
             family = first.Quoted && (IsGenericFamily(first.Name) || IsFontFamilyKeyword(first.Name))
                 ? first.Name
                 : !first.Quoted && IsFontFamilyKeyword(first.Name)
@@ -217,8 +226,6 @@ public sealed class Font
         }
         else
         {
-            var families = ParseFamilyEntries(fontFamily ?? "sans-serif");
-            var first = families[0];
             family = first.Quoted
                 ? first.Name
                 : IsGenericFamily(first.Name)
@@ -231,7 +238,18 @@ public sealed class Font
         var size = ParseSize(fontSize, defaultSize);
         var weight = ParseWeight(fontWeight);
         var style = ParseStyle(fontStyle);
-        return new Font(family, size, weight, style);
+        var fallback = families.Count > 1
+            ? families.Skip(1)
+                .Select(entry => !entry.Quoted && IsGenericFamily(entry.Name)
+                    ? ResolveGenericFamily(entry.Name) : entry.Name)
+                .Where(name => !string.Equals(name, family, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : [];
+        return new Font(family, size, weight, style)
+        {
+            FallbackFamilies = fallback,
+            UseLiteralFamily = first.Quoted && first.Name.Equals(family, StringComparison.OrdinalIgnoreCase)
+        };
     }
 
     /// <summary>是否为 CSS 通用字体族关键字。</summary>
@@ -264,7 +282,7 @@ public sealed class Font
         return family;
     }
 
-    private static bool IsFontFamilyKeyword(string family) => family.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+    internal static bool IsFontFamilyKeyword(string family) => family.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
                                                                family.Equals("initial", StringComparison.OrdinalIgnoreCase) ||
                                                                family.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
                                                                family.Equals("default", StringComparison.OrdinalIgnoreCase);

@@ -345,6 +345,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     /// <summary>是否为只承载模板子树的编译器生成组件。</summary>
     protected virtual bool IsGeneratedComponent => false;
 
+    internal bool HasGeneratedTemplateBox => IsGeneratedComponent;
+
     protected virtual bool RequiresStatePaintInvalidation(ElementState flag) =>
         flag != ElementState.Hover || (!IsGeneratedComponent && GetType().Assembly != typeof(Element).Assembly) ||
         ScrollbarVisibility is ScrollbarVisibilityMode.Hover or ScrollbarVisibilityMode.Scroll;
@@ -578,6 +580,21 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
             },
             new ReactiveSubscriptionOptions { Dispatcher = Dispatcher });
         _bindings.Add(subscription!);
+    }
+
+    /// <summary>将模板绑定的初始值和响应式变更传给编译期生成的 CLR setter。</summary>
+    public void BindProp<T>(string name, PropBinding<T> binding, Action<T> setter)
+    {
+        if (binding.IsBound) Properties.MarkBound(name);
+        setter(binding.GetValue());
+        if (binding.Source is not { } source) return;
+        _bindings.Add(source.Subscribe(value =>
+        {
+            if (Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+                dispatcher.Invoke(() => setter(value));
+            else
+                setter(value);
+        }));
     }
 
     /// <summary>绑定集合快照：集合实例直接写入属性袋（Square 扩展；变更通知不传递）。</summary>

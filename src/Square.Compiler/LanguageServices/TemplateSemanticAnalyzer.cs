@@ -82,8 +82,13 @@ public sealed class TemplateSemanticAnalyzer
                 if (attribute == null) continue;
                 var required = attribute.NamedArguments.Any(argument =>
                     argument.Key == "Required" && argument.Value.Value is true);
+                var useSetter = attribute.NamedArguments.Any(argument =>
+                    argument.Key == "UseSetter" && argument.Value.Value is true);
                 result.Add(new TemplatePropDescriptor(property.Name,
-                    property.Type.ToDisplayString(FullyQualifiedTypeFormat), required));
+                    property.Type.ToDisplayString(FullyQualifiedTypeFormat), required)
+                {
+                    UseSetter = useSetter
+                });
             }
         }
         return Array.AsReadOnly(result.OrderBy(item => item.Name, StringComparer.Ordinal).ToArray());
@@ -675,6 +680,7 @@ public sealed class TemplatePropDescriptor
     public string Name { get; }
     public string TypeName { get; }
     public bool Required { get; }
+    internal bool UseSetter { get; set; }
 }
 
 public sealed class TemplateSlotDescriptor
