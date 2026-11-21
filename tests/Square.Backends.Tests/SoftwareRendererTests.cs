@@ -1115,6 +1115,9 @@ public class SoftwareRendererTests
         using var context = CreateContext(128, 40, dpi);
         context.DrawText(layout, new Point(8 / dpi, 3), Brush.FromColor(Color.White));
         var bitmap = context.GetBitmap();
+        // The centroid is measured from quantized 8-bit coverage. Allow one sixteenth of
+        // a device pixel for rounding while still detecting whole-pixel glyph placement.
+        const double centroidTolerance = 1d / 16;
         double previousCenter = 0;
         for (var i = 0; i < layout.Text.Length; i++)
         {
@@ -1131,7 +1134,7 @@ public class SoftwareRendererTests
             }
             Assert.True(coverage > 0);
             var center = (double)moment / coverage;
-            if (i > 0) Assert.InRange(center - previousCenter, step - 0.02, step + 0.02);
+            if (i > 0) Assert.InRange(center - previousCenter, step - centroidTolerance, step + centroidTolerance);
             previousCenter = center;
         }
     }
