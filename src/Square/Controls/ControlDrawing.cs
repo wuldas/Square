@@ -201,6 +201,7 @@ internal static class ControlDrawing
             layout.SourceCharOffsets = sourceCharOffsets;
             layout.SourceLength = sourceLength;
         }
+        layout.UsesNaturalLineHeight = lineHeight == null && UsesNaturalLineHeight(element);
         if (font.Size > 0)
             layout.LineHeight = (lineHeight ?? GetStyledLineHeight(element, font.Size)) / font.Size;
         context.DrawText(layout, position, new SolidColorBrush(color));
@@ -375,9 +376,23 @@ internal static class ControlDrawing
          roundedGeometry.BottomRight.X > 0 || roundedGeometry.BottomRight.Y > 0 ||
          roundedGeometry.BottomLeft.X > 0 || roundedGeometry.BottomLeft.Y > 0);
 
+    private static bool UsesNaturalLineHeight(Element element)
+    {
+        if (element is not Text || ResolveWhiteSpace(element) != TextWhiteSpaceMode.Nowrap ||
+            !element.ClipsOverflow()) return false;
+        var value = element.Style.Get("line-height")?.Trim();
+        return string.IsNullOrEmpty(value) || value.Equals("normal", StringComparison.OrdinalIgnoreCase);
+    }
+
     internal static float GetStyledLineHeight(Element element, float fontSize)
     {
         var value = (element.Style.Get("line-height") ?? "").Trim();
+        if (UsesNaturalLineHeight(element))
+        {
+            var metrics = TextMetrics.GetFontMetrics(ResolveFont(element, fontSize));
+            return MathF.Ceiling(Math.Max(fontSize * TextLayout.DefaultLineHeight,
+                -metrics.Ascent + metrics.Descent + metrics.Leading));
+        }
         if (string.IsNullOrEmpty(value))
             return MathF.Round(TextMetrics.GetLineHeight(ResolveFont(element, fontSize), TextLayout.DefaultLineHeight));
 

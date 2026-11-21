@@ -55,6 +55,7 @@ public sealed class TextLayout
     public TextAlignment Alignment { get; set; } = TextAlignment.Left;
     /// <summary>行高倍数（相对字号）。</summary>
     public float LineHeight { get; set; } = DefaultLineHeight;
+    internal bool UsesNaturalLineHeight { get; set; }
     /// <summary>段落基方向；Auto 使用第一个强方向字符。</summary>
     public BidiDirection Direction { get; set; } = BidiDirection.Auto;
     /// <summary>CSS <c>unicode-bidi</c> 的基础子集。</summary>

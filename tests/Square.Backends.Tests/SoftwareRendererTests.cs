@@ -1037,6 +1037,75 @@ public class SoftwareRendererTests
     }
 
     [Theory]
+    [InlineData(1f, 0.5f, 1, 0f)]
+    [InlineData(1.25f, 0.25f, 0, 0f)]
+    [InlineData(1.5f, 0.75f, 1, 0f)]
+    [InlineData(1f, 1f, 1, 0.5f)]
+    public void SmallProportionalTextKeepsItsSpacingWhenMoved(float dpi, float offset, int pixelShift, float tracking)
+    {
+        if (!new SystemGlyphRasterizer().IsAvailable) return;
+        var layout = new TextLayout("Enter 11:11 (Wi.,!)", new Font("Segoe UI", 12)) { LetterSpacing = tracking };
+        using var reference = CreateContext(256, 48, dpi);
+        using var actual = CreateContext(256, 48, dpi);
+        var brush = Brush.FromColor(Color.White);
+        reference.DrawText(layout, new Point(4 / dpi, 4), brush);
+        actual.DrawText(layout, new Point((4 + offset) / dpi, 4), brush);
+
+        var expected = reference.GetBitmap();
+        var moved = actual.GetBitmap();
+        Assert.Contains((byte)255, expected.Pixels);
+        for (var y = 0; y < expected.Height; y++)
+        {
+            var rowStart = y * expected.Stride;
+            var length = (expected.Width - pixelShift) * 4;
+            Assert.True(expected.Pixels.AsSpan(rowStart, length).SequenceEqual(
+                moved.Pixels.AsSpan(rowStart + pixelShift * 4, length)), $"Spacing changed at row {y}.");
+        }
+    }
+
+    [Theory]
+    [InlineData('i', 1.5f, false)]
+    [InlineData('i', 1f, true)]
+    [InlineData('1', 1.25f, true)]
+    [InlineData('.', 1.5f, true)]
+    public void RepeatedAsciiGlyphsKeepFractionalAdvances(char character, float dpi, bool addTracking)
+    {
+        if (!new SystemGlyphRasterizer().IsAvailable) return;
+        var font = new Font("Segoe UI", 12);
+        var advance = TextLayout.MeasureRuneAdvance(new System.Text.Rune(character), font);
+        var layout = new TextLayout(new string(character, 5), font);
+        var step = advance * dpi;
+        if (addTracking)
+        {
+            // Exercise a half-device-pixel advance even when the font uses integral widths.
+            step = MathF.Ceiling(step) + 2.5f;
+            layout.LetterSpacing = step / dpi - advance;
+        }
+        using var context = CreateContext(128, 40, dpi);
+        context.DrawText(layout, new Point(8 / dpi, 3), Brush.FromColor(Color.White));
+        var bitmap = context.GetBitmap();
+        double previousCenter = 0;
+        for (var i = 0; i < layout.Text.Length; i++)
+        {
+            var start = (int)MathF.Floor(8 + i * step);
+            var end = (int)MathF.Floor(8 + (i + 1) * step);
+            var coverage = 0;
+            var moment = 0;
+            for (var x = start; x < end; x++)
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                var alpha = bitmap.GetPixel(x, y)[3];
+                coverage += alpha;
+                moment += x * alpha;
+            }
+            Assert.True(coverage > 0);
+            var center = (double)moment / coverage;
+            if (i > 0) Assert.InRange(center - previousCenter, step - 0.02, step + 0.02);
+            previousCenter = center;
+        }
+    }
+
+    [Theory]
     [InlineData(0.25f)]
     [InlineData(0.5f)]
     [InlineData(0.75f)]
@@ -1267,6 +1336,31 @@ public class SoftwareRendererTests
         var pixels = expected.GetBitmap().Pixels;
         Assert.Contains((byte)255, pixels);
         Assert.Equal(pixels, actual.GetBitmap().Pixels);
+    }
+
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(1.25f)]
+    [InlineData(1.5f)]
+    [InlineData(2f)]
+    public void NormalSingleLineTextFitsItsMeasuredHeightAtDeviceScale(float dpi)
+    {
+        var title = new Square.Controls.Text("only my railgun");
+        title.Style.CssText = "font-family: Segoe UI; font-size: 13px; white-space: nowrap; overflow: hidden;";
+        var size = title.Measure(new Size(200, 44));
+        title.Geometry = new Rect(8, 25, 200, size.Height);
+        using var full = CreateContext(480, 128, dpi);
+        using var clipped = CreateContext(480, 128, dpi);
+        title.Paint(full);
+        clipped.PushClip(title.Geometry);
+        Render(title, clipped);
+        clipped.PopClip();
+
+        Assert.Contains((byte)255, full.GetBitmap().Pixels);
+        Assert.Equal(full.GetBitmap().Pixels, clipped.GetBitmap().Pixels);
+
+        title.Style.Set("line-height", "13px");
+        Assert.Equal(13f, title.Measure(new Size(200, 44)).Height);
     }
 
     [Fact]

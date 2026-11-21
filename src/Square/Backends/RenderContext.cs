@@ -13,9 +13,8 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
     public bool SupportsPartialRendering => true;
     private const int CoverageSampleGrid = 4;
     private const int CoverageSampleCount = CoverageSampleGrid * CoverageSampleGrid;
-    // Text at or below this logical size is rasterized and placed on whole pixels; blending a small
-    // glyph column across two pixels costs legibility, so only larger text is subpixel sampled.
-    private const float MinBlendedTextSize = 14f;
+    // Keep small text anchored on the pixel grid; narrow ASCII glyphs can still have fractional advances.
+    private const float SmallTextMaxSize = 14f;
     private const uint AlphaMask = 0xFF000000u;
 
     private readonly ISoftwareRenderSurface _surface;
@@ -2767,21 +2766,31 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         var lineHeight = TextMetrics.GetLineHeight(textLayout.Font, textLayout.LineHeight) * _dpiScale;
         var physicalFont = textLayout.Font.WithSize(textLayout.Font.Size * _dpiScale);
         var baselineOffset = TextMetrics.GetBaselineOffset(physicalFont, lineHeight);
+        var descent = textLayout.UsesNaturalLineHeight
+            ? (int)MathF.Ceiling(TextMetrics.GetFontMetrics(physicalFont).Descent) : 0;
         // Match measurement in logical coordinates; scale only glyph rasterization and placement.
         var lines = TextWrapping.Wrap(textLayout.Text, textLayout.MaxSize.Width, (_, rune) =>
             TextLayout.MeasureRuneAdvance(rune, textLayout.Font), textLayout.WrappingOptions);
-        // Small glyphs read as smudges when a column is split across two pixels, so only larger text
-        // is sampled between pixels; small text keeps one crisp sample per column.
-        var blendSubpixels = textLayout.Font.Size > MinBlendedTextSize;
+        var smallText = textLayout.Font.Size <= SmallTextMaxSize;
 
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
             var line = lines[lineIndex];
             var indent = textLayout.GetLineIndent(lineIndex);
             var x = origin.X + (indent + GetTextAlignmentOffset(textLayout, line.Width + indent)) * _dpiScale;
+            // Anchor small text as a run so moving it preserves the gaps between glyphs.
+            if (smallText) x = MathF.Floor(x + 0.5f);
             // Snap the shared baseline before adding glyph bearings: at a half pixel,
             // rounding each glyph's top separately can move neighbors in opposite directions.
-            var baselineY = (int)MathF.Round(origin.Y + lineIndex * lineHeight + baselineOffset);
+            var lineTop = origin.Y + lineIndex * lineHeight;
+            var baselineY = (int)MathF.Round(lineTop + baselineOffset);
+            if (descent > 0)
+            {
+                // The clip includes pixel centers strictly above the bottom. Hinted glyphs
+                // at fractional DPI can descend further than the scaled logical metrics.
+                var bottom = (int)MathF.Ceiling(lineTop + lineHeight - 0.5f);
+                baselineY = Math.Min(baselineY, bottom - descent);
+            }
             foreach (var visualRune in textLayout.EnumerateVisualRunes(line))
             {
                 var rune = visualRune.Glyph;
@@ -2790,7 +2799,8 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
                 if (rune.IsBmp)
                     glyph = _glyphRasterizer.Rasterize(physicalFont, (char)rune.Value);
                 if (glyph != null)
-                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, baselineY + glyph.OffsetY, color, blendSubpixels);
+                    DrawSubpixelGlyph(glyph, x + glyph.OffsetX, baselineY + glyph.OffsetY, color,
+                        blendSubpixels: !smallText || rune.IsAscii);
                 x += advance;
             }
         }
@@ -2806,7 +2816,8 @@ internal sealed class RenderContext : IRenderContext, IDpiResizableRenderContext
         var fraction = originX - baseX;
         if (!blendSubpixels || fraction < 0.02f || fraction > 0.98f)
         {
-            var snappedX = (int)MathF.Round(originX);
+            // Resolve ties consistently: ties-to-even alternates gaps for odd-pixel advances.
+            var snappedX = fraction < 0.5f ? baseX : baseX + 1;
             for (var row = 0; row < glyph.Height; row++)
             {
                 var y = baseY + row;
