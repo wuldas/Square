@@ -991,6 +991,11 @@ public sealed class ForNode<T> : IForNode
 public sealed class SwitchNode : IDisposable
 {
     private readonly List<MatchBranch> _branches = [];
+    private readonly Element? _owner;
+    private readonly string[] _dependencies = [];
+    private readonly Node? _anchor;
+    private Dictionary<IReactiveSource, IDisposable>? _observedSources;
+    private HashSet<IReactiveSource>? _readSources;
     private Element? _parent;
     private int _index;
     private int _activeBranch = -1;
@@ -1005,6 +1010,37 @@ public sealed class SwitchNode : IDisposable
     public SwitchNode(Func<int> selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
+    }
+
+    /// <summary>创建模板条件链，并监听组件属性变更。</summary>
+    public SwitchNode(Element owner, params string[] dependencies)
+    {
+        _owner = owner;
+        _dependencies = dependencies;
+        _anchor = new BranchAnchor();
+        if (_dependencies.Length > 0) _owner.PropertyChanged += OnOwnerPropertyChanged;
+    }
+
+    private void OnOwnerPropertyChanged(string name)
+    {
+        if (Array.IndexOf(_dependencies, name) >= 0) ScheduleUpdate();
+    }
+
+    /// <summary>读取普通布尔条件。</summary>
+    public bool ReadCondition(bool condition) => condition;
+
+    /// <summary>读取条件源，并在其值变化时重新选择分支。</summary>
+    public bool ReadCondition(ObservableValue<bool> source) => ReadCondition((IReactiveValue<bool>)source);
+
+    /// <summary>读取任意响应式条件源，并在其值变化时重新选择分支。</summary>
+    public bool ReadCondition(IReactiveValue<bool> source)
+    {
+        _readSources ??= new(ReferenceEqualityComparer.Instance);
+        _observedSources ??= new(ReferenceEqualityComparer.Instance);
+        _readSources.Add(source);
+        if (!_observedSources.ContainsKey(source))
+            _observedSources.Add(source, source.SubscribeChanged(ScheduleUpdate));
+        return source.Value;
     }
 
     /// <summary>添加一个条件分支。</summary>
@@ -1046,6 +1082,7 @@ public sealed class SwitchNode : IDisposable
     {
         _parent = parent;
         _index = parent.Children.Count;
+        if (_anchor != null) parent.ChildNodes.Add(_anchor);
         UpdateCore();
     }
 
@@ -1065,7 +1102,16 @@ public sealed class SwitchNode : IDisposable
     private void UpdateCore()
     {
         if (_disposed || _parent == null) return;
+        _readSources?.Clear();
         var match = FindMatch();
+        if (_observedSources != null)
+        {
+            foreach (var source in _observedSources.Keys.Where(source => !_readSources!.Contains(source)).ToArray())
+            {
+                _observedSources[source].Dispose();
+                _observedSources.Remove(source);
+            }
+        }
         if (match == _activeBranch) return;
 
         if (_activeBranch >= 0 && _activeBranch < _branches.Count)
@@ -1081,8 +1127,16 @@ public sealed class SwitchNode : IDisposable
             branch.Child ??= branch.Build();
             if (branch.Child != null)
             {
-                branch.Child.BuildElementTree();
-                _parent.Children.Insert(Math.Min(_index, _parent.Children.Count), branch.Child);
+                if (_anchor != null && _anchor.ParentNode == _parent)
+                {
+                    _parent.ChildNodes.InsertBefore(branch.Child, _anchor);
+                    branch.Child.BuildElementTree();
+                }
+                else
+                {
+                    branch.Child.BuildElementTree();
+                    _parent.Children.Insert(Math.Min(_index, _parent.Children.Count), branch.Child);
+                }
             }
         }
     }
@@ -1092,13 +1146,21 @@ public sealed class SwitchNode : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_owner != null && _dependencies.Length > 0) _owner.PropertyChanged -= OnOwnerPropertyChanged;
         if (_parent != null)
         {
             foreach (var branch in _branches)
                 if (branch.Child != null) _parent.Children.Remove(branch.Child);
+            if (_anchor != null) _parent.ChildNodes.Remove(_anchor);
         }
         foreach (var branch in _branches) branch.Child?.DiscardGeneratedSubtree();
         foreach (var branch in _branches) branch.Subscription?.Dispose();
+        if (_observedSources != null)
+        {
+            foreach (var subscription in _observedSources.Values) subscription.Dispose();
+            _observedSources.Clear();
+            _readSources!.Clear();
+        }
         _branches.Clear();
         _parent = null;
     }
@@ -1112,6 +1174,13 @@ public sealed class SwitchNode : IDisposable
                 return i;
         }
         return -1;
+    }
+
+    // Keeps the branch in template order even when it currently has no element.
+    private sealed class BranchAnchor : Node
+    {
+        public override NodeType NodeTypeValue => NodeType.Comment;
+        public override string NodeName => "#comment";
     }
 
     private sealed class MatchBranch(Func<bool>? condition, Func<Element?> build)

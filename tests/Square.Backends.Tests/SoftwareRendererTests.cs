@@ -1006,6 +1006,37 @@ public class SoftwareRendererTests
         Assert.True(darkPixels > 80);
     }
 
+    [Theory]
+    [InlineData("♡")]
+    [InlineData("●")]
+    [InlineData("○")]
+    [InlineData("■")]
+    [InlineData("□")]
+    [InlineData("⚙")]
+    [InlineData("≡")]
+    [InlineData("▶")]
+    [InlineData("🎵")]
+    public void Win32SoftwareMeasuresAndDrawsReportedFallbackGlyphs(string text)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var font = Square.Text.FontManager.Instance.FromCss(null, null);
+        var rune = System.Text.Rune.GetRuneAt(text, 0);
+        var rasterizer = new SystemGlyphRasterizer();
+        var glyph = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(font, rune));
+        Assert.Contains(glyph.Coverage, coverage => coverage > 0);
+        Assert.NotEqual(rasterizer.Rasterize(font, '\ufffd')?.Coverage, glyph.Coverage);
+
+        var layout = new TextLayout(text, font);
+        Assert.Equal(glyph.AdvanceX, layout.Measure().Width);
+        Assert.Equal(text.Length, Assert.Single(Assert.Single(layout.GetVisualLines()).Runes).EndOffset);
+
+        using var context = CreateContext(64, 64);
+        context.DrawText(layout, new Point(8, 8), Brush.FromColor(Color.White));
+        var pixels = context.GetBitmap().Pixels;
+        Assert.Contains((byte)255, pixels);
+    }
+
     [Fact]
     public void DrawTextWrapsWhenMaxWidthIsFinite()
     {

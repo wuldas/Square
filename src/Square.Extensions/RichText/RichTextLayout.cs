@@ -255,11 +255,11 @@ public static class RichTextLayoutEngine
         return new RichTextBlockLayout(block, bounds, lines);
     }
 
-    public static Font ApplyMarks(Font baseFont, RichTextMarks marks) => new(
-        baseFont.Family,
-        baseFont.Size,
-        marks.Bold ? FontWeight.Bold : baseFont.Weight,
-        marks.Italic ? FontStyle.Italic : baseFont.Style);
+    public static Font ApplyMarks(Font baseFont, RichTextMarks marks)
+    {
+        var font = baseFont.WithWeight(marks.Bold ? FontWeight.Bold : baseFont.Weight);
+        return marks.Italic && font.Style != FontStyle.Italic ? font.WithStyle(FontStyle.Italic) : font;
+    }
 
     private readonly record struct LayoutToken(
         int StartOffset,

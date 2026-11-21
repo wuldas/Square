@@ -410,11 +410,21 @@ public class RichTextDocumentTests
         Assert.Equal(6, layout.Lines[1].EndOffset);
         var selectionRects = layout.GetSelectionRects(1, 5);
         Assert.Equal(2, selectionRects.Count);
-        AssertWithinOneUlp(new Square.Graphics.TextLayout("bc", font).Measure().Width, selectionRects[0].Width);
-        AssertWithinOneUlp(new Square.Graphics.TextLayout("de", font).Measure().Width, selectionRects[1].Width);
+        AssertSelectionCoversAdvancesAndInk("bc", selectionRects[0]);
+        AssertSelectionCoversAdvancesAndInk("de", selectionRects[1]);
         var hitX = new Square.Graphics.TextLayout("a", font).Measure().Width + 0.1f;
         Assert.Equal(1, layout.HitTestOffset(new Square.Graphics.Point(hitX, 5)));
         Assert.Equal(4, layout.HitTestOffset(new Square.Graphics.Point(hitX, 29)));
+
+        void AssertSelectionCoversAdvancesAndInk(string text, Square.Graphics.Rect selection)
+        {
+            var advances = new Square.Graphics.TextLayout(text, font).Measure().Width;
+            var first = Square.Graphics.TextMetrics.GetGlyphMetrics(font, new System.Text.Rune(text[0]));
+            var last = Square.Graphics.TextMetrics.GetGlyphMetrics(font, new System.Text.Rune(text[^1]));
+            // The shared CSS face can place ink past its logical selection edges.
+            AssertWithinOneUlp(advances - Math.Min(0, first.InkBounds.Left) +
+                Math.Max(0, last.InkBounds.Right - last.AdvanceX), selection.Width);
+        }
     }
 
     private static void AssertWithinOneUlp(float expected, float actual) =>

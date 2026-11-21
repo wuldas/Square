@@ -4,6 +4,7 @@ using Square.Rendering.Yoga;
 using Square.Graphics;
 using Square.Html;
 using Square.UI;
+using Square.UI.ElementApi;
 using Square.Controls;
 using static Square.Rendering.Yoga.YGConfigAPI;
 using static Square.Rendering.Yoga.YGNodeAPI;
@@ -479,7 +480,7 @@ public sealed partial class LayoutEngine
     private void BuildYogaSession(YogaSession session, Element root, float width, float height, FlexYogaCache? retained = null)
     {
         var rootFontSize = GetRootFontSize(root);
-        var yogaRoot = CreateYogaSubtree(root, session, width, height, rootFontSize, isRoot: true);
+        var yogaRoot = CreateYogaSubtree(root, session, width, height, rootFontSize, layoutParent: null);
         session.Root = yogaRoot;
         if (retained != null) retained.NaturalRootHeightStyle = YGNodeStyleGetHeight(yogaRoot);
 
@@ -496,7 +497,7 @@ public sealed partial class LayoutEngine
     }
 
     private YogaNode CreateYogaSubtree(
-        Element element, YogaSession session, float parentW, float parentH, float rem, bool isRoot)
+        Element element, YogaSession session, float parentW, float parentH, float rem, Element? layoutParent)
     {
         if (element is ILayoutPreparingElement preparing)
             preparing.PrepareLayout(new Size(parentW, parentH));
@@ -516,12 +517,20 @@ public sealed partial class LayoutEngine
             return node;
         }
 
+        if (CanUseTemplateRootAsFlexItem(element, layoutParent, out var templateRoot))
+        {
+            YGNodeStyleSetDisplay(node, YGDisplay.Contents);
+            var rootNode = CreateYogaSubtree(templateRoot, session, parentW, parentH, rem, layoutParent);
+            YGNodeInsertChild(node, rootNode, 0);
+            return node;
+        }
+
         if (string.Equals(display, "grid", StringComparison.OrdinalIgnoreCase))
         {
             // Grid 子树：作为叶子，用内置 Grid 引擎在 measure 中排版
             YGNodeStyleSetDisplay(node, YGDisplay.Flex);
             YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
-            ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            ApplyBoxModel(element, node, parentW, parentH, em, rem, layoutParent == null);
             YGNodeSetMeasureFunc(node, GridHostMeasureCallback);
             return node;
         }
@@ -530,7 +539,7 @@ public sealed partial class LayoutEngine
         {
             YGNodeStyleSetDisplay(node, YGDisplay.Flex);
             YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
-            ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            ApplyBoxModel(element, node, parentW, parentH, em, rem, layoutParent == null);
             YGNodeSetMeasureFunc(node, TableHostMeasureCallback);
             return node;
         }
@@ -546,9 +555,9 @@ public sealed partial class LayoutEngine
             // text width instead of honoring flex-grow/flex-basis.
             YGNodeStyleSetDisplay(node, YGDisplay.Flex);
             YGNodeStyleSetFlexDirection(node, YGFlexDirection.Column);
-            ApplyFlexItem(element, node, parentW, parentH, em, rem);
+            ApplyFlexItem(element, node, layoutParent, parentW, parentH, em, rem);
             ApplyDirectionAndAspectRatio(element, node);
-            ApplyBoxModel(element, node, parentW, parentH, em, rem);
+            ApplyBoxModel(element, node, parentW, parentH, em, rem, layoutParent == null);
             ApplyBorder(element, node, parentW, parentH, em, rem);
             ApplyPosition(element, node, parentW, parentH, em, rem);
             ApplyOverflow(element, node);
@@ -570,9 +579,9 @@ public sealed partial class LayoutEngine
             YGNodeStyleSetJustifyContent(node, YGJustify.FlexStart);
         }
 
-        ApplyFlexItem(element, node, parentW, parentH, em, rem);
+        ApplyFlexItem(element, node, layoutParent, parentW, parentH, em, rem);
         ApplyDirectionAndAspectRatio(element, node);
-        ApplyBoxModel(element, node, parentW, parentH, em, rem);
+        ApplyBoxModel(element, node, parentW, parentH, em, rem, layoutParent == null);
         ApplyBorder(element, node, parentW, parentH, em, rem);
         ApplyGap(element, node, parentW, parentH, em, rem);
         ApplyPosition(element, node, parentW, parentH, em, rem);
@@ -604,9 +613,15 @@ public sealed partial class LayoutEngine
                     }
                     if (ElementLayoutStore.TryGet(child, out var childLayout) && childLayout.IsFixedRoot)
                         childLayout.IsFixedRoot = false;
-                    var childNode = CreateYogaSubtree(child, session, refW, refH, rem, isRoot: false);
-                    if (element.IsScrollContainer() && child.Style.Get("flex-shrink") == null)
-                        YGNodeStyleSetFlexShrink(childNode, 0);
+                    var childNode = CreateYogaSubtree(child, session, refW, refH, rem, element);
+                    if (element.IsScrollContainer())
+                    {
+                        var itemNode = YGNodeStyleGetDisplay(childNode) == YGDisplay.Contents
+                            ? YGNodeGetChild(childNode, 0)!
+                            : childNode;
+                        if (YGNodeGetContext(itemNode) is Element item && item.Style.Get("flex-shrink") == null)
+                            YGNodeStyleSetFlexShrink(itemNode, 0);
+                    }
                     YGNodeInsertChild(node, childNode, i++);
                 }
             }
@@ -615,17 +630,50 @@ public sealed partial class LayoutEngine
         {
             ReturnVisibleChildren(visibleChildren);
         }
-        ApplyIntrinsicLeafMinSize(element, node);
-        ApplyIntrinsicRowItemSize(element, node);
+        ApplyIntrinsicLeafMinSize(element, node, layoutParent);
+        ApplyIntrinsicRowItemSize(element, node, layoutParent);
 
         return node;
     }
 
-    private static void ApplyIntrinsicRowItemSize(Element element, YogaNode node)
+    private static bool CanUseTemplateRootAsFlexItem(Element element, Element? layoutParent, out Element templateRoot)
+    {
+        templateRoot = null!;
+        if (!element.HasGeneratedTemplateBox || layoutParent == null || CssKeyword(layoutParent, "display") != "flex" ||
+            element.Children.Count != 1 || element.VisualSidecars.Count != 0 || element is ILayoutPreparingElement)
+            return false;
+
+        var root = element.Children[0];
+        if (!root.IsVisible || !root.IsCssDisplayed() || root.IsFixedPositioned() ||
+            CssKeyword(root, "position") == "absolute" || root is IPopupElement { IsLayoutOverlay: true })
+            return false;
+
+        var grow = root.Style.Get("flex-grow");
+        if (grow == null)
+        {
+            var flex = root.Style.Get("flex")?.Trim();
+            grow = string.Equals(flex, "auto", StringComparison.OrdinalIgnoreCase)
+                ? "1"
+                : flex?.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        }
+        if (!float.TryParse(grow, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor) || !(factor > 0))
+            return false;
+
+        // Keep an independently styled host box. Paint/composite styles can still use the root's
+        // bounds, and inherited CSS and events keep the original element-tree parent.
+        foreach (var property in element.Style.GetAll().Keys)
+            if ((StyleInvalidation.ForProperty(property) & ElementInvalidation.Layout) != 0)
+                return false;
+
+        templateRoot = root;
+        return true;
+    }
+
+    private static void ApplyIntrinsicRowItemSize(Element element, YogaNode node, Element? layoutParent)
     {
         if (!element.HasCustomMeasure || element is Square.Controls.Button ||
-            element.Style.Get("width") != null || element.Parent == null) return;
-        if (!string.Equals(element.Parent.Style.Get("flex-direction")?.Trim(), "row", StringComparison.OrdinalIgnoreCase)) return;
+            element.Style.Get("width") != null || layoutParent == null) return;
+        if (!string.Equals(layoutParent.Style.Get("flex-direction")?.Trim(), "row", StringComparison.OrdinalIgnoreCase)) return;
         foreach (var child in element.Children)
         {
             if (child.IsVisible && !string.Equals(child.Style.Get("position")?.Trim(), "absolute", StringComparison.OrdinalIgnoreCase))
@@ -636,12 +684,12 @@ public sealed partial class LayoutEngine
         if (IsFiniteLayoutSize(measured.Width)) YGNodeStyleSetWidth(node, measured.Width);
     }
 
-    private static void ApplyIntrinsicLeafMinSize(Element element, YogaNode node)
+    private static void ApplyIntrinsicLeafMinSize(Element element, YogaNode node, Element? layoutParent)
     {
         if (!element.HasCustomMeasure) return;
 
         var measured = element.Measure(new Size(float.MaxValue, float.MaxValue));
-        var preservesIntrinsicWidth = element is not Square.Controls.Text || IsDirectRowItem(element);
+        var preservesIntrinsicWidth = element is not Square.Controls.Text || IsDirectRowItem(layoutParent);
         if (preservesIntrinsicWidth && element.Style.Get("min-width") == null &&
             element.Style.Get("width") == null && IsFiniteLayoutSize(measured.Width))
             YGNodeStyleSetMinWidth(node, measured.Width);
@@ -649,9 +697,8 @@ public sealed partial class LayoutEngine
             YGNodeStyleSetMinHeight(node, measured.Height);
     }
 
-    private static bool IsDirectRowItem(Element element) =>
-        element.Parent != null &&
-        (element.Parent.Style.Get("flex-direction")?.Trim().ToLowerInvariant() is "row" or "row-reverse");
+    private static bool IsDirectRowItem(Element? layoutParent) =>
+        layoutParent != null && CssKeyword(layoutParent, "flex-direction") is "row" or "row-reverse";
 
     private static bool IsFiniteLayoutSize(float value) =>
         !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0 && value < 1_000_000f;
@@ -667,8 +714,10 @@ public sealed partial class LayoutEngine
         var availH = heightMode == MeasureMode.Undefined ? float.MaxValue : Math.Max(0, availableHeight);
         var measured = element.Measure(new Size(availW, availH));
 
-        var w = measured.Width;
-        var h = measured.Height;
+        // float.MaxValue stands for an unconstrained axis in Element.Measure. Returning that
+        // same sentinel does not give Yoga a usable intrinsic base size (e.g. a fill-width track).
+        var w = measured.Width == float.MaxValue ? 0 : measured.Width;
+        var h = measured.Height == float.MaxValue ? 0 : measured.Height;
         if (widthMode == MeasureMode.Exactly) w = availableWidth;
         else if (widthMode == MeasureMode.AtMost) w = Math.Min(w, availableWidth);
         if (heightMode == MeasureMode.Exactly) h = availableHeight;
@@ -741,6 +790,14 @@ public sealed partial class LayoutEngine
 
     private void ApplyYogaLayout(Element element, YogaNode yoga, float parentAbsX, float parentAbsY)
     {
+        if (YGNodeStyleGetDisplay(yoga) == YGDisplay.Contents && YGNodeGetChild(yoga, 0) is { } rootNode &&
+            YGNodeGetContext(rootNode) is Element templateRoot)
+        {
+            ApplyYogaLayout(templateRoot, rootNode, parentAbsX, parentAbsY);
+            element.Arrange(templateRoot.Geometry);
+            return;
+        }
+
         var left = YGNodeLayoutGetLeft(yoga);
         var top = YGNodeLayoutGetTop(yoga);
         var width = YGNodeLayoutGetWidth(yoga);
@@ -784,7 +841,8 @@ public sealed partial class LayoutEngine
             var yogaIndex = 0;
             for (var i = 0; i < visibleCount && yogaIndex < count; i++)
             {
-                if (visibleChildren[i] is IPopupElement { IsLayoutOverlay: true }) continue;
+                if (visibleChildren[i] is IPopupElement { IsLayoutOverlay: true } ||
+                    visibleChildren[i].IsFixedPositioned()) continue;
                 var childYoga = YGNodeGetChild(yoga, (nuint) yogaIndex++);
                 if (childYoga != null)
                     ApplyYogaLayout(visibleChildren[i], childYoga, absX, absY);
@@ -1176,7 +1234,8 @@ public sealed partial class LayoutEngine
                 var element = pair.Key;
                 var context = pair.Value;
                 var adjust = 0f;
-                if (ParseBoxSizing(element.Style.Get("box-sizing")) == BoxSizing.ContentBox)
+                if (ParseBoxSizing(element.Style.Get("box-sizing")) == BoxSizing.ContentBox &&
+                    YGNodeStyleGetBoxSizing(cache.Session.Map[element]) != YGBoxSizing.ContentBox)
                 {
                     var padding = ResolvePadding(element, context.ParentW, context.ParentH, context.Em, context.Rem);
                     adjust = padding.Left + padding.Right;
@@ -1445,7 +1504,7 @@ public sealed partial class LayoutEngine
         });
     }
 
-    private static void ApplyFlexItem(Element element, YogaNode node, float parentW, float parentH, float em, float rem)
+    private static void ApplyFlexItem(Element element, YogaNode node, Element? layoutParent, float parentW, float parentH, float em, float rem)
     {
         var flex = element.Style.Get("flex");
         ApplyFlexShorthand(flex, node, parentW, parentH, em, rem);
@@ -1456,7 +1515,7 @@ public sealed partial class LayoutEngine
         var shrink = element.Style.Get("flex-shrink");
         if (shrink != null && float.TryParse(shrink, NumberStyles.Float, CultureInfo.InvariantCulture, out var s))
             YGNodeStyleSetFlexShrink(node, s);
-        else if (flex == null && HasExplicitMainAxisSize(element))
+        else if (flex == null && HasExplicitMainAxisSize(element, layoutParent))
             YGNodeStyleSetFlexShrink(node, 0);
         var basis = element.Style.Get("flex-basis");
         if (basis != null)
@@ -1484,10 +1543,12 @@ public sealed partial class LayoutEngine
         }
     }
 
-    private static bool HasExplicitMainAxisSize(Element element)
+    private static bool HasExplicitMainAxisSize(Element element, Element? layoutParent)
     {
-        var parentDirection = element.Parent?.Style.Get("flex-direction")?.Trim();
-        var mainAxisSize = parentDirection is "row" or "row-reverse" ? "width" : "height";
+        var parentDirection = layoutParent?.Style.Get("flex-direction")?.Trim();
+        var isRow = parentDirection is "row" or "row-reverse" ||
+            parentDirection == null && layoutParent != null && CssKeyword(layoutParent, "display") == "flex";
+        var mainAxisSize = isRow ? "width" : "height";
         var value = element.Style.Get(mainAxisSize)?.Trim();
         return !string.IsNullOrEmpty(value) && !string.Equals(value, "auto", StringComparison.OrdinalIgnoreCase);
     }
@@ -1572,7 +1633,7 @@ public sealed partial class LayoutEngine
             YGNodeStyleSetAspectRatio(node, ratio);
     }
 
-    private static void ApplyBoxModel(Element element, YogaNode node, float parentW, float parentH, float em, float rem)
+    private static void ApplyBoxModel(Element element, YogaNode node, float parentW, float parentH, float em, float rem, bool isRoot)
     {
         var padding = ResolvePadding(element, parentW, parentH, em, rem);
         var scrollbarInsets = element.GetReservedScrollbarInsets();
@@ -1581,8 +1642,16 @@ public sealed partial class LayoutEngine
         var rightPadding = padding.Right + scrollbarInsets.Right;
         var bottomPadding = padding.Bottom + scrollbarInsets.Bottom;
         var contentBox = ParseBoxSizing(element.Style.Get("box-sizing")) == BoxSizing.ContentBox;
-        var horizontalPadding = contentBox ? padding.Left + padding.Right : 0;
-        var verticalPadding = contentBox ? padding.Top + padding.Bottom : 0;
+        // Leave percentages to Yoga so a flex item's final allocation, rather than its ancestor's
+        // build-time constraint, determines the reference size. Keep exact roots and scrollbar
+        // gutters on the existing border-box path because those constraints already include insets.
+        var nativeContentBox = contentBox && !isRoot && !element.HasScrollbarGutterPotential &&
+            (TryParsePercent(element.Style.Get("width"), out _) || TryParsePercent(element.Style.Get("height"), out _) ||
+             TryParsePercent(element.Style.Get("min-width"), out _) || TryParsePercent(element.Style.Get("min-height"), out _) ||
+             TryParsePercent(element.Style.Get("max-width"), out _) || TryParsePercent(element.Style.Get("max-height"), out _));
+        if (nativeContentBox) YGNodeStyleSetBoxSizing(node, YGBoxSizing.ContentBox);
+        var horizontalPadding = contentBox && !nativeContentBox ? padding.Left + padding.Right : 0;
+        var verticalPadding = contentBox && !nativeContentBox ? padding.Top + padding.Bottom : 0;
 
         ApplyBoxDim(element, "width", parentW, parentH, em, rem, horizontalPadding,
             v => YGNodeStyleSetWidth(node, v), v => YGNodeStyleSetWidthPercent(node, v), () => YGNodeStyleSetWidthAuto(node));

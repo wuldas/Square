@@ -442,26 +442,24 @@ private void OnNameChanged(Event e)
 
 ### 6.3 绑定语义
 
-模板绑定最终写入元素的属性袋（`SetProperty`/`BindProperty`），**不会调用 CLR 属性的 setter**。因此 `[Prop]` 属性应使用 store-backed 写法，派生逻辑放在 `OnPropertyChanged` / `OnPropChanged`：
+默认模板绑定通过 `SetProperty` / `BindProperty` 写入元素属性袋。`[Prop]` 属性可通过 `OnPropertyChanged` / `OnPropChanged` 响应属性袋变化。若固定名称的模板表达式绑定需要在初始化及每次响应源更新时执行 CLR setter，为该属性声明 `[Prop(UseSetter = true)]`。例如，`<TrackList :tracks="RowsMirror" />` 可以把 `ObservableValue<IReadOnlyList<Track>>` 的当前值及后续值传给下面的 setter。
 
 ```csharp
-[Prop]
+[Prop(UseSetter = true)]
 public IReadOnlyList<Track> Tracks
 {
     get => GetProperty<IReadOnlyList<Track>>(nameof(Tracks)) ?? [];
-    set => SetProperty(nameof(Tracks), value ?? []);
-}
-
-protected override void OnPropertyChanged(string name)
-{
-    base.OnPropertyChanged(name);
-    if (name == nameof(Tracks)) ApplyTracks(Tracks);
+    set
+    {
+        SetProperty(nameof(Tracks), value);
+        ApplyTracks(value);
+    }
 }
 ```
 
-在 `set` 中写副作用（例如直接调用 `ApplyTracks`）在手动赋值属性时有效，但模板绑定会绕过它，属于静默失效，应避免。常量表达式（`:size="40"`）会直接赋值 CLR 属性以获得类型转换；动态表达式仍走属性袋。
+编译器直接生成类型化调用。setter 必须能从使用组件的模板访问。需要属性变更通知时，由 setter 使用 `SetProperty` 写入属性袋。常量表达式（如 `:size="40"`）仍直接赋值 CLR 属性。动态属性名称、对象式 `v-bind` 和字符串名称的 `BindProperty` 使用原有属性袋协议。
 
-普通值也可以用于一次性绑定，例如 `:tracks="Collection"` 会写入集合快照（`ObservableCollection<T>` 的变更不会自动推送，需要持续更新时改用 `ObservableValue<T>` 或在 `v-for` 中使用集合）。
+普通值也可以用于一次性绑定。例如，`:tracks="Collection"` 会传入集合实例。`ObservableCollection<T>` 自身的变更不会再次调用 setter。可替换集合的持续更新用 `ObservableValue<T>`，直接渲染集合的增删可用 `v-for`。
 
 ### 6.4 数据流
 
@@ -494,9 +492,9 @@ protected override void OnPropChanged(string name)
 <Text v-if="IsLoggedIn">欢迎回来</Text>
 ```
 
-当 `IsLoggedIn` 为 `ObservableValue<bool>` 或 `IReactiveValue<bool>` 时，直接传入该响应源，条件变化会增删 Element 子树。普通布尔成员若通过元素属性袋更新（`[Prop]` 的 store-backed setter 或 `SetProperty`），条件链也会在该属性变化时重新求值；`v-if`/`v-else-if`/`v-else` 之间允许空白行和注释。`.Value`、方法调用等任意 C# 表达式在构建时求值，不自动订阅其依赖，需要响应性时改用直接传响应源或先写入组件属性。
+条件链按模板顺序选中首个为真的分支，没有匹配时渲染 `v-else`。在 `v-if` 和 `v-else-if` 中直接使用 `ObservableValue<bool>` / `IReactiveValue<bool>`，条件源变化后会重新选择分支。普通布尔条件引用的组件属性通过 `SetProperty` 更新后，也会重新求值。条件分支之间允许空白行和注释。需要对多个响应源进行组合时，可以先将它们组合为一个 `IReactiveValue<bool>`，再把它直接用于条件。
 
-组件模板根上的 `v-if` 同样生效：条件为假时根元素不会构建。组件元素本身（宿主盒）始终存在于父布局中；需要它不占空间时，把条件放到调用方或为宿主设置尺寸约束。
+组件模板根上的条件也遵循相同规则。首次匹配时才构建分支，切换后只把活动分支挂载到组件宿主。组件宿主仍是调用方布局的子项；若条件为假时应连宿主一起移除，把 `v-if` 放在调用方的组件标签上。
 
 ### 7.2 列表渲染
 

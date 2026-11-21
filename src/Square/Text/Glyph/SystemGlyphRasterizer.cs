@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -77,17 +78,6 @@ public sealed partial class SystemGlyphRasterizer
         return false;
     }
 
-    private RasterizedGlyph? RasterizePlatformOrStb(Font font, char character)
-    {
-        if (FontCollection.Shared.IsCustomFamily(font.Family))
-            return _stbRasterizer.Rasterize(font, character);
-        if (OperatingSystem.IsAndroid() && _platformRasterizer?.Invoke(font, character) is { } platform)
-            return platform;
-        return OperatingSystem.IsWindows()
-            ? RasterizeWin32(font, character)
-            : _stbRasterizer.Rasterize(font, character);
-    }
-
     /// <summary>当前平台是否可用光栅化（Windows 或已加载字体）。</summary>
     public bool IsAvailable => OperatingSystem.IsWindows() || _stbRasterizer.IsAvailable ||
                                OperatingSystem.IsAndroid() && _platformRasterizer != null;
@@ -102,47 +92,84 @@ public sealed partial class SystemGlyphRasterizer
         }
     }
 
-    /// <summary>光栅化指定字体的单个字符，返回字形位图与度量；不可用或失败时返回 null。</summary>
-    /// <param name="font">目标字体。</param>
-    /// <param name="character">要光栅化的字符。</param>
-    public RasterizedGlyph? Rasterize(Font font, char character)
+    private static readonly string[] WindowsSymbolFallbacks = ["Segoe UI Symbol", "Segoe UI Emoji", "Segoe UI"];
+    private static readonly string[] WindowsEmojiFallbacks = ["Segoe UI Emoji", "Segoe UI Symbol", "Segoe UI"];
+
+    /// <summary>光栅化单个 BMP 字符。补充平面字符请传入完整的 <see cref="Rune"/>。</summary>
+    public RasterizedGlyph? Rasterize(Font font, char character) =>
+        Rune.TryCreate(character, out var rune) ? Rasterize(font, rune) : null;
+
+    /// <summary>按主族、局部、应用级和平台回退顺序查找并光栅化一个 Unicode 标量。</summary>
+    public RasterizedGlyph? Rasterize(Font font, Rune rune)
     {
         if (!IsAvailable) return null;
-        var family = ResolveFontFamily(font.Family, character);
-        var effectiveFont = family == font.Family
-            ? font
-            : new Font(family, font.Size, font.Weight, font.Style);
-        if (!_cacheGlyphs)
-            return RasterizePlatformOrStb(effectiveFont, character);
-        var key = new GlyphKey(effectiveFont.Family, effectiveFont.Size, effectiveFont.Weight, effectiveFont.Style,
-            character, FontCollection.Shared.CustomGeneration);
-
+        var family = OperatingSystem.IsWindows() && !font.UseLiteralFamily ? ResolveGenericFontFamily(font.Family) : font.Family;
+        var generation = FontCollection.Shared.CustomGeneration;
         lock (_cacheGate)
         {
-            if (_cache.TryGetValue(key, out var cached)) return cached;
+            if (RasterizeFamily(font, family, rune, generation) is { } primary) return primary;
 
-            var glyph = RasterizePlatformOrStb(effectiveFont, character);
-            _cache[key] = glyph;
-            return glyph;
+            foreach (var fallback in font.FallbackFamilies)
+                if (RasterizeFallback(font, family, fallback, rune, generation, literal: true) is { } glyph) return glyph;
+            foreach (var fallback in FontManager.Instance.DefaultFallbackFamilies)
+                if (RasterizeFallback(font, family, fallback, rune, generation) is { } glyph) return glyph;
+
+            // Custom faces (notably icon fonts) and private-use positions are only matched explicitly.
+            if (Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.PrivateUse ||
+                FontCollection.Shared.IsCustomFamily(family)) return null;
+
+            if (!OperatingSystem.IsWindows())
+                return _stbRasterizer.Rasterize(font, rune, allowSystemFallback: true);
+
+            var scriptFamily = rune.Value switch
+            {
+                >= 0x3040 and <= 0x30ff or >= 0xff66 and <= 0xff9f => "Yu Gothic UI",
+                >= 0x3400 and <= 0x4dbf or >= 0x4e00 and <= 0x9fff => "Microsoft YaHei UI",
+                >= 0xac00 and <= 0xd7af => "Malgun Gothic",
+                _ => null
+            };
+            if (scriptFamily is not null &&
+                RasterizeFallback(font, family, scriptFamily, rune, generation) is { } scriptGlyph)
+                return scriptGlyph;
+
+            foreach (var fallback in rune.IsBmp ? WindowsSymbolFallbacks : WindowsEmojiFallbacks)
+                if (RasterizeFallback(font, family, fallback, rune, generation) is { } glyph) return glyph;
+            return null;
         }
     }
 
-    private static string ResolveFontFamily(string requestedFamily, char character)
+    private RasterizedGlyph? RasterizeFallback(Font font, string primary, string fallback, Rune rune, int generation, bool literal = false)
     {
-        if (FontCollection.Shared.IsCustomFamily(requestedFamily))
-            return requestedFamily;
-        if (!string.Equals(requestedFamily, "Segoe UI", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(requestedFamily, "Segoe UI Variable", StringComparison.OrdinalIgnoreCase))
-            return requestedFamily;
-
-        if (character is >= '\u3040' and <= '\u30ff' or >= '\uff66' and <= '\uff9f')
-            return "Yu Gothic UI";
-        if (character is >= '\u3400' and <= '\u4dbf' or >= '\u4e00' and <= '\u9fff')
-            return "Microsoft YaHei UI";
-        return requestedFamily;
+        if (string.IsNullOrWhiteSpace(fallback)) return null;
+        var family = OperatingSystem.IsWindows() && !literal ? ResolveGenericFontFamily(fallback) : fallback;
+        return string.Equals(family, primary, StringComparison.OrdinalIgnoreCase)
+            ? null : RasterizeFamily(font, family, rune, generation);
     }
 
-    private static RasterizedGlyph? RasterizeWin32(Font font, char character)
+    private RasterizedGlyph? RasterizeFamily(Font font, string family, Rune rune, int generation)
+    {
+        var key = new GlyphKey(family, font.Size, font.Weight, font.Style, rune.Value, generation);
+        if (_cacheGlyphs && _cache.TryGetValue(key, out var cached)) return cached;
+
+        var face = family == font.Family ? font : new Font(family, font.Size, font.Weight, font.Style);
+        RasterizedGlyph? glyph;
+        if (FontCollection.Shared.IsCustomFamily(family) || !OperatingSystem.IsWindows())
+        {
+            glyph = OperatingSystem.IsAndroid() && rune.IsBmp && !FontCollection.Shared.IsCustomFamily(family)
+                ? _platformRasterizer?.Invoke(face, (char)rune.Value)
+                : null;
+            glyph ??= _stbRasterizer.Rasterize(face, rune, allowSystemFallback: false);
+        }
+        else
+        {
+            glyph = RasterizeWin32(face, rune);
+        }
+
+        if (_cacheGlyphs) _cache[key] = glyph;
+        return glyph;
+    }
+
+    private static RasterizedGlyph? RasterizeWin32(Font font, Rune rune)
     {
         var dc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
         if (dc == IntPtr.Zero) return null;
@@ -161,9 +188,13 @@ public sealed partial class SystemGlyphRasterizer
         var oldFont = NativeMethods.SelectObject(dc, fontHandle);
         try
         {
+            var glyphIndex = GetWin32GlyphIndex(dc, font.Family, rune);
+            if (glyphIndex == 0) return null;
+
             var transform = NativeMethods.Mat2.Identity;
+            const uint format = NativeMethods.Gray8Bitmap | NativeMethods.GlyphIndex;
             var size = NativeMethods.GetGlyphOutline(
-                dc, character, NativeMethods.Gray8Bitmap,
+                dc, glyphIndex, format,
                 out var metrics, 0, IntPtr.Zero, ref transform);
             if (size == NativeMethods.GdiError) return null;
 
@@ -174,7 +205,7 @@ public sealed partial class SystemGlyphRasterizer
                 try
                 {
                     var written = NativeMethods.GetGlyphOutline(
-                        dc, character, NativeMethods.Gray8Bitmap,
+                        dc, glyphIndex, format,
                         out metrics, size, handle.AddrOfPinnedObject(), ref transform);
                     if (written == NativeMethods.GdiError) return null;
                 }
@@ -210,7 +241,81 @@ public sealed partial class SystemGlyphRasterizer
         }
     }
 
-    internal static bool TryGetWin32FontMetrics(Font font, out FontMetrics metrics)
+    private static unsafe uint GetWin32GlyphIndex(IntPtr dc, string family, Rune rune)
+    {
+        if (!Win32FaceMatches(dc, family)) return 0;
+
+        if (rune.IsBmp)
+        {
+            var character = (char)rune.Value;
+            ushort index;
+            return NativeMethods.GetGlyphIndices(dc, &character, 1, &index, NativeMethods.MarkMissingGlyphs)
+                       == NativeMethods.GdiError || index == 0xffff ? 0u : index;
+        }
+
+        // GDI's character APIs accept one UTF-16 code unit per glyph. Read the selected
+        // face's format-12 cmap to obtain the glyph index for a supplementary scalar.
+        const uint cmapTag = 0x70616d63; // little-endian GDI table tag for 'cmap'
+        var size = NativeMethods.GetFontData(dc, cmapTag, 0, null, 0);
+        if (size < 4 || size > 16 * 1024 * 1024) return 0;
+        var table = new byte[size];
+        fixed (byte* buffer = table)
+            if (NativeMethods.GetFontData(dc, cmapTag, 0, buffer, size) != size) return 0;
+        return FindSupplementaryGlyph(table, (uint)rune.Value);
+    }
+
+    private static unsafe bool Win32FaceMatches(IntPtr dc, string family)
+    {
+        // CreateFont can silently substitute the default face for an unavailable family.
+        Span<char> face = stackalloc char[64];
+        fixed (char* name = face)
+        {
+            var length = NativeMethods.GetTextFace(dc, face.Length, name);
+            if (length <= 0 || length > face.Length) return false;
+            var actual = face[..length];
+            if (actual[^1] == '\0') actual = actual[..^1];
+            return actual.Equals(family, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static uint FindSupplementaryGlyph(ReadOnlySpan<byte> cmap, uint scalar)
+    {
+        var records = BinaryPrimitives.ReadUInt16BigEndian(cmap[2..]);
+        for (var i = 0; i < records && 4 + (i + 1) * 8 <= cmap.Length; i++)
+        {
+            var record = cmap[(4 + i * 8)..];
+            var platform = BinaryPrimitives.ReadUInt16BigEndian(record);
+            var encoding = BinaryPrimitives.ReadUInt16BigEndian(record[2..]);
+            if (platform != 0 && (platform != 3 || encoding != 10)) continue;
+            var offset = BinaryPrimitives.ReadUInt32BigEndian(record[4..]);
+            if (offset > cmap.Length - 16) continue;
+            var subtable = cmap[(int)offset..];
+            if (BinaryPrimitives.ReadUInt16BigEndian(subtable) != 12) continue;
+            var length = BinaryPrimitives.ReadUInt32BigEndian(subtable[4..]);
+            var groups = BinaryPrimitives.ReadUInt32BigEndian(subtable[12..]);
+            if (length < 16 || length > subtable.Length || groups > (length - 16) / 12) continue;
+
+            var low = 0;
+            var high = (int)groups - 1;
+            while (low <= high)
+            {
+                var middle = low + (high - low) / 2;
+                var group = subtable[(16 + middle * 12)..];
+                var first = BinaryPrimitives.ReadUInt32BigEndian(group);
+                var last = BinaryPrimitives.ReadUInt32BigEndian(group[4..]);
+                if (scalar < first) high = middle - 1;
+                else if (scalar > last) low = middle + 1;
+                else
+                {
+                    var startIndex = BinaryPrimitives.ReadUInt32BigEndian(group[8..]);
+                    var index = (ulong)startIndex + scalar - first;
+                    return index <= ushort.MaxValue ? (uint)index : 0;
+                }
+            }
+        }
+        return 0;
+    }
+    internal static bool TryGetWin32FontMetrics(Font font, out FontMetrics metrics, bool requireExactFamily = false)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -218,7 +323,7 @@ public sealed partial class SystemGlyphRasterizer
             return false;
         }
 
-        var family = ResolveGenericFontFamily(font.Family);
+        var family = requireExactFamily || font.UseLiteralFamily ? font.Family : ResolveGenericFontFamily(font.Family);
         var dc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
         if (dc == IntPtr.Zero)
         {
@@ -241,7 +346,7 @@ public sealed partial class SystemGlyphRasterizer
         var oldFont = NativeMethods.SelectObject(dc, fontHandle);
         try
         {
-            if (!NativeMethods.GetTextMetrics(dc, out var textMetrics))
+            if (requireExactFamily && !Win32FaceMatches(dc, family) || !NativeMethods.GetTextMetrics(dc, out var textMetrics))
             {
                 metrics = default;
                 return false;
@@ -284,7 +389,7 @@ public sealed partial class SystemGlyphRasterizer
         float Size,
         FontWeight Weight,
         FontStyle Style,
-        char Character,
+        int CodePoint,
         int CustomGeneration);
 
     private static partial class NativeMethods
@@ -292,6 +397,8 @@ public sealed partial class SystemGlyphRasterizer
         internal const uint DefaultCharset = 1;
         internal const uint AntialiasedQuality = 4;
         internal const uint Gray8Bitmap = 6;
+        internal const uint GlyphIndex = 0x80;
+        internal const uint MarkMissingGlyphs = 1;
         internal const uint GdiError = 0xFFFFFFFF;
 
         [LibraryImport("gdi32.dll", EntryPoint = "CreateCompatibleDC")]
@@ -318,6 +425,15 @@ public sealed partial class SystemGlyphRasterizer
         [LibraryImport("gdi32.dll", EntryPoint = "GetTextMetricsW")]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static partial bool GetTextMetrics(IntPtr dc, out TextMetrics metrics);
+
+        [LibraryImport("gdi32.dll", EntryPoint = "GetTextFaceW")]
+        internal static unsafe partial int GetTextFace(IntPtr dc, int count, char* name);
+
+        [LibraryImport("gdi32.dll", EntryPoint = "GetGlyphIndicesW")]
+        internal static unsafe partial uint GetGlyphIndices(IntPtr dc, char* text, int count, ushort* indices, uint flags);
+
+        [LibraryImport("gdi32.dll")]
+        internal static unsafe partial uint GetFontData(IntPtr dc, uint table, uint offset, byte* buffer, uint size);
 
         [LibraryImport("gdi32.dll", EntryPoint = "GetGlyphOutlineW")]
         internal static partial uint GetGlyphOutline(
@@ -405,13 +521,8 @@ internal static class SystemTextMeasurementRegistration
 
     internal static float? MeasureAdvance(Rune rune, Font font)
     {
-        if (!rune.IsBmp || !Rasterizer.IsAvailable) return null;
-        var family = SystemGlyphRasterizer.ResolveGenericFontFamily(font.Family);
-        var effectiveFont = family == font.Family
-            ? font
-            : new Font(family, font.Size, font.Weight, font.Style);
         lock (Sync)
-            return Rasterizer.Rasterize(effectiveFont, (char)rune.Value)?.AdvanceX;
+            return Rasterizer.Rasterize(font, rune)?.AdvanceX;
     }
 }
 
@@ -487,10 +598,10 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
     /// <param name="font">目标字体。</param>
     /// <param name="rune">目标字符。</param>
     /// <param name="metrics">输出的字形度量。</param>
-    /// <returns>成功获取返回 true；字符非 BMP 或光栅失败返回 false。</returns>
+    /// <returns>成功获取返回 true；光栅失败返回 false。</returns>
     public bool TryGetGlyphMetrics(Font font, Rune rune, out GlyphMetrics metrics)
     {
-        if (!rune.IsBmp || !rasterizer.IsAvailable)
+        if (!rasterizer.IsAvailable)
         {
             metrics = default;
             return false;
@@ -498,7 +609,7 @@ internal sealed class SystemTextMetricsProvider(SystemGlyphRasterizer rasterizer
 
         RasterizedGlyph? glyph;
         lock (_sync)
-            glyph = rasterizer.Rasterize(font, (char)rune.Value);
+            glyph = rasterizer.Rasterize(font, rune);
         if (glyph == null)
         {
             metrics = default;

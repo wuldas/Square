@@ -17,6 +17,8 @@ public abstract class Node : EventTarget
         Element = 1,
         /// <summary>文本节点。</summary>
         Text = 3,
+        /// <summary>注释节点。</summary>
+        Comment = 8,
         /// <summary>文档节点。</summary>
         Document = 9
     }
