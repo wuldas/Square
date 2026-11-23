@@ -285,6 +285,42 @@ public class MarkdownDocumentTests
         Assert.Equal("inline", inlineText.TextContent);
     }
 
+    [Theory]
+    [InlineData("cs", "var value = 42;", "var", "value", true)]
+    [InlineData("csharp", "var text = \"hello\";", "var", "hello", true)]
+    [InlineData("csharp", "var value = 42; // note", "var", "note", true)]
+    [InlineData("json", "{\"value\":42}", "value", "42", true)]
+    [InlineData("html", "<script>var value = 42;</script>", "var", "value", true)]
+    [InlineData("not-a-language", "var value = 42;", "var", "value", false)]
+    public void CodeHighlightingPreservesTextAndLexicalRoles(
+        string language, string source, string firstToken, string secondToken, bool highlighted)
+    {
+        var viewer = new MarkdownViewer { Content = $"```{language}\n{source}\n```" };
+        viewer.BuildElementTree();
+        ((IComponentLifecycle)viewer).OnAttached();
+        var code = Assert.Single(viewer.QueryAll<UIElement>(),
+            element => element.ClassList.Contains("markdown-code-text"));
+        using var context = new TextRecordingContext();
+
+        code.Paint(context);
+
+        Assert.Equal(source, string.Concat(context.Text.Select(draw => draw.Text)));
+        var first = ColorAt(source.IndexOf(firstToken, StringComparison.Ordinal));
+        var second = ColorAt(source.IndexOf(secondToken, StringComparison.Ordinal));
+        if (highlighted) Assert.NotEqual(first, second);
+        else Assert.Equal(first, second);
+
+        Color ColorAt(int offset)
+        {
+            foreach (var draw in context.Text)
+            {
+                if (offset < draw.Text.Length) return draw.Color;
+                offset -= draw.Text.Length;
+            }
+            throw new InvalidOperationException("Code character was not painted.");
+        }
+    }
+
     [Fact]
     public void CodeAndTableRemainInTheSameSelectableTextTree()
     {
@@ -504,5 +540,34 @@ public class MarkdownDocumentTests
 
         var document = new UIDocument();
         Assert.IsType<MarkdownViewer>(document.CreateComponentElement("urn:square:markdown", "MarkdownViewer"));
+    }
+
+    private sealed class TextRecordingContext : IRenderContext
+    {
+        public List<(string Text, Color Color)> Text { get; } = [];
+        public Size CanvasSize => new(700, 200);
+        public float DpiScale => 1f;
+        public void DrawText(TextLayout text, Point origin, Brush brush) =>
+            Text.Add((text.Text, Assert.IsType<SolidColorBrush>(brush).Color));
+        public void PushTransform(System.Numerics.Matrix3x2 matrix) { }
+        public void PopTransform() { }
+        public void PushClip(Rect rect) { }
+        public void PushClip(Geometry geometry) { }
+        public void PopClip() { }
+        public void FillRect(Rect rect, Brush brush) { }
+        public void DrawRect(Rect rect, Pen pen) { }
+        public void FillPath(PathGeometry path, Brush brush) { }
+        public void DrawPath(PathGeometry path, Pen pen) { }
+        public void FillGeometry(Geometry geometry, Brush brush) { }
+        public void DrawGeometry(Geometry geometry, Pen pen) { }
+        public void DrawImage(Square.Graphics.Image image, Rect dest, Rect? source = null) { }
+        public void PushLayer(Rect bounds, float opacity) { }
+        public void PopLayer() { }
+        public void Clear(Color color) { }
+        public void Clear(Color color, Rect rect) { }
+        public void Flush() { }
+        public void Present() { }
+        public void Present(IReadOnlyList<Rect>? dirtyRects) { }
+        public void Dispose() { }
     }
 }
