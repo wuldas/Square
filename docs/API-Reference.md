@@ -2729,6 +2729,8 @@ public sealed class MarkdownViewer : UIElement
 
 `MarkdownDocument.Parse(string?)` 将源文本解析为 `Square.Extensions.Markdown` 自有的块和行内模型。Markdig 仅作为 `Square.Extensions.Markdown` 内部解析器，不会出现在公开模型或核心 `Square` 项目的依赖中。围栏代码块通过 TextMate grammar 数据库进行语法高亮。
 
+代码高亮首次使用时只建立内置 grammar 的语言与 scope 索引，不加载代码编辑器专用的 language configuration 或 snippets。grammar 文件及其依赖仍按需加载并由 TextMate registry 缓存；既有主题、scope 着色、语言别名和未知语言的纯文本回退保持不变，不通过应用启动预热转移首次加载成本。
+
 `MarkdownViewer` 将该模型渲染为 Square 元素树（标题 H1–H6、段落、嵌套有序/无序列表、任务列表、引用、代码块、分隔线、表格、图片、链接、强调与行内代码）。容器默认 `display:flex; flex-direction:column; gap:8px`，各块带 `markdown-*` class，可在 `<style>` 中定制。挂载（`OnAttached`）或 Prop 变化时自动重新渲染。
 
 需要复用解析结果时可直接传入文档：

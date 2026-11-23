@@ -9,7 +9,7 @@ namespace Square.Extensions.Markdown;
 internal sealed class MarkdownCodeText : UIElement, ITextSelectable
 {
     private static readonly object GrammarGate = new();
-    private static readonly RegistryOptions GrammarOptions = new(ThemeName.DarkPlus);
+    private static readonly MarkdownGrammarOptions GrammarOptions = new();
     private static readonly Registry GrammarRegistry = new(GrammarOptions);
     private readonly global::Square.UI.Text _textNode = new();
     private IReadOnlyList<IReadOnlyList<CodeToken>>? _tokens;
