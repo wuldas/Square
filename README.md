@@ -1,69 +1,49 @@
 # Square
 
-Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌面 UI 框架。
+Square 是一个用 C# 编写的跨平台桌面 UI 框架，主要在 Windows 和使用 X11 的 Linux 上验证，也可在 macOS 上运行。项目处于实验阶段，API 和模板语法可能调整。
 
-它借鉴 Vue、HTML 与 CSS 的开发体验，但不是浏览器，也不引入 Vue 运行时或 JavaScript 引擎。`.sqv` / `.sqx` 模板会在编译期由 Roslyn Source Generator 生成普通 C# 组件。
+Square 提供两种组件模板。`.sqv` 借鉴 Vue 的写法，`.sqx` 使用 Square 自己的语法。模板用标签描述界面结构，用 C# 编写逻辑，用 CSS 定义样式。构建时模板会编译为 C# 组件，运行时由 Square 绘制界面。
 
-> 项目仍处于早期开发阶段，API 与模板语法可能调整。目前主要验证 Windows / Win32 与 Linux / X11 桌面宿主。
+## 创建独立应用
 
-## 0.3.2 主线维护补丁
+安装 .NET 10 SDK 后，在准备存放新项目的目录运行下面的命令。Linux 桌面需要 X11 会话和 `libX11`。[下载 .NET 10 SDK](<https://dotnet.microsoft.com/download/dotnet/10.0>)
 
-0.3.2 从 `main` 发布，修复 CI 检查及多个Issue（条件渲染、绑定/编译、事件、布局、指针坐标、Input、DevTools），并补齐模板、flex 布局与字形回退的剩余问题及文字排版稳定性。框架与模板仍为 22 个统一版本包；没有新增 Canvas 或生产语言服务器功能，也没有新的性能基准声明。详情与发布门禁见 [0.3.2 发布说明](docs/releases/0.3.2.md)。
+```bash
+dotnet new install Wuldas.Square.Templates@0.3.2
+dotnet new square -n MyApp
+dotnet run --project MyApp
+```
 
-## 0.3.1 主线维护补丁
+应用会打开欢迎页，点击 **Increment** 按钮会增加计数。生成的项目默认使用 `.sqv` 模板和 CPU 软件渲染（Software），构建时会从 NuGet.org 自动下载依赖。[核心包](<https://www.nuget.org/packages/Wuldas.Square>) · [模板包](<https://www.nuget.org/packages/Wuldas.Square.Templates>)
 
-0.3.1 从 `main` 发布，更新构建工具链与 CI 测试会话，框架与模板仍为22个统一版本包；没有新增 Canvas 或生产语言服务器功能。详情与发布门禁见 [0.3.1 发布说明](docs/releases/0.3.1.md)。
+创建项目时可用 `--markup sqx` 选择 `.sqx` 模板，用 `--platforms desktop,android` 创建可分别构建为桌面和 Android 应用的项目。平台要求、项目结构和组件模板用法见[入门指南](<docs/Getting-Started.md>)。
 
-下列功能说明与2026-11-11基准保留为0.3.0记录，不是0.3.1或0.3.2新增测量；已知Software桌面截图0/2 limited边界仍有效。
+## 编写第一个组件
 
-### 0.3.0 Canvas 与软件呈现
-
-- 对齐主线 UI、CSS、布局、编译器与内置 Yoga，独立合入 Canvas 路径、渐变、文字准备缓存、图层、Software alpha/SIMD 与 Vulkan 帧资源改进。
-- Canvas 默认一个综合场景、一个固定档位、control-only；六目标各三轮共18个进程，显式主线对照为27个。旧29场景仅显式扩展运行。
-- Win32 Software 补齐 GDI 访问完成交接与 best-effort DWM 合成节拍等待；原生桌面截图门槛仍为0/2通过，不声明物理扫描无撕裂或透明窗口完整呈现保证。
-- 布局窗口标题显示实际 backend 与 jit/aot；保留同口径 CPU、生产事件 FPS、平均内存和完整发布体积。本轮布局与Canvas实测见[测量记录](docs/benchmarks/2026-11-11.md)。
-
-版本改动、升级与支持边界见 [0.3.0 发布说明](docs/releases/0.3.0.md)；布局与分词的早期改动保留在 [0.2.0 历史发布说明](docs/releases/0.2.0.md)。
-
-## 截图
-
-![Square sample screenshot](samples/E46602.png)
-
-![Square sample screenshot](samples/QQ20260724-162114.png)
-
-![Square sample screenshot](samples/QQ20260724-162126.png)
-
-## 示例
-
-`Main.sqv`：
+将刚创建的 `MyApp/Pages/MainPage.sqv` 替换为下面的内容。这个页面会随着输入更新问候语，点击「确认」后会显示提示文字。
 
 ```vue
 <template>
   <View class="page">
-    <Text class="title">Hello {{ Name.Value }}</Text>
-
+    <Text class="title">你好，{{ Name.Value }}！</Text>
     <Input :value="Name" @input="OnNameChanged" />
-
-    <Button ref="SaveButton" @click="OnSave">
-      Save
-    </Button>
-
-    <Text v-if="Saved">Saved</Text>
+    <Button @click="ConfirmName">确认</Button>
+    <Text v-if="Confirmed">已确认</Text>
   </View>
 </template>
 
-<script lang="csharp">
+<script lang="csharp" namespace="MyApp.Pages">
   public ObservableValue<string> Name = new("Square");
-  public ObservableValue<bool> Saved = new(false);
+  public ObservableValue<bool> Confirmed = new(false);
 
   private void OnNameChanged(Event e)
   {
       Name.Value = ((Input)e.Target!).Value;
   }
 
-  private void OnSave()
+  private void ConfirmName()
   {
-      Saved.Value = true;
+      Confirmed.Value = true;
   }
 </script>
 
@@ -81,121 +61,85 @@ Square 是一个纯 C#、编译优先、NativeAOT 友好的实验性跨平台桌
 </style>
 ```
 
-`Program.cs`：
+`ObservableValue<T>` 保存界面可以订阅的值。`@input` 和 `@click` 将输入和点击绑定到 C# 方法，`v-if` 根据 `Confirmed` 的值决定是否显示提示。在 `MyApp` 的上一级目录再次运行 `dotnet run --project MyApp` 即可查看效果。
 
-```csharp
-using Square.Hosting;
+## 截图
 
-var window = new AppWindow("My App", 800, 600);
-window.Load(new Main());
+![Square 代码编辑器示例，展示语法高亮、行号和代码折叠](<samples/E46602.png>)
 
-new DesktopApplication(window).Run();
-```
+![SQV 表单示例，展示登录和注册控件](<samples/QQ20260724-162114.png>)
 
-## 创建独立应用
-
-使用 [`Wuldas.Square.Templates` 0.3.2](https://www.nuget.org/packages/Wuldas.Square.Templates/0.3.2) 创建应用。安装 .NET 10 SDK 后，无需克隆仓库或配置本地包源：
-
-```bash
-dotnet new install Wuldas.Square.Templates@0.3.2
-dotnet new square -n MyApp
-dotnet run --project MyApp
-```
-
-也可生成桌面与 Android 共用的应用，或添加组件：
-
-```bash
-dotnet new square -n MyMobileApp --platforms desktop,android --markup sqx
-dotnet new square-component -n UserCard -o MyApp/Components --namespace MyApp.Components
-```
-
-默认使用 SQV + Software，依赖直接从 NuGet.org 还原；通过共享 `SquareProgram.CreateWindow()` 复用桌面与可选 Android 的应用初始化。平台要求、模板选项和框架开发者的本地打包流程见[入门指南](docs/Getting-Started.md)。
+![SQV Markdown 示例，展示标题、列表、表格和图片](<samples/QQ20260724-162126.png>)
 
 ## 运行示例
 
+克隆仓库后，在仓库根目录运行 SQV 示例，查看控件、表单、Markdown 和页面路由等功能。
+
 ```bash
-dotnet restore Square.slnx
-dotnet build Square.slnx
 dotnet run --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
 ```
 
-静态 HTML/CSS 外壳与 SQX/SQV 局部挂载示例（可选包默认不启用）：
-
-```powershell
-dotnet run --project samples/Square.Sample/Square.Sample.csproj -c Release -p:SquareSampleUseNativeHtml=true -- --backend Software --html-mount-demo
-```
-
-用 `--html-file <path>` 指定自定义外壳；组件挂载到 `#sqx-root` / `#sqv-root`，卸载永久释放绑定与生成样式，再挂载须新实例。完整 API 和文件资源边界见 [本地静态 HTML 与组件挂载](docs/Web-Hosting.md#8-本地静态-html-外壳与编译组件挂载)。
-
-
-Debug 模式下可使用 `dotnet watch` 热更新普通 C#、`.sqx` / `.sqv` 模板和组件 `<style>`：
+开发时可用 `dotnet watch` 在 Debug 模式下热更新 C#、模板和组件样式。在此示例中，修改模板结构会保留根组件的状态。内部控件会重建，焦点或滚动位置可能重置。[热更新用法](<docs/Getting-Started.md#33-构建和运行>)
 
 ```bash
 dotnet watch --project samples/Square.Sample.Vue/Square.Sample.Vue.csproj
 ```
 
-模板或组件样式变化时，Square 复用顶层生成组件实例并重建其后代，因此顶层 C# 字段和响应式状态会保留；窗口 `Content` / 自定义标题栏需要以生成组件作为顶层根。根组件及后代会重新执行 unload/detach/attach/load 生命周期，生命周期代码应支持重复挂载。后代控件的局部状态、焦点、滚动位置和选择区不保证保留。组件或文件重命名、删除成员及部分 `ref` 结构变化仍可能要求重启。
-
-各平台默认启用按需节能：静态界面停止帧时钟，动画、延迟控件帧和光标按需求唤醒，桌面最小化停止绘制。通过 `AppWindow.PowerSavingEnabled = false` 可恢复连续宿主 Tick；平台行为和扩展接入见[节能与按需调度](docs/Power-Saving.md)。
-
-主示例可选择 CPU Skia 后端：
+另一个桌面示例可以切换绘制方式。下面的两条命令分别选择 Skia 和 Windows 上的 Direct2D。[渲染文档](<docs/Rendering.md>)
 
 ```bash
 dotnet run --project samples/Square.Sample/Square.Sample.csproj -- --backend Skia
+dotnet run --project samples/Square.Sample/Square.Sample.csproj -p:SquareTargetPlatform=Win32 -p:SquareSampleUseDirect2D=true -- --backend Direct2D
 ```
 
-Windows 主示例也可选择原生 Direct2D HWND 后端：
+其他示例包括 [富文本控件](<samples/Square.Sample.RichText>) 和 [在本地 HTML 页面中嵌入 Square 组件](<docs/Web-Hosting.md#8-本地静态-html-外壳与编译组件挂载>)。构建整个框架及运行测试的命令见[贡献指南](<CONTRIBUTING.md#development-setup>)。
 
-```powershell
-dotnet run --project samples/Square.Sample/Square.Sample.csproj `
-  -p:SquareTargetPlatform=Win32 `
-  -p:SquareSampleUseDirect2D=true `
-  -- --backend Direct2D
-```
+## Android（实验性）
 
-运行 RichText 示例：
+Android 的基本交互已在模拟器上验证，arm64 真机仍待完整验证。运行示例需要 Android SDK、JDK 17 和 .NET Android 工作负载。先启动模拟器，再从仓库根目录安装并启动示例。[Android 平台说明](<docs/Android-Platform-TODO.md>)
 
 ```bash
-dotnet run --project samples/Square.Sample.RichText/Square.Sample.RichText.csproj
+dotnet workload restore Square.Android.slnx
+dotnet build samples/Square.Sample.Android/Square.Sample.Android.csproj -t:Install -f net10.0-android -p:SquareTargetPlatform=Android
+adb shell am start -n com.wuldas.square.sample/.MainActivity
 ```
 
-运行测试：
+示例默认使用软件渲染。要切换渲染方式，关闭示例后用 `backend` 启动参数选择 `AndroidCanvas`、`AndroidSkia` 或 `Vulkan`。
 
 ```bash
-dotnet test Square.slnx
+adb shell am start -n com.wuldas.square.sample/.MainActivity --es backend AndroidCanvas
 ```
 
-## 布局动画性能对比
+开发时可以开启 DevTools，从电脑上查看应用截图、检查界面元素和模拟输入。关闭示例后，用以下命令重新启动并转发端口。通过 `adb logcat -d -s Square` 查看访问令牌。[Android 远程调试步骤](<docs/DevTools.md#android-远程调试adb-端口转发>)
 
-[对比示例](samples/Square.Sample.PerfComparison)包含 Square Software / Direct2D（JIT 与 NativeAOT）、Avalonia（JIT 与 NativeAOT）、Electron 和 Flutter。各目标使用 900×1240 客户区、3 组各 240 个方块，分别运行 transform、opacity、width 动画，6 秒线性循环，目标更新频率为 60 FPS。width 组改变真实宽度并触发行重排，不用缩放代替布局。
-
-### 复现
-
-需要 Windows x64、PowerShell 7、.NET 10 SDK、Node.js/npm、Flutter Windows 桌面 SDK，以及 Visual Studio C++ / Windows SDK 工具链（用于 NativeAOT 和 Flutter）。将 `flutter` 加入 PATH，或通过 `-FlutterCommand` 指定 `flutter.bat` 的完整路径。
-
-```powershell
-pwsh -NoProfile -File samples/Square.Sample.PerfComparison/Run-Comparison.ps1 `
-  -Seconds 30 -WarmupSeconds 5
+```bash
+adb shell am start -n com.wuldas.square.sample/.MainActivity --ez devtools true --ei devtools-port 5128
+adb forward tcp:5128 tcp:5128
 ```
 
-脚本先构建所有 Release 发布物，再按固定顺序逐个运行；上述命令每个目标预热 5 秒、测量 30 秒，目标之间间隔 2 秒。测量期间不构建、不挂接 DevTools。Square Direct2D 必须使用硬件设备；Square 使用 Auto 脏区渲染，各框架原生的布局与合成优化保持启用。Flutter 按绝对 60 Hz 截止点驱动动画，避免原生时钟高于 60 Hz 时增加负载；实际产出帧率仍由下面的计数定义决定。
+## NativeAOT 发布
 
-默认将逐目标 JSON、stdout/stderr 和汇总 `results.json` 写入 `artifacts/perf-comparison-时间戳/`。可通过 `-OutputDirectory` 指定目录，`-Seconds` / `-WarmupSeconds` 调整时长，已有发布物时可用 `-SkipBuild`。发布目录由脚本管理，重新构建时会清空对应的 .NET 输出目录，避免旧文件虚增体积。
+NativeAOT 可以将桌面应用提前编译为原生可执行文件。安装系统所需的编译工具后，在 `MyApp` 的上一级目录运行与你系统匹配的命令。[NativeAOT 工具要求](<https://learn.microsoft.com/zh-cn/dotnet/core/deploying/native-aot/#prerequisites>)
 
-Avalonia 的 JIT / NativeAOT 构建共用同一界面、动画和采样逻辑。NativeAOT 按 [Avalonia 11.x 的要求](https://github.com/AvaloniaUI/avalonia-docs/blob/main/docs/deployment/native-aot.md)设置 `BuiltInComInteropSupport=false`，不启用基于内建 COM 互操作的辅助功能路径。
+```bash
+# Windows x64
+dotnet publish MyApp/MyApp.csproj -c Release -r win-x64 --self-contained true -p:PublishAot=true
 
-### 统计口径
+# Linux x64（X11）
+dotnet publish MyApp/MyApp.csproj -c Release -r linux-x64 --self-contained true -p:PublishAot=true
+```
 
-- **CPU**：测量区间的进程 CPU 时间 / 实际经过秒数 × 100%；100% 表示占满一个逻辑处理器，不是任务管理器的整机百分比。Electron 汇总浏览器、渲染、GPU 和 utility 等所属进程；进程在两次采样之间退出时，最后一次观察之后的 CPU 时间可能漏计。JSON 另存整机折算值和每帧 CPU 毫秒数。
-- **内存**：约每秒采样一次，分别记录私有提交内存（Private Bytes）和驻留工作集（Working Set）的均值、观察到的峰值，单位为 MiB；不含独立 GPU 显存。Electron 为多进程合计，工作集可能重复计入共享页。
-- **FPS**：实际帧计数 / 实际测量秒数，不写死为 60。Square 计渲染提交，Avalonia / Electron 计动画帧回调，Flutter 计区间内栅格完成的引擎 `FrameTiming`。这些都不是显示器物理扫描输出计数；原始 JSON 的 `fpsDefinition` 保留各目标的具体定义，不应据此比较细微的呈现帧率差异。
-- **发布体积**：未压缩、可运行的 Windows x64 发布目录总大小，包含运行时、动态库和资源，排除 `.pdb` / `.dbg` 调试符号；不是仅比较 EXE。JIT 目标均为 self-contained；Square 的两个后端共用同一份对应发布物。JSON 同时保留入口 EXE 字节数。
+## 性能测试
 
-### 0.3.0 本轮测量
+两项测试于 2026 年 11 月 11 日在同一台 Windows 11 x64 电脑上运行，硬件为 Intel Core i5-12400F 和 GeForce GTX 1660 SUPER。测试使用 Square 0.3.0，各项目均以 Release 配置发布。[测试环境、测量方法和原始数据](<docs/benchmarks/2026-11-11.md>)
 
-工作负载、环境与口径见[本轮测量记录](docs/benchmarks/2026-11-11.md)。每目标预热5秒、测量30秒，单轮、固定顺序串行：
+CPU 的 100% 相当于一个逻辑处理器满载。私有内存统计进程独占的已提交内存，工作集统计驻留在物理内存中的页面。发布体积为完整可运行目录的大小。帧率按各项目的动画或渲染事件计算，两项测试的 CPU 占用在各自表内比较。
 
-| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
+### 布局动画
+
+720 个方块分三组改变位置、透明度和宽度，其中宽度动画触发重新布局。每个目标预热 5 秒，测量 30 秒。Flutter 取两次测量的中位数，其余目标各测一次。JIT 版在运行时编译，NativeAOT 版在发布时预先编译为原生代码。
+
+| 框架与配置 | CPU | 实测帧率（FPS） | 平均私有内存（MiB） | 平均工作集（MiB） | 发布体积（MiB） |
 |---|---:|---:|---:|---:|---:|
 | Square Software · JIT | 39.07% | 59.91 | 58.94 | 108.89 | 100.31 |
 | Square Direct2D · JIT | 21.68% | 60.00 | 108.07 | 144.15 | 100.31 |
@@ -203,39 +147,14 @@ Avalonia 的 JIT / NativeAOT 构建共用同一界面、动画和采样逻辑。
 | Square Direct2D · NativeAOT | 31.97% | 60.00 | 103.98 | 108.42 | 9.55 |
 | Avalonia · JIT | 26.70% | 59.97 | 125.08 | 149.03 | 102.86 |
 | Avalonia · NativeAOT | 30.40% | 59.97 | 114.56 | 113.45 | 34.64 |
-| Electron · packaged | 101.26% | 59.93 | 267.10 | 419.03 | 366.90 |
+| Electron · 打包版 | 101.26% | 59.93 | 267.10 | 419.03 | 366.90 |
 | Flutter · Release | 33.93% | 53.35 | 176.28 | 126.03 | 23.37 |
 
-Flutter 首次测量 FPS 明显偏低，按同一协议补测一次，表中为中位并保留两次样本（48.16 / 58.53）；其余目标为单轮。完整范围与限制见测量记录，原始数据见[results.json](samples/Square.Sample.PerfComparison/results.json)。
+### Canvas 绘制
 
-### 历史本机实测（2026-10-19，非0.3.0成绩）
+各项目在 1280 × 800 的画布上绘制路径、文字、图片、渐变和图层，也执行裁剪与变换。每轮预热 60 帧，测量 120 帧。每个目标运行三轮，表中是各指标的中位数。[Canvas 运行命令与依赖](<samples/Square.Sample.CanvasBenchmark/README.md>)
 
-Square 基于 `08da487`。Windows 11 Pro 10.0.26300；Intel Core i5-12400F（12 个逻辑处理器）；NVIDIA GeForce GTX 1660 SUPER，2560×1440 / 60 Hz。使用 .NET SDK 10.0.303、Avalonia 11.3.12、Electron 44.7.2、Flutter 3.47.7 stable。全部为重新构建的 Release / Windows x64 发布物，单轮串行运行，预热 5 秒，请求测量 30 秒；计算采用 JSON 中记录的实际区间。
-
-**历史同步配置：此表保留 2026-10-19 的原始测量。** 当时 Win32 传入 `VSync=true`，Direct2D 保留 `RETAIN_CONTENTS`、不启用 `IMMEDIATELY`；Software 当时只有约 60 Hz 的主机调度，GDI 提交没有等待 DWM，不能由参数或约 60 FPS 推断软件呈现已同步。此表不代表下述 Software 呈现修复后的成绩，也不能与此前关闭 GPU VSync 的快照视为相同条件。
-
-| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
-|---|---:|---:|---:|---:|---:|
-| Square Software · JIT | 44.23% | 60.01 | 58.68 | 107.98 | 99.93 |
-| Square Direct2D · JIT | 22.17% | 60.01 | 111.41 | 147.51 | 99.93 |
-| Square Software · NativeAOT | 48.14% | 60.01 | 51.48 | 80.58 | 9.40 |
-| Square Direct2D · NativeAOT | 26.48% | 60.01 | 100.78 | 106.72 | 9.40 |
-| Avalonia · JIT | 26.81% | 59.97 | 124.29 | 149.10 | 102.67 |
-| Avalonia · NativeAOT | 29.20% | 59.97 | 115.45 | 115.26 | 34.88 |
-| Electron · packaged | 93.67% | 59.97 | 267.35 | 416.74 | 366.89 |
-| Flutter · Release | 37.13% | 59.83 | 176.47 | 125.95 | 23.37 |
-
-此表仅保留2026-10-19的历史观测；当前 [results.json](samples/Square.Sample.PerfComparison/results.json)已更新为0.3.0本轮汇总，不是此历史表的原始记录。比较 CPU 时应同时看实测 FPS。单轮结果受后台负载、执行顺序、JIT 和温度影响，不代表统计上成立的跨框架排名。
-
-## Canvas 综合性能测试
-
-Canvas 默认只运行**一个综合场景、一个固定档位**，覆盖填充与透明度、矢量重用与变化、描边、文字、图片、变换、裁剪、渐变和分组图层。普通六方比较每目标三轮，共 **18 次 control 进程**；显式加入远程 Square 三后端对照时共 27 次。不会默认展开旧的 29 场景或负载梯度，也不在主性能采集中初始化桌面捕获。
-
-运行入口为 [Canvas 性能样例](samples/Square.Sample.CanvasBenchmark/README.md)中的默认命令；旧细分场景仅作为显式专项诊断使用。报告继续输出 CPU、实际生产事件 FPS、平均私有内存、平均工作集和完整发布体积，保留每次原始记录及三轮范围。综合场景是固定混合工作量，适合快速观察整体变化；需要定位单项回退时再运行专项。它不表示所有框架的原生渐变、描边和 AA 都逐像素等价，FPS 也不是物理显示扫描计数。
-
-本轮六列（六目标各三轮，共18个control进程）：
-
-| 目标 | CPU（单核=100%） | 实测 FPS | 私有内存均值（MiB） | 工作集均值（MiB） | 发布体积（MiB） |
+| 框架与配置 | CPU | 实测帧率（FPS） | 平均私有内存（MiB） | 平均工作集（MiB） | 发布体积（MiB） |
 |---|---:|---:|---:|---:|---:|
 | Square Software | 42.90% | 60.00 | 41.64 | 92.53 | 104.95 |
 | Square Direct2D | 35.68% | 60.02 | 110.57 | 120.66 | 104.95 |
@@ -244,115 +163,50 @@ Canvas 默认只运行**一个综合场景、一个固定档位**，覆盖填充
 | Flutter | 45.82% | 61.57 | 172.61 | 109.70 | 23.22 |
 | Avalonia | 60.25% | 59.99 | 115.76 | 141.79 | 102.36 |
 
-CPU 三轮范围：42.14–45.10 / 34.98–38.05 / 38.88–40.17 / 48.16–63.97 / 42.88–48.08 / 57.79–60.31。完整口径、范围与原始数据见[本轮测量记录](docs/benchmarks/2026-11-11.md)及[Canvas summary](samples/Square.Sample.CanvasBenchmark/results/2026-11-11/summary.json)。Software 现含每帧一次 best-effort DWM 等待。
+### Square 在测试中的优势
 
-本次代码基于 `origin/main` 固定提交 `ef6409d634349ebafadc29afcf9eeb4dcee0bfed`，再移植 Canvas 功能与性能改进；共享 UI、CSS、布局、DOM 遍历、编译器和内置 Yoga 沿用主线实现。布局性能窗口标题包含真实后端与运行模式，例如 `Square CSS animation benchmark-direct2d-aot`、`Square CSS animation benchmark-software-jit`。
+- **NativeAOT 发布目录更小。** 布局动画示例使用 NativeAOT 发布后，Square 为 9.55 MiB，Avalonia 为 34.64 MiB，Square 小约 72%。同一测试中，Flutter 为 23.37 MiB，Electron 为 366.90 MiB。
+- **Software 软件渲染更省内存。** 在布局动画中，Square Software NativeAOT 的平均私有内存为 54.69 MiB，Avalonia NativeAOT 为 114.56 MiB。在 Canvas 场景中，Square Software 的平均私有内存为 41.64 MiB，平均工作集为 92.53 MiB，两项均为该场景最低。
+- **Windows Direct2D 的 CPU 占用较低。** 布局动画中，Square Direct2D JIT 和 Avalonia JIT 都约为 60 FPS，CPU 占用分别为 21.68% 和 26.70%。在 Canvas 场景中，Square Direct2D 的 CPU 占用中位数为 35.68%，在六个测试目标中最低。
 
-Windows Software 另补软件呈现同步：共享 DIB 与 bitmap 在 GDI 完成访问后才交回 CPU，脏区合为一次拷贝，每个实际提交最多等待一次 DWM；空更新和 `WM_PAINT` 不增加合成等待，原 60 Hz 定时器推进保持不变。这是 GDI 交接与 DWM 合成节拍等待，不将其称为硬件原子翻页或物理扫描无撕裂保证，详见 [0.3.0 发布说明](docs/releases/0.3.0.md)与[本轮测量记录](docs/benchmarks/2026-11-11.md)。同步修复前的27次综合与20次布局对照属于历史阶段，不能替代上方修复后的本轮数据。
+### 运行布局动画测试
 
-此前主线对齐前 dirty 源码快照的39次布局与783次Canvas对照保留为历史记录，不是当前集成源码的新成绩；上方2026-10-19表格同样属于历史。当前源码、同步配置与采样边界以[本轮测量记录](docs/benchmarks/2026-11-11.md)和 [0.3.0 发布说明](docs/releases/0.3.0.md)为准。
+在 Windows x64 上安装 PowerShell 7、.NET 10 SDK、Node.js、Flutter Windows 桌面工具和 Visual Studio C++ 工具链。将 `flutter` 加入 `PATH` 后，在仓库根目录运行以下命令。[布局动画测试脚本](<samples/Square.Sample.PerfComparison/Run-Comparison.ps1>)
 
-## Android Experimental
-
-Android 首期使用 .NET 10 for Android、单 Activity 和单 `SquareView`，通过 `ApplicationSession` 由 Activity/Looper/Choreographer 驱动。默认路径为 Software BGRA bitmap 到 Android `ARGB_8888` bitmap；也可通过 Activity extra 选择 `AndroidCanvas`、`AndroidSkia` 或 `Vulkan` 直绘路径。Android 不引入 MAUI、原生 View/Compose 控件树或桌面窗口操作。
-
-```bash
-dotnet workload restore Square.Android.slnx
-dotnet restore Square.Android.slnx -p:SquareTargetPlatform=Android
-dotnet build Square.Android.slnx -c Debug -p:SquareTargetPlatform=Android
-dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj \
-  -c Release -f net10.0-android -r android-arm64 --self-contained false \
-  -p:SquareTargetPlatform=Android -p:PublishAot=false -p:TrimMode=full
-```
-
-```bash
-adb shell am start -n <package>/<activity> --es backend AndroidCanvas
-adb shell am start -n <package>/<activity> --es backend AndroidSkia
-adb shell am start -n <package>/<activity> --es backend Vulkan
-```
-
-Release 的 x86_64 Android 门禁使用 trimming + profiled Mono AOT：`PublishAot=false`、`RunAOTCompilation=true`、`AndroidEnableProfiledAot=true`。当前 arm64 APK/AAB 产物使用 Release trimming；`PublishAot=true` 仍会触发官方 XA1040 实验性限制，不作为生产支持声明。
-
-当前 Android 支持等级为 Experimental：代码、x86_64 emulator 的 IME/像素/性能/生命周期/虚拟 accessibility tree smoke、Canvas/Skia/Vulkan 路径以及 APK/AAB 构建已落地；arm64 真机验证、稳定版多设备门禁和官方 NativeAOT 仍未完成。详细边界与验收矩阵见 [Android 平台 TODO](docs/Android-Platform-TODO.md)。
-
-## NativeAOT 发布
-
-Hot Reload 仅用于框架依赖运行时的 Debug 构建，不适用于 Release、trimming 或 NativeAOT 发布。
-
-Windows x64：
-
-```bash
-dotnet publish samples/Square.Sample.Vue/Square.Sample.Vue.csproj \
-  -c Release \
-  -r win-x64 \
-  -p:SquareSamplePublishAot=true \
-  --self-contained true
-```
-
-Linux x64 / X11：
-
-```bash
-dotnet publish samples/Square.Sample.Vue/Square.Sample.Vue.csproj \
-  -c Release \
-  -r linux-x64 \
-  -p:SquareSamplePublishAot=true \
-  -p:SquareTargetPlatform=X11 \
-  --self-contained true
+```powershell
+pwsh -NoProfile -File samples/Square.Sample.PerfComparison/Run-Comparison.ps1 -Seconds 30 -WarmupSeconds 5
 ```
 
 ## 文档
 
-- [入门指南](docs/Getting-Started.md)
-- [SQV / Vue 模板语法](docs/vue-plan.md)
-- [SQX 原生语法](docs/Sqx-Spec.md)
-- [总体架构](docs/Architecture.md)
-- [API 参考](docs/API-Reference.md)
-- [CSS 规范](docs/CSS-Spec.md)
-- [布局](docs/Layout.md)
-- [渲染](docs/Rendering.md)
-- [DevTools 调试服务](docs/DevTools.md)
-- [Web Server 与静态 HTML](docs/Web-Hosting.md)
-- [开发路线](docs/Roadmap.md)
-
-## 项目状态
-
-Square 适合框架设计验证、实验和贡献开发，暂不建议用于生产项目。
-
-首个版本 `0.1.0` 已发布，包含 20 个 NuGet 包，入口为[核心包](https://www.nuget.org/packages/Wuldas.Square/0.1.0)与[模板包](https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0)。当前版本为 `0.3.2`，包含 22 个框架及模板包；源码默认版本与发布标签保持一致。`docs/` 文档头部的版本号是各文档的独立修订号，不代表包版本。
-
-贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 私下报告。
+- [入门指南](<docs/Getting-Started.md>)
+- [SQV 模板语法](<docs/vue-plan.md>)与 [SQX 模板语法](<docs/Sqx-Spec.md>)
+- [总体架构](<docs/Architecture.md>)与 [API 参考](<docs/API-Reference.md>)
+- [CSS 支持范围](<docs/CSS-Support.md>)、[布局](<docs/Layout.md>)与[渲染](<docs/Rendering.md>)
+- [DevTools 调试](<docs/DevTools.md>)与[按需绘制和节能](<docs/Power-Saving.md>)
+- [Web 服务和静态 HTML](<docs/Web-Hosting.md>)
+- [开发路线](<docs/Roadmap.md>)、[贡献指南](<CONTRIBUTING.md>)与[安全问题报告](<SECURITY.md>)
 
 ## NuGet 发布
 
-NuGet 包 ID 统一为 `Wuldas.Square` / `Wuldas.Square.*`，避免与已存在的 Square 支付 SDK 冲突。程序集、C# 命名空间、源码项目名及 `dotnet new square` 命令不变。
+维护者可在 GitHub Actions 手动运行 **Publish NuGet** 并填入待发布版本。手动运行会构建并验证 NuGet 包，验证后的包可在该次运行的产物中下载。[NuGet 发布工作流](<.github/workflows/publish.yml>)
 
-`v0.1.0` 已通过 CI、Android 和[正式发布工作流](https://github.com/wuldas/Square/actions/runs/33955548922)，并完成全新缓存下从 NuGet.org 安装模板、生成项目和构建验证。以下流程用于后续版本发布。
-
-`.github/workflows/publish.yml` 使用 NuGet Trusted Publishing，无需长期 API Key。策略 `SquarePublish` 绑定 `wuldas/Square`、工作流文件名 `publish.yml`、包所有者 `wuldas`，允许发布新包及新版本；Environment 留空。包匹配范围为以下两行：
-
-```text
-Wuldas.Square
-Wuldas.Square.*
-```
-
-先在 GitHub Actions 手动运行 **Publish NuGet**，输入版本号。这只构建、验证并上传工作流产物，不向 NuGet.org 发布。本地也可以验证（需要 .NET 10、Android workload 与 JDK 17）：
+也可以用 PowerShell 在仓库根目录打包验证，需要 .NET 10 SDK、Android 工作负载与 JDK 17。将 `x.y.z` 换成待发布版本，并使用一个空的输出目录。[打包脚本](<tools/Pack-Release.ps1>)
 
 ```powershell
-pwsh -File tools/Pack-Release.ps1 -Version 0.3.2 -OutputDirectory artifacts/packages
+pwsh -File tools/Pack-Release.ps1 -Version x.y.z -OutputDirectory artifacts/packages
 ```
 
-输出目录必须为空。脚本打包全部 22 个框架及模板包，检查内部依赖闭环和版本一致性，并让模板中的包引用使用发布版本；不会修改模板源码。正式发布前应确认该提交的 CI 和 Android 工作流通过，并确认账号有权使用所有目标包 ID。
+正式发布时，为 `main` 分支上通过桌面与 Android 测试的提交创建并推送版本标签。版本 `x.y.z` 对应标签 `vx.y.z`，版本号须与构建配置中的 `Version` 一致。标签触发发布工作流，验证通过后会自动上传到 NuGet.org。[版本配置](<Directory.Build.props>)
 
-推送 `v` 开头的版本标签会正式发布。`v0.1.0`、`v0.3.0` 与 `v0.3.1` 已存在，不要重建或移动；以下以 `0.3.2` 演示发布，版本须与手动验证时一致，仅在准备好正式发布时执行：
+## 许可证
 
-```bash
-git tag -a v0.3.2 -m "Release Wuldas.Square 0.3.2"
-git push origin v0.3.2
-```
+[MIT](<LICENSE>)
 
-标签去掉 `v` 后成为统一包版本，也支持 `v0.3.2-preview.1`。正式发布要求标签指向 `main` 已有提交，且标签版本与 `Directory.Build.props` 的 `Version` 一致（包括 preview 版本），再通过原有构建、包校验与发布流程。发布任务仅在标签推送时运行，通过 `NuGet/login` 获取短期凭据后上传 `.nupkg` 及配套符号包。相同版本已存在时跳过；已发布版本不可覆盖，修复应发布新版本。工作流不会在普通 `main` 推送或手动验证时发布。
+## 版本更新
 
-
-## License
-
-MIT
+- **0.3.2** 修复条件渲染、数据绑定、输入事件和布局问题，改进字体回退与文字排版。[发布说明](<docs/releases/0.3.2.md>)
+- **0.3.1** 更新 .NET 构建工具链，修复自动化测试的构建与运行问题。[发布说明](<docs/releases/0.3.1.md>)
+- **0.3.0** 改进 Canvas 的路径、渐变、文字和图层绘制，以及 Windows 软件渲染向窗口提交画面的方式。[发布说明](<docs/releases/0.3.0.md>)
+- **0.2.0** 优化布局、动画和代码编辑器的语法高亮，加入 Godot 集成与静态 HTML 组件挂载。[发布说明](<docs/releases/0.2.0.md>)
+- **0.1.0** 首次发布框架与应用模板。[核心包](<https://www.nuget.org/packages/Wuldas.Square/0.1.0>) · [模板包](<https://www.nuget.org/packages/Wuldas.Square.Templates/0.1.0>)
