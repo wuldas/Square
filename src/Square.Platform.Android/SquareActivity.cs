@@ -26,6 +26,8 @@ public abstract class SquareActivity : AndroidActivity
     private bool _processingFrame;
     private bool _updatingFrameSchedule;
     private int _frameRequestPosted;
+    private long _lastFlingFrameMillis;
+    private bool _flingClockRunning;
 
     /// <summary>创建应用窗口和真实 Square 内容。</summary>
     protected abstract AppWindow CreateSquareWindow();
@@ -91,6 +93,7 @@ public abstract class SquareActivity : AndroidActivity
         host.TextInputClientQuery = () => session.FocusedTextInputClient;
         session.BackRequested = OnSquareBackRequested;
         session.FramePresented += host.InvalidateView;
+        host.PointerExited += session.NotifyPointerExited;
         var scheduler = new AndroidFrameScheduler(ProcessFrame);
         _scheduler = scheduler;
         host.RenderRequested += RequestFrame;
@@ -215,36 +218,7 @@ public abstract class SquareActivity : AndroidActivity
 
     private void ApplyRootWindowInsets()
     {
-        if (_view == null || _host == null) return;
-        var insets = _view.RootWindowInsets;
-        if (insets == null) return;
-        var resources = Resources;
-        if (resources == null) return;
-
-        if (OperatingSystem.IsAndroidVersionAtLeast(30))
-        {
-#pragma warning disable CA1416, CA1422
-            var systemBars = insets.GetInsets(WindowInsets.Type.SystemBars());
-#pragma warning restore CA1416, CA1422
-            if (systemBars.Left != 0 || systemBars.Top != 0 || systemBars.Right != 0 || systemBars.Bottom != 0)
-            {
-                _host.UpdateInsets(systemBars.Left, systemBars.Top, systemBars.Right, systemBars.Bottom);
-                return;
-            }
-        }
-
-#pragma warning disable CA1422
-        var top = resources.GetIdentifier("status_bar_height", "dimen", "android") is var topId && topId > 0
-            ? resources.GetDimensionPixelSize(topId)
-            : 0;
-        var bottom = resources.GetIdentifier("navigation_bar_height", "dimen", "android") is var bottomId && bottomId > 0
-            ? resources.GetDimensionPixelSize(bottomId)
-            : 0;
-#pragma warning restore CA1422
-        if (_view.Height >= _view.Width)
-            _host.UpdateInsets(0, top, 0, bottom);
-        else
-            _host.UpdateInsets(0, top, bottom, 0);
+        if (_view?.RootWindowInsets is { } insets) _view.ApplySystemInsets(insets);
     }
 
     private bool ProcessFrame()
@@ -253,7 +227,18 @@ public abstract class SquareActivity : AndroidActivity
         _processingFrame = true;
         try
         {
-            _host.StepFling();
+            // fling 按真实帧间隔推进，高刷新率屏幕上的滚动距离和时长与 60Hz 一致。
+            if (_host.HasFling)
+            {
+                var frameMillis = SystemClock.UptimeMillis();
+                _host.StepFling(_flingClockRunning ? (frameMillis - _lastFlingFrameMillis) / 1000f : 1f / 60f);
+                _lastFlingFrameMillis = frameMillis;
+                _flingClockRunning = true;
+            }
+            else
+            {
+                _flingClockRunning = false;
+            }
             _session.Tick();
         }
         finally

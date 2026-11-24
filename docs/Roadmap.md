@@ -164,7 +164,7 @@ M2 与架构重建已完成，`.sqv` 前端、扩展模块、截图、PNG、文�
 [x] 发布约束：Android NativeAOT 在官方仍标记实验时只做非阻断记录，正式门禁使用平台支持的 Release trimming/AOT
 [~] Phase 0：Android workload、SDK platform/build-tools、JDK17、像素探针与 arm64 APK/AAB 已验证；x86_64 emulator smoke 与性能证据已完成，非紧凑 stride/lockPixels 仍不在核心 Bitmap API
 [~] Phase 1–2：ApplicationSession、按需帧调度、PointerInput 和 touch 路由已实现；桌面输入专项回归待补
-[~] Phase 3–4：Android host、Activity/View、触摸滚动、fling、Back 与剪贴板已实现；Canvas/Skia/Vulkan 后端和 x86_64 emulator smoke 已完成，arm64 conformance 待补
+[~] Phase 3–4：Android host、Activity/View、触摸滚动、fling、Back 与剪贴板已实现；Canvas/Skia/Vulkan 后端和 x86_64 emulator smoke 已完成，arm64 conformance 待补；2026-11-23 起 Android 15+ 键盘弹出按 IME insets 收缩客户区并把焦点编辑器滚回视口，fling 与刷新率无关
 [~] Phase 5–6：Android 字体、软键盘、中文组合输入、性能采样和资源清理路径已实现；2026-11-15 补充输入连接按编辑器身份隔离、关闭/暂停失效、键盘类型与选区同步，托管回归和 Android 构建/arm64 Release 发布通过；新增 IME 行为的设备回归与 arm64 IME/压力待补
 [~] Phase 7：APK/AAB、Android CI、trimming + profiled AOT 已实现并验证；`PublishAot=true` 仍受 XA1040/IL3053 官方实验限制
 [~] Phase 8：虚拟 accessibility tree、AndroidCanvas/Skia/Vulkan 与 profiling 已实现；NativeUiNode 原生 adapter、TalkBack 多设备矩阵和更深度性能优化后置

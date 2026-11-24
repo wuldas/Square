@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\Square.Platform.Android\AndroidTextInputSession.cs" Link="Android\AndroidTextInputSession.cs" />
+    <Compile Include="..\..\src\Square.Platform.Android\AndroidFlingMotion.cs" Link="Android\AndroidFlingMotion.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SquareTargetPlatform)' != 'X11'">

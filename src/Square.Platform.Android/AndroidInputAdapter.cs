@@ -9,12 +9,11 @@ namespace Square.Platform.Android;
 public sealed class AndroidInputAdapter
 {
     private const float TouchSlop = 8f;
-    private const float FlingVelocityThreshold = 80f;
     private const float FlingMaxVelocity = 6000f;
     private readonly AndroidPlatformHost _host;
+    private AndroidFlingMotion _fling;
     private bool _active;
     private bool _moved;
-    private bool _flinging;
     private int _pointerId = -1;
     private Point _lastPoint;
     private long _lastEventTime;
@@ -26,8 +25,7 @@ public sealed class AndroidInputAdapter
     internal AndroidInputAdapter(AndroidPlatformHost host) => _host = host;
 
     /// <summary>当前是否有待处理的 fling。</summary>
-    public bool HasFling => _flinging && (MathF.Abs(_velocityX) >= FlingVelocityThreshold ||
-                                         MathF.Abs(_velocityY) >= FlingVelocityThreshold);
+    public bool HasFling => _fling.IsActive;
 
     /// <summary>处理 View 的触摸/鼠标指针事件。</summary>
     public bool HandleTouchEvent(MotionEvent e)
@@ -83,7 +81,8 @@ public sealed class AndroidInputAdapter
             _lastEventTime = e.EventTime;
             _host.RaisePointer(new PointerInput(point, PointerAction.Move, _pointerId, _deviceKind,
                 ResolveButton(e), true));
-            if (_moved && (deltaX != 0 || deltaY != 0))
+            // 触摸和手写笔拖动沿滚动链平移；鼠标拖动保持桌面语义（拖选、分隔条、滚动条）。
+            if (_moved && _deviceKind != PointerDeviceKind.Mouse && (deltaX != 0 || deltaY != 0))
                 _host.RaiseWheel(new WheelInput(point, -deltaX, -deltaY, true, false, _deviceKind, _pointerId));
             return true;
         }
@@ -94,10 +93,10 @@ public sealed class AndroidInputAdapter
             var point = ToLogicalPoint(e, index);
             _host.RaisePointer(new PointerInput(point, PointerAction.Up, _pointerId, _deviceKind,
                 ResolveButton(e), true));
-            if (_moved && _deviceKind == PointerDeviceKind.Touch)
+            if (_moved && _deviceKind != PointerDeviceKind.Mouse)
             {
                 _flingPointerId = _pointerId;
-                BeginFling();
+                _fling.Begin(_velocityX, _velocityY);
             }
             _active = false;
             _moved = false;
@@ -113,6 +112,12 @@ public sealed class AndroidInputAdapter
     {
         ArgumentNullException.ThrowIfNull(e);
         if ((e.Source & InputSourceType.ClassPointer) == 0) return false;
+        if (e.ActionMasked == MotionEventActions.HoverExit)
+        {
+            _host.RaisePointerExited();
+            return true;
+        }
+
         var point = ToLogicalPoint(e, 0);
         if (e.ActionMasked == MotionEventActions.HoverMove)
         {
@@ -133,15 +138,10 @@ public sealed class AndroidInputAdapter
     public bool StepFling(float deltaSeconds = 1f / 60f)
     {
         if (!HasFling) return false;
-        var point = _lastPoint;
-        var deltaX = -_velocityX * deltaSeconds;
-        var deltaY = -_velocityY * deltaSeconds;
+        var (deltaX, deltaY) = _fling.Step(deltaSeconds);
         if (deltaX != 0 || deltaY != 0)
-            _host.RaiseWheel(new WheelInput(point, deltaX, deltaY, true, true,
+            _host.RaiseWheel(new WheelInput(_lastPoint, deltaX, deltaY, true, true,
                 PointerDeviceKind.Touch, _flingPointerId));
-        var damping = MathF.Exp(-10f * deltaSeconds);
-        _velocityX *= damping;
-        _velocityY *= damping;
         return HasFling;
     }
 
@@ -157,13 +157,6 @@ public sealed class AndroidInputAdapter
 
     private Point _downPoint;
 
-    private void BeginFling()
-    {
-        if (MathF.Abs(_velocityX) < FlingVelocityThreshold) _velocityX = 0;
-        if (MathF.Abs(_velocityY) < FlingVelocityThreshold) _velocityY = 0;
-        _flinging = true;
-    }
-
     private void CancelPointer()
     {
         _active = false;
@@ -175,7 +168,7 @@ public sealed class AndroidInputAdapter
 
     private void CancelFling()
     {
-        _flinging = false;
+        _fling.Cancel();
         _velocityX = 0;
         _velocityY = 0;
         _flingPointerId = 0;

@@ -66,7 +66,7 @@ public sealed class SquareView : SKCanvasView
         return base.OnApplyWindowInsets(insets);
     }
 
-    private void ApplySystemInsets(WindowInsets insets)
+    internal void ApplySystemInsets(WindowInsets insets)
     {
         var left = 0;
         var top = 0;
@@ -76,11 +76,14 @@ public sealed class SquareView : SKCanvasView
         {
 #pragma warning disable CA1416, CA1422
             var systemBars = insets.GetInsets(WindowInsets.Type.SystemBars());
-#pragma warning restore CA1416, CA1422
             left = systemBars.Left;
             top = systemBars.Top;
             right = systemBars.Right;
             bottom = systemBars.Bottom;
+            // API 35 起强制 edge-to-edge，adjustResize 不再缩小窗口，键盘高度只来自 IME insets。
+            if (OperatingSystem.IsAndroidVersionAtLeast(35))
+                bottom = Math.Max(bottom, insets.GetInsets(WindowInsets.Type.Ime()).Bottom);
+#pragma warning restore CA1416, CA1422
         }
         else
         {

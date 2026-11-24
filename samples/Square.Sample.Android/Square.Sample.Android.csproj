@@ -21,6 +21,9 @@
     <ProjectReference Include="..\..\src\Square.Platform.Android\Square.Platform.Android.csproj">
       <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
     </ProjectReference>
+    <ProjectReference Include="..\..\src\Square.DevTools\Square.DevTools.csproj">
+      <AdditionalProperties>SquareTargetPlatform=Android</AdditionalProperties>
+    </ProjectReference>
     <ProjectReference Include="..\..\src\Square.Compiler\Square.Compiler.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"

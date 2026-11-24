@@ -30,6 +30,9 @@ internal sealed class AndroidAccessibilityNodeProvider : AccessibilityNodeProvid
     private readonly Dictionary<Element, int> _ids = new(ReferenceEqualityComparer.Instance);
     private int _nextId;
     private int _accessibilityFocusedId = HostViewId;
+    // 绑定的 Action 枚举未包含 API 23 的 ACTION_SHOW_ON_SCREEN，按平台 ID 匹配。
+    private const AndroidAccessibilityAction ShowOnScreenAction =
+        (AndroidAccessibilityAction)global::Android.Resource.Id.AccessibilityActionShowOnScreen;
 
     internal AndroidAccessibilityNodeProvider(SquareView view, AndroidPlatformHost host)
     {
@@ -109,6 +112,7 @@ internal sealed class AndroidAccessibilityNodeProvider : AccessibilityNodeProvid
             AndroidAccessibilityAction.ScrollBackward => Scroll(element, forward: false),
             AndroidAccessibilityAction.SetText => SetText(element, arguments),
             AndroidAccessibilityAction.SetSelection => SetSelection(element, arguments),
+            ShowOnScreenAction => ShowOnScreen(element),
             _ => false
         };
         if (handled)

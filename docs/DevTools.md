@@ -1,9 +1,9 @@
 # DevTools
 
-> Document Revision: 0.8
+> Document Revision: 0.9
 > 配套：`Getting-Started.md`、`API-Reference.md`、`Rendering.md`
 
-`Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集、输入自动化、元素检查和低开销内存诊断。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
+`Square.DevTools` 提供一个只监听 `127.0.0.1` 的 HTTP 调试服务，用于在运行中的 Square 桌面应用上做截图采集、输入自动化、元素检查和低开销内存诊断；Android 应用可经 adb 端口转发使用同一组接口（见 [Android 远程调试](#android-远程调试adb-端口转发)）。它面向本地开发、示例演示、端到端测试和外部调试工具，不参与应用的正常 UI 渲染管线。
 
 ---
 
@@ -165,6 +165,54 @@ Square 不提供全局注册表或固定发现端口。应用负责把实例元�
 ```
 
 不要把 token 写入公共日志、版本库或遥测系统。上面的结构仅表示本地受控进程间传递格式。
+
+### Android 远程调试（adb 端口转发）
+
+Android 应用引用 `Square.DevTools` 后，在 `SquareActivity.CreateSquareWindow()` 返回窗口前调用 `UseDevToolsServer()`。服务只监听设备上的 `127.0.0.1`，主机通过 adb 转发访问，token 照常必填；会话 Detach（Activity 销毁）时服务一起停止。`adb forward` 需要固定端口，因此使用 `Port = 1..65535`，token 输出到 logcat 读取。
+
+```csharp
+protected override AppWindow CreateSquareWindow()
+{
+    var window = new AppWindow("My App", 480, 800);
+    window.Load(new MainPage());
+    if (Intent?.GetBooleanExtra("devtools", false) == true)
+        window.UseDevToolsServer(new DevToolsOptions
+        {
+            Port = 5128,
+            AllowInputInjection = true,
+            AllowInspector = true
+        });
+    return window;
+}
+```
+
+Android 示例已内置该开关，组件名固定为 `com.wuldas.square.sample/.MainActivity`：
+
+```bash
+adb shell am start -n com.wuldas.square.sample/.MainActivity \
+  --ez devtools true --ei devtools-port 5128
+adb forward tcp:5128 tcp:5128
+
+TOKEN=$(adb logcat -d -s Square | tr -d '\r' \
+  | grep -o 'X-Square-DevTools-Token: .*' | tail -1 | cut -d' ' -f2)
+curl -H "X-Square-DevTools-Token: $TOKEN" http://127.0.0.1:5128/api/v1/health
+```
+
+与桌面用法的差异：
+
+- 截图是客户区的离屏重放，不含状态栏、导航栏和软键盘。键盘弹出的效果表现为客户区收缩，`/inspect/tree` 根节点的 `bounds` 随之变小。
+- `/input/*` 的坐标是客户区 DIP，不是 `adb shell input` 使用的物理像素。
+- `/input/pointer` 聚焦编辑器会弹出软键盘，与触摸、鼠标和手写笔点击一致。暂停恢复后同一编辑器仍保持焦点，但不会重复弹出。
+- `/input/wheel` 的旧字段 `delta` 正值向上滚动；向内容末尾滚动使用 `deltaY`。
+- Chrome Inspector（CDP）依赖的 WebSocket 在 Android 上未验证。
+
+不带 `devtools` extra 启动时不会创建服务。该开关用于本地调试，不要在发布构建中默认开启。
+
+.NET for Android 自动生成的清单只在 Debug 构建中声明 `android.permission.INTERNET`，Release 包需要在 `AndroidManifest.xml` 中显式声明，否则监听以 `Permission denied` 启动失败，`UseDevToolsServer()` 按设计返回 `null`，应用继续运行：
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
 
 ---
 

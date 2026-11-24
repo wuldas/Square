@@ -179,6 +179,22 @@ Vulkan Surface 更换顺序：取消输入连接、暂停调度和会话 → `Re
 
 `ITextInputClient.CompositionLength` 表示当前组合范围的 UTF-16 长度，默认接口实现为 `0`，已有自定义客户端保持源码兼容；支持组合范围的客户端应实现此属性。`Input` / `TextArea` 已提供实际长度，无组合文本时 `CompositionStart == -1`、`CompositionLength == 0`。
 
+### Android 键盘避让、指针与 fling
+
+Android 15（API 35）起对 targetSdk 35+ 强制 edge-to-edge，`adjustResize` 不再因软键盘缩小窗口。`SquareView` 从 API 35 起把 `ime()` insets 并入底部 inset，使客户区在键盘弹出时收缩；客户区尺寸变化后，`AndroidPlatformHost` 会把焦点编辑器依次滚入其 `ScrollViewer` 祖先的视口。页面内容因此超出可用高度时，自动高度项可能被压缩；需要保持内容高度的项应显式声明 `flex-shrink: 0`。
+
+| 成员 | 契约 |
+|---|---|
+| `AndroidPlatformHost.PointerExited` | `event Action?`；外接鼠标或手写笔离开宿主 View（`ACTION_HOVER_EXIT`）时触发。`SquareActivity` 已连接到 `ApplicationSession.NotifyPointerExited()` 清理悬停状态；自行组合 host/session 时应同样连接 |
+| `AndroidPlatformHost.StepFling(float deltaSeconds)` | 按真实帧间隔推进一次 fling，滚动距离和时长与屏幕刷新率无关；`StepFling()` 保持按 1/60 秒推进的兼容形式 |
+| `AndroidPlatformHost.HasFling` | 是否仍有待推进的 fling；宿主应在每帧前查询并据此刻意继续调度 |
+
+软键盘在编辑器获得焦点时弹出，不区分指针来源：触摸、鼠标、手写笔和 DevTools 注入的 `/input/pointer` 行为一致。首次附加以及 `CancelInput()`（暂停、Vulkan Surface 丢失）之后的第一次焦点变化不算用户操作，不会弹出键盘；触摸再次点击已聚焦的编辑器仍会请求键盘。
+
+### Android 远程调试
+
+`Square.DevTools` 不依赖桌面 `Run()` 循环。在 `SquareActivity.CreateSquareWindow()` 返回窗口前调用 `window.UseDevToolsServer()`，服务通过 `AppWindow` 的截图、输入注入和 Inspector 转发访问会话，并随 `Detach()` 触发的窗口 `Closed` 一起停止。Android 示例以 `--ez devtools true --ei devtools-port <port>` 启用，主机经 `adb forward` 访问，步骤见 [DevTools](DevTools.md#android-远程调试adb-端口转发)。
+
 ---
 
 ## 1.1. Square.DevTools — 本地调试与自动化服务

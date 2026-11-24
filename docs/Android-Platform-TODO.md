@@ -1,6 +1,6 @@
 # Square Android 平台支持 TODO
 
-> Document Revision: 0.6
+> Document Revision: 0.7
 > Status: Experimental MVP 已实现（除 arm64 真机验证外的 emulator、像素、性能、生命周期、IME、accessibility、Canvas/Skia/Vulkan 和 profiled AOT 门禁已验证；官方 `PublishAot=true` 仍为实验能力）
 > Planning Baseline: 2026-09-04
 > 配套：`Architecture.md`、`Rendering-Targets.md`、`Roadmap.md`、`Rendering.md`
@@ -57,7 +57,7 @@
 - [x] Android 系统字体发现和 generic family 映射（emulator 系统字体与 CJK fallback 已验证，arm64 glyph fallback 待验收）。
 - [x] Android Bitmap 呈现通道及颜色、stride、alpha、DPI 证据（像素探针与 emulator 首帧/旋转截图已验证；核心 Bitmap 使用紧凑 stride）。
 - [x] Android workload、APK/AAB、emulator 和 arm64 CI/设备门禁（workload/APK/AAB/CI、x86_64 emulator smoke 已有，arm64 设备门禁待补）。
-- [x] Canvas-only View 的虚拟 accessibility tree（uiautomator 与 TalkBack 服务绑定已验证；完整 TalkBack 人工/自动语音矩阵仍待扩展）。
+- [x] Canvas-only View 的虚拟 accessibility tree（uiautomator 与 TalkBack 服务绑定已验证；完整 TalkBack 人工/自动语音矩阵仍待扩展）。`ACTION_SHOW_ON_SCREEN` 已按平台 ID 接入既有的滚动到可见逻辑，尚未经 TalkBack 触发验证；虚拟节点 bounds 尚未扣除祖先滚动偏移。
 
 ### 2.3 现有阻塞证据
 
@@ -228,6 +228,9 @@ DisplayTree -> Vulkan backend -> ANativeWindow -> Android swapchain
 - tap 仅在 down/up 目标一致且未超过 touch slop 时合成 click；
 - 超过 slop 后取消 click/active，并进入 scroll gesture；
 - touch 不产生持久 `:hover`；
+- 鼠标按下拖动不产生滚动或 fling，保持桌面拖选、分隔条和滚动条语义；触摸与手写笔拖动平移滚动链，抬手后可 fling；
+- fling 按真实帧间隔积分，滚动距离和时长不随屏幕刷新率变化；
+- 鼠标或手写笔离开 View（`ACTION_HOVER_EXIT`）时经 `AndroidPlatformHost.PointerExited` 清理悬停状态；
 - `GestureDetector`/`VelocityTracker`/`OverScroller` 产出 precise/inertial `WheelInput`，复用现有滚动链；
 - fling 在 pause、detach 或新手势开始时立即取消；
 - 首期只跟踪 primary pointer，额外 pointer 明确忽略。
@@ -291,9 +294,10 @@ Android View 通过 `OnCheckIsTextEditor` / `OnCreateInputConnection` 接入。c
 
 首期默认不做 edge-to-edge：
 
-- 内容区由系统 bars 和 `adjustResize` 提供；
-- keyboard resize 后重新布局；
-- safe-area/window-insets 后置为显式能力；
+- 系统栏由 `systemBars()` insets 提供，内容区不铺到栏下；
+- Android 15（API 35）起 targetSdk 35+ 被强制 edge-to-edge，`adjustResize` 与 `SetDecorFitsSystemWindows(true)` 不再缩小窗口；`SquareView` 自 API 35 起把 `ime()` insets 并入底部 inset，键盘弹出时客户区收缩并重新布局；
+- 客户区尺寸变化后，host 把焦点编辑器依次滚入 `ScrollViewer` 祖先的视口；
+- 键盘动画期间的内容同步（`WindowInsetsAnimation`）与 safe-area 后置为显式能力；
 - 任何 inset 都先从物理像素转换为 Square DIP。
 
 ### 9.3 AppWindow 能力矩阵
@@ -378,6 +382,7 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 - [x] touch 路径不设置 hover；mouse 保持现有 hover，桌面宿主仍使用兼容 MouseEvent。
 - [x] Android touch slop 超限后取消 click/active。
 - [x] scroll/fling 已复用 WheelInput 滚动链。
+- [x] fling 按真实帧间隔积分（`AndroidFlingMotion`），位移与刷新率无关；托管回归覆盖 60/90/120/144Hz。
 - [~] 已实现 pause/new gesture 取消路径；drag selection、splitter、popup、scrollbar、context menu 的完整回归待补。
 
 **退出标准：** Android 只翻译 `MotionEvent` 并复用统一 session 输入路由；x86_64 emulator 已完成 touch/scroll/back smoke，复杂控件矩阵仍按对应扩展测试维护。
@@ -430,7 +435,7 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 - [x] pause/detach/new gesture 取消 fling 路径已实现。
 - [~] Back 按 Popup/Dialog/Router/Activity 顺序：Popup 和 Activity 已接入，Router 由 Activity 回调提供，Dialog 专项设备回归待补。
 - [x] Android ClipboardManager 已桥接 Unicode 文本。
-- [~] 外接鼠标 hover/wheel 不污染 touch 状态，代码路径已区分设备；emulator 未连接真实外接鼠标。
+- [~] 外接鼠标 hover/wheel 不污染 touch 状态，代码路径已区分设备；鼠标按下拖动不产生滚动或 fling，hover 离开 View 时清理悬停状态；emulator 未连接真实外接鼠标和手写笔。
 
 **退出标准：** 代码已不依赖桌面滚轮；x86_64 emulator 已完成基础 Sample 的启动、tap、swipe、text、back 和截图验收，复杂控件专项保持后续回归。
 
@@ -446,7 +451,7 @@ Unsupported 路径应明确抛出 `PlatformNotSupportedException` 或在能力�
 
 - [x] Android 系统字体和 generic family 已加入 `/system/fonts` 等根目录与 Roboto/Noto 映射，emulator 读取与 CJK fallback 已验证。
 - [~] 英文与中文真实 glyph 和一致 metrics（emulator 中文组合 IME 截图通过）；emoji 非 BMP raster 未做独立像素断言。
-- [x] Input/TextArea 获焦后显示软键盘（emulator 通过）。
+- [x] Input/TextArea 获焦后显示软键盘（emulator 通过）。触摸、鼠标、手写笔和 DevTools 注入的指针一致；首次附加和取消输入后的第一次焦点变化不弹出。
 - [x] commit/composition/delete/selection/editor action 已接入组合客户端；自包含中文 IME service 在 emulator 通过。
 - [x] 中文拼音预编辑不重复写值或 undo history（`n`→`ni`→`你`→commit 后显示单个 `你`）。
 - [x] caret rect 已转为物理像素并请求候选区滚动（emulator 输入连接通过）。
@@ -604,6 +609,51 @@ dotnet publish samples/Square.Sample.Android/Square.Sample.Android.csproj -c Rel
 - 本轮 `adb devices -l` 无设备：尚未执行新增行为的原生 IME 调用探针、键盘布局/候选区截图、第三方 IME、emulator 或 arm64 真机验收；上述通过项限于托管回归与构建/发布，不替代前述设备门禁。macOS/Linux 本轮未运行。
 
 待设备回归矩阵：两个 View 分别验证普通↔密码↔数字↔多行切换与初始非零选区；A→B 后对旧连接调用 commit/composition/delete/selection/key；pause→resume 与 Surface 重建后旧连接失效；composition 完成的 input 回调主动聚焦 B 时新连接仍可提交；同一客户端内光标/选区变更和中文候选区同步。
+
+### 2026-11-23 键盘避让与触摸/fling 回归
+
+targetSdk 36 在 Android 15+ 上被强制 edge-to-edge，`AdjustResize` 不再缩小窗口。修复前键盘弹出后 Square 内容 bounds 与键盘关闭时完全相同（`[0,63][1079,2337]`），页面下部的输入框被键盘完全遮挡。本轮改动：
+
+- `SquareView` 自 API 35 起把 `ime()` insets 并入底部 inset；Activity 的根 insets 应用改为复用 View 的同一实现。
+- 客户区尺寸变化后，`AndroidPlatformHost` 把焦点编辑器滚入各层 `ScrollViewer` 视口。
+- `AndroidInputAdapter`：鼠标按下拖动不再产生滚动或 fling；手写笔拖动与触摸一致，抬手后可 fling；`ACTION_HOVER_EXIT` 经 `AndroidPlatformHost.PointerExited` 通知会话清理悬停状态，`SquareActivity` 已连接。
+- fling 改为按真实帧间隔积分（`AndroidFlingMotion`）。原先固定按 1/60 秒步进，120Hz 屏幕上的时长减半；现为指数衰减的精确积分，位移只取决于经过的时间。
+- `ACTION_SHOW_ON_SCREEN` 接入既有的 `ShowOnScreen`。.NET 绑定的 `Action` 枚举不含该值，按 `global::Android.Resource.Id.AccessibilityActionShowOnScreen` 匹配。
+- Sample 的 `.wrapped-action` 增加 `flex-shrink: 0`。
+
+验证环境：Windows、.NET SDK 10.0.303、Android workload 36.1.69、JDK 21.0.11、x86_64 emulator `Medium_Phone`（API 37、1080x2400、420 dpi，`-no-snapshot -gpu swiftshader_indirect`）。未使用 arm64 真机。
+
+- `dotnet build Square.Android.slnx -c Debug -p:SquareTargetPlatform=Android`：退出码 0，0 警告、0 错误。`dotnet build Square.slnx -c Release`：退出码 0，0 警告、0 错误。
+- `Square.Platform.Tests` 78/78（含新增 `AndroidFlingMotionTests` 9 项），`Square.ExternalHostScheduling.Tests` 15/15。在仓库 `bin` 下运行 `dotnet test` 时 testhost 以 `Win32Exception (5)` 中止，属本次执行环境限制；两组数据来自把同一 Release 输出复制到仓库外再执行 `dotnet vstest`，不是 `dotnet test` 的结果。其余测试工程未运行。
+- 键盘避让：修复前页面底部输入框聚焦时 bounds 为 `[42,2168][1040,2295]`，位于键盘之下；修复后为 `[42,1346][1040,1473]`，紧贴键盘上沿。滚动区收缩后，滚动区内的输入框自动滚回视口；`adb shell input text Hello` 的文本进入该输入框；Back 收起键盘后布局恢复且 Activity 未结束。Software、AndroidCanvas、AndroidSkia、Vulkan 四条路径均保持进程运行，无 fatal exception。
+- 触摸与 fling：点按 Button 后状态由 `Ready` 变为 `Tapped`；慢速和快速滑动均滚到预期位置；快速滑动后 +0ms 与 +1.5s 的截图显示内容沿滑动方向继续前进，没有回弹。
+- 取证用的示例页面临时加入底部输入框、滚动区内输入框和可伸缩滚动区，已还原，未提交。
+
+本轮未验证或未处理：
+
+- 真实外接鼠标、手写笔和 90/120Hz 真机；fling 与刷新率无关目前只有托管回归证据。
+- TalkBack 实际触发 `ACTION_SHOW_ON_SCREEN`。滚动区滚动前后 `uiautomator` 读到的节点 bounds 相同（`Line 1 top=1443`），说明虚拟节点 bounds 尚未扣除祖先滚动偏移。
+- Vulkan 路径的内容不随状态栏顶部 inset 下移，标题贴近状态栏；这是既有行为，本轮未处理。
+- API 30–34 的 `adjustResize` 路径未在本机重跑；`ime()` 合并只在 API 35 及以上生效。
+- 核心布局限制：flex 列溢出时，自动高度项会被压缩到内容高度以下。桌面探针中 411x554 的 flex 列里换行 Button 高度为 87 而非内容高度，声明 `flex-shrink: 0` 后恢复。键盘弹出使页面高度受限后该行为在 Android 上可见，暂以 `flex-shrink: 0` 规避。
+
+本机截图证据（`artifacts/` 被 Git 忽略）：`artifacts/android/ime-before-bottom-input.png`、`ime-after-bottom-input.png`、`ime-after-input-in-scroll.png`、`ime-wrapped-button-squeezed.png`、`fling-after-swipe.png`、`fling-after-swipe-1500ms.png`、`vulkan-ime-top-inset.png`。
+
+### 2026-11-24 DevTools 远程调试与软键盘焦点
+
+- Android 示例引用 `Square.DevTools`，以 `--ez devtools true --ei devtools-port <port>` 按需启动服务，主机经 `adb forward` 访问；`Square.Android.slnx` 相应加入 `Square.DevTools`，Activity 名称固定为 `com.wuldas.square.sample/.MainActivity`。
+- 新增 `samples/Square.Sample.Android/AndroidManifest.xml` 声明 `android.permission.INTERNET`。.NET for Android 自动生成的清单只在 Debug 中带该权限，Release 包因此无法绑定 loopback 监听。加入后 Debug 包的合并清单和 badging 与之前完全一致。
+- 软键盘改由编辑器的焦点变化触发。此前只有触摸按下会请求键盘，鼠标、手写笔和 DevTools 注入的指针聚焦编辑器时都不弹出。首次附加和 `CancelInput()` 之后的第一次焦点变化被抑制，暂停恢复不会重复弹出。
+
+验证环境同上一节（x86_64 emulator `Medium_Phone`，API 37）。
+
+- Debug 包和 Release 包（`TrimMode=full` + profiled AOT，android-x64）上都验证了 `/health`、`/screenshot`（1080x2274 PNG，约 0.15–0.25 秒）、`/inspect/tree`、`/inspect/hit-test`、`/input/pointer`、`/input/text`、`/input/key`（退格）和 `/input/wheel`；不带 token 返回 `401`。
+- 注入点击输入框后 `mInputShown=true`，`/inspect/tree` 根节点高度由 866.3 DIP 变为 553.9 DIP；注入点击标题后键盘收起。按 HOME 再回到应用，键盘保持收起；真实触摸点击输入框仍弹出键盘。
+- 不带 `devtools` extra 启动时 logcat 没有 DevTools 输出、端口无服务；Back 结束 Activity 后服务停止。
+- 加入清单之前，Release 包启动服务时记录 `Unable to bind the Square DevTools loopback listener ... Permission denied`，应用继续运行。
+- CI 同款发布均退出码 0、0 警告、0 错误：arm64 Release（`TrimMode=full`）的签名 APK 为 10164715 bytes；android-x64 profiled AOT 的签名 APK 为 10602917 bytes。
+
+未验证：真机和 arm64 运行、Chrome Inspector（CDP）依赖的 WebSocket、`AllowMemoryDiagnostics` 和 `AllowChromeConsole` 在 Android 上的表现。
 
 ### 后续阶段证据要求
 

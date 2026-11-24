@@ -4,6 +4,7 @@
   <Project Path="src/Square.Platform.Android/Square.Platform.Android.csproj" />
   <Project Path="src/Square.Backends.AndroidCanvas/Square.Backends.AndroidCanvas.csproj" />
   <Project Path="src/Square.Backends.Vulkan/Square.Backends.Vulkan.csproj" />
+  <Project Path="src/Square.DevTools/Square.DevTools.csproj" />
   <Folder Name="/Samples/">
     <Project Path="samples/Square.Sample.Android/Square.Sample.Android.csproj" />
   </Folder>

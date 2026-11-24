@@ -26,6 +26,8 @@ public sealed class AndroidPlatformHost : IPlatformHost
     private Square.Controls.ITextInputClient? _textInputClient;
     private object? _textInputEditorIdentity;
     private bool _hasTextInputFocus;
+    // 首次附加和取消输入（暂停、Surface 丢失）之后的焦点变化不是用户操作，不自动弹出软键盘。
+    private bool _suppressKeyboardAutoShow = true;
     private global::Android.Text.InputTypes _textInputType;
     private global::Android.Views.Surface? _nativeSurface;
     private AndroidVulkanRenderTarget? _nativeRenderTarget;
@@ -96,6 +98,8 @@ public sealed class AndroidPlatformHost : IPlatformHost
     public event Action<Size>? SizeChanged;
     /// <inheritdoc />
     public event Action<PointerInput>? PointerEvent;
+    /// <summary>外接鼠标或手写笔离开宿主 View；会话据此清理悬停状态。</summary>
+    public event Action? PointerExited;
     /// <inheritdoc />
     public event Action<Point, MouseAction, MouseButton>? MouseEvent
     {
@@ -269,6 +273,7 @@ public sealed class AndroidPlatformHost : IPlatformHost
         else if (_renderContext is IResizableRenderContext resizable && contentWidth > 0 && contentHeight > 0)
             resizable.Resize(_clientSize);
         SizeChanged?.Invoke(_clientSize);
+        EnsureFocusedEditorVisible();
     }
     internal void UpdateInsets(int left, int top, int right, int bottom)
     {
@@ -278,6 +283,22 @@ public sealed class AndroidPlatformHost : IPlatformHost
         _insetRight = Math.Max(0, right);
         _insetBottom = Math.Max(0, bottom);
         if (_view != null) UpdateSurfaceSize(_view.Width, _view.Height);
+    }
+
+    // 键盘或旋转改变可用高度后，像原生 ScrollView 一样把焦点编辑器滚回视口。
+    private void EnsureFocusedEditorVisible()
+    {
+        if (TextEditorQuery?.Invoke() is not Square.UI.Element editor) return;
+        for (Square.UI.Element? current = editor.Parent; current != null; current = current.Parent)
+        {
+            if (current is not Square.Controls.ScrollViewer scroll) continue;
+            var beforeX = scroll.HorizontalOffset;
+            var beforeY = scroll.VerticalOffset;
+            scroll.ScrollIntoView(editor);
+            if (MathF.Abs(beforeX - scroll.HorizontalOffset) > 0.01f ||
+                MathF.Abs(beforeY - scroll.VerticalOffset) > 0.01f)
+                RequestRenderFrame();
+        }
     }
 
     internal Point ToLogicalPoint(float xPixels, float yPixels) => new(
@@ -324,6 +345,9 @@ public sealed class AndroidPlatformHost : IPlatformHost
     /// <summary>推进 Android fling。</summary>
     public bool StepFling() => !_disposed && _inputAdapter.StepFling();
 
+    /// <summary>按真实帧间隔推进 Android fling，使滚动距离不随屏幕刷新率变化。</summary>
+    public bool StepFling(float deltaSeconds) => !_disposed && _inputAdapter.StepFling(deltaSeconds);
+
     /// <summary>当前是否有 fling 需要继续运行。</summary>
     public bool HasFling => !_disposed && _inputAdapter.HasFling;
 
@@ -336,6 +360,7 @@ public sealed class AndroidPlatformHost : IPlatformHost
         _textInputClient = null;
         _textInputEditorIdentity = null;
         _hasTextInputFocus = false;
+        _suppressKeyboardAutoShow = true;
     }
 
     internal void PrepareInputConnection()
@@ -396,6 +421,7 @@ public sealed class AndroidPlatformHost : IPlatformHost
             editorIdentity = TextInputEditorIdentity;
             hasFocus = editorIdentity != null || TextEditorFocusQuery?.Invoke() == true;
             inputType = AndroidInputConnection.GetInputType(client);
+            var gainedFocus = hasFocus && !_hasTextInputFocus;
             _textInputClient = client;
             _textInputEditorIdentity = editorIdentity;
             _hasTextInputFocus = hasFocus;
@@ -404,7 +430,14 @@ public sealed class AndroidPlatformHost : IPlatformHost
             manager?.RestartInput(inputView);
             if (!hasFocus)
                 manager?.HideSoftInputFromWindow(inputView.WindowToken, global::Android.Views.InputMethods.HideSoftInputFlags.None);
+            else if (gainedFocus)
+            {
+                // 触摸、鼠标、手写笔和 DevTools 注入的指针不共用适配器，统一由焦点变化弹出软键盘。
+                if (_suppressKeyboardAutoShow) _suppressKeyboardAutoShow = false;
+                else manager?.ShowSoftInput(inputView, global::Android.Views.InputMethods.ShowFlags.Implicit);
+            }
         }
+        if (!hasFocus) _suppressKeyboardAutoShow = false;
         if (client != null)
         {
             var compositionStart = client.CompositionStart;
@@ -432,6 +465,7 @@ public sealed class AndroidPlatformHost : IPlatformHost
         }
     }
 
+    internal void RaisePointerExited() => PointerExited?.Invoke();
     internal void RaiseWheel(WheelInput input)
     {
         WheelEvent?.Invoke(input);
@@ -586,6 +620,7 @@ public sealed class AndroidPlatformHost : IPlatformHost
         TextInputClientQuery = null;
         SizeChanged = null;
         PointerEvent = null;
+        PointerExited = null;
         WheelEvent = null;
         KeyEvent = null;
         TextInput = null;

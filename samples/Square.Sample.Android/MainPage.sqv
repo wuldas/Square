@@ -38,7 +38,7 @@
   .title { color: #172b4d; font-size: 24px; }
   .description { color: #475467; font-size: 14px; }
   .action { height: 48px; background: #1769e0; color: #ffffff; }
-  .wrapped-action { width: 180px; padding: 10px 12px; font-size: 16px; line-height: 22px; white-space: normal; background: #1769e0; color: #ffffff; }
+  .wrapped-action { width: 180px; padding: 10px 12px; font-size: 16px; line-height: 22px; white-space: normal; flex-shrink: 0; background: #1769e0; color: #ffffff; }
   .status { color: #067647; font-size: 14px; }
   .input { height: 48px; color: #202124; }
   .scroll { height: 300px; overflow-y: auto; background: #ffffff; border: 1px solid #d0d5dd; }

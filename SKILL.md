@@ -56,7 +56,7 @@ description: "帮助 AI Agent 快速理解和修改 Square 仓库。首次进入
 | 图片解码、帧、元数据 | [Square.Images](src/Square.Images) | [Images 测试](tests/Square.Images.Tests)、[图片 fixture 说明](tests/Square.Images.Tests/Fixtures/README.md) |
 | 路由、RichText、Markdown、代码编辑器、终端、WebView | [Extensions](src/Square.Extensions)、[Markdown](src/Square.Extensions.Markdown)、[CodeEditor](src/Square.Extensions.CodeEditor)、[Terminal](src/Square.Extensions.Terminal)、[WebView](src/Square.Extensions.WebView) | 路由/RichText/Markdown 在 [UI 测试](tests/Square.UI.Tests)；另有 [CodeEditor](tests/Square.Extensions.CodeEditor.Tests)、[Terminal](tests/Square.Extensions.Terminal.Tests)、[WebView](tests/Square.Extensions.WebView.Tests) 测试 |
 | 静态 HTML、Web 宿主 | [Native.Html](src/Square.Native.Html)、[Hosting.Web](src/Square.Hosting.Web) | [Native.Html 测试](tests/Square.Native.Html.Tests)、[Hosting.Web 测试](tests/Square.Hosting.Web.Tests)；[Web Hosting](docs/Web-Hosting.md) |
-| DevTools、检查器 | [Square.DevTools](src/Square.DevTools) | [DevTools 测试](tests/Square.DevTools.Tests)、[UI 测试](tests/Square.UI.Tests)；[DevTools](docs/DevTools.md) |
+| DevTools、检查器 | [Square.DevTools](src/Square.DevTools) | [DevTools 测试](tests/Square.DevTools.Tests)、[UI 测试](tests/Square.UI.Tests)；[DevTools](docs/DevTools.md)，Android 上经 adb 转发远程调试 |
 | 补全、跳转、语义诊断、IDE 插件 | 编译器 [LanguageServices](src/Square.Compiler/LanguageServices)、[LanguageServer](tools/Square.LanguageServer)、[tooling](tooling) | [LanguageServer 测试](tests/Square.LanguageServer.Tests)需单独运行；[tooling 说明](tooling/README.md) |
 | 应用模板、包消费 | [templates](templates)、编译器 [buildTransitive](src/Square.Compiler/buildTransitive)、[PackageConsumer](tests/Square.PackageConsumer) | [Verify-Templates](templates/Verify-Templates.ps1)、[入门指南](docs/Getting-Started.md)中的本地打包验证 |
 
