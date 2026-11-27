@@ -902,7 +902,9 @@ public abstract class TextEditorBase : UIElement, ITextEditor, ITextInputClient
     private (float Top, float Height) GetVisualLineBox(float fontSize, float lineHeight, int lineIndex)
     {
         var font = ControlDrawing.ResolveFont(this, fontSize);
-        var naturalLineHeight = TextMetrics.GetFontMetrics(font).Height;
+        var metrics = TextMetrics.GetFontMetrics(font);
+        // Carets and scroll visibility follow the line's ascent/descent; the font-wide ink box also includes outlier glyphs.
+        var naturalLineHeight = Math.Max(0, -metrics.Ascent) + Math.Max(0, metrics.Descent);
         var visualHeight = Math.Max(lineHeight, naturalLineHeight);
         var lineTop = GetFirstLineTop(lineHeight) + lineIndex * lineHeight;
         return (MathF.Round(lineTop + (lineHeight - visualHeight) / 2f), visualHeight);

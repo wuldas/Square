@@ -227,9 +227,7 @@ public sealed partial class SystemGlyphRasterizer
                 Stride = (width + 3) & ~3,
                 OffsetX = metrics.GlyphOrigin.X,
                 OffsetY = -metrics.GlyphOrigin.Y,
-                AdvanceX = metrics.CellIncrementX > 0
-                    ? metrics.CellIncrementX
-                    : Math.Max(1, (int)MathF.Round(font.Size * 0.5f)),
+                AdvanceX = GetWin32Advance(dc, glyphIndex, font.Size, metrics.CellIncrementX),
                 Coverage = coverage
             };
         }
@@ -239,6 +237,91 @@ public sealed partial class SystemGlyphRasterizer
             NativeMethods.DeleteObject(fontHandle);
             NativeMethods.DeleteDC(dc);
         }
+    }
+
+    private static unsafe bool TryReadFontInt16(IntPtr dc, uint tag, uint offset, out short value)
+    {
+        byte* buffer = stackalloc byte[2];
+        if (NativeMethods.GetFontData(dc, tag, offset, buffer, 2) == 2)
+        {
+            value = BinaryPrimitives.ReadInt16BigEndian(new ReadOnlySpan<byte>(buffer, 2));
+            return true;
+        }
+        value = 0;
+        return false;
+    }
+
+    // 字体表垂直度量（设计单位）按 CSS 字号缩放到 DIP；失败时回退 GDI 整数度量。
+    private static bool TryGetFontTableMetrics(IntPtr dc, float size, out FontMetrics metrics)
+    {
+        const uint head = 0x64616568u, hhea = 0x61656868u, os2 = 0x322F534Fu; // 小端 'OS/2'
+        const ushort useTypoMetrics = 0x80;
+        metrics = default;
+        if (!TryReadFontUInt16(dc, head, 18, out var upem) || upem is < 16 or > 16384) return false;
+
+        var scale = size / upem;
+        int ascent, descent, lineGap;
+        var typoSelected = TryReadFontUInt16(dc, os2, 0, out var os2Version) && os2Version >= 4 &&
+            TryReadFontUInt16(dc, os2, 62, out var selection) && (selection & useTypoMetrics) != 0;
+        if (typoSelected &&
+            TryReadFontInt16(dc, os2, 68, out var typoAscent) && typoAscent != 0 &&
+            TryReadFontInt16(dc, os2, 70, out var typoDescent) &&
+            TryReadFontInt16(dc, os2, 72, out var typoLineGap))
+        {
+            ascent = typoAscent;
+            descent = typoDescent;
+            lineGap = typoLineGap;
+        }
+        else if (TryReadFontInt16(dc, hhea, 4, out var hheaAscent) && hheaAscent != 0 &&
+                 TryReadFontInt16(dc, hhea, 6, out var hheaDescent) &&
+                 TryReadFontInt16(dc, hhea, 8, out var hheaLineGap))
+        {
+            ascent = hheaAscent;
+            descent = hheaDescent;
+            lineGap = hheaLineGap;
+        }
+        else return false;
+
+        var ascentDip = ascent * scale;
+        var descentDip = -descent * scale;   // 字体表 descender 为负，FontMetrics 用正值。
+        var leadingDip = Math.Max(0, lineGap * scale);
+        if (ascentDip <= 0 || descentDip <= 0) return false;
+
+        // 墨迹包围盒用于 FontMetrics.Height（默认 Input 等控件按 Height 取行盒）。
+        var top = -ascentDip;
+        var bottom = descentDip;
+        if (TryReadFontInt16(dc, head, 38, out var yMin) && TryReadFontInt16(dc, head, 42, out var yMax) &&
+            yMax > yMin && Math.Abs((int)yMax) <= upem * 4 && Math.Abs((int)yMin) <= upem * 4)
+        {
+            top = -yMax * scale;
+            bottom = -yMin * scale;
+        }
+
+        metrics = new FontMetrics(top, -ascentDip, descentDip, bottom, leadingDip);
+        return true;
+    }
+
+    private static unsafe bool TryReadFontUInt16(IntPtr dc, uint tag, uint offset, out ushort value)
+    {
+        byte* buffer = stackalloc byte[2];
+        if (NativeMethods.GetFontData(dc, tag, offset, buffer, 2) == 2)
+        {
+            value = BinaryPrimitives.ReadUInt16BigEndian(new ReadOnlySpan<byte>(buffer, 2));
+            return true;
+        }
+        value = 0;
+        return false;
+    }
+
+    // GDI 只回整数字形步进；按 CSS 字号取 hmtx 的字体单位宽度还原浮点 advance。
+    private static float GetWin32Advance(IntPtr dc, uint glyph, float size, short hintedAdvance)
+    {
+        const uint head = 0x64616568u, hhea = 0x61656868u, hmtx = 0x78746d68u;
+        if (TryReadFontUInt16(dc, head, 18, out var upem) && upem is >= 16 and <= 16384 &&
+            TryReadFontUInt16(dc, hhea, 34, out var count) && count > 0 &&
+            TryReadFontUInt16(dc, hmtx, 4u * Math.Min(glyph, (uint)count - 1), out var width))
+            return width * (size / upem);
+        return Math.Max(0f, hintedAdvance);
     }
 
     private static unsafe uint GetWin32GlyphIndex(IntPtr dc, string family, Rune rune)
@@ -350,6 +433,13 @@ public sealed partial class SystemGlyphRasterizer
             {
                 metrics = default;
                 return false;
+            }
+
+            // GDI 只给整数像素度量；优先读字体表，和 Skia 用同一套垂直度量。
+            if (TryGetFontTableMetrics(dc, font.Size, out var tableMetrics))
+            {
+                metrics = tableMetrics;
+                return true;
             }
 
             metrics = new FontMetrics(

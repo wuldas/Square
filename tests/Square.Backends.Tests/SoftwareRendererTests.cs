@@ -1335,6 +1335,48 @@ public class SoftwareRendererTests
             TextLayout.MeasureRuneAdvance(wide, large), 3);
     }
 
+    [Theory]
+    [InlineData("i")]
+    [InlineData("W")]
+    [InlineData("1")]
+    [InlineData("中")]
+    public void Win32AdvanceScalesLinearlyWithCssSize(string value)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var rasterizer = new SystemGlyphRasterizer();
+        var rune = new System.Text.Rune(value[0]);
+        var ratios = new List<float>();
+        foreach (var size in new[] { 13f, 13.3333f, 20f })
+        {
+            var glyph = Assert.IsType<RasterizedGlyph>(rasterizer.Rasterize(new Font("Arial", size), rune));
+            Assert.True(glyph.AdvanceX > 0f, $"advance={glyph.AdvanceX} for {value}@{size}");
+            ratios.Add(glyph.AdvanceX / size);
+        }
+
+        Assert.Equal(ratios[0], ratios[1], 5);
+        Assert.Equal(ratios[0], ratios[2], 5);
+    }
+
+    [Fact]
+    public void Win32FontMetricsScaleWithFractionalCssSize()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Assert.True(SystemGlyphRasterizer.TryGetWin32FontMetrics(new Font("Arial", 13f), out var whole));
+        Assert.True(SystemGlyphRasterizer.TryGetWin32FontMetrics(new Font("Arial", 13.3333f), out var fractional));
+        Assert.True(whole.Ascent < 0f && whole.Descent > 0f);
+        Assert.True(fractional.Ascent < 0f && fractional.Descent > 0f);
+
+        // GDI 只回整数度量时两档会得到同一个 13px 行盒，比值必然不同。
+        Assert.Equal(whole.Ascent / 13f, fractional.Ascent / 13.3333f, 5);
+        Assert.Equal(whole.Descent / 13f, fractional.Descent / 13.3333f, 5);
+
+        // 墨迹包围盒必须来自 head.yMin/yMax，而不是退化的 ascent/descent。
+        Assert.True(fractional.Top < fractional.Ascent, $"top={fractional.Top}, ascent={fractional.Ascent}");
+        Assert.True(fractional.Bottom > fractional.Descent, $"bottom={fractional.Bottom}, descent={fractional.Descent}");
+        Assert.True(fractional.Height > -fractional.Ascent + fractional.Descent,
+            $"height={fractional.Height}, ascent+descent={-fractional.Ascent + fractional.Descent}");
+    }
+
     [Fact]
     public void RasterizedGlyphVerticalOffsetsAreBaselineRelative()
     {
@@ -2498,7 +2540,9 @@ public class SoftwareRendererTests
         // 紧凑行高（14px）时选区仍须覆盖字体的自然墨迹高度（ascent+descent）。
         // 允许 1 行容差：选区矩形为浮点边界，整数像素行计数可能比高度少 1。
         var font = global::Square.Text.FontManager.Instance.FromCss("sans-serif", null, null, null, 14f);
-        var naturalHeight = TextMetrics.GetFontMetrics(font).Height;
+        var metrics = TextMetrics.GetFontMetrics(font);
+        // 选区按行盒（ascent+descent）覆盖；FontMetrics.Height 现在是字体表墨迹包围盒，含离群字形。
+        var naturalHeight = Math.Max(0, -metrics.Ascent) + Math.Max(0, metrics.Descent);
         Assert.True(highlightedRows >= Math.Ceiling(naturalHeight) - 1,
             $"selection covered {highlightedRows} rows, natural font height {naturalHeight:F1}");
     }
