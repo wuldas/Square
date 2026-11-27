@@ -571,9 +571,7 @@ public class Popup : View, IPopupElement
         var background = ControlDrawing.GetStyledColor(this, "background", Color.White);
         ControlDrawing.DrawStyledBackground(context, this, background);
         CssBoxPainter.PaintBorder(context, this);
-        var contentClip = GetScrollViewportRect();
-        if (contentClip.IsEmpty) contentClip = Geometry;
-        context.PushClip(contentClip);
+        var childClips = PushChildClip(context, popupRoot: true);
         var scrolls = MapsScrollOffsetForChildren();
         if (scrolls)
             context.PushTransform(Matrix3x2.CreateTranslation(-ScrollLeft, -ScrollTop));
@@ -581,7 +579,7 @@ public class Popup : View, IPopupElement
             PaintPopupSubtree(context, child);
         if (scrolls)
             context.PopTransform();
-        context.PopClip();
+        for (var i = 0; i < childClips; i++) context.PopClip();
         ScrollbarPainter.Paint(context, this);
         context.PopClip();
         context.PopTransform();
@@ -593,6 +591,7 @@ public class Popup : View, IPopupElement
         var bounds = ContentBounds;
         if (!IsPopupOpen || !bounds.Contains(point)) return null;
         var localPoint = MapPointToContent(point);
+        if (!ChildClipContains(localPoint, popupRoot: true)) return this;
         var childPoint = MapsScrollOffsetForChildren()
             ? new Point(localPoint.X + ScrollLeft, localPoint.Y + ScrollTop)
             : localPoint;
@@ -705,15 +704,14 @@ public class Popup : View, IPopupElement
             element.Paint(context);
             CssBoxPainter.PaintAfterContent(context, element);
         }
-        var clip = element.GetOverflowClipRect();
-        if (!clip.IsEmpty) context.PushClip(clip);
+        var childClips = element.Children.Count == 0 ? 0 : element.PushChildClip(context);
         var offset = element.ScrollOffset;
         var scrolls = element.MapsScrollOffsetForChildren();
         if (scrolls) context.PushTransform(Matrix3x2.CreateTranslation(-offset.X, -offset.Y));
         foreach (var child in element.Children.OrderBy(child => child.ZIndex))
             PaintPopupSubtree(context, child);
         if (scrolls) context.PopTransform();
-        if (!clip.IsEmpty) context.PopClip();
+        for (var i = 0; i < childClips; i++) context.PopClip();
         if (paintsNode) CssBoxPainter.PaintAfterChildren(context, element);
     }
 

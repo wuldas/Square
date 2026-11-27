@@ -696,6 +696,7 @@ public sealed class DisplayTree
         var localPoint = popup.MapPointToContent(point);
         if (IsScrollbarHit(element, localPoint, includeOwnedChrome))
             return element;
+        if (element is Popup && !element.ChildClipContains(localPoint, popupRoot: true)) return null;
         var childPoint = element.MapsScrollOffsetForChildren()
             ? new Point(localPoint.X + element.ScrollLeft, localPoint.Y + element.ScrollTop)
             : localPoint;
@@ -721,8 +722,7 @@ public sealed class DisplayTree
         if (IsScrollbarHit(element, point, includeOwnedChrome))
             return element;
 
-        var overflowClip = element.GetOverflowClipRect();
-        if (!overflowClip.IsEmpty && !overflowClip.Contains(point)) return null;
+        if (!element.ChildClipContains(point)) return null;
         var childPoint = element.MapsScrollOffsetForChildren()
             ? new Point(point.X + element.ScrollLeft, point.Y + element.ScrollTop)
             : point;
@@ -758,8 +758,7 @@ public sealed class DisplayTree
         if (IsScrollbarHit(element, point, includeOwnedChrome))
             return element;
 
-        var overflowClip = element.GetOverflowClipRect();
-        if (!overflowClip.IsEmpty && !overflowClip.Contains(point)) return null;
+        if (!element.ChildClipContains(point)) return null;
         var childPoint = element.MapsScrollOffsetForChildren()
             ? new Point(point.X + element.ScrollLeft, point.Y + element.ScrollTop)
             : point;
@@ -780,8 +779,8 @@ public sealed class DisplayTree
 
         var element = node.Element;
         var inside = element.Geometry.Contains(point);
-        var overflowClip = element.GetOverflowClipRect();
-        if (!overflowClip.IsEmpty && !overflowClip.Contains(point)) return null;
+        if (!element.ChildClipContains(point))
+            return inside && !element.IsCssVisibilityHidden() && element is not MenuSeparator ? element : null;
 
         var childPoint = element.MapsScrollOffsetForChildren()
             ? new Point(point.X + element.ScrollLeft, point.Y + element.ScrollTop)

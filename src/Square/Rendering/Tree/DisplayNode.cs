@@ -165,9 +165,8 @@ public sealed class DisplayNode
             return;
         }
 
-        var overflowClip = Element?.GetOverflowClipRect() ?? Rect.Empty;
-        var clipsChildren = !overflowClip.IsEmpty;
-        if (clipsChildren) ctx.PushClip(overflowClip);
+        var childClips = Children.Count == 0 ? 0 : Element?.PushChildClip(ctx) ?? 0;
+        var clipsChildren = childClips > 0;
         var scrollsChildren = Element?.MapsScrollOffsetForChildren() == true;
         var scrollOffset = Element?.ScrollOffset ?? default;
         if (scrollsChildren) ctx.PushTransform(Matrix3x2.CreateTranslation(-scrollOffset.X, -scrollOffset.Y));
@@ -179,7 +178,7 @@ public sealed class DisplayNode
             child.RenderPrepared(ctx, screenClip, excludedRoots, childMatrix, PreparedStamp);
         }
         if (scrollsChildren) ctx.PopTransform();
-        if (clipsChildren) ctx.PopClip();
+        for (var i = 0; i < childClips; i++) ctx.PopClip();
         if (paintsNode) ExecuteCommands(ctx, _afterChildrenCommands);
         if (wrapsTransform) ctx.PopTransform();
         if (wrapsOpacity) ctx.PopLayer();
@@ -358,7 +357,7 @@ public sealed class DisplayNode
     {
         fill = null!;
         if (Children.Count != 0 || Element is IPopupElement ||
-            !(Element?.GetOverflowClipRect() ?? Rect.Empty).IsEmpty ||
+            Element?.ClipsOverflow() == true ||
             _beforeContentCommands.Count + Commands.Count + _afterContentCommands.Count + _afterChildrenCommands.Count != 1)
             return false;
         var command = _beforeContentCommands.Count != 0 ? _beforeContentCommands[0] :
@@ -437,7 +436,7 @@ public sealed class DisplayNode
         var bounds = own;
         if (Element is not IPopupElement)
         {
-            var overflowClip = Element?.GetOverflowClipRect() ?? Rect.Empty;
+            var clipsChildren = Element?.ClipsOverflow() == true;
             var scrollsChildren = Element?.MapsScrollOffsetForChildren() == true;
             var scrollOffset = Element?.ScrollOffset ?? default;
             foreach (var child in Children)
@@ -448,8 +447,8 @@ public sealed class DisplayNode
                     childBounds = DrawCommandBounds.TransformBounds(childBounds, child.CompositeTransform);
                 if (scrollsChildren)
                     childBounds = Translate(childBounds, -scrollOffset.X, -scrollOffset.Y);
-                if (!overflowClip.IsEmpty && !childBounds.IsEmpty)
-                    childBounds = Rect.Intersect(childBounds, overflowClip);
+                if (clipsChildren && !childBounds.IsEmpty)
+                    childBounds = Rect.Intersect(childBounds, Element?.GetOverflowClipRect() ?? Rect.Empty);
                 bounds = Union(bounds, childBounds);
             }
         }
@@ -537,6 +536,7 @@ public sealed class DisplayNode
             case FillGeometryCommand f: ctx.FillGeometry(f.Geometry, f.Brush); break;
             case DrawGeometryCommand d: ctx.DrawGeometry(d.Geometry, d.Pen); break;
             case DrawTextCommand t: ctx.DrawText(t.Text, t.Origin, t.Brush); break;
+            case DrawButtonWidgetCommand b: CssBoxPainter.DrawButtonWidget(ctx, b.Bounds, b.Fill, b.Border); break;
             case DrawImageCommand i: ctx.DrawImage(i.Image, i.Dest, i.Source); break;
             case PushClipCommand p: ctx.PushClip(p.Rect); break;
             case PushGeometryClipCommand p: ctx.PushClip(p.Geometry); break;
@@ -555,6 +555,8 @@ internal sealed class CommandCollector : IRenderContext
     private Size _canvasSize = new(1920, 1080);
 
     public CommandCollector(List<DrawCommand> commands) { _commands = commands; }
+
+    public void Add(DrawCommand command) => _commands.Add(command);
 
     public Size CanvasSize => _canvasSize;
     public float DpiScale => 1f;

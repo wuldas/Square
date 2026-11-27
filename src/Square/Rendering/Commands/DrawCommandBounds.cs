@@ -49,14 +49,14 @@ internal static class DrawCommandBounds
     }
 
     private static Rect GetBounds(DrawCommand command, Rect fallbackBounds) => command switch
-    {
-        FillRectCommand fill => fill.Rect,
+    {        FillRectCommand fill => fill.Rect,
         DrawRectCommand draw => draw.Rect.Inflate(Math.Max(1f, draw.Pen.Width) / 2f, Math.Max(1f, draw.Pen.Width) / 2f),
         DrawTextCommand text => TextMetrics.MeasureInkBounds(text.Text, text.Origin),
         DrawImageCommand image => image.Dest,
         FillGeometryCommand fill => GetGeometryBounds(fill.Geometry),
         DrawGeometryCommand draw => GetGeometryBounds(draw.Geometry).Inflate(Math.Max(1f, draw.Pen.Width) / 2f, Math.Max(1f, draw.Pen.Width) / 2f),
         PushLayerCommand layer => layer.Bounds,
+        DrawButtonWidgetCommand button => button.Bounds,
         ClearCommand => fallbackBounds,
         FillPathCommand fill => GetPathBounds(fill.Path),
         DrawPathCommand draw => GetPathBounds(draw.Path).Inflate(Math.Max(1f, draw.Pen.Width) / 2f, Math.Max(1f, draw.Pen.Width) / 2f),

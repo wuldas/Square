@@ -198,6 +198,9 @@ public static class BoxShadowRendering
 
     /// <summary>绘制盒阴影。</summary>
     public static void Draw(IRenderContext context, Rect box, float cornerRadius, BoxShadow shadow)
+        => Draw(context, box, cornerRadius == 0 ? null : new RoundedRectGeometry(box, cornerRadius, cornerRadius), shadow);
+
+    private static void Draw(IRenderContext context, Rect box, RoundedRectGeometry? corners, BoxShadow shadow)
     {
         if (box.IsEmpty || shadow.Color.A == 0) return;
         var baseRect = box.Offset(shadow.OffsetX, shadow.OffsetY).Inflate(shadow.SpreadRadius, shadow.SpreadRadius);
@@ -205,7 +208,7 @@ public static class BoxShadowRendering
         var blur = Math.Max(0, shadow.BlurRadius);
         if (blur <= 0)
         {
-            DrawLayer(context, baseRect, Math.Max(0, cornerRadius + shadow.SpreadRadius), shadow.Color);
+            DrawLayer(context, baseRect, corners, shadow.SpreadRadius, 0, shadow.Color);
             return;
         }
 
@@ -221,17 +224,51 @@ public static class BoxShadowRendering
             var alpha = (byte)Math.Clamp(MathF.Round(layerAlpha * 255f), 0, 255);
             if (alpha == 0) continue;
             var rect = baseRect.Inflate(expansion, expansion);
-            var radius = Math.Max(0, cornerRadius + shadow.SpreadRadius + expansion);
             var color = Color.FromRgba(shadow.Color.R, shadow.Color.G, shadow.Color.B, alpha);
-            DrawLayer(context, rect, radius, color);
+            DrawLayer(context, rect, corners, shadow.SpreadRadius, expansion, color);
             accumulatedAlpha += alpha / 255f * (1f - accumulatedAlpha);
         }
     }
 
-    private static void DrawLayer(IRenderContext context, Rect rect, float radius, Color color)
+    private static void DrawLayer(IRenderContext context, Rect rect, RoundedRectGeometry? corners,
+        float spread, float expansion, Color color)
     {
-        if (radius <= 0) context.FillRect(rect, new SolidColorBrush(color));
-        else context.FillGeometry(new RoundedRectGeometry(rect, radius, radius), new SolidColorBrush(color));
+        var brush = new SolidColorBrush(color);
+        CornerRadius Expand(CornerRadius corner)
+        {
+            var x = corner.X + spread;
+            var y = corner.Y + spread;
+            if (corner.X <= 0 || corner.Y <= 0 || x <= 0 || y <= 0)
+                return new CornerRadius(expansion);
+            return new CornerRadius(x + expansion, y + expansion);
+        }
+
+        var tl = Expand(corners?.TopLeft ?? default);
+        var tr = Expand(corners?.TopRight ?? default);
+        var br = Expand(corners?.BottomRight ?? default);
+        var bl = Expand(corners?.BottomLeft ?? default);
+        // A negative spread can shrink a side past its remaining corner radii.
+        var maxWidth = Math.Max(tl.X + tr.X, bl.X + br.X);
+        var maxHeight = Math.Max(tl.Y + bl.Y, tr.Y + br.Y);
+        var scale = Math.Min(maxWidth > rect.Width ? rect.Width / maxWidth : 1f,
+            maxHeight > rect.Height ? rect.Height / maxHeight : 1f);
+        if (scale < 1f)
+        {
+            CornerRadius Scale(CornerRadius c) => new(c.X * scale, c.Y * scale);
+            tl = Scale(tl);
+            tr = Scale(tr);
+            br = Scale(br);
+            bl = Scale(bl);
+        }
+
+        if (tl == default && tr == default && br == default && bl == default)
+        {
+            context.FillRect(rect, brush);
+            return;
+        }
+        var shape = new RoundedRectGeometry(rect, tl, tr, br, bl);
+        if (shape.IsUniform) context.FillGeometry(shape, brush);
+        else context.FillPath(shape.ToPath(), brush);
     }
 
     /// <summary>按 CSS 堆叠顺序绘制全部盒阴影，列表首项位于最上层。</summary>
@@ -243,7 +280,7 @@ public static class BoxShadowRendering
 
     public static void Draw(IRenderContext context, Rect box, RoundedRectGeometry? roundedGeometry, IReadOnlyList<BoxShadow> shadows)
     {
-        var cornerRadius = roundedGeometry is { IsUniform: true } ? roundedGeometry.RadiusX : 0;
-        Draw(context, box, cornerRadius, shadows);
+        for (var i = shadows.Count - 1; i >= 0; i--)
+            Draw(context, box, roundedGeometry, shadows[i]);
     }
 }

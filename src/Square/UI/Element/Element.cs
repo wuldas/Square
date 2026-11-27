@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using Square.Events;
+using Square.CSS.Properties;
+using Square.Rendering.Paint;
 using Square.Graphics;
 using Square.Runtime;
 using Square.Runtime.Binding;
@@ -720,7 +722,7 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
         if (!IsVisible || !IsCssDisplayed()) return null;
         var visibilityHidden = IsCssVisibilityHidden();
         var inside = Geometry.Contains(point);
-        if (!inside && ClipsOverflowAt(point)) return null;
+        if (!ChildClipContains(point)) return inside && !visibilityHidden ? this : null;
 
         var childPoint = MapsScrollOffsetForChildren()
             ? new Point(point.X + _scrollOffset.X, point.Y + _scrollOffset.Y)
@@ -789,6 +791,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
 
     private readonly record struct HitTestEntry(Element Element, int Index);
 
+    private DescendantClip? _descendantClip;
+
     private sealed class HitTestEntryComparer : IComparer<HitTestEntry>
     {
         public static HitTestEntryComparer Instance { get; } = new();
@@ -808,25 +812,94 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     }
 
     /// <summary>溢出裁剪矩形（渲染用）。</summary>
-    public Rect GetOverflowClipRect()
+    public Rect GetOverflowClipRect() => GetDescendantClip()?.Bounds ?? Rect.Empty;
+
+    internal bool ChildClipContains(Point point, bool popupRoot = false) =>
+        GetDescendantClip(popupRoot)?.Contains(point) ?? true;
+
+    internal int PushChildClip(IRenderContext context, bool popupRoot = false) =>
+        GetDescendantClip(popupRoot)?.Push(context) ?? 0;
+
+    private DescendantClip? GetDescendantClip(bool popupRoot = false)
     {
-        var (clipX, clipY) = GetOverflowClipAxes();
-        if (!clipX && !clipY) return Rect.Empty;
-        const float unbounded = 1_000_000f;
-        var viewport = GetScrollbarMetrics().ViewportRect;
-        return new Rect(
-            clipX ? viewport.X : -unbounded,
-            clipY ? viewport.Y : -unbounded,
-            clipX ? viewport.Width : unbounded * 2,
-            clipY ? viewport.Height : unbounded * 2);
+        var (clipX, clipY) = popupRoot ? (true, true) : GetOverflowClipAxes();
+        if (!clipX && !clipY) return null;
+        var viewport = GetScrollViewportRect();
+        var key = (Geometry, viewport, clipX, clipY, Style.ScrollStyleRevision);
+        if (_descendantClip is { } cached && cached.Key == key) return cached;
+        return _descendantClip = new DescendantClip(this, key);
     }
 
-    private bool ClipsOverflowAt(Point point)
+    private sealed class DescendantClip
     {
-        var (clipX, clipY) = GetOverflowClipAxes();
-        var viewport = GetScrollbarMetrics().ViewportRect;
-        return clipX && (point.X < viewport.Left || point.X > viewport.Right) ||
-            clipY && (point.Y < viewport.Top || point.Y > viewport.Bottom);
+        internal readonly (Rect Box, Rect Viewport, bool ClipX, bool ClipY, long StyleRevision) Key;
+        internal readonly Rect Bounds;
+        private readonly RoundedRectGeometry? _rounded;
+        private readonly Square.Graphics.Geometry? _shape;
+
+        internal DescendantClip(Element owner, (Rect Box, Rect Viewport, bool ClipX, bool ClipY, long StyleRevision) key)
+        {
+            Key = key;
+            var (box, viewport, clipX, clipY, _) = key;
+            float top = 0, right = 0, bottom = 0, left = 0;
+            if (CssBoxPainter.TryGetBorderEdges(owner, out var edges))
+            {
+                static float Width(CssBoxPainter.BorderEdge edge) =>
+                    edge.Style == CssBoxPainter.BorderStyle.None ? 0 : Math.Max(0, edge.Width);
+                top = Width(edges[0]); right = Width(edges[1]); bottom = Width(edges[2]); left = Width(edges[3]);
+            }
+
+            var padding = new Rect(box.X + left, box.Y + top,
+                Math.Max(0, box.Width - left - right), Math.Max(0, box.Height - top - bottom));
+            const float unbounded = 1_000_000f;
+            var x = clipX ? Math.Max(padding.Left, viewport.Left) : -unbounded;
+            var y = clipY ? Math.Max(padding.Top, viewport.Top) : -unbounded;
+            Bounds = new Rect(x, y,
+                clipX ? Math.Max(0, Math.Min(padding.Right, viewport.Right) - x) : 2 * unbounded,
+                clipY ? Math.Max(0, Math.Min(padding.Bottom, viewport.Bottom) - y) : 2 * unbounded);
+            if (!clipX || !clipY || Bounds.IsEmpty ||
+                !CssBorderRadiusParser.TryResolve(owner.Style, box, out var outer)) return;
+            static CornerRadius Inset(CornerRadius radius, float dx, float dy) => radius.X > dx && radius.Y > dy
+                ? new CornerRadius(radius.X - dx, radius.Y - dy) : default;
+            var tl = Inset(outer.TopLeft, left, top); var tr = Inset(outer.TopRight, right, top);
+            var br = Inset(outer.BottomRight, right, bottom); var bl = Inset(outer.BottomLeft, left, bottom);
+            if (tl == default && tr == default && br == default && bl == default) return;
+            // Opposing borders may shrink the padding box below the surviving radii.
+            var scale = Math.Min(1f, Math.Min(
+                padding.Width / Math.Max(tl.X + tr.X, bl.X + br.X),
+                padding.Height / Math.Max(tl.Y + bl.Y, tr.Y + br.Y)));
+            CornerRadius Scale(CornerRadius r) => new(r.X * scale, r.Y * scale);
+            _rounded = new RoundedRectGeometry(padding, Scale(tl), Scale(tr), Scale(br), Scale(bl));
+            // The Software rounded-clip primitive handles a uniform ellipse; use the existing path for distinct corners.
+            _shape = _rounded.IsUniform ? _rounded : _rounded.ToPath();
+        }
+
+        internal int Push(IRenderContext context)
+        {
+            if (_shape == null) { context.PushClip(Bounds); return 1; }
+            context.PushClip(_shape);
+            if (Bounds == _rounded!.Rect) return 1;
+            context.PushClip(Bounds); // intersect the padding curve with the scrollbar viewport
+            return 2;
+        }
+
+        internal bool Contains(Point point)
+        {
+            if (Bounds.IsEmpty || !Bounds.Contains(point)) return false;
+            if (_rounded is not { } r) return true;
+            var box = r.Rect;
+            static bool InCorner(float dx, float dy, CornerRadius radius)
+            {
+                if (dx >= radius.X || dy >= radius.Y) return true;
+                var x = 1 - dx / radius.X; var y = 1 - dy / radius.Y;
+                return x * x + y * y <= 1;
+            }
+
+            return InCorner(point.X - box.Left, point.Y - box.Top, r.TopLeft) &&
+                InCorner(box.Right - point.X, point.Y - box.Top, r.TopRight) &&
+                InCorner(box.Right - point.X, box.Bottom - point.Y, r.BottomRight) &&
+                InCorner(point.X - box.Left, box.Bottom - point.Y, r.BottomLeft);
+        }
     }
 
     private (bool clipX, bool clipY) GetOverflowClipAxes()
@@ -1664,6 +1737,8 @@ public abstract class Element : Node, IComponentLifecycle, ILayoutLifecycle, IFr
     internal void Invalidate(ElementInvalidation invalidation, LayoutDirtyKind layoutDirtyKind)
     {
         if (_invalidationSuppressionDepth > 0) return;
+        if ((invalidation & (ElementInvalidation.Layout | ElementInvalidation.Paint | ElementInvalidation.Style)) != 0)
+            _descendantClip = null;
         if ((invalidation & ElementInvalidation.DisplayTree) != 0)
             InvalidateStructureRevision();
         if ((invalidation & ElementInvalidation.HitTest) != 0)

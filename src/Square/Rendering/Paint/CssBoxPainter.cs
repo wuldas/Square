@@ -4,6 +4,9 @@ using Square.CSS.Properties;
 using Square.Controls;
 using Square.Graphics;
 using Square.Html;
+using Square.Rendering;
+using Square.Rendering.Commands;
+using Square.Rendering.Tree;
 using Square.UI;
 
 namespace Square.Rendering.Paint;
@@ -260,15 +263,33 @@ internal static class CssBoxPainter
                     : (Color.FromRgb(239, 239, 239), Color.FromRgb(118, 118, 118));
         if (button.Properties.HasValue(nameof(Button.Background)))
             fill = button.Background;
+        if (context is CommandCollector collector)
+        {
+            collector.Add(new DrawButtonWidgetCommand(geometry, fill, border));
+            return;
+        }
+
+        DrawButtonWidget(context, geometry, fill, border);
+    }
+
+    /// <summary>按钮底座绘制：1× 用既有整像素模板，分数 DPI 用圆角内描边。</summary>
+    internal static void DrawButtonWidget(IRenderContext context, Rect geometry, Color fill, Color border)
+    {
+        if (context.DpiScale > 1.0001f)
+        {
+            context.FillGeometry(new RoundedRectGeometry(geometry, 2.5f, 2.5f), new SolidColorBrush(fill));
+            PaintSmoothFormControlBorder(context, geometry, border, 1);
+            return;
+        }
+
         var left = MathF.Ceiling(geometry.X);
         var top = MathF.Ceiling(geometry.Y);
         var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
         var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
         if (right < left || bottom < top) return;
 
-        var fillBrush = new SolidColorBrush(fill);
         context.FillRect(new Rect(left + 1, top + 1,
-            Math.Max(0, right - left - 1), Math.Max(0, bottom - top - 1)), fillBrush);
+            Math.Max(0, right - left - 1), Math.Max(0, bottom - top - 1)), new SolidColorBrush(fill));
 
         var borderBrush = new SolidColorBrush(border);
         context.FillRect(new Rect(left + 2, top, Math.Max(0, right - left - 3), 1), borderBrush);
@@ -276,13 +297,10 @@ internal static class CssBoxPainter
         context.FillRect(new Rect(left, top + 2, 1, Math.Max(0, bottom - top - 3)), borderBrush);
         context.FillRect(new Rect(right, top + 2, 1, Math.Max(0, bottom - top - 3)), borderBrush);
 
-        var weakBorderBrush = new SolidColorBrush(WithAlpha(border, 32));
-        var shoulderBorderBrush = new SolidColorBrush(WithAlpha(border, 192));
-        var innerCornerBrush = new SolidColorBrush(WithAlpha(border, 106));
-        PaintButtonCorners(context, left, top, right, bottom, weakBorderBrush, 0, 0);
-        PaintButtonCorners(context, left, top, right, bottom, shoulderBorderBrush, 1, 0);
-        PaintButtonCorners(context, left, top, right, bottom, shoulderBorderBrush, 0, 1);
-        PaintButtonCorners(context, left, top, right, bottom, innerCornerBrush, 1, 1);
+        PaintButtonCorners(context, left, top, right, bottom, new SolidColorBrush(WithAlpha(border, 32)), 0, 0);
+        PaintButtonCorners(context, left, top, right, bottom, new SolidColorBrush(WithAlpha(border, 192)), 1, 0);
+        PaintButtonCorners(context, left, top, right, bottom, new SolidColorBrush(WithAlpha(border, 192)), 0, 1);
+        PaintButtonCorners(context, left, top, right, bottom, new SolidColorBrush(WithAlpha(border, 106)), 1, 1);
     }
 
     private static void PaintButtonCorners(
@@ -331,7 +349,17 @@ internal static class CssBoxPainter
                 ? Color.FromRgb(79, 79, 79)
                 : Color.FromRgb(118, 118, 118)
             : Color.FromRgb(212, 212, 212);
-        PaintSmoothFormControlBorder(context, geometry, border, 1);
+        PaintLegacyTextAreaBorder(context, geometry, border);
+    }
+
+    // TextArea 保持既有的整像素边框模板，其它表单控件走圆角内描边。
+    private static void PaintLegacyTextAreaBorder(IRenderContext context, Rect geometry, Color color)
+    {
+        var left = MathF.Ceiling(geometry.X);
+        var top = MathF.Ceiling(geometry.Y);
+        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
+        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
+        PaintSmoothOnePixelFrame(context, left, top, right, bottom, color);
     }
 
     private static void PaintSelectWidgetBorder(IRenderContext context, Select select, Rect geometry)
@@ -352,14 +380,19 @@ internal static class CssBoxPainter
     private static void PaintSmoothFormControlBorder(
         IRenderContext context, Rect geometry, Color color, int thickness)
     {
-        var left = MathF.Ceiling(geometry.X);
-        var top = MathF.Ceiling(geometry.Y);
-        var right = MathF.Round(geometry.Right, MidpointRounding.AwayFromZero) - 1;
-        var bottom = MathF.Round(geometry.Bottom, MidpointRounding.AwayFromZero) - 1;
-        if (thickness == 2)
-            PaintSmoothTwoPixelFrame(context, left, top, right, bottom, color);
-        else
-            PaintSmoothOnePixelFrame(context, left, top, right, bottom, color);
+        var width = thickness <= 1 ? 1f : 2f;
+        var outerRadius = width <= 1f ? 2.5f : 3f;
+        if (geometry.Width <= width * 2 || geometry.Height <= width * 2)
+        {
+            // Too small to inset a stroke: paint the outer rounded box solid.
+            context.FillGeometry(new RoundedRectGeometry(geometry, outerRadius, outerRadius),
+                new SolidColorBrush(color));
+            return;
+        }
+
+        var strokeBox = geometry.Inflate(-width / 2f, -width / 2f);
+        var radius = Math.Max(0f, outerRadius - width / 2f);
+        context.DrawGeometry(new RoundedRectGeometry(strokeBox, radius, radius), Pen.FromColor(color, width));
     }
 
     private static void PaintSmoothOnePixelFrame(
