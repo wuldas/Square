@@ -12,6 +12,7 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
 {
     private IntPtr _hwnd;
     private bool _running;
+    private bool _applyingDpiChange;
     private string _title;
     private readonly int _width;
     private readonly int _height;
@@ -185,10 +186,13 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
 
         CenterOnOwner();
 
+        // CreateWindowEx and SetWindowPos dispatch WM_SIZE synchronously. Publish the first size after the final monitor and DPI are known.
+        _dpiScale = DpiToScale(Win32Api.GetDpiForWindow(_hwnd));
         Win32Api.GetClientRect(_hwnd, out var rect);
         UpdateClientSize(rect);
 
         _running = true;
+        SizeChanged?.Invoke(_clientSize);
     }
 
     private int CreateWindowStyle()
@@ -685,35 +689,30 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
                 };
                 host.UpdateState(state);
                 host.UpdateWindowFrameAppearance(state);
-                if (state == AppWindowState.Minimized) break;
-                Win32Api.GetClientRect(hWnd, out var rect);
-                var newPhysicalSize = new Size(rect.Width, rect.Height);
-                var newSize = host.ToLogicalSize(newPhysicalSize);
-                if (newSize == host._clientSize) break;
-                host._physicalClientSize = newPhysicalSize;
-                host._clientSize = newSize;
-                if (host._renderContext is IResizableRenderContext resizable)
-                    resizable.Resize(newSize);
-                host.SizeChanged?.Invoke(host._clientSize);
+                if (host._running && !host._applyingDpiChange && state != AppWindowState.Minimized)
+                    host.RefreshClientMetrics(hWnd, host._dpiScale);
                 break;
             case Win32Api.WM_DPICHANGED:
             {
                 var dpi = (uint)(wParam.ToInt64() & 0xffff);
-                host._dpiScale = DpiToScale(dpi);
                 var suggested = Marshal.PtrToStructure<Win32Api.RECT>(lParam);
-                Win32Api.SetWindowPos(
-                    hWnd, IntPtr.Zero,
-                    suggested.Left, suggested.Top, suggested.Width, suggested.Height,
-                    Win32Api.SWP_NOZORDER | Win32Api.SWP_NOACTIVATE);
-                Win32Api.GetClientRect(hWnd, out var clientRect);
-                host.UpdateClientSize(clientRect);
-                if (host._renderContext is IDpiResizableRenderContext dpiResizable)
-                    dpiResizable.Resize(host._clientSize, host._dpiScale);
-                else if (host._renderContext is IResizableRenderContext dpiFallbackResizable)
-                    dpiFallbackResizable.Resize(host._clientSize);
-                host.SizeChanged?.Invoke(host._clientSize);
-            }
+                var wasApplyingDpiChange = host._applyingDpiChange;
+                host._applyingDpiChange = true;
+                try
+                {
+                    Win32Api.SetWindowPos(
+                        hWnd, IntPtr.Zero,
+                        suggested.Left, suggested.Top, suggested.Width, suggested.Height,
+                        Win32Api.SWP_NOZORDER | Win32Api.SWP_NOACTIVATE);
+                }
+                finally
+                {
+                    host._applyingDpiChange = wasApplyingDpiChange;
+                }
+                if (host._running && !wasApplyingDpiChange)
+                    host.RefreshClientMetrics(hWnd, DpiToScale(dpi));
                 return IntPtr.Zero;
+            }
             case Win32Api.WM_LBUTTONDOWN:
             {
                 var x = (short)(lParam.ToInt64() & 0xFFFF);
@@ -1036,6 +1035,20 @@ internal sealed class Win32Host : IPlatformHost, IPlatformNativeWindow, IPlatfor
 
     private static int ToPhysical(int logicalValue, float dpiScale)
         => Math.Max(1, (int)MathF.Round(logicalValue * dpiScale));
+
+    private void RefreshClientMetrics(IntPtr hWnd, float dpiScale)
+    {
+        if (!Win32Api.GetClientRect(hWnd, out var rect)) return;
+        var physicalSize = new Size(rect.Width, rect.Height);
+        if (physicalSize == _physicalClientSize && dpiScale == _dpiScale) return;
+        _dpiScale = dpiScale;
+        UpdateClientSize(rect);
+        if (_renderContext is IDpiResizableRenderContext dpiResizable)
+            dpiResizable.Resize(_clientSize, _dpiScale);
+        else if (_renderContext is IResizableRenderContext resizable)
+            resizable.Resize(_clientSize);
+        SizeChanged?.Invoke(_clientSize);
+    }
 
     private void UpdateClientSize(Win32Api.RECT rect)
     {

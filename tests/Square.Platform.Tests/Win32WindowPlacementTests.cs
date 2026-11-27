@@ -1,5 +1,6 @@
 using Square.Hosting;
 using Square.Platform.Win32;
+using Square.Graphics;
 using Xunit;
 
 namespace Square.Platform.Tests;
@@ -7,10 +8,11 @@ namespace Square.Platform.Tests;
 public sealed class Win32WindowPlacementTests
 {
     [Fact]
-    public void CreationSizeChangedExposesNativeWindowHandle()
+    public void CreationPublishesFinalClientMetricsBeforeCreatingRenderer()
     {
         if (!OperatingSystem.IsWindows()) return;
 
+        RenderBackendRegistry.Register(new Square.Backends.RenderBackendFactory());
         using var host = new Win32Host(new PlatformHostCreateInfo
         {
             Title = "Square creation lifecycle test",
@@ -19,14 +21,37 @@ public sealed class Win32WindowPlacementTests
             TitleStyle = TitleStyle.Custom,
             BorderStyle = BorderStyle.Resizable
         });
-        var handlesDuringCreation = new List<IntPtr>();
-        host.SizeChanged += _ => handlesDuringCreation.Add(host.Handle);
+        var notifications = new List<(IntPtr Handle, bool Running, Size Size, float Dpi)>();
+        IRenderContext? renderer = null;
+        host.SizeChanged += size =>
+        {
+            notifications.Add((host.Handle, host.IsRunning, size, host.DpiScale));
+            renderer ??= host.CreateRenderContext();
+        };
 
-        host.Show();
+        try
+        {
+            host.Show();
 
-        Assert.NotEmpty(handlesDuringCreation);
-        Assert.NotEqual(IntPtr.Zero, host.Handle);
-        Assert.All(handlesDuringCreation, handle => Assert.Equal(host.Handle, handle));
+            var creation = Assert.Single(notifications);
+            Assert.NotEqual(IntPtr.Zero, creation.Handle);
+            Assert.Equal(host.Handle, creation.Handle);
+            Assert.True(creation.Running, "Published size before initialization completed.");
+            var nativeScale = Win32Api.GetDpiForWindow(host.Handle) / 96f;
+            Assert.Equal(nativeScale, creation.Dpi);
+            Assert.Equal(host.ClientSize, creation.Size);
+
+            var context = Assert.IsAssignableFrom<IRenderContext>(renderer);
+            Assert.Equal(nativeScale, context.DpiScale);
+            Assert.True(Win32Api.GetClientRect(host.Handle, out var client));
+            using var bitmap = Assert.IsAssignableFrom<IRenderBitmapSource>(context).CaptureBitmap();
+            Assert.InRange(bitmap.Width, client.Width, client.Width + 1);
+            Assert.InRange(bitmap.Height, client.Height, client.Height + 1);
+        }
+        finally
+        {
+            renderer?.Dispose();
+        }
     }
 
     [Theory]
